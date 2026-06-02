@@ -128,9 +128,11 @@ async def test_sign_invoice_produces_verifiable_stamp_and_retention(client):
     assert body["invoice_hash"] and body["stamp"]
 
     # Document is retained with a future retention date (6-year default).
+    # Status is "signed" then "pending" once background reporting runs and finds
+    # no Fatoora gateway configured (fail-closed, sale stays valid).
     docs = (await client.get("/api/v1/zatca/documents", headers=headers)).json()
     assert len(docs) == 1
-    assert docs[0]["status"] == "signed"
+    assert docs[0]["status"] in ("signed", "pending")
     assert docs[0]["retention_until"] is not None
 
     # Status now reflects the advanced hash chain (PIH != initial).
@@ -154,14 +156,31 @@ async def test_sign_chains_previous_hash(client):
     assert s2["previous_hash"] == s1["invoice_hash"]
 
 
-async def test_sign_without_csr_is_rejected(client):
+async def test_sale_autosigns_without_manual_onboarding(client):
+    """C-3: a sale signs itself (auto-provisioned EGS key) with no manual CSR.
+
+    The signing key no longer has to be created by hand before a sale can be
+    signed — the POS path provisions it and signs every invoice. The manual
+    ``/sign`` endpoint is therefore idempotent: it returns the already-signed
+    document rather than minting a duplicate fiscal record.
+    """
     user, token, client_id = await make_client_account(client)
     headers = auth_headers(token)
     await _set_vat(client_id)
     txn_id = await _make_transaction(client, headers, client_id, user["id"])
+
+    # The sale already produced exactly one signed document for this client
+    # ("signed", or "pending" after background reporting finds no gateway).
+    docs = (await client.get("/api/v1/zatca/documents", headers=headers)).json()
+    assert len(docs) == 1
+    assert docs[0]["status"] in ("signed", "pending")
+
+    # Manual sign is idempotent — same document, no duplicate, chain intact.
     resp = await client.post(f"/api/v1/zatca/invoices/{txn_id}/sign", headers=headers)
-    assert resp.status_code == 400
-    assert "onboard/csr" in resp.json()["detail"]
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["document_id"] == docs[0]["id"]
+    docs_after = (await client.get("/api/v1/zatca/documents", headers=headers)).json()
+    assert len(docs_after) == 1
 
 
 async def test_report_fails_closed_without_onboarding(client):

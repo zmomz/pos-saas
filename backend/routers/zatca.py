@@ -96,6 +96,15 @@ class ReportResponse(BaseModel):
     response: dict
 
 
+class IntegrityResponse(BaseModel):
+    ok: bool
+    total: int
+    chain_ok: bool
+    signatures_ok: bool
+    broken_at: Optional[int] = None  # icv of the first broken link/signature
+    detail: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -289,6 +298,27 @@ async def sign_invoice(
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
+    # Idempotency: sales are auto-signed on the POS path (C-3), so a document
+    # usually already exists. Re-signing would mint a duplicate fiscal record and
+    # corrupt the hash chain — return the existing signed document instead.
+    existing = (
+        await db.execute(
+            select(ZatcaDocuments)
+            .where(ZatcaDocuments.transaction_id == txn.id)
+            .order_by(ZatcaDocuments.id.asc())
+        )
+    ).scalars().first()
+    if existing is not None:
+        return SignResponse(
+            document_id=existing.id,
+            invoice_number=existing.invoice_number,
+            invoice_hash=existing.invoice_hash or "",
+            stamp=existing.stamp or "",
+            icv=existing.icv or 0,
+            previous_hash=existing.previous_hash or zatca.INITIAL_PIH,
+            verified=True,
+        )
+
     # Reuse the existing UBL builder, then hash + sign with real crypto.
     items = json.loads(txn.items_json) if txn.items_json else []
     issued = txn.created_at or datetime.now(timezone.utc)
@@ -421,6 +451,70 @@ async def list_documents(
         )
         for d in result.scalars().all()
     ]
+
+
+# ---------------------------------------------------------------------------
+# Hash-chain + signature integrity (ZA-04)
+# ---------------------------------------------------------------------------
+@router.get("/integrity", response_model=IntegrityResponse)
+async def chain_integrity(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify the client's invoice hash chain and every cryptographic stamp.
+
+    Walks the archived documents in counter (``icv``) order and asserts that
+    each ``previous_hash`` equals the prior document's ``invoice_hash`` (the
+    first chains onto ``INITIAL_PIH``) and that every ECDSA stamp verifies
+    against the client's EGS public key. Reports the first ``icv`` that fails.
+    """
+    client = await _get_client(db, str(current_user.id))
+    result = await db.execute(
+        select(ZatcaDocuments)
+        .where(ZatcaDocuments.client_id == client.id)
+        .order_by(ZatcaDocuments.icv.asc(), ZatcaDocuments.id.asc())
+    )
+    docs = result.scalars().all()
+
+    creds = (
+        await db.execute(
+            select(ZatcaCredentials).where(ZatcaCredentials.client_id == client.id)
+        )
+    ).scalar_one_or_none()
+    public_key_pem = None
+    if creds and creds.private_key_enc:
+        public_key_pem = zatca.public_key_pem_from_private(
+            zatca.decrypt_secret(creds.private_key_enc)
+        )
+
+    chain_ok = True
+    signatures_ok = True
+    broken_at: Optional[int] = None
+    detail: Optional[str] = None
+    expected_prev = zatca.INITIAL_PIH
+
+    for doc in docs:
+        if (doc.previous_hash or "") != expected_prev:
+            chain_ok = False
+            broken_at = doc.icv
+            detail = f"hash chain break at icv={doc.icv}"
+            break
+        if public_key_pem and doc.stamp and doc.invoice_hash:
+            if not zatca.verify_stamp(public_key_pem, doc.invoice_hash, doc.stamp):
+                signatures_ok = False
+                broken_at = doc.icv
+                detail = f"invalid stamp at icv={doc.icv}"
+                break
+        expected_prev = doc.invoice_hash or expected_prev
+
+    return IntegrityResponse(
+        ok=chain_ok and signatures_ok,
+        total=len(docs),
+        chain_ok=chain_ok,
+        signatures_ok=signatures_ok,
+        broken_at=broken_at,
+        detail=detail,
+    )
 
 
 def _api_error(exc: zatca.ZatcaApiError) -> HTTPException:

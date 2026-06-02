@@ -268,6 +268,105 @@ def verify_stamp(public_key_pem: str, invoice_hash_base64: str, stamp_b64: str) 
         return False
 
 
+def public_key_der_b64(private_key_pem: str) -> str:
+    """Base64 of the DER ``SubjectPublicKeyInfo`` (TLV tag 8 carries these bytes)."""
+    key = serialization.load_pem_private_key(private_key_pem.encode("utf-8"), password=None)
+    der = key.public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return base64.b64encode(der).decode("ascii")
+
+
+# ---------------------------------------------------------------------------
+# ZATCA QR — stamped TLV (tags 1-8) + PNG rendering
+# ---------------------------------------------------------------------------
+def _ber_length(n: int) -> bytes:
+    """BER definite-length encoding (TLV length octets)."""
+    if n < 0x80:
+        return bytes([n])
+    out = bytearray()
+    while n:
+        out.insert(0, n & 0xFF)
+        n >>= 8
+    return bytes([0x80 | len(out)]) + bytes(out)
+
+
+def _tlv_field(tag: int, value: bytes) -> bytes:
+    return bytes([tag]) + _ber_length(len(value)) + value
+
+
+def build_stamped_qr_tlv(
+    *,
+    seller_name: str,
+    vat_number: str,
+    timestamp: str,
+    total_with_vat: str,
+    vat_amount: str,
+    invoice_hash_b64: str,
+    stamp_b64: str,
+    public_key_der_base64: str,
+) -> str:
+    """Build the ZATCA Phase-2 **stamped** QR payload (base64 TLV, tags 1-8).
+
+    Tags 1-5 are the human-readable invoice fields (Phase-1 QR); tags 6-8 add the
+    cryptographic stamp that makes the QR Phase-2 compliant:
+
+      6 = invoice hash (base64 SHA-256 of the canonical XML)
+      7 = ECDSA signature (the cryptographic stamp)
+      8 = EGS public key (DER ``SubjectPublicKeyInfo``)
+
+    Strings are UTF-8; the binary tags carry the decoded bytes of their base64
+    inputs. Returns the base64 of the concatenated TLV — exactly what the QR image
+    encodes and what tag-6 readers re-hash to verify the invoice.
+    """
+    payload = bytearray()
+    payload += _tlv_field(1, seller_name.encode("utf-8"))
+    payload += _tlv_field(2, vat_number.encode("utf-8"))
+    payload += _tlv_field(3, timestamp.encode("utf-8"))
+    payload += _tlv_field(4, total_with_vat.encode("utf-8"))
+    payload += _tlv_field(5, vat_amount.encode("utf-8"))
+    payload += _tlv_field(6, base64.b64decode(invoice_hash_b64))
+    payload += _tlv_field(7, base64.b64decode(stamp_b64))
+    payload += _tlv_field(8, base64.b64decode(public_key_der_base64))
+    return base64.b64encode(bytes(payload)).decode("ascii")
+
+
+def parse_tlv_tags(tlv_b64: str) -> Dict[int, bytes]:
+    """Decode a base64 TLV payload into ``{tag: value_bytes}`` (test/verification)."""
+    raw = base64.b64decode(tlv_b64)
+    out: Dict[int, bytes] = {}
+    i = 0
+    while i < len(raw):
+        tag = raw[i]
+        i += 1
+        length = raw[i]
+        i += 1
+        if length & 0x80:
+            num = length & 0x7F
+            length = int.from_bytes(raw[i:i + num], "big")
+            i += num
+        out[tag] = raw[i:i + length]
+        i += length
+    return out
+
+
+def render_qr_png_base64(tlv_b64: str) -> str:
+    """Render the QR TLV payload to a base64 PNG (``data:image/png;base64,`` body).
+
+    Server-side rendering (C-4): the frontend receives a ready-to-show PNG and
+    does not need a QR library. The QR encodes the base64 TLV string verbatim.
+    """
+    import io
+
+    import qrcode
+
+    img = qrcode.make(tlv_b64)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 # ---------------------------------------------------------------------------
 # Fatoora API client (compliance / production CSID, reporting / clearance)
 # ---------------------------------------------------------------------------

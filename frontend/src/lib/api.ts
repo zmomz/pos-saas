@@ -99,16 +99,55 @@ export async function getClientBranding() {
 }
 
 // POS endpoints
+export interface TransactionResult {
+  id: number;
+  invoice_number: string;
+  subtotal: number;
+  vat_amount: number;
+  discount_amount: number;
+  total_amount: number;
+  payment_method: string;
+  status: string;
+  // Stamped ZATCA TLV (base64) + the ready-to-render fiscal QR PNG (base64).
+  zatca_qr?: string;
+  zatca_qr_base64?: string;
+  zatca_hash?: string;
+  zatca_document_id?: number;
+  zatca_status?: string;
+}
+
 export async function createTransaction(data: {
   items: { product_id: number; name: string; quantity: number; price: number; vat_rate: number }[];
   payment_method: string;
   customer_name?: string;
   customer_phone?: string;
-}) {
-  const response = await client.apiCall.invoke({
+}): Promise<TransactionResult> {
+  const response = await client.apiCall.invoke<TransactionResult>({
     url: '/api/v1/pos/transaction',
     method: 'POST',
     data,
+  });
+  return response.data;
+}
+
+export interface RefundResult {
+  credit_note_id: number;
+  original_transaction_id: number;
+  credit_note_number: string;
+  total_amount: number;
+  zatca_qr?: string;
+  zatca_qr_base64?: string;
+  zatca_document_id: number;
+  zatca_status: string;
+}
+
+// POS-07: refund a sale by issuing a ZATCA credit note (type 381). Restores
+// inventory and signs the credit note server-side; returns its number + QR.
+export async function refundTransaction(transactionId: number): Promise<RefundResult> {
+  const response = await client.apiCall.invoke<RefundResult>({
+    url: `/api/v1/pos/transactions/${transactionId}/refund`,
+    method: 'POST',
+    data: {},
   });
   return response.data;
 }

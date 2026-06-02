@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
@@ -35,6 +35,7 @@ interface Receipt {
   subtotal: number;
   payment_method: string;
   zatca_qr_base64: string;
+  zatca_status?: string;
   items: { name: string; quantity: number; price: number }[];
   discount_amount?: number;
   discount_code?: string;
@@ -253,7 +254,8 @@ export default function POSTerminal() {
         vat_amount: result.vat_amount,
         subtotal: result.subtotal,
         payment_method: paymentMethod,
-        zatca_qr_base64: result.zatca_qr_base64,
+        zatca_qr_base64: result.zatca_qr_base64 || '',
+        zatca_status: result.zatca_status,
         items: cart.map((item) => ({
           name: item.product.name,
           quantity: item.quantity,
@@ -329,37 +331,23 @@ export default function POSTerminal() {
   }
 
   async function handleRefund() {
-    if (!selectedTransaction) return;
+    if (!selectedTransaction?.id) return;
     setRefundProcessing(true);
     try {
-      const items = (selectedTransaction.items || []).map((item) => ({
-        product_id: 0,
-        name: `REFUND: ${item.name}`,
-        quantity: item.quantity,
-        price: -Math.abs(item.price),
-        vat_rate: 0.15,
-      }));
-
-      const result = await createTransaction({
-        items: items.length > 0 ? items : [{
-          product_id: 0,
-          name: `REFUND: ${selectedTransaction.invoice_number}`,
-          quantity: 1,
-          price: -Math.abs(selectedTransaction.subtotal || selectedTransaction.total_amount),
-          vat_rate: 0.15,
-        }],
-        payment_method: 'refund',
-      });
+      // POS-07: the backend issues a real ZATCA credit note (type 381),
+      // restores inventory, and signs it. No more negative-price fake refund.
+      const result = await refundTransaction(selectedTransaction.id);
 
       setReceipt({
-        invoice_number: result.invoice_number || `REF-${Date.now()}`,
-        total_amount: -(selectedTransaction.total_amount || 0),
+        invoice_number: result.credit_note_number,
+        total_amount: result.total_amount,
         vat_amount: -(selectedTransaction.vat_amount || 0),
         subtotal: -(selectedTransaction.subtotal || 0),
         payment_method: 'refund',
         zatca_qr_base64: result.zatca_qr_base64 || '',
+        zatca_status: result.zatca_status,
         items: (selectedTransaction.items || []).map((item) => ({
-          name: `REFUND: ${item.name}`,
+          name: item.name,
           quantity: item.quantity,
           price: -Math.abs(item.price),
         })),
@@ -470,6 +458,17 @@ export default function POSTerminal() {
                     />
                   </div>
                 </div>
+                {receipt.zatca_status && (
+                  <p className="text-xs text-slate-500 mt-2 text-center">
+                    حالة الفاتورة الإلكترونية: {{
+                      signed: 'موقعة',
+                      pending: 'بانتظار الإبلاغ',
+                      reported: 'تم الإبلاغ',
+                      cleared: 'معتمدة',
+                      failed: 'فشل الإبلاغ',
+                    }[receipt.zatca_status] || receipt.zatca_status}
+                  </p>
+                )}
               </div>
             )}
 

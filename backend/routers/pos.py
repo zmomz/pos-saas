@@ -5,7 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, update
@@ -19,6 +19,8 @@ from models.clients import Clients
 from models.products import Products
 from models.transactions import Transactions
 from services import loyalty as loyalty_service
+from services import zatca as zatca_service_mod
+from services import zatca_sale
 from services.escpos import build_receipt_base64
 from services.production import EmailService, LowStockChecker, PDFInvoiceService
 from services.system_settings import get_effective_tax_rate
@@ -74,8 +76,14 @@ class TransactionResponse(BaseModel):
     payment_method: str
     payment_breakdown: Optional[str] = None
     status: str
+    # zatca_qr is the **stamped** ZATCA TLV (base64); zatca_qr_base64 is the
+    # ready-to-render QR PNG (base64) the frontend shows directly (C-4).
     zatca_qr: Optional[str] = None
+    zatca_qr_base64: Optional[str] = None
     zatca_hash: Optional[str] = None
+    # Fiscal document linkage + reporting state for this sale (C-3).
+    zatca_document_id: Optional[int] = None
+    zatca_status: Optional[str] = None
     items_json: Optional[str] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
@@ -208,10 +216,11 @@ async def get_client_for_user(db: AsyncSession, user_id: str) -> Clients:
 @router.post("/transaction", response_model=TransactionResponse)
 async def create_transaction(
     data: CreateTransactionRequest,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new POS transaction with ZATCA QR code generation."""
+    """Create a new POS transaction, ECDSA-signed and ZATCA-reported (C-3/C-4)."""
     client = await get_client_for_user(db, str(current_user.id))
 
     # Calculate totals
@@ -304,33 +313,8 @@ async def create_transaction(
         ensure_ascii=False,
     )
 
-    # Generate ZATCA QR code
-    seller_name = client.business_name or "Business"
-    vat_number = client.vat_number or "000000000000000"
-
-    zatca_qr = generate_zatca_tlv(
-        seller_name=seller_name,
-        vat_number=vat_number,
-        timestamp=timestamp_iso,
-        total_with_vat=f"{total_amount:.2f}",
-        vat_amount=f"{vat_amount:.2f}",
-    )
-
-    # Generate ZATCA hash
-    invoice_data = {
-        "invoice_number": invoice_number,
-        "seller_name": seller_name,
-        "vat_number": vat_number,
-        "timestamp": timestamp_iso,
-        "subtotal": subtotal,
-        "discount": discount_amount,
-        "vat_amount": vat_amount,
-        "total_amount": total_amount,
-        "items": [item.model_dump() for item in data.items],
-    }
-    zatca_hash = generate_zatca_hash(invoice_data)
-
-    # Create transaction record
+    # Create transaction record. The fiscal QR/hash are populated by signing
+    # below (C-3) — never with the old unsigned Phase-1 TLV.
     transaction = Transactions(
         user_id=str(current_user.id),
         client_id=client.id,
@@ -342,8 +326,6 @@ async def create_transaction(
         payment_method=payment_method,
         payment_breakdown=payment_breakdown_json,
         status="completed",
-        zatca_qr=zatca_qr,
-        zatca_hash=zatca_hash,
         items_json=items_json,
         customer_name=data.customer_name,
         customer_phone=data.customer_phone,
@@ -375,8 +357,22 @@ async def create_transaction(
             loyalty_points_earned = accrual.points_earned
             loyalty_balance = accrual.new_balance
 
+    # ---- ZATCA signing on the real sale path (C-3) ----
+    # Hash + ECDSA-stamp + hash-chain + archive the invoice inside this same
+    # transaction. A signing failure raises and rolls the sale back, so a
+    # completed sale is never silently left unsigned.
+    await db.flush()  # assign transaction.id before signing
+    doc, stamped_qr = await zatca_sale.sign_transaction(db, client, transaction)
+    document_id = doc.id
+
     await db.commit()
     await db.refresh(transaction)
+
+    # Queue Fatoora reporting out-of-band (C-3): fails closed to "pending" when
+    # the gateway/onboarding isn't configured; never blocks the committed sale.
+    background_tasks.add_task(
+        zatca_sale.report_document_background, document_id, client.id
+    )
 
     # ---- Automated low-stock alerts (best-effort, post-commit) ----
     # After the sale is durably persisted, notify the merchant about any sold
@@ -394,8 +390,11 @@ async def create_transaction(
         payment_method=transaction.payment_method,
         payment_breakdown=transaction.payment_breakdown,
         status=transaction.status or "completed",
-        zatca_qr=transaction.zatca_qr,
+        zatca_qr=stamped_qr,
+        zatca_qr_base64=zatca_service_mod.render_qr_png_base64(stamped_qr),
         zatca_hash=transaction.zatca_hash,
+        zatca_document_id=document_id,
+        zatca_status="signed",
         items_json=transaction.items_json,
         customer_name=transaction.customer_name,
         customer_phone=transaction.customer_phone,
@@ -490,6 +489,115 @@ async def list_transactions(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+# ---------- Refund / ZATCA credit note (POS-07) ----------
+class RefundResponse(BaseModel):
+    credit_note_id: int
+    original_transaction_id: int
+    credit_note_number: str
+    total_amount: float
+    zatca_qr: Optional[str] = None
+    zatca_qr_base64: Optional[str] = None
+    zatca_document_id: int
+    zatca_status: str
+
+
+async def _restore_inventory(db: AsyncSession, client_id: int, items: List[dict]) -> None:
+    """Add refunded quantities back to stock (inverse of ``_deduct_inventory``)."""
+    restore: dict[int, int] = {}
+    for item in items:
+        pid = item.get("product_id")
+        if pid:
+            restore[pid] = restore.get(pid, 0) + int(item.get("quantity") or 0)
+    for product_id, qty in restore.items():
+        await db.execute(
+            update(Products)
+            .where(Products.id == product_id, Products.client_id == client_id)
+            .values(quantity=Products.quantity + qty)
+        )
+
+
+@router.post("/transactions/{txn_id}/refund", response_model=RefundResponse)
+async def refund_transaction(
+    txn_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Refund a sale by issuing a ZATCA **credit note** (POS-07).
+
+    Replaces the previous negative-price fake refund. Creates a type-381 credit
+    note that references the original invoice, restores inventory, advances the
+    hash chain, is ECDSA-signed and queued for Fatoora reporting — all atomically.
+    The credit-note transaction stores negative amounts so sales reports net out;
+    the signed ZATCA document carries the compliant positive credit-note amounts.
+    """
+    client = await get_client_for_user(db, str(current_user.id))
+    original = await _get_owned_transaction(db, client, txn_id)
+
+    if (original.total_amount or 0) < 0 or (original.payment_method or "") == "refund":
+        raise HTTPException(status_code=400, detail="Cannot refund a credit note")
+    if (original.status or "") == "refunded":
+        raise HTTPException(status_code=400, detail="Transaction already refunded")
+
+    try:
+        items = json.loads(original.items_json) if original.items_json else []
+    except (ValueError, TypeError):
+        items = []
+
+    await _restore_inventory(db, client.id, items)
+
+    # Allocate the credit note its own sequential invoice number.
+    current_counter = (client.invoice_counter or 0) + 1
+    await db.execute(
+        update(Clients).where(Clients.id == client.id).values(invoice_counter=current_counter)
+    )
+    credit_number = f"CRN-{client.id:04d}-{current_counter:06d}"
+
+    credit = Transactions(
+        user_id=str(current_user.id),
+        client_id=client.id,
+        invoice_number=credit_number,
+        subtotal=-(original.subtotal or 0),
+        vat_amount=-(original.vat_amount or 0),
+        discount_amount=-(original.discount_amount or 0),
+        total_amount=-(original.total_amount or 0),
+        payment_method="refund",
+        status="credit_note",
+        items_json=original.items_json,
+        customer_name=original.customer_name,
+        customer_phone=original.customer_phone,
+    )
+    db.add(credit)
+    original.status = "refunded"
+
+    await db.flush()
+    doc, stamped_qr = await zatca_sale.sign_transaction(
+        db,
+        client,
+        credit,
+        document_type="credit_note",
+        invoice_type_code="381",
+        billing_reference=original.invoice_number,
+    )
+    document_id = doc.id
+
+    await db.commit()
+    await db.refresh(credit)
+
+    background_tasks.add_task(zatca_sale.report_document_background, document_id, client.id)
+
+    return RefundResponse(
+        credit_note_id=credit.id,
+        original_transaction_id=original.id,
+        credit_note_number=credit_number,
+        total_amount=credit.total_amount,
+        zatca_qr=stamped_qr,
+        zatca_qr_base64=zatca_service_mod.render_qr_png_base64(stamped_qr),
+        zatca_document_id=document_id,
+        zatca_status="signed",
     )
 
 

@@ -22,6 +22,8 @@ class ZatcaDocuments(Base):
 
     invoice_number = Column(String, nullable=False)
     invoice_uuid = Column(String, nullable=True)
+    # "invoice" (388 tax invoice) or "credit_note" (381 refund). POS-07.
+    document_type = Column(String, nullable=False, default="invoice", server_default="invoice")
     icv = Column(Integer, nullable=True)            # Invoice Counter Value (chain position)
     invoice_hash = Column(String, nullable=True)    # base64 SHA-256 of the canonical XML
     previous_hash = Column(String, nullable=True)   # PIH at signing time

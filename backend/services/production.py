@@ -210,8 +210,17 @@ class ZATCAService:
         total_vat: float,
         total_including_vat: float,
         payment_method: str = "10",  # Cash
+        invoice_type_code: str = "388",  # 388 = Tax Invoice, 381 = Credit Note
+        invoice_type_name: str = "0100000",
+        billing_reference_id: Optional[str] = None,  # original invoice no. for 381
     ) -> str:
-        """Generate ZATCA Phase 2 compliant UBL 2.1 XML invoice."""
+        """Generate ZATCA Phase 2 compliant UBL 2.1 XML invoice.
+
+        ``invoice_type_code`` 388 is a tax invoice; 381 is a credit note. For a
+        credit note, pass ``billing_reference_id`` with the original invoice
+        number so the document carries the required ``cac:BillingReference``
+        linking the credit note back to the invoice it reverses (POS-07).
+        """
         # Root element
         invoice = Element("Invoice")
         invoice.set("xmlns", self.ZATCA_NS)
@@ -236,14 +245,21 @@ class ZATCAService:
         issue_time_el = SubElement(invoice, "cbc:IssueTime")
         issue_time_el.text = issue_time
 
-        # Invoice Type Code (388 = Tax Invoice)
+        # Invoice Type Code (388 = Tax Invoice, 381 = Credit Note)
         type_code = SubElement(invoice, "cbc:InvoiceTypeCode")
-        type_code.text = "388"
-        type_code.set("name", "0100000")
+        type_code.text = invoice_type_code
+        type_code.set("name", invoice_type_name)
 
         # Document Currency
         currency = SubElement(invoice, "cbc:DocumentCurrencyCode")
         currency.text = "SAR"
+
+        # Billing Reference — links a credit note (381) to the original invoice.
+        if billing_reference_id:
+            billing_ref = SubElement(invoice, "cac:BillingReference")
+            inv_doc_ref = SubElement(billing_ref, "cac:InvoiceDocumentReference")
+            br_id = SubElement(inv_doc_ref, "cbc:ID")
+            br_id.text = billing_reference_id
 
         # Previous Invoice Hash (for chaining)
         additional_doc = SubElement(invoice, "cac:AdditionalDocumentReference")
