@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     # Disable in production once the master account and provisioning are set up.
     allow_registration: bool = True
 
+    # ZATCA Phase-2 (Fatoora) e-invoicing.
+    #   zatca_environment: sandbox | simulation | production (selects the
+    #     Fatoora gateway + CSR template). Network calls are skipped (503)
+    #     unless a base URL resolves.
+    #   zatca_api_base_url: explicit gateway override (e.g. a local mock).
+    #   zatca_encryption_key: AES-256 key material for secrets at rest;
+    #     falls back to jwt_secret_key in dev. MUST be set in production.
+    #   zatca_retention_years: statutory archival period for signed invoices.
+    zatca_environment: str = "sandbox"
+    zatca_api_base_url: str = ""
+    zatca_encryption_key: str = ""
+    zatca_retention_years: int = 6
+
     @property
     def backend_url(self) -> str:
         """Generate backend URL from host and port."""

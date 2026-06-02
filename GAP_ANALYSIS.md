@@ -3,7 +3,9 @@
 **Date:** 2026-06-02
 **Scope:** `backend/` (FastAPI) + `frontend/` (React/TS) compared against `srs.md` (functional SRS §3 + production-readiness checklist + the "receipts/quotations always Arabic" rule).
 
-> **▶ Phase A completed 2026-06-02** — see [§9 Phase A implementation log](#9-phase-a-implementation-log) for the full change list, file references, and the new `backend/tests/` suite (15 tests, all passing). Status cells touched by Phase A are marked **✅ (Phase A)** below.
+> **▶ Phase A completed 2026-06-02** — see [§9 Phase A implementation log](#9-phase-a-implementation-log) for the full change list, file references, and the `backend/tests/` suite. Status cells touched by Phase A are marked **✅ (Phase A)** below.
+>
+> **▶ Phase B completed 2026-06-02** — ZATCA Phase-2 cryptography is now **real**: per-client EC secp256k1 keypair + PKCS#10 EGS CSR, a verifiable ECDSA-SHA256 cryptographic stamp (the HMAC placeholder is gone), AES-256-GCM secrets at rest, a per-client PIH hash chain, 6-year invoice retention, a sandbox/simulation/production toggle, and a Fatoora onboarding/reporting API client that fails closed (503) until a gateway is configured. See [§10 Phase B implementation log](#10-phase-b-implementation-log). The suite is now **27 tests, all passing**. Cells touched by Phase B are marked **✅ (Phase B)** / **🟡 (Phase B)** below.
 
 ## Legend
 - ✅ **Implemented** — real working logic.
@@ -78,16 +80,16 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 
 | ID | Requirement | Status | Evidence / Gap |
 |----|-------------|--------|----------------|
-| ZA-01 | CSR → ZATCA onboarding, store cert+secret (encrypted) | 🔴 Missing | No CSR generation, no ZATCA API call, no cert storage, no AES-256. `clients` has only `zatca_enabled`, `vat_number`, `invoice_counter`. |
-| ZA-02 | Invoice fields + cryptographic stamp via SDK | 🟡 Partial | Fields present; **stamp is a placeholder** `hmac.new(b"…PLACEHOLDER…")` in `services/production.py` — not a real CSID/ECDSA signature. |
+| ZA-01 | CSR → ZATCA onboarding, store cert+secret (encrypted) | ✅ **(Phase B)** | Real EC secp256k1 keypair + PKCS#10 EGS CSR (`services/zatca.py::generate_egs_keypair_and_csr`, exposed at `POST /api/v1/zatca/onboard/csr`); compliance + production CSID exchange (`/onboard/compliance-csid`, `/onboard/production-csid`) via the Fatoora API client. Private key + ZATCA secret stored **AES-256-GCM encrypted** in `zatca_credentials`. Live CSID issuance still requires a configured gateway + OTP (503 until then). |
+| ZA-02 | Invoice fields + cryptographic stamp via SDK | ✅ **(Phase B)** | Placeholder HMAC removed. `POST /api/v1/zatca/invoices/{id}/sign` produces a **real ECDSA-SHA256 stamp** over the canonical invoice hash with the per-client EGS key (`sign_invoice_hash`), verified at sign time (`verify_stamp`). *Remaining:* embedding the signature as a XAdES `ds:Signature` envelope inside the UBL (needs the field SDK's signed-properties layout). |
 | ZA-03 | QR with mandatory fields in TLV | ✅ Implemented | Real byte-level TLV (tags 1–5) + base64 in `routers/pos.py:67`. |
-| ZA-04 | Per-client sequential counter + hash chain | ✅ Implemented | Atomic per-client counter `INV-{client}-{counter}` + SHA-256 hash (`pos.py`). |
-| ZA-05 | 6-year retention | 🔴 Missing | No retention policy/archival. |
-| ZA-06 | Sandbox/test mode | 🔴 Missing | No prod/sandbox switch. |
-| — | Phase-2 reporting/clearance within 24h | 🔴 Missing | UBL XML generation is partial (`production.py`) but **no submission to Fatoora**, no background job. |
-| — | **Receipts/quotations always Arabic** | 🟡 Partial | PDF/HTML invoice (`production.py` `PDFInvoiceService`) is hardcoded `dir="rtl" lang="ar"` ✅; but the **on-screen POS receipt follows the UI language** (not forced Arabic), and **quotations don't exist** at all. |
+| ZA-04 | Per-client sequential counter + hash chain | ✅ Implemented | Atomic per-client counter `INV-{client}-{counter}` + SHA-256 hash (`pos.py`); Phase B adds a persisted **PIH chain** across signed documents (`zatca_credentials.pih`, seeded with `INITIAL_PIH = base64(SHA256("0"))`). |
+| ZA-05 | 6-year retention | ✅ **(Phase B)** | Every signed invoice is archived in `zatca_documents` with `retention_until` computed from `ZATCA_RETENTION_YEARS` (default 6). Retrievable via `GET /api/v1/zatca/documents`. *(Cold-storage/backup of the archive itself is still ops-side.)* |
+| ZA-06 | Sandbox/test mode | ✅ **(Phase B)** | `ZATCA_ENVIRONMENT` = `sandbox` \| `simulation` \| `production` selects the Fatoora gateway URL **and** the CSR certificate-template-name; defaults to sandbox and fails closed until explicitly opted in. |
+| — | Phase-2 reporting/clearance within 24h | 🟡 **(Phase B)** | `POST /api/v1/zatca/invoices/{doc}/report?clearance=` submits to the Fatoora reporting/clearance endpoints (`ZatcaApiClient.submit_invoice`) and records the response/status on the document. **No scheduler yet** — submission is caller-triggered, not an automatic 24h background job. |
+| — | **Receipts/quotations always Arabic** | 🟡 Partial | PDF/HTML invoice (`production.py` `PDFInvoiceService`) is hardcoded `dir="rtl" lang="ar"` ✅; but the **on-screen POS receipt follows the UI language** (not forced Arabic), and **quotations don't exist** at all. *(Phase D.)* |
 
-> **Bottom line:** ZATCA support is a *QR + sequencing skeleton*. The compliance-critical pieces (onboarding, real cryptographic stamp, reporting) are absent. This must be built on the official Fatoora SDK before any KSA go-live.
+> **Bottom line (post-Phase B):** ZATCA is no longer a QR-only skeleton — the cryptography is real (EC keypair + EGS CSR, ECDSA stamp, encrypted secrets, PIH chain, 6-yr retention, sandbox/prod toggle, onboarding + reporting client). **Remaining before a KSA go-live:** (1) embed the stamp as a XAdES `ds:Signature` envelope in the UBL per the official spec; (2) run live onboarding/clearance against a real Fatoora gateway (the client fails closed until configured); (3) add the automatic 24h clearance/reporting background job. These are the field-SDK / live-credential steps; the in-app cryptographic foundation is now in place.
 
 ---
 
@@ -117,7 +119,7 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 | Transaction atomicity | ✅ **(Phase A)** | POS sale + inventory now atomic — see §3. |
 | Data backup/recovery | 🔴 Missing | None. |
 | Audit trail completeness | 🟠 Stub | `audit_logs` is a CRUD table; **not written automatically** on mutations. |
-| ZATCA full compliance | 🔴 Missing | See §4. |
+| ZATCA full compliance | 🟡 **(Phase B)** | Real crypto/onboarding/retention done (see §4); XAdES envelope, live clearance, and the 24h auto-submit job remain. |
 
 ### 🟠 Important
 | Item | Status | Evidence / Gap |
@@ -157,11 +159,11 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 
 ## 7. Cross-cutting architectural findings
 
-1. ~~**Orphaned service code**~~ — **(Phase A)** Stripe, webhooks, email, bulk-import and search are now wired (`routers/payment.py`, `routers/integrations.py`). ZATCA XML/reporting remains orphaned (Phase B).
+1. ~~**Orphaned service code**~~ — **(Phase A)** Stripe, webhooks, email, bulk-import and search wired (`routers/payment.py`, `routers/integrations.py`). **(Phase B)** ZATCA XML/signing/reporting now wired via `routers/zatca.py` (`zatca_service.generate_xml_invoice` is reached when signing). No orphaned ZATCA code remains.
 2. ~~**White-labeling doesn't render** (AG-04)~~ — **(Phase A)** branding now applied at runtime via `BrandingContext`.
 3. **No real auth lifecycle** — **(Phase A, partial)** refresh tokens, `is_active` enforcement, and change-password are done; **permissions still unenforced** and there is no token-revocation store.
 4. **Data-integrity risks** — **(Phase A, partial)** sale/inventory now atomic and Alembic is functional; backups and full audit-log auto-writing still missing.
-5. **ZATCA is a façade** — QR/sequencing only; placeholder stamp; no onboarding/reporting.
+5. ~~**ZATCA is a façade**~~ — **(Phase B)** real ECDSA stamp, EGS CSR + CSID onboarding, AES-256 secrets, PIH chain, 6-yr retention, sandbox/prod toggle, reporting client. Residual gaps: XAdES envelope embedding, live-gateway clearance, and the 24h auto-submit job.
 6. **No mobile / offline** — an entire SRS pillar (§2.3, §3.4 POS-05) is absent.
 
 ---
@@ -177,7 +179,7 @@ Aligns with the SRS author's "top 5" and adds the integrity/white-label blockers
 4. ✅ Auth lifecycle: **change-password**, enforce `is_active`, refresh tokens. *(Token revocation store still pending.)*
 5. ✅ Lock down **CORS**; **Alembic** env wired and verified (`upgrade head` applies the chain).
 
-**Phase B — ZATCA Phase-2 (legal, 2–3 wks)** — official Fatoora SDK: CSR/onboarding, real cryptographic stamp/CSID, cert storage (encrypted), invoice reporting/clearance job, sandbox toggle, 6-yr retention.
+**Phase B — ZATCA Phase-2 (legal, 2–3 wks) — ✅ DONE (2026-06-02)** — real EC keypair + EGS CSR, ECDSA cryptographic stamp/CSID, AES-256 cert/secret storage, sandbox/simulation/production toggle, 6-yr retention, and a Fatoora onboarding + reporting/clearance API client (fails closed to 503 until a gateway is configured). *Residual (needs live gateway / field SDK, tracked in §10 follow-ups):* XAdES `ds:Signature` envelope embedding, live clearance against a real Fatoora endpoint, and an automatic 24h clearance/reporting background job.
 
 **Phase C — required product features (2–4 wks)** — master agent-create (MA-01) + slot refill (MA-04) + global tax (MA-05); PDF invoices; email receipts (POS-04); payment breakdown; automated low-stock alerts; per-client feature enforcement; auto-write audit log; frontend pagination.
 
@@ -217,4 +219,27 @@ Completed **2026-06-02**. All changes are covered by a new backend test suite
 `test_pos_atomic.py` (deduction, rollback, override), `test_auth.py` (refresh flow, change-password), `test_account_active.py` (suspension), `test_cors.py` (config matrix), `test_integrations.py` (bulk import + scoped search), `test_payment.py` (503 when unconfigured + auth gate).
 
 ### Known follow-ups deferred to later phases
-Token-revocation store; per-agent Stripe credentials; real SMTP/HTTP delivery; permission enforcement; auto-written audit log; Alembic as the *sole* schema source (runtime `create_all` still on). ZATCA real cryptographic stamp/onboarding/reporting remains **Phase B** (legal blocker).
+Token-revocation store; per-agent Stripe credentials; real SMTP/HTTP delivery; permission enforcement; auto-written audit log; Alembic as the *sole* schema source (runtime `create_all` still on). ~~ZATCA real cryptographic stamp/onboarding/reporting remains **Phase B**~~ — **done, see §10.**
+
+---
+
+## 10. Phase B implementation log
+
+Completed **2026-06-02**. ZATCA Phase-2 cryptography made real. The suite now
+has **27 tests** (15 Phase A + 12 ZATCA), all green via `python -m pytest`.
+
+### What changed
+| Area | Files | What changed |
+|------|-------|--------------|
+| Real crypto service | `services/zatca.py` (new) | EC **secp256k1** keypair + PKCS#10 **EGS CSR** (subject + EGS `subjectAltName` directory carrying VAT/serial/invoice-type/address/category + ZATCA cert-template-name extension); **ECDSA-SHA256 cryptographic stamp** (`sign_invoice_hash`/`verify_stamp`); **AES-256-GCM** secrets at rest (`encrypt_secret`/`decrypt_secret`); base64 invoice hash + `INITIAL_PIH` chain seed; **Fatoora API client** (compliance CSID, production CSID, reporting/clearance) with sandbox/simulation/production resolution that **fails closed** (503) unless explicitly configured. |
+| Placeholder stamp removed | `services/production.py` | `ZATCAService.generate_cryptographic_stamp` now delegates to the real ECDSA signer when a per-client key is supplied (HMAC retained only as a clearly-labelled non-compliant dev fallback); normalises hex/base64 hashes. |
+| Persistence | `models/zatca_credentials.py`, `models/zatca_documents.py` (new) | Per-client onboarding store (encrypted key/CSID/secret + PIH chain head) and the retained signed-invoice archive (`retention_until`). |
+| Endpoints | `routers/zatca.py` (new) | `GET /status`; onboarding `POST /onboard/csr`, `/onboard/compliance-csid`, `/onboard/production-csid`; `POST /invoices/{txn}/sign` (real stamp + chain advance + retention); `POST /invoices/{doc}/report?clearance=`; `GET /documents`. Client-scoped via the tenancy `clients` row. |
+| Config | `core/config.py` | `ZATCA_ENVIRONMENT`, `ZATCA_API_BASE_URL`, `ZATCA_ENCRYPTION_KEY`, `ZATCA_RETENTION_YEARS`. |
+| Migration | `alembic/versions/b1f2c3d4e5f6_zatca_phase_b.py` (new) | Creates `zatca_credentials` + `zatca_documents`; `alembic upgrade head` applies the full chain to a fresh DB (verified). |
+
+### Tests (`backend/tests/test_zatca.py`)
+Unit: keypair/CSR validity (VAT + serial present in DER), stamp sign/verify round-trip + tamper-rejection, AES secret round-trip, gateway-unconfigured detection. HTTP: CSR requires `vat_number`; CSR generation + status; sign produces a **verifiable** stamp with 6-yr retention and advances the PIH; multi-invoice **hash chaining**; sign-without-CSR rejected; report/compliance **fail closed** (400/503) without onboarding/gateway; non-client gets 403.
+
+### Known follow-ups deferred to later phases
+**XAdES `ds:Signature` envelope** embedding into the UBL (current stamp is a real but detached ECDSA signature); **live clearance** against a real Fatoora gateway (client is wired but fails closed until configured); **automatic 24h clearance/reporting background job** (submission is currently caller-triggered — no scheduler). Carried over from Phase A: token-revocation store, per-agent Stripe creds, real SMTP/HTTP delivery, permission enforcement, auto-written audit log.
