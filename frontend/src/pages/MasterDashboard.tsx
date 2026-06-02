@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { client, getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Settings, Shield } from 'lucide-react';
 
@@ -188,7 +189,7 @@ export default function MasterDashboard() {
             </div>
             <div>
               <p className={`text-sm ${isDark ? 'text-green-300' : 'text-green-600'}`}>{t('total_revenue') || 'Total Revenue'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>${totalRevenue.toLocaleString()}</p>
+              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(totalRevenue, language)}</p>
             </div>
           </CardContent>
         </Card>
@@ -272,8 +273,8 @@ export default function MasterDashboard() {
               </CardHeader>
               <CardContent className={`space-y-2 text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
                 <p>{t('client_slots')}: {pkg.client_slots}</p>
-                <p>{t('wholesale_price')}: ${pkg.wholesale_price}</p>
-                <p>{t('retail_price')}: ${pkg.retail_price_per_client}</p>
+                <p>{t('wholesale_price')}: {formatMoney(pkg.wholesale_price || 0, language)}</p>
+                <p>{t('retail_price')}: {formatMoney(pkg.retail_price_per_client || 0, language)}</p>
               </CardContent>
             </Card>
           ))}

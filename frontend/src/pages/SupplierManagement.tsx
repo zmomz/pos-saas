@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { client } from '@/lib/api';
+import { client, receivePurchaseOrder } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { Truck, Plus, Search, Package, ClipboardList, CheckCircle } from 'lucide-react';
 
@@ -225,10 +225,9 @@ export default function SupplierManagement() {
 
   async function handleReceiveStock(po: PurchaseOrder) {
     try {
-      await client.entities.purchase_orders.update({
-        id: po.id,
-        data: { status: 'received', received_date: new Date().toISOString() },
-      });
+      // Phase 6: the real receive endpoint increments product stock + records
+      // cost server-side (idempotent), rather than just flipping the status.
+      await receivePurchaseOrder(po.id);
       await loadData();
     } catch (err) {
       console.error('Failed to receive stock:', err);

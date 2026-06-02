@@ -5,12 +5,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, type MyPermissions } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, type MyPermissions } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown } from 'lucide-react';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera } from 'lucide-react';
 
 interface Product {
   id: number;
@@ -82,6 +82,19 @@ export default function POSTerminal() {
   // POS-06: free-text product name search (complements barcode/SKU lookup).
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Loyalty checkout (Phase 4): pick the customer to accrue/redeem points and
+  // optionally spend points as a discount at checkout.
+  const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [redeemPoints, setRedeemPoints] = useState<string>('');
+
+  // Multi-branch (Phase 6): tag the sale to a branch so its stock is deducted.
+  const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
+  const [selectedBranchId, setSelectedBranchId] = useState<string>('');
+
+  // POS-06: live camera barcode scanning via the BarcodeDetector API.
+  const [cameraScanning, setCameraScanning] = useState(false);
+
   // POS-02: split-tender payment. When enabled the cashier allocates the total
   // across multiple methods; the per-method amounts are sent as payments[].
   const [splitMode, setSplitMode] = useState(false);
@@ -112,6 +125,13 @@ export default function POSTerminal() {
   useEffect(() => {
     loadProducts();
     getMyPermissions().then(setPermissions).catch(() => setPermissions(null));
+    // Loyalty + multi-branch pickers (best-effort; absent data just hides them).
+    getCustomers()
+      .then((d) => setCustomers((d?.items || d || []) as { id: number; name: string }[]))
+      .catch(() => setCustomers([]));
+    getBranches()
+      .then((d) => setBranches((d?.items || d || []) as { id: number; name: string }[]))
+      .catch(() => setBranches([]));
   }, []);
 
   // Offline POS (Phase E): replay any queued sales when connectivity returns.
@@ -183,19 +203,68 @@ export default function POSTerminal() {
     setCart((prev) => prev.filter((item) => item.product.id !== productId));
   }
 
+  // Resolve a scanned/typed code to a product and add it to the cart. Shared by
+  // the keyboard scanner and the live camera scanner (POS-06).
+  function lookupAndAdd(code: string): boolean {
+    const barcode = code.trim();
+    if (!barcode) return false;
+    const matchedProduct = products.find(
+      (p) => p.barcode === barcode || p.sku === barcode
+    );
+    if (matchedProduct) {
+      addToCart(matchedProduct);
+      setBarcodeMessage({ text: `✓ ${matchedProduct.name} added`, type: 'success' });
+      return true;
+    }
+    setBarcodeMessage({ text: `✕ No product found for "${barcode}"`, type: 'error' });
+    return false;
+  }
+
+  // Camera barcode scanning via the native BarcodeDetector API (POS-06). Falls
+  // back gracefully with a message when the browser/device doesn't support it.
+  async function toggleCameraScan() {
+    if (cameraScanning) {
+      setCameraScanning(false);
+      return;
+    }
+    const DetectorCtor = (window as unknown as { BarcodeDetector?: new (o?: unknown) => { detect: (s: unknown) => Promise<{ rawValue: string }[]> } }).BarcodeDetector;
+    if (!DetectorCtor || !navigator.mediaDevices?.getUserMedia) {
+      setBarcodeMessage({ text: '✕ Camera scanning not supported on this device', type: 'error' });
+      return;
+    }
+    setCameraScanning(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      await video.play();
+      const detector = new DetectorCtor({ formats: ['ean_13', 'code_128', 'qr_code', 'upc_a'] });
+      const stop = () => stream.getTracks().forEach((tr) => tr.stop());
+      const tick = async () => {
+        if (!video.srcObject) return;
+        try {
+          const codes = await detector.detect(video);
+          if (codes.length > 0) {
+            const found = lookupAndAdd(codes[0].rawValue);
+            if (found) { stop(); setCameraScanning(false); return; }
+          }
+        } catch { /* transient frame error */ }
+        if (video.srcObject) requestAnimationFrame(tick);
+      };
+      // Stop when the user toggles off: clearing srcObject ends the loop.
+      requestAnimationFrame(tick);
+      // Auto-stop after 20s so the camera never stays on indefinitely.
+      setTimeout(() => { stop(); video.srcObject = null; setCameraScanning(false); }, 20000);
+    } catch {
+      setBarcodeMessage({ text: '✕ Could not access the camera', type: 'error' });
+      setCameraScanning(false);
+    }
+  }
+
   // Barcode scan handler
   function handleBarcodeScan(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter' && barcodeInput.trim()) {
-      const barcode = barcodeInput.trim();
-      const matchedProduct = products.find(
-        (p) => p.barcode === barcode || p.sku === barcode
-      );
-      if (matchedProduct) {
-        addToCart(matchedProduct);
-        setBarcodeMessage({ text: `✓ ${matchedProduct.name} added`, type: 'success' });
-      } else {
-        setBarcodeMessage({ text: `✕ No product found for "${barcode}"`, type: 'error' });
-      }
+      lookupAndAdd(barcodeInput.trim());
       setBarcodeInput('');
     }
   }
@@ -320,6 +389,15 @@ export default function POSTerminal() {
         payments: splitMode
           ? splitPayments.filter((p) => (Number(p.amount) || 0) > 0)
           : undefined,
+        // Loyalty (Phase 4): accrue/redeem against the selected customer.
+        customer_id:
+          selectedCustomerId && selectedCustomerId !== 'walkin'
+            ? Number(selectedCustomerId)
+            : undefined,
+        redeem_points: redeemPoints && Number(redeemPoints) > 0 ? Number(redeemPoints) : undefined,
+        // Multi-branch (Phase 6): deduct from the selected branch's stock ledger.
+        branch_id:
+          selectedBranchId && selectedBranchId !== 'all' ? Number(selectedBranchId) : undefined,
       });
 
       setReceipt({
@@ -352,6 +430,8 @@ export default function POSTerminal() {
       setDiscountCode('');
       setSplitMode(false);
       setSplitPayments([{ method: 'cash', amount: 0 }, { method: 'card', amount: 0 }]);
+      setRedeemPoints('');
+      setSelectedCustomerId('');
     } catch (err) {
       // Offline POS (Phase E): if the device is offline (or the network call
       // failed), buffer the sale in IndexedDB and replay it on reconnect rather
@@ -781,6 +861,15 @@ export default function POSTerminal() {
               placeholder={t('search_products')}
               className="flex-1 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500 focus:border-blue-500"
             />
+            <Button
+              type="button"
+              variant={cameraScanning ? 'default' : 'outline'}
+              onClick={toggleCameraScan}
+              className="shrink-0 border-slate-600"
+              title={t('scan_camera')}
+            >
+              <Camera className="w-4 h-4" />
+            </Button>
           </div>
           {barcodeMessage && (
             <div className={`absolute top-full mt-1 start-0 text-xs px-3 py-1.5 rounded ${
@@ -790,6 +879,46 @@ export default function POSTerminal() {
             }`}>
               {barcodeMessage.text}
             </div>
+          )}
+        </div>
+
+        {/* Loyalty + branch checkout controls (Phase 4/6) */}
+        <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {customers.length > 0 && (
+            <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
+              <SelectTrigger className="bg-slate-800 border-slate-600 text-white">
+                <SelectValue placeholder={t('select_customer')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="walkin">{t('walk_in_customer')}</SelectItem>
+                {customers.map((c) => (
+                  <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {selectedCustomerId && selectedCustomerId !== 'walkin' && (
+            <Input
+              type="number"
+              min={0}
+              value={redeemPoints}
+              onChange={(e) => setRedeemPoints(e.target.value)}
+              placeholder={t('redeem_points')}
+              className="bg-slate-800 border-slate-600 text-white placeholder:text-slate-500"
+            />
+          )}
+          {branches.length > 0 && (
+            <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
+              <SelectTrigger className="bg-slate-800 border-slate-600 text-white">
+                <SelectValue placeholder={t('select_branch')} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t('all_branches')}</SelectItem>
+                {branches.map((b) => (
+                  <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </div>
 

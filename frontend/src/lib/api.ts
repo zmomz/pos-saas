@@ -133,6 +133,8 @@ export async function createTransaction(data: {
   // Loyalty: identify the customer to accrue points; redeem_points spends balance.
   customer_id?: number;
   redeem_points?: number;
+  // Multi-branch: tag the sale to a branch so its stock ledger is deducted.
+  branch_id?: number;
 }): Promise<TransactionResult> {
   const response = await client.apiCall.invoke<TransactionResult>({
     url: '/api/v1/pos/transaction',
@@ -483,6 +485,41 @@ export async function updateCustomer(id: string, data: Record<string, unknown>) 
 
 export async function deleteCustomer(id: string) {
   await client.entities.customers.delete({ id });
+}
+
+// Procurement (Phase 6): receive a purchase order — the backend increments
+// product stock, records cost, and advances the PO to 'received' (idempotent).
+export async function receivePurchaseOrder(poId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/entities/purchase_orders/${poId}/receive`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Branches (multi-branch). Used to tag POS sales to a branch and for reports.
+export async function getBranches() {
+  const response = await client.entities.branches.query({ query: {}, limit: 200 });
+  return response.data;
+}
+
+// Per-branch stock ledger (Phase 6). Set/list a branch's stock allocation.
+export async function getBranchStock(branchId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/stock`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function setBranchStock(branchId: number, productId: number, quantity: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/stock`,
+    method: 'PUT',
+    data: { product_id: productId, quantity },
+  });
+  return response.data;
 }
 
 // Expense Management

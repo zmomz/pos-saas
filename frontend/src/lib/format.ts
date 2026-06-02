@@ -53,3 +53,57 @@ export function formatMoney(value: number, lang: Language, decimals = 2): string
 export function formatMoneyAr(value: number, decimals = 2): string {
   return `${formatNumberAr(value, decimals)} ر.س`;
 }
+
+/**
+ * Locale-aware date formatting (SRS L10N-04). Gregorian is the required
+ * calendar; Arabic/Urdu render Arabic-Indic digits. Pass `{ hijri: true }` to
+ * additionally append the Umm al-Qura (Islamic) date in parentheses.
+ */
+const LOCALE_BY_LANG: Record<Language, string> = {
+  ar: 'ar-SA',
+  en: 'en-GB',
+  hi: 'hi-IN',
+  ur: 'ur-PK',
+};
+
+function toDate(value: Date | string | number): Date {
+  return value instanceof Date ? value : new Date(value);
+}
+
+export function formatDate(
+  value: Date | string | number,
+  lang: Language,
+  opts: { hijri?: boolean; withTime?: boolean } = {}
+): string {
+  const date = toDate(value);
+  if (isNaN(date.getTime())) return '';
+
+  const dateOpts: Intl.DateTimeFormatOptions = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    calendar: 'gregory',
+    ...(opts.withTime ? { hour: '2-digit', minute: '2-digit' } : {}),
+  };
+  // Force Gregorian even for ar-SA (which defaults to Islamic) via the -u-ca-gregory extension.
+  let out = new Intl.DateTimeFormat(`${LOCALE_BY_LANG[lang]}-u-ca-gregory`, dateOpts).format(date);
+
+  if (opts.hijri) {
+    const hijri = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+    out = `${out} (${hijri})`;
+  }
+  return out;
+}
+
+/** Date + time convenience (L10N-04). */
+export function formatDateTime(
+  value: Date | string | number,
+  lang: Language,
+  opts: { hijri?: boolean } = {}
+): string {
+  return formatDate(value, lang, { ...opts, withTime: true });
+}

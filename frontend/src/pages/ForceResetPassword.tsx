@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
 import { changePassword } from '@/lib/api';
-import { useLanguage } from '@/lib/i18n';
+import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 
 /**
  * First-login force-password-change screen (C-1 / CL-01).
@@ -17,7 +18,7 @@ import { useLanguage } from '@/lib/i18n';
  */
 export default function ForceResetPassword() {
   const { user, refetch, logout } = useAuth();
-  const { t } = useLanguage();
+  const { t, language, setLanguage } = useLanguage();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -62,6 +63,23 @@ export default function ForceResetPassword() {
             {t('first_login_reset_prompt') ||
               `Welcome${user?.name ? `, ${user.name}` : ''}. For security you must replace your temporary password before continuing.`}
           </p>
+
+          {/* CL-02: guided first-login language step. Applies instantly via the
+              shared LanguageProvider and persists the choice. */}
+          <div className="space-y-1">
+            <label className="text-xs text-slate-400">{t('choose_language')}</label>
+            <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
+              <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {languageOptions.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <Input
             type="password"
             placeholder={t('current_temp_password') || 'Current (temporary) password'}

@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { BrandingProvider } from '@/contexts/BrandingContext';
+import { LanguageProvider } from '@/lib/i18n';
 import LandingPage from './pages/LandingPage';
 import Index from './pages/Index';
 import AuthCallback from './pages/AuthCallback';
@@ -162,19 +163,21 @@ const AppRoutes = () => (
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <ThemeProvider>
-      <TooltipProvider>
-        <Toaster />
-        <GlobalEventToasts />
-        <BrowserRouter>
-          <AuthProvider>
-            <BrandingProvider>
-              <AppRoutes />
-            </BrandingProvider>
-          </AuthProvider>
-        </BrowserRouter>
-      </TooltipProvider>
-    </ThemeProvider>
+    <LanguageProvider>
+      <ThemeProvider>
+        <TooltipProvider>
+          <Toaster />
+          <GlobalEventToasts />
+          <BrowserRouter>
+            <AuthProvider>
+              <BrandingProvider>
+                <AppRoutes />
+              </BrandingProvider>
+            </AuthProvider>
+          </BrowserRouter>
+        </TooltipProvider>
+      </ThemeProvider>
+    </LanguageProvider>
   </QueryClientProvider>
 );
 

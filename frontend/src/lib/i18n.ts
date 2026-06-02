@@ -1,4 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from 'react';
 
 export type Language = 'ar' | 'en' | 'hi' | 'ur';
 
@@ -64,6 +70,16 @@ const translations: Record<Language, Record<string, string>> = {
     checkout: 'Checkout',
     payment_method: 'Payment Method',
     search_products: 'Search products by name...',
+    scan_camera: 'Scan with camera',
+    select_customer: 'Select customer',
+    walk_in_customer: 'Walk-in customer',
+    redeem_points: 'Redeem points',
+    select_branch: 'Select branch',
+    all_branches: 'All branches',
+    receive_po: 'Receive',
+    received: 'Received',
+    choose_language: 'Choose your language',
+    continue: 'Continue',
     split_payment: 'Split',
     allocated: 'Allocated',
     remaining: 'Remaining',
@@ -203,6 +219,16 @@ const translations: Record<Language, Record<string, string>> = {
     checkout: 'الدفع',
     payment_method: 'طريقة الدفع',
     search_products: 'ابحث عن المنتجات بالاسم...',
+    scan_camera: 'المسح بالكاميرا',
+    select_customer: 'اختر العميل',
+    walk_in_customer: 'عميل نقدي',
+    redeem_points: 'استبدال النقاط',
+    select_branch: 'اختر الفرع',
+    all_branches: 'كل الفروع',
+    receive_po: 'استلام',
+    received: 'تم الاستلام',
+    choose_language: 'اختر لغتك',
+    continue: 'متابعة',
     split_payment: 'تقسيم',
     allocated: 'المخصص',
     remaining: 'المتبقي',
@@ -342,6 +368,16 @@ const translations: Record<Language, Record<string, string>> = {
     checkout: 'चेकआउट',
     payment_method: 'भुगतान विधि',
     search_products: 'नाम से उत्पाद खोजें...',
+    scan_camera: 'कैमरे से स्कैन करें',
+    select_customer: 'ग्राहक चुनें',
+    walk_in_customer: 'वॉक-इन ग्राहक',
+    redeem_points: 'अंक भुनाएं',
+    select_branch: 'शाखा चुनें',
+    all_branches: 'सभी शाखाएं',
+    receive_po: 'प्राप्त करें',
+    received: 'प्राप्त हुआ',
+    choose_language: 'अपनी भाषा चुनें',
+    continue: 'जारी रखें',
     split_payment: 'विभाजित',
     allocated: 'आवंटित',
     remaining: 'शेष',
@@ -481,6 +517,16 @@ const translations: Record<Language, Record<string, string>> = {
     checkout: 'چیک آؤٹ',
     payment_method: 'ادائیگی کا طریقہ',
     search_products: 'نام سے مصنوعات تلاش کریں...',
+    scan_camera: 'کیمرے سے اسکین کریں',
+    select_customer: 'گاہک منتخب کریں',
+    walk_in_customer: 'واک ان گاہک',
+    redeem_points: 'پوائنٹس بھنائیں',
+    select_branch: 'برانچ منتخب کریں',
+    all_branches: 'تمام برانچیں',
+    receive_po: 'وصول کریں',
+    received: 'موصول',
+    choose_language: 'اپنی زبان منتخب کریں',
+    continue: 'جاری رکھیں',
     split_payment: 'تقسیم',
     allocated: 'مختص',
     remaining: 'باقی',
@@ -565,7 +611,26 @@ export function isRTL(lang: Language): boolean {
   return lang === 'ar' || lang === 'ur';
 }
 
-export function useLanguage() {
+export function translate(language: Language, key: string): string {
+  return translations[language]?.[key] || translations.en[key] || key;
+}
+
+export interface LanguageContextValue {
+  language: Language;
+  setLanguage: (lang: Language) => void;
+  t: (key: string) => string;
+  isRTL: boolean;
+}
+
+const LanguageContext = createContext<LanguageContextValue | null>(null);
+
+/**
+ * App-wide language state (L10N i18n instant toggle). Holding the language in a
+ * single provider means changing it re-renders **every** consumer at once,
+ * instead of each `useLanguage()` caller owning isolated state. Persists to
+ * localStorage and keeps `document.dir`/`lang` in sync for RTL.
+ */
+export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>(() => {
     const saved = localStorage.getItem('pos-language');
     return (saved as Language) || 'en';
@@ -583,14 +648,27 @@ export function useLanguage() {
     document.documentElement.lang = language;
   }, [language]);
 
-  const t = useCallback(
-    (key: string): string => {
-      return translations[language]?.[key] || translations.en[key] || key;
-    },
-    [language]
-  );
+  const t = useCallback((key: string): string => translate(language, key), [language]);
 
-  return { language, setLanguage, t, isRTL: isRTL(language) };
+  const value: LanguageContextValue = { language, setLanguage, t, isRTL: isRTL(language) };
+  return React.createElement(LanguageContext.Provider, { value }, children);
+}
+
+/**
+ * Read the shared language state. When used outside a `LanguageProvider` (e.g. an
+ * isolated unit test or a prerendered shell) it returns a safe, non-reactive
+ * fallback so nothing crashes.
+ */
+export function useLanguage(): LanguageContextValue {
+  const ctx = useContext(LanguageContext);
+  if (ctx) return ctx;
+  const language = (localStorage.getItem('pos-language') as Language) || 'en';
+  return {
+    language,
+    setLanguage: () => {},
+    t: (key: string) => translate(language, key),
+    isRTL: isRTL(language),
+  };
 }
 
 export const languageOptions: { value: Language; label: string }[] = [

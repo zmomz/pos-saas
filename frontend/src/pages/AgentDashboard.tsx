@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { client, getAgentClients, getAgentBranding, createNewClient, toggleClient, setClientFeature } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Users, DollarSign, CreditCard, Clock, UserPlus, Palette, ShoppingBag, BarChart3 } from 'lucide-react';
 
@@ -164,7 +165,7 @@ export default function AgentDashboard() {
             </div>
             <div>
               <p className={`text-sm ${isDark ? 'text-green-300' : 'text-green-600'}`}>{t('total_monthly_revenue') || 'Monthly Revenue'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>${totalMonthlyRevenue.toFixed(2)}</p>
+              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(totalMonthlyRevenue, language)}</p>
             </div>
           </CardContent>
         </Card>
@@ -393,7 +394,7 @@ export default function AgentDashboard() {
                   <td className="p-3">{c.business_name}</td>
                   <td className="p-3">{c.email}</td>
                   <td className="p-3">{c.phone}</td>
-                  <td className="p-3">${c.subscription_fee}</td>
+                  <td className="p-3">{formatMoney(c.subscription_fee || 0, language)}</td>
                   <td className="p-3">
                     <Badge className={c.is_active ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}>
                       {c.is_active ? t('active') : t('inactive')}

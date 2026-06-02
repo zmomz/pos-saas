@@ -89,6 +89,12 @@ These knobs are read from the environment. Sensible, safe defaults apply when un
 | `MAX_BODY_SIZE_MB` | `10` | Reject request bodies larger than this with `413`. |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USERNAME` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_USE_TLS` | — | Real email transport. With no `SMTP_HOST`, email **falls back to logging** (dev mode) and never blocks the request. |
 | `SENTRY_DSN` / `SENTRY_TRACES_SAMPLE_RATE` | — | Backend error tracking. No-op unless `sentry-sdk` is installed **and** a DSN is set. |
+| `RUN_MIGRATIONS_ON_BOOT` | `false` | Run `alembic upgrade head` at startup before `create_all`. Enable in production to use the migration history; dev/CI keep `create_all`. |
+| `API_METERING_ENABLED` | `false` | Write an `api_usage` row per authenticated API call so `GET /api/v1/production/api-usage/stats` reflects real traffic. |
+| `LOG_FORMAT` / `LOG_LEVEL` | `text` / `INFO` | Set `LOG_FORMAT=json` for structured one-line-JSON logs (correlation IDs) suited to log aggregators. |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` | — | SMS receipts (`POST /pos/transactions/{id}/sms`, feature-gated by `sms_receipts`). Without them, SMS **falls back to logging**. |
+| `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` | — | Subscription charges via the agent's Stripe Connect account (`agents.stripe_account_id`). With no key, payment is recorded as `manual`. The billing webhook (`POST /api/v1/tenant/billing/webhook`) auto-suspends a client on `*.payment_failed`; signature is verified when `STRIPE_WEBHOOK_SECRET` is set. |
+| `VITE_SENTRY_DSN` / `VITE_SENTRY_TRACES_SAMPLE_RATE` | — | **Frontend** error tracking (build-time). No-op when unset. |
 
 **Sessions / logout.** JWTs now carry a `jti` and `POST /api/v1/auth/logout` blocklists it
 server-side (table `revoked_tokens`), so a logged-out token is rejected before it expires.
@@ -122,8 +128,32 @@ For SQLite (single-server/dev) snapshot the file with the app stopped, or use
 Signed ZATCA documents must be retained for `ZATCA_RETENTION_YEARS` (default 6) — ensure
 backups cover the `zatca_documents` table for that period.
 
-### Deferred to a later pass (tracked in `ACTION_PLAN.md`)
+**Migrations.** With `RUN_MIGRATIONS_ON_BOOT=true` the app runs `alembic upgrade head`
+at startup. The head revision `e4f5a6b7c8d9_sync_models_baseline` reconciles the hand-written
+chain with the current ORM models (Phases 2–6 columns/tables); a CI check asserts the
+autogenerate diff is empty. Generate new migrations with `alembic revision --autogenerate`.
 
-Alembic migrations-on-boot (schema is still created via `create_all`), Twilio **SMS**,
-**API-usage metering** rows, audit before/after **diffs**, frontend **Sentry** wiring, and
-the Playwright E2E specs remain TODO and are documented in the Phase 3 progress log.
+### Testing
+
+```bash
+# Backend (135 tests)
+cd backend && python -m pytest -q
+
+# Frontend unit (Vitest + RTL + MSW) and E2E (Playwright smoke)
+cd frontend && pnpm test          # vitest run
+cd frontend && pnpm build && pnpm test:e2e
+```
+
+CI (`.github/workflows/ci.yml`) runs all three on every push/PR to `main`.
+
+### Deferrals — closed
+
+The Phase 0–6 deferrals (frontend test harness + CI, deep `get_tenant_scope`, Alembic
+migrations-on-boot, Twilio SMS, API-usage metering, audit diffs + failed-auth logging,
+structured JSON logging, Stripe Connect subscription charge + auto-suspend webhook, the
+per-branch stock ledger, the Arabic-glyph PDF, frontend Sentry, the shared `LanguageProvider`,
+the locale-aware date helper, the SAR sweep, POS loyalty/branch/camera controls, the
+first-login language step, and PO-receiving) are **all implemented and tested** — see the
+"DEFERRALS CLOSEOUT" entry in `ACTION_PLAN.md`. **Phase 7 (native mobile)** remains a
+separate track; the recommendation is to ship the existing responsive PWA as the mobile
+answer and schedule a native app as a follow-on.

@@ -33,6 +33,11 @@ frontend/dist/
 frontend/.vite/
 *.local
 
+# ---- Test artifacts ----
+frontend/test-results/
+frontend/playwright-report/
+frontend/coverage/
+
 # ---- Editor / OS ----
 .vscode/
 .idea/
