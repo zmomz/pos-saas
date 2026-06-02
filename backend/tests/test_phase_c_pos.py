@@ -71,7 +71,10 @@ async def test_email_receipt_enabled_by_default(client):
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "queued"
+    # Phase 3 wired the real email transport: status reflects delivery outcome
+    # ("sent" via SMTP, "logged" on the dev fallback) instead of the old stub
+    # "queued". With no SMTP configured in tests it falls back to "logged".
+    assert resp.json()["status"] in ("sent", "logged")
 
 
 async def test_sale_below_threshold_still_succeeds(client):

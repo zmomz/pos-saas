@@ -6,6 +6,7 @@ and CORS lockdown helpers.
 
 import json
 import logging
+import os
 import time
 import uuid
 from typing import List, Optional
@@ -16,6 +17,18 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from services.production import performance_monitor, rate_limiter
 
 logger = logging.getLogger(__name__)
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean feature flag from the environment at call time.
+
+    Read live (not via the cached settings singleton) so operators — and the
+    test-suite — can toggle middleware behaviour without rebuilding the app.
+    """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 # =============================================================================
@@ -86,6 +99,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         ]
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        # Disabled by default; enable per-deployment with RATE_LIMIT_ENABLED=true.
+        if not _env_flag("RATE_LIMIT_ENABLED", False):
+            return await call_next(request)
+
         # Skip excluded paths
         if any(request.url.path.startswith(p) for p in self.exclude_paths):
             return await call_next(request)
@@ -234,17 +251,33 @@ def get_cors_config(environment: str = "production") -> dict:
 class RequestValidationMiddleware(BaseHTTPMiddleware):
     """Middleware for basic request validation and sanitization."""
 
-    MAX_BODY_SIZE = 10 * 1024 * 1024  # 10MB max body size
+    DEFAULT_MAX_BODY_MB = 10  # 10MB max body size
+
+    def _max_body_size(self) -> int:
+        """Body-size cap in bytes; override with MAX_BODY_SIZE_MB at runtime."""
+        try:
+            mb = int(os.environ.get("MAX_BODY_SIZE_MB", self.DEFAULT_MAX_BODY_MB))
+        except (TypeError, ValueError):
+            mb = self.DEFAULT_MAX_BODY_MB
+        return max(1, mb) * 1024 * 1024
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # Check content length
+        max_bytes = self._max_body_size()
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > self.MAX_BODY_SIZE:
-            return Response(
-                content=json.dumps({"detail": "Request body too large. Maximum size is 10MB."}),
-                status_code=413,
-                media_type="application/json",
-            )
+        if content_length:
+            try:
+                declared = int(content_length)
+            except ValueError:
+                declared = 0
+            if declared > max_bytes:
+                return Response(
+                    content=json.dumps(
+                        {"detail": f"Request body too large. Maximum size is {max_bytes // (1024 * 1024)}MB."}
+                    ),
+                    status_code=413,
+                    media_type="application/json",
+                )
 
         # Validate content type for POST/PUT/PATCH
         if request.method in ("POST", "PUT", "PATCH"):

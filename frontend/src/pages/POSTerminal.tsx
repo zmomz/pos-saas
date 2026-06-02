@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, type MyPermissions } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
@@ -94,8 +94,13 @@ export default function POSTerminal() {
   // Offline POS (Phase E) state.
   const [queuedOffline, setQueuedOffline] = useState(false);
 
+  // Phase 3: permission-aware UI — gate the refund flow on `pos.refund`.
+  const [permissions, setPermissions] = useState<MyPermissions | null>(null);
+  const canRefund = canUse(permissions, 'pos.refund');
+
   useEffect(() => {
     loadProducts();
+    getMyPermissions().then(setPermissions).catch(() => setPermissions(null));
   }, []);
 
   // Offline POS (Phase E): replay any queued sales when connectivity returns.
@@ -618,11 +623,16 @@ export default function POSTerminal() {
 
                 <Button
                   onClick={handleRefund}
-                  disabled={refundProcessing}
+                  disabled={refundProcessing || !canRefund}
                   className="w-full bg-orange-600 hover:bg-orange-700 text-white py-6 text-lg disabled:opacity-50"
                 >
                   {refundProcessing ? t('loading') : '↩ Process Refund'}
                 </Button>
+                {!canRefund && (
+                  <p className="text-center text-sm text-orange-400/80 mt-2">
+                    You don't have permission to issue refunds.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="flex items-center justify-center h-full text-slate-500">
@@ -643,14 +653,16 @@ export default function POSTerminal() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-white">{t('products')}</h2>
           <div className="flex items-center gap-2">
-            <Button
-              onClick={() => setMode('refund')}
-              variant="outline"
-              className="border-orange-600 text-orange-400 hover:bg-orange-600/10"
-            >
-              <RotateCcw className="w-4 h-4 me-2" />
-              Refund
-            </Button>
+            {canRefund && (
+              <Button
+                onClick={() => setMode('refund')}
+                variant="outline"
+                className="border-orange-600 text-orange-400 hover:bg-orange-600/10"
+              >
+                <RotateCcw className="w-4 h-4 me-2" />
+                Refund
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() => navigate('/client')}

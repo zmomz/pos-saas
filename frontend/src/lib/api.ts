@@ -161,6 +161,30 @@ export async function getTransactions(page = 1, pageSize = 20) {
   return response.data;
 }
 
+// Phase 3: the caller's effective permission grants/denies, so the UI can
+// hide/disable actions (e.g. refund) the staff member lacks. Master accounts
+// come back with is_master=true and gate nothing.
+export interface MyPermissions {
+  is_master: boolean;
+  denied: string[];
+  granted: string[];
+}
+
+export async function getMyPermissions(): Promise<MyPermissions> {
+  const response = await client.apiCall.invoke<MyPermissions>({
+    url: '/api/v1/auth/me/permissions',
+    method: 'GET',
+  });
+  return response.data;
+}
+
+/** Whether the current user may use a permission key (grant-by-default). */
+export function canUse(perms: MyPermissions | null | undefined, key: string): boolean {
+  if (!perms) return true; // not yet loaded — optimistic, server still enforces
+  if (perms.is_master) return true;
+  return !perms.denied.includes(key);
+}
+
 // Entity endpoints
 export async function getProducts() {
   const response = await client.entities.products.query({

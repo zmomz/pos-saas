@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from dependencies.auth import get_current_user
 from dependencies.features import require_feature
+from dependencies.permissions import require_permission
 from schemas.auth import UserResponse
 from models.clients import Clients
 from models.products import Products
@@ -22,7 +23,7 @@ from services import loyalty as loyalty_service
 from services import zatca as zatca_service_mod
 from services import zatca_sale
 from services.escpos import build_receipt_base64
-from services.production import EmailService, LowStockChecker, PDFInvoiceService
+from services.production import EmailService, LowStockChecker, PDFInvoiceService, fire_event_background
 from services.system_settings import get_effective_tax_rate
 
 logger = logging.getLogger(__name__)
@@ -374,6 +375,21 @@ async def create_transaction(
         zatca_sale.report_document_background, document_id, client.id
     )
 
+    # ---- Domain webhook: sale.completed (Phase 3) ----
+    # Fire registered webhooks out-of-band so integrations (accounting, ERP) are
+    # notified. Best-effort: a failing endpoint never affects the committed sale.
+    background_tasks.add_task(
+        fire_event_background,
+        str(current_user.id),
+        "sale.completed",
+        {
+            "transaction_id": transaction.id,
+            "invoice_number": transaction.invoice_number,
+            "total_amount": transaction.total_amount,
+            "client_id": client.id,
+        },
+    )
+
     # ---- Automated low-stock alerts (best-effort, post-commit) ----
     # After the sale is durably persisted, notify the merchant about any sold
     # product that has fallen to/below the threshold. Never blocks or fails the
@@ -519,7 +535,11 @@ async def _restore_inventory(db: AsyncSession, client_id: int, items: List[dict]
         )
 
 
-@router.post("/transactions/{txn_id}/refund", response_model=RefundResponse)
+@router.post(
+    "/transactions/{txn_id}/refund",
+    response_model=RefundResponse,
+    dependencies=[Depends(require_permission("pos.refund"))],
+)
 async def refund_transaction(
     txn_id: int,
     background_tasks: BackgroundTasks,
@@ -588,6 +608,18 @@ async def refund_transaction(
     await db.refresh(credit)
 
     background_tasks.add_task(zatca_sale.report_document_background, document_id, client.id)
+    background_tasks.add_task(
+        fire_event_background,
+        str(current_user.id),
+        "refund.created",
+        {
+            "credit_note_id": credit.id,
+            "credit_note_number": credit_number,
+            "original_transaction_id": original.id,
+            "total_amount": credit.total_amount,
+            "client_id": client.id,
+        },
+    )
 
     return RefundResponse(
         credit_note_id=credit.id,

@@ -88,6 +88,23 @@ app = FastAPI(
 
 
 # MODULE_MIDDLEWARE_START
+# Starlette runs middleware in reverse order of registration, so the LAST one
+# added is the OUTERMOST (runs first). Registration order below is therefore
+# inner→outer: validation/rate-limit → audit → CORS (outermost).
+
+# Request validation: rejects oversized bodies (413). Always on; the cap is
+# MAX_BODY_SIZE_MB (default 10MB).
+from middlewares.production import (  # noqa: E402
+    RateLimitMiddleware,
+    RequestValidationMiddleware,
+)
+
+app.add_middleware(RequestValidationMiddleware)
+
+# Per-user/IP rate limiting (429). Disabled unless RATE_LIMIT_ENABLED=true so it
+# never throttles dev/CI; tune via the RateLimiter token bucket in production.
+app.add_middleware(RateLimitMiddleware)
+
 # Audit trail: records authenticated mutations to audit_logs. Added before CORS
 # so that, at request time, it runs *after* CORS (Starlette executes middleware in
 # reverse order of registration) and therefore only sees real, CORS-approved calls.

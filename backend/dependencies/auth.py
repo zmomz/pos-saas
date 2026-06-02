@@ -72,6 +72,16 @@ async def get_current_user(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token")
 
+    # Server-side revocation (Phase 3): a logged-out / forcibly-revoked token is
+    # rejected even though its signature and ``exp`` are still valid.
+    from services.token_revocation import is_token_revoked
+
+    if await is_token_revoked(db, payload.get("jti")):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This session has been logged out. Please sign in again.",
+        )
+
     await _assert_account_active(db, user_id)
 
     last_login_raw = payload.get("last_login")

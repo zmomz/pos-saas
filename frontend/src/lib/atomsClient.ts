@@ -52,6 +52,36 @@ function makeHttp(): AxiosInstance {
     }
     return config;
   });
+  // Phase 3: handle production-hardening responses gracefully.
+  //  - 401 after token revocation/expiry → clear the session and bounce to login
+  //    (skip auth probe endpoints, which callers handle, and avoid redirect loops).
+  //  - 429 rate-limited → broadcast an event the UI can toast on.
+  http.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const status = error?.response?.status;
+      const url: string = error?.config?.url ?? '';
+      if (status === 401) {
+        const isAuthProbe = url.includes('/api/v1/auth/me') || url.includes('/api/v1/auth/login');
+        const onLogin = typeof window !== 'undefined' && window.location.pathname === LOGIN_PATH;
+        if (!isAuthProbe && !onLogin) {
+          clearToken();
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('pos:session-expired'));
+            window.location.assign(LOGIN_PATH);
+          }
+        }
+      } else if (status === 429) {
+        if (typeof window !== 'undefined') {
+          const retryAfter = error?.response?.headers?.['retry-after'];
+          window.dispatchEvent(
+            new CustomEvent('pos:rate-limited', { detail: { retryAfter } })
+          );
+        }
+      }
+      return Promise.reject(error);
+    }
+  );
   return http;
 }
 

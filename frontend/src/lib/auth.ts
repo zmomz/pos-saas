@@ -118,13 +118,16 @@ class LocalAuthApi {
     }
   }
 
-  /** Discard the local session. */
+  /** Discard the local session and revoke the tokens server-side. */
   async logout(): Promise<void> {
     const token = getToken();
+    const refresh = getRefreshToken();
     try {
       await this.client.post(
         `${this.getBaseURL()}/api/v1/auth/logout`,
-        {},
+        // Pass the refresh token so the server revokes it too — without this the
+        // session could be resurrected via /auth/refresh after logout.
+        refresh ? { refresh_token: refresh } : {},
         token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
       );
     } catch {

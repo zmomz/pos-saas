@@ -614,7 +614,13 @@ class PDFInvoiceService:
 # Email Service (Stub with Logging)
 # =============================================================================
 class EmailService:
-    """Email notification service (stub implementation with logging)."""
+    """Email notification service.
+
+    Phase 3: delegates to :mod:`core.email`, which sends via real SMTP when
+    ``SMTP_HOST`` is configured and otherwise logs the message (dev fallback).
+    The return shape is preserved so existing callers keep working; ``status`` is
+    ``"sent"`` when delivered over SMTP and ``"logged"`` on the dev fallback.
+    """
 
     @staticmethod
     async def send_email(
@@ -623,24 +629,17 @@ class EmailService:
         body: str,
         html_body: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Send an email notification (logged, not actually sent in stub mode)."""
+        """Send an email notification via the configured transport."""
+        from core.email import send_email as _send_email
+
         message_id = str(uuid.uuid4())
-        logger.info(
-            "EMAIL_SEND",
-            extra={
-                "message_id": message_id,
-                "to": to_email,
-                "subject": subject,
-                "body_length": len(body),
-                "has_html": html_body is not None,
-            },
-        )
+        delivered = await _send_email(to_email, subject, body)
         return {
             "message_id": message_id,
-            "status": "queued",
+            "status": "sent" if delivered else "logged",
             "to": to_email,
             "subject": subject,
-            "note": "Email service is in stub mode. Configure SMTP for production.",
+            "delivered": delivered,
         }
 
     @staticmethod
@@ -682,6 +681,9 @@ class WebhookDispatcher:
             hashlib.sha256,
         ).hexdigest()
 
+    MAX_ATTEMPTS = 3
+    TIMEOUT_SECONDS = 10.0
+
     @staticmethod
     async def dispatch(
         url: str,
@@ -689,34 +691,130 @@ class WebhookDispatcher:
         payload: Dict[str, Any],
         secret: str,
     ) -> Dict[str, Any]:
+        """POST a signed webhook to ``url`` with bounded retries (Phase 3).
+
+        The body is HMAC-SHA256 signed with the endpoint ``secret`` and sent in
+        the ``X-Webhook-Signature: sha256=<hex>`` header (GitHub-style) so the
+        receiver can verify authenticity. Transient failures (network error or
+        5xx) are retried up to ``MAX_ATTEMPTS``; a 4xx is treated as a permanent
+        rejection and not retried. Never raises — delivery outcome is returned.
         """
-        Dispatch a webhook event.
-        In production, this would use httpx/aiohttp to POST to the URL.
-        Currently logs the dispatch for stub mode.
-        """
+        import httpx
+
         payload_str = json.dumps(payload, ensure_ascii=False, default=str)
-        signature = WebhookDispatcher.generate_signature(payload_str, secret)
+        signature = WebhookDispatcher.generate_signature(payload_str, secret or "")
         delivery_id = str(uuid.uuid4())
+        headers = {
+            "Content-Type": "application/json",
+            "X-Webhook-Signature": f"sha256={signature}",
+            "X-Webhook-Event": event,
+            "X-Webhook-Delivery": delivery_id,
+        }
 
-        logger.info(
-            "WEBHOOK_DISPATCH",
-            extra={
-                "delivery_id": delivery_id,
-                "url": url,
-                "event": event,
-                "signature": signature[:16] + "...",
-                "payload_size": len(payload_str),
-            },
+        last_error: Optional[str] = None
+        status_code: Optional[int] = None
+        for attempt in range(1, WebhookDispatcher.MAX_ATTEMPTS + 1):
+            try:
+                async with httpx.AsyncClient(timeout=WebhookDispatcher.TIMEOUT_SECONDS) as http:
+                    resp = await http.post(url, content=payload_str.encode("utf-8"), headers=headers)
+                status_code = resp.status_code
+                if 200 <= status_code < 300:
+                    return {
+                        "delivery_id": delivery_id,
+                        "url": url,
+                        "event": event,
+                        "status": "delivered",
+                        "status_code": status_code,
+                        "attempts": attempt,
+                        "signature": f"sha256={signature}",
+                    }
+                if 400 <= status_code < 500:
+                    # Permanent rejection — do not retry.
+                    last_error = f"HTTP {status_code}"
+                    break
+                last_error = f"HTTP {status_code}"
+            except Exception as exc:  # network error / timeout — retry
+                last_error = type(exc).__name__
+
+        logger.warning(
+            "WEBHOOK_DELIVERY_FAILED url=%s event=%s error=%s", url, event, last_error
         )
-
         return {
             "delivery_id": delivery_id,
             "url": url,
             "event": event,
-            "status": "dispatched",
+            "status": "failed",
+            "status_code": status_code,
+            "attempts": WebhookDispatcher.MAX_ATTEMPTS,
+            "error": last_error,
             "signature": f"sha256={signature}",
-            "note": "Webhook dispatcher is in stub mode. Configure HTTP client for production.",
         }
+
+
+async def fire_event(
+    db: AsyncSession, user_id: str, event: str, payload: Dict[str, Any]
+) -> int:
+    """Deliver ``event`` to every active webhook of ``user_id`` subscribed to it.
+
+    Looks up ``webhooks`` rows owned by the user whose ``events`` (comma- or
+    JSON-list) include ``event`` (or the wildcard ``*``) and dispatches the
+    signed payload to each. Returns the number of endpoints attempted. Best
+    effort — a misconfigured webhook never breaks the originating sale/refund.
+    Intended to be scheduled via ``BackgroundTasks`` after the commit.
+    """
+    from models.webhooks import Webhooks
+
+    try:
+        result = await db.execute(
+            select(Webhooks).where(Webhooks.user_id == str(user_id))
+        )
+        hooks = result.scalars().all()
+    except Exception as exc:  # pragma: no cover - lookup failure must not propagate
+        logger.warning("Webhook lookup failed for event %s: %s", event, exc)
+        return 0
+
+    attempted = 0
+    body = {"event": event, "data": payload}
+    for hook in hooks:
+        if hook.is_active is False:
+            continue
+        if not _hook_subscribes(hook.events, event):
+            continue
+        await WebhookDispatcher.dispatch(hook.url, event, body, hook.secret_key or "")
+        attempted += 1
+    return attempted
+
+
+async def fire_event_background(user_id: str, event: str, payload: Dict[str, Any]) -> None:
+    """``BackgroundTasks``-friendly wrapper that opens its own DB session.
+
+    The request-scoped session is closed once the response is sent, so domain
+    events fired post-commit must use a fresh session.
+    """
+    from core.database import db_manager
+
+    try:
+        await db_manager.ensure_initialized()
+        async with db_manager.async_session_maker() as db:
+            await fire_event(db, user_id, event, payload)
+    except Exception as exc:  # pragma: no cover - background dispatch is best effort
+        logger.warning("Background webhook dispatch failed for %s: %s", event, exc)
+
+
+def _hook_subscribes(events_field: Optional[str], event: str) -> bool:
+    """Return whether a webhook's ``events`` column subscribes to ``event``."""
+    if not events_field:
+        return False
+    raw = events_field.strip()
+    subscribed: list = []
+    if raw.startswith("["):
+        try:
+            subscribed = json.loads(raw)
+        except (ValueError, TypeError):
+            subscribed = []
+    if not subscribed:
+        subscribed = [e.strip() for e in raw.split(",") if e.strip()]
+    return "*" in subscribed or event in subscribed
 
 
 # =============================================================================

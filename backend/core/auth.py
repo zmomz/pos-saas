@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -34,6 +35,9 @@ def _create_token(claims: Dict[str, Any], token_type: str, expires_minutes: int)
             "iat": now,
             "nbf": now,
             "type": token_type,
+            # Unique token id so a specific token can be revoked server-side
+            # (Phase 3 logout / forced-logout blocklist).
+            "jti": token_claims.get("jti") or uuid.uuid4().hex,
         }
     )
 

@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -39,6 +41,35 @@ import ProtectedRoute from './components/ProtectedRoute';
 import DashboardLayout from './components/DashboardLayout';
 
 const queryClient = new QueryClient();
+
+/**
+ * Phase 3: surface production-hardening API responses to the user. The
+ * atomsClient interceptor dispatches window events on 429 (rate-limited) and
+ * 401-after-revocation; this listener turns them into toasts. The hard redirect
+ * to /login on revocation is handled in the interceptor itself.
+ */
+const GlobalEventToasts = () => {
+  useEffect(() => {
+    const onRateLimited = (e: Event) => {
+      const retryAfter = (e as CustomEvent).detail?.retryAfter;
+      toast.error(
+        retryAfter
+          ? `Too many requests. Please retry in ${retryAfter}s.`
+          : 'Too many requests. Please slow down and try again.'
+      );
+    };
+    const onSessionExpired = () => {
+      toast.error('Your session has ended. Please sign in again.');
+    };
+    window.addEventListener('pos:rate-limited', onRateLimited);
+    window.addEventListener('pos:session-expired', onSessionExpired);
+    return () => {
+      window.removeEventListener('pos:rate-limited', onRateLimited);
+      window.removeEventListener('pos:session-expired', onSessionExpired);
+    };
+  }, []);
+  return null;
+};
 
 const AppRoutes = () => (
   <Routes>
@@ -134,6 +165,7 @@ const App = () => (
     <ThemeProvider>
       <TooltipProvider>
         <Toaster />
+        <GlobalEventToasts />
         <BrowserRouter>
           <AuthProvider>
             <BrandingProvider>
