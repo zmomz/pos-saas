@@ -25,6 +25,17 @@ def setup_logging():
     if os.environ.get("IS_LAMBDA") == "true":
         return
 
+    # Structured JSON logging (Phase 3): when LOG_FORMAT=json, emit one JSON
+    # object per line (with correlation IDs) instead of the human format — ideal
+    # for log aggregators in production. Activated here so it is the process-wide
+    # default; everything else below is the dev-friendly text format.
+    if os.environ.get("LOG_FORMAT", "").strip().lower() == "json":
+        from middlewares.production import setup_structured_logging
+
+        setup_structured_logging(os.environ.get("LOG_LEVEL", "INFO"))
+        logging.getLogger(__name__).info("Structured JSON logging enabled.")
+        return
+
     # Create the logs directory
     log_dir = "logs"
     if not os.path.exists(log_dir):
@@ -67,6 +78,11 @@ async def lifespan(app: FastAPI):
     logger.info("=== Application startup initiated ===")
 
     # MODULE_STARTUP_START
+    # Run Alembic migrations first when RUN_MIGRATIONS_ON_BOOT is enabled (prod);
+    # otherwise initialize_database()'s create_all bootstraps the schema (dev/CI).
+    from services.migrations import run_migrations_on_boot
+
+    await run_migrations_on_boot()
     await initialize_database()
     await initialize_mock_data()
     await initialize_admin_user()
@@ -95,11 +111,16 @@ app = FastAPI(
 # Request validation: rejects oversized bodies (413). Always on; the cap is
 # MAX_BODY_SIZE_MB (default 10MB).
 from middlewares.production import (  # noqa: E402
+    ApiUsageMeteringMiddleware,
     RateLimitMiddleware,
     RequestValidationMiddleware,
 )
 
 app.add_middleware(RequestValidationMiddleware)
+
+# API-usage metering: writes an api_usage row per authenticated call so
+# /api-usage/stats reflects real traffic. No-op unless API_METERING_ENABLED=true.
+app.add_middleware(ApiUsageMeteringMiddleware)
 
 # Per-user/IP rate limiting (429). Disabled unless RATE_LIMIT_ENABLED=true so it
 # never throttles dev/CI; tune via the RateLimiter token bucket in production.

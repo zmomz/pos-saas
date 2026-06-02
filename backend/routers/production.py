@@ -1036,8 +1036,15 @@ async def get_branch_inventory(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get multi-branch inventory view."""
+    """Get multi-branch inventory view backed by the per-branch stock ledger.
+
+    Each branch reports its *own* quantities from ``product_branch_stock``;
+    products with no ledger row for a branch fall back to the client-level
+    ``products.quantity`` (the aggregate/opening stock). This replaces the former
+    façade that showed identical client-level stock for every branch.
+    """
     from models.branches import Branches
+    from models.product_branch_stock import Product_branch_stock
     from models.products import Products
 
     # Get branches for user
@@ -1057,18 +1064,29 @@ async def get_branch_inventory(
     )
     products = prod_result.scalars().all()
 
+    # Per-branch ledger overrides, keyed by (branch_id, product_id).
+    ledger_result = await db.execute(
+        select(Product_branch_stock).where(
+            Product_branch_stock.user_id == str(current_user.id)
+        )
+    )
+    ledger = {(r.branch_id, r.product_id): r.quantity for r in ledger_result.scalars().all()}
+
     # Build inventory view
     inventory = []
     for branch in branches:
+        def _qty(p):
+            return ledger.get((branch.id, p.id), p.quantity or 0)
+
         branch_data = {
             "branch_id": branch.id,
             "branch_name": branch.name,
             "city": branch.city,
             "is_main": branch.is_main,
             "total_products": len(products),
-            "total_stock_value": sum((p.price or 0) * (p.quantity or 0) for p in products),
-            "low_stock_count": sum(1 for p in products if (p.quantity or 0) <= 10),
-            "out_of_stock_count": sum(1 for p in products if (p.quantity or 0) <= 0),
+            "total_stock_value": sum((p.price or 0) * _qty(p) for p in products),
+            "low_stock_count": sum(1 for p in products if _qty(p) <= 10),
+            "out_of_stock_count": sum(1 for p in products if _qty(p) <= 0),
         }
         inventory.append(branch_data)
 

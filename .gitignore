@@ -19,6 +19,9 @@ backend/_alembic_baseline.db
 logs/
 *.log
 
+# ---- Runtime uploads (user-supplied; created on demand) ----
+backend/uploads/
+
 # ---- Environment / secrets ----
 .env
 .env.*

@@ -19,6 +19,9 @@ from schemas.auth import UserResponse
 from models.clients import Clients
 from models.products import Products
 from models.transactions import Transactions
+# Imported so the per-branch stock table registers on Base.metadata at startup
+# (services.branch_stock is only imported lazily inside handlers).
+from models.product_branch_stock import Product_branch_stock  # noqa: F401
 from services import loyalty as loyalty_service
 from services import zatca as zatca_service_mod
 from services import zatca_sale
@@ -371,7 +374,23 @@ async def create_transaction(
     # committed together. If stock is insufficient (and overselling isn't
     # allowed) we raise before commit, so nothing is persisted and the counter
     # is not consumed — fixing the previous fire-and-forget deduction gap.
-    await _deduct_inventory(db, client.id, data.items, bool(data.allow_negative_stock))
+    #
+    # Multi-branch (Phase 6): when the sale is tagged with a branch_id, deduct
+    # from that branch's stock ledger so a sale in branch A never touches branch
+    # B's stock. Otherwise fall back to client-level product quantity.
+    if data.branch_id:
+        from services.branch_stock import deduct_branch_inventory
+
+        await deduct_branch_inventory(
+            db,
+            str(current_user.id),
+            client.id,
+            int(data.branch_id),
+            data.items,
+            bool(data.allow_negative_stock),
+        )
+    else:
+        await _deduct_inventory(db, client.id, data.items, bool(data.allow_negative_stock))
 
     # ---- Loyalty accrual (Phase E) ----
     # Earn points for the identified customer on the final total, in the same
@@ -700,7 +719,16 @@ async def refund_transaction(
     except (ValueError, TypeError):
         items = []
 
-    await _restore_inventory(db, client.id, items)
+    # Restore to the same stock pool the sale deducted from (branch ledger when
+    # the original sale was branch-tagged, else client-level product quantity).
+    if original.branch_id:
+        from services.branch_stock import restore_branch_inventory
+
+        await restore_branch_inventory(
+            db, str(current_user.id), client.id, int(original.branch_id), items
+        )
+    else:
+        await _restore_inventory(db, client.id, items)
 
     # Allocate the credit note its own sequential invoice number.
     current_counter = (client.invoice_counter or 0) + 1
@@ -774,6 +802,10 @@ async def refund_transaction(
 # ---------- Invoice document & receipt delivery ----------
 class EmailReceiptRequest(BaseModel):
     to_email: str
+
+
+class SmsReceiptRequest(BaseModel):
+    to_number: str
 
 
 async def _get_owned_transaction(db: AsyncSession, client: Clients, txn_id: int) -> Transactions:
@@ -948,3 +980,85 @@ async def email_invoice_receipt(
         invoice_number=txn.invoice_number,
         total=txn.total_amount,
     )
+
+
+@router.post(
+    "/transactions/{txn_id}/sms",
+    dependencies=[Depends(require_feature("sms_receipts"))],
+)
+async def sms_invoice_receipt(
+    txn_id: int,
+    data: SmsReceiptRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send a transaction receipt by SMS (POS-04).
+
+    Gated by the per-client ``sms_receipts`` feature flag (AG-03). Uses the Twilio
+    transport (``core.sms``) when configured and otherwise logs in dev mode; the
+    ``delivered`` flag tells the caller which path ran.
+    """
+    from core.sms import send_sms
+
+    client = await get_client_for_user(db, str(current_user.id))
+    txn = await _get_owned_transaction(db, client, txn_id)
+
+    to_number = (data.to_number or "").strip()
+    if not to_number:
+        raise HTTPException(status_code=400, detail="to_number is required")
+
+    body = f"إيصال {txn.invoice_number}: الإجمالي {txn.total_amount:.2f} ر.س"
+    delivered = await send_sms(to_number, body)
+    return {
+        "status": "sent" if delivered else "logged",
+        "to": to_number,
+        "invoice_number": txn.invoice_number,
+        "delivered": delivered,
+    }
+
+
+# ---------- Per-branch stock ledger (Phase 6 multi-branch) ----------
+class BranchStockSetRequest(BaseModel):
+    product_id: int
+    quantity: int
+
+
+@router.get("/branches/{branch_id}/stock")
+async def get_branch_stock(
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the per-branch stock ledger for a branch (branch-scoped stock report)."""
+    from services.branch_stock import list_branch_stock
+
+    client = await get_client_for_user(db, str(current_user.id))
+    rows = await list_branch_stock(db, client.id, branch_id)
+    return {
+        "branch_id": branch_id,
+        "items": [
+            {"product_id": r.product_id, "quantity": r.quantity} for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.put("/branches/{branch_id}/stock")
+async def set_branch_stock_endpoint(
+    branch_id: int,
+    data: BranchStockSetRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Allocate/adjust a product's stock for a specific branch."""
+    from services.branch_stock import set_branch_stock
+
+    client = await get_client_for_user(db, str(current_user.id))
+    row = await set_branch_stock(
+        db, str(current_user.id), client.id, branch_id, data.product_id, data.quantity
+    )
+    return {
+        "branch_id": branch_id,
+        "product_id": row.product_id,
+        "quantity": row.quantity,
+    }

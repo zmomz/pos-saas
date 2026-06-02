@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from services.products import ProductsService
 from dependencies.auth import get_admin_user, get_current_user
+from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -107,6 +108,7 @@ async def query_productss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Query productss with filtering, sorting, and pagination (user can only see their own records)"""
@@ -127,7 +129,7 @@ async def query_productss(
             limit=limit,
             query_dict=query_dict,
             sort=sort,
-            user_id=str(current_user.id),
+            user_id=scope.owner_user_id,
         )
         logger.debug(f"Found {result['total']} productss")
         return result
@@ -181,6 +183,7 @@ async def get_products(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single products by ID (user can only see their own records)"""
@@ -188,7 +191,7 @@ async def get_products(
     
     service = ProductsService(db)
     try:
-        result = await service.get_by_id(id, user_id=str(current_user.id))
+        result = await service.get_by_id(id, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Products with id {id} not found")
             raise HTTPException(status_code=404, detail="Products not found")
@@ -205,6 +208,7 @@ async def get_products(
 async def create_products(
     data: ProductsData,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new products"""
@@ -212,7 +216,7 @@ async def create_products(
     
     service = ProductsService(db)
     try:
-        result = await service.create(data.model_dump(), user_id=str(current_user.id))
+        result = await service.create(data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create products")
         
@@ -230,6 +234,7 @@ async def create_products(
 async def create_productss_batch(
     request: ProductsBatchCreateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create multiple productss in a single request"""
@@ -240,7 +245,7 @@ async def create_productss_batch(
     
     try:
         for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=str(current_user.id))
+            result = await service.create(item_data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
             if result:
                 results.append(result)
         
@@ -256,6 +261,7 @@ async def create_productss_batch(
 async def update_productss_batch(
     request: ProductsBatchUpdateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Update multiple productss in a single request (requires ownership)"""
@@ -268,7 +274,7 @@ async def update_productss_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
-            result = await service.update(item.id, update_dict, user_id=str(current_user.id))
+            result = await service.update(item.id, update_dict, user_id=scope.owner_user_id)
             if result:
                 results.append(result)
         
@@ -285,6 +291,7 @@ async def update_products(
     id: int,
     data: ProductsUpdateData,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing products (requires ownership)"""
@@ -294,7 +301,7 @@ async def update_products(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
+        result = await service.update(id, update_dict, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Products with id {id} not found for update")
             raise HTTPException(status_code=404, detail="Products not found")
@@ -315,6 +322,7 @@ async def update_products(
 async def delete_productss_batch(
     request: ProductsBatchDeleteRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete multiple productss by their IDs (requires ownership)"""
@@ -325,7 +333,7 @@ async def delete_productss_batch(
     
     try:
         for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
+            success = await service.delete(item_id, user_id=scope.owner_user_id)
             if success:
                 deleted_count += 1
         
@@ -341,6 +349,7 @@ async def delete_productss_batch(
 async def delete_products(
     id: int,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a single products by ID (requires ownership)"""
@@ -348,7 +357,7 @@ async def delete_products(
     
     service = ProductsService(db)
     try:
-        success = await service.delete(id, user_id=str(current_user.id))
+        success = await service.delete(id, user_id=scope.owner_user_id)
         if not success:
             logger.warning(f"Products with id {id} not found for deletion")
             raise HTTPException(status_code=404, detail="Products not found")

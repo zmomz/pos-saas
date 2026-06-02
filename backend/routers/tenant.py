@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -894,6 +894,31 @@ async def pay_client_subscription(
     period_start = now.date().isoformat()
     period_end = _advance_billing_date(now, cycle)
 
+    # CL-04: charge through the agent's Stripe Connect gateway when Stripe is
+    # configured; otherwise fall open to a manually-settled record. A real card
+    # decline aborts the payment (402) and does NOT advance the billing period.
+    from services.subscription_billing import SubscriptionChargeError, charge_subscription
+
+    agent_stripe_account = None
+    agent_row = (
+        await db.execute(select(Agents).where(Agents.id == merchant.agent_id))
+    ).scalar_one_or_none()
+    if agent_row is not None:
+        agent_stripe_account = getattr(agent_row, "stripe_account_id", None)
+
+    from core.config import settings as _settings
+
+    try:
+        charge = await charge_subscription(
+            amount=float(fee),
+            currency=str(getattr(_settings, "subscription_currency", "sar") or "sar"),
+            agent_stripe_account=agent_stripe_account,
+            client_id=merchant.id,
+            idempotency_key=f"sub-{merchant.id}-{period_start}",
+        )
+    except SubscriptionChargeError as exc:
+        raise HTTPException(status_code=402, detail=f"Subscription payment failed: {exc}")
+
     db.add(
         Subscription_payments(
             user_id=str(current_user.id),
@@ -902,7 +927,8 @@ async def pay_client_subscription(
             billing_cycle=cycle,
             period_start=period_start,
             period_end=period_end,
-            method="manual",
+            method=charge.method,
+            reference=charge.reference,
         )
     )
     await db.execute(
@@ -983,6 +1009,81 @@ async def suspend_overdue_client(
     )
     await db.commit()
     return ToggleResponse(success=True, is_active=False)
+
+
+# ---------- Stripe billing webhook (CL-05 auto-suspend on non-payment) ----------
+_FAILURE_EVENTS = {
+    "invoice.payment_failed",
+    "charge.failed",
+    "payment_intent.payment_failed",
+}
+_RECOVERY_EVENTS = {
+    "invoice.payment_succeeded",
+    "payment_intent.succeeded",
+}
+
+
+@router.post("/billing/webhook")
+async def stripe_billing_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """Stripe webhook: auto-suspend a client on a failed subscription charge.
+
+    Verifies the signature when ``STRIPE_WEBHOOK_SECRET`` is set (production); in
+    dev/test (no secret) the JSON body is parsed directly. A failed payment event
+    carrying ``metadata.client_id`` suspends that client (``is_active=False`` +
+    ``subscription_status='suspended'``), which blocks them at authentication
+    until they pay; a recovery event re-activates them.
+    """
+    from core.config import settings as _settings
+
+    payload = await request.body()
+    secret = getattr(_settings, "stripe_webhook_secret", None)
+    if secret:
+        import stripe
+
+        sig = request.headers.get("stripe-signature", "")
+        try:
+            event = stripe.Webhook.construct_event(payload, sig, secret)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid webhook signature")
+        event_type = event.get("type")
+        data_object = event.get("data", {}).get("object", {})
+    else:
+        try:
+            event = json.loads(payload or b"{}")
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid webhook payload")
+        event_type = event.get("type")
+        data_object = (event.get("data") or {}).get("object", {})
+
+    metadata = data_object.get("metadata") or {}
+    client_id = metadata.get("client_id")
+    if not client_id:
+        return {"received": True, "action": "ignored", "reason": "no client_id"}
+
+    try:
+        client_id_int = int(client_id)
+    except (TypeError, ValueError):
+        return {"received": True, "action": "ignored", "reason": "bad client_id"}
+
+    if event_type in _FAILURE_EVENTS:
+        await db.execute(
+            update(Clients)
+            .where(Clients.id == client_id_int)
+            .values(is_active=False, subscription_status="suspended")
+        )
+        await db.commit()
+        return {"received": True, "action": "suspended", "client_id": client_id_int}
+
+    if event_type in _RECOVERY_EVENTS:
+        await db.execute(
+            update(Clients)
+            .where(Clients.id == client_id_int)
+            .values(is_active=True, subscription_status="active")
+        )
+        await db.commit()
+        return {"received": True, "action": "reactivated", "client_id": client_id_int}
+
+    return {"received": True, "action": "ignored", "event": event_type}
 
 
 # ---------- Public Endpoints (no auth required) ----------

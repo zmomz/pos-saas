@@ -19,6 +19,9 @@ async def write_audit_log(
     action: str,
     details: Optional[str] = None,
     ip_address: Optional[str] = None,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    changes: Optional[str] = None,
 ) -> None:
     """Persist a single audit row. Never raises — failures are logged and swallowed."""
     if not db_manager.async_session_maker:
@@ -31,6 +34,9 @@ async def write_audit_log(
                     action=action,
                     details=(details or "")[:2000] or None,
                     ip_address=ip_address,
+                    entity_type=entity_type,
+                    entity_id=(str(entity_id) if entity_id is not None else None),
+                    changes=(changes or "")[:4000] or None,
                 )
             )
             await db.commit()

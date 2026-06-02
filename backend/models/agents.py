@@ -21,5 +21,8 @@ class Agents(Base):
     button_radius = Column(String, nullable=True, default='8px', server_default='8px')
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
     default_language = Column(String, nullable=True, default='en', server_default='en')
+    # Stripe Connect: the agent's connected-account id. When set, a client's
+    # subscription charge is routed to the agent's gateway (CL-04 production path).
+    stripe_account_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

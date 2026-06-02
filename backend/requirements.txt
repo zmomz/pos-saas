@@ -21,6 +21,10 @@ Pillow>=10.0.0
 
 # Server-side invoice PDF rendering (Phase 6 PDF deliverable; pure Python)
 fpdf2>=2.7
+# Arabic-glyph PDF: shape + bidi-reorder Arabic text for the always-Arabic
+# invoice layout (bundled Amiri OFL font in backend/assets/fonts/).
+arabic-reshaper>=3.0
+python-bidi>=0.4
 
 
 # database module dependencies

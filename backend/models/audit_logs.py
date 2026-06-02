@@ -12,5 +12,12 @@ class Audit_logs(Base):
     action = Column(String, nullable=False)
     details = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
+    # Audit-completeness (Phase 3): the affected entity and the submitted change
+    # set. ``entity_type``/``entity_id`` are parsed from the request path;
+    # ``changes`` is the JSON request body ("after" state) with sensitive keys
+    # redacted. Failed-auth attempts are recorded with action ``AUTH_FAILURE``.
+    entity_type = Column(String, nullable=True)
+    entity_id = Column(String, nullable=True)
+    changes = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

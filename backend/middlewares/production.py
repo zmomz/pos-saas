@@ -246,6 +246,83 @@ def get_cors_config(environment: str = "production") -> dict:
 
 
 # =============================================================================
+# API-Usage Metering Middleware
+# =============================================================================
+class ApiUsageMeteringMiddleware(BaseHTTPMiddleware):
+    """Persist one ``api_usage`` row per authenticated API request (Phase 3).
+
+    Powers ``GET /api/v1/production/api-usage/stats`` with real data (request
+    counts + average response time per endpoint). Disabled by default so dev/CI
+    add no write overhead; enable with ``API_METERING_ENABLED=true``. Writes are
+    best-effort in their own session and never affect the response.
+    """
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        if not _env_flag("API_METERING_ENABLED", False):
+            return await call_next(request)
+
+        start = time.time()
+        response = await call_next(request)
+        elapsed_ms = int((time.time() - start) * 1000)
+
+        try:
+            path = request.url.path
+            if not path.startswith("/api/v1"):
+                return response
+            user_id = self._user_id(request)
+            if not user_id:
+                return response
+            await self._record(
+                user_id=user_id,
+                endpoint=path,
+                method=request.method,
+                status_code=response.status_code,
+                response_time_ms=elapsed_ms,
+            )
+        except Exception as exc:  # pragma: no cover - metering must not break requests
+            logger.debug("API metering skipped a request: %s", exc)
+
+        return response
+
+    @staticmethod
+    def _user_id(request: Request) -> Optional[str]:
+        auth = request.headers.get("authorization", "")
+        if not auth.lower().startswith("bearer "):
+            return None
+        from core.auth import AccessTokenError, decode_access_token
+
+        try:
+            payload = decode_access_token(auth.split(" ", 1)[1].strip())
+        except AccessTokenError:
+            return None
+        if payload.get("type") == "refresh":
+            return None
+        return payload.get("sub")
+
+    @staticmethod
+    async def _record(user_id, endpoint, method, status_code, response_time_ms) -> None:
+        from datetime import datetime, timezone
+
+        from core.database import db_manager
+        from models.api_usage import Api_usage
+
+        if not db_manager.async_session_maker:
+            return
+        async with db_manager.async_session_maker() as db:
+            db.add(
+                Api_usage(
+                    user_id=str(user_id),
+                    endpoint=endpoint[:255],
+                    method=method,
+                    status_code=status_code,
+                    response_time_ms=response_time_ms,
+                    request_date=datetime.now(timezone.utc).date().isoformat(),
+                )
+            )
+            await db.commit()
+
+
+# =============================================================================
 # Request Validation Middleware
 # =============================================================================
 class RequestValidationMiddleware(BaseHTTPMiddleware):
