@@ -607,3 +607,47 @@ export async function deleteQuotation(id: string) {
 export function quotationDocumentPath(quotationId: number): string {
   return `/api/v1/entities/quotations/${quotationId}/document`;
 }
+
+// ---- Phase E ----
+
+// Fetch a base64 ESC/POS byte stream for thermal printing (see lib/thermalPrint).
+export async function getEscposReceipt(transactionId: number): Promise<string> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/transactions/${transactionId}/escpos`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data?.data as string;
+}
+
+// Customer loyalty balance.
+export async function getLoyaltyBalance(customerId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/production/loyalty/balance?customer_id=${customerId}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// AI sales forecast (moving-average projection).
+export async function getSalesForecast(days = 30) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/production/analytics/forecast?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// Flush an offline-queued batch of transactions (idempotent by offline_id).
+export async function syncOfflineTransactions(
+  transactions: Array<Record<string, unknown>>
+) {
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/production/offline/sync',
+    method: 'POST',
+    data: { transactions },
+  });
+  return response.data;
+}

@@ -5,10 +5,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, getTransactions, getDiscounts } from '@/lib/api';
+import { getProducts, createTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X } from 'lucide-react';
+import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
+import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer } from 'lucide-react';
 
 interface Product {
   id: number;
@@ -88,8 +90,17 @@ export default function POSTerminal() {
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [refundProcessing, setRefundProcessing] = useState(false);
 
+  // Offline POS (Phase E) state.
+  const [queuedOffline, setQueuedOffline] = useState(false);
+
   useEffect(() => {
     loadProducts();
+  }, []);
+
+  // Offline POS (Phase E): replay any queued sales when connectivity returns.
+  useEffect(() => {
+    const unsubscribe = registerAutoFlush(syncOfflineTransactions);
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -251,13 +262,69 @@ export default function POSTerminal() {
         discount_amount: discountAmount > 0 ? discountAmount : undefined,
         discount_code: appliedDiscount?.code,
       });
+      setQueuedOffline(false);
       setCart([]);
       setAppliedDiscount(null);
       setDiscountCode('');
     } catch (err) {
-      console.error('Checkout failed:', err);
+      // Offline POS (Phase E): if the device is offline (or the network call
+      // failed), buffer the sale in IndexedDB and replay it on reconnect rather
+      // than losing it. A queued sale gets no fiscal QR until it syncs.
+      if (!isOnline()) {
+        try {
+          const subtotal = cart.reduce((s, i) => s + i.product.price * i.quantity, 0);
+          const taxable = Math.max(0, subtotal - discountAmount);
+          const vat = Math.round(taxable * 0.15 * 100) / 100;
+          const queued = await enqueueTransaction({
+            subtotal,
+            discount_amount: discountAmount,
+            vat_amount: vat,
+            total_amount: Math.round((taxable + vat) * 100) / 100,
+            payment_method: paymentMethod,
+            items: cart.map((item) => ({
+              product_id: item.product.id,
+              name: item.product.name,
+              quantity: item.quantity,
+              price: item.product.price,
+            })),
+          });
+          setReceipt({
+            invoice_number: queued.offline_id,
+            total_amount: queued.total_amount || 0,
+            vat_amount: queued.vat_amount || 0,
+            subtotal: queued.subtotal || 0,
+            payment_method: paymentMethod,
+            zatca_qr_base64: '',
+            items: cart.map((item) => ({
+              name: item.product.name,
+              quantity: item.quantity,
+              price: item.product.price,
+            })),
+            discount_amount: discountAmount > 0 ? discountAmount : undefined,
+            discount_code: appliedDiscount?.code,
+          });
+          setQueuedOffline(true);
+          setCart([]);
+          setAppliedDiscount(null);
+          setDiscountCode('');
+        } catch (queueErr) {
+          console.error('Offline queue failed:', queueErr);
+        }
+      } else {
+        console.error('Checkout failed:', err);
+      }
     } finally {
       setProcessing(false);
+    }
+  }
+
+  async function handleThermalPrint() {
+    if (!receipt?.id) return;
+    try {
+      const payload = await getEscposReceipt(receipt.id);
+      await printEscPos(payload);
+    } catch (err) {
+      console.error('Thermal print failed:', err);
     }
   }
 
@@ -406,10 +473,26 @@ export default function POSTerminal() {
               </div>
             )}
 
+            {queuedOffline && (
+              <div className="rounded-md bg-amber-900/40 border border-amber-700 text-amber-200 text-sm p-3 text-center">
+                تم حفظ العملية دون اتصال وسيتم مزامنتها عند عودة الإنترنت
+              </div>
+            )}
+
             <div className="flex gap-3 pt-2">
               <Button onClick={handleNewSale} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
                 {t('new_sale')}
               </Button>
+              {receipt.id && isThermalPrintSupported() && (
+                <Button
+                  variant="outline"
+                  onClick={handleThermalPrint}
+                  className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                  title="Thermal print"
+                >
+                  <Printer className="w-4 h-4" />
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => navigate('/client')}

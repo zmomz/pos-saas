@@ -152,6 +152,13 @@ def include_routers_from_package(app: FastAPI, package_name: str = "routers") ->
 
 # Setup logging before router discovery
 setup_logging()
+
+# Error tracking (Phase E): config-gated, no-op unless SENTRY_DSN + sentry-sdk
+# are both present.
+from core.observability import init_sentry  # noqa: E402
+
+init_sentry()
+
 include_routers_from_package(app, "routers")
 
 

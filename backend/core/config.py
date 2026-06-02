@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     zatca_encryption_key: str = ""
     zatca_retention_years: int = 6
 
+    # Error tracking (Phase E). When sentry_dsn is set AND the optional
+    # `sentry-sdk` package is installed, errors are reported to Sentry; otherwise
+    # observability is a no-op. See core/observability.py.
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.0
+
     @property
     def backend_url(self) -> str:
         """Generate backend URL from host and port."""

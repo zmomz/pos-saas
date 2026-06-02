@@ -28,6 +28,17 @@ async function initializeApp() {
 
   // Render the app
   createRoot(document.getElementById('root')!).render(<App />);
+
+  // Offline POS (Phase E): register the app-shell service worker so the
+  // terminal keeps loading without a network. Best-effort; only in production
+  // builds and where service workers are available.
+  if ('serviceWorker' in navigator && import.meta.env.PROD) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker
+        .register('/sw.js')
+        .catch((err) => console.warn('SW registration failed:', err));
+    });
+  }
 }
 
 // Initialize the app

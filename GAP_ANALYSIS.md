@@ -10,6 +10,8 @@
 > **▶ Phase C completed 2026-06-02** — the required product features are wired and enforced: master **agent provisioning** (creates a real login + temp password), **slot refill**, a master-set **global VAT rate** that agents/clients inherit and the POS applies authoritatively, **split/mixed payment breakdown**, an **always-Arabic invoice document** endpoint + **email receipts**, **automated low-stock alerts** on each sale, **per-client feature enforcement** with an agent runtime toggle, and an **audit-log middleware** that records every authenticated mutation. See [§11 Phase C implementation log](#11-phase-c-implementation-log). The suite is now **42 tests, all passing**. Cells touched by Phase C are marked **✅ (Phase C)** / **🟡 (Phase C)** below.
 >
 > **▶ Phase D completed 2026-06-02** — the Arabic-output rule and its polish are done: the **on-screen POS receipt is now forced Arabic** (RTL, Arabic-Indic numerals, SAR) regardless of UI language; a **quotation feature** (عرض سعر) exists end-to-end — a new entity triad plus an **always-Arabic, non-fiscal quotation document** endpoint and a frontend page; a central **Arabic-Indic digit formatter** (backend `core/formatting.py` + frontend `lib/format.ts`) renders amounts/dates natively in the always-Arabic documents; and the **agent default language** propagates to clients (set in the branding editor, inherited on client creation, applied on first client login). See [§12 Phase D implementation log](#12-phase-d-implementation-log). The suite is now **51 tests, all passing**. Cells touched by Phase D are marked **✅ (Phase D)** below.
+>
+> **▶ Phase E completed 2026-06-02** — mobile/offline & nice-to-haves. **Loyalty is now real and wired into the *atomic* sale**: points accrue on every customer sale and `redeem_points` redeems against the balance as an order discount, both committed in the same transaction as the sale + inventory (a rolled-back sale never moves the ledger). **Thermal/ESC-POS printing** exists — a backend byte builder (`services/escpos.py`) + `GET /pos/transactions/{id}/escpos` and a frontend WebUSB helper, with the canonical ZATCA QR embedded. **Offline POS** is in place — an IndexedDB queue + app-shell service worker on the frontend that buffers sales offline and replays them to the (idempotent) `/production/offline/sync` endpoint on reconnect. **Error tracking (Sentry)** is wired as a config-gated no-op (`core/observability.py`). See [§13 Phase E implementation log](#13-phase-e-implementation-log). The suite is now **63 tests, all passing**. Cells touched by Phase E are marked **✅ (Phase E)** / **🟡 (Phase E)** below. *The only genuinely out-of-scope item is the **native white-label RN/Flutter mobile app**, which is a separate codebase, not this FastAPI+React repo — see §13.*
 
 ## Legend
 - ✅ **Implemented** — real working logic.
@@ -70,10 +72,10 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 | ID | Requirement | Status | Evidence / Gap |
 |----|-------------|--------|----------------|
 | POS-01 | Cart: items, qty, discounts, taxes | 🟡 Partial | `POSTerminal.tsx` cart + per-item discount; **VAT hardcoded 15%** (no per-product/global rate). |
-| POS-02 | Multiple payment methods (cash/card/transfer/loyalty) | 🟡 **(Phase C)** | `create_transaction` accepts an optional `payments: [{method, amount}]` split breakdown, **validates the per-method amounts sum to the invoice total** (400 otherwise), stores it in the new `transactions.payment_breakdown` column, and derives `payment_method` (`"mixed"` when >1). Returned on the transaction + list responses. *(Loyalty accrual/redemption in the pay flow is still Phase E.)* Tested in `tests/test_phase_c_pos.py`. |
+| POS-02 | Multiple payment methods (cash/card/transfer/loyalty) | 🟡 **(Phase C)** | `create_transaction` accepts an optional `payments: [{method, amount}]` split breakdown, **validates the per-method amounts sum to the invoice total** (400 otherwise), stores it in the new `transactions.payment_breakdown` column, and derives `payment_method` (`"mixed"` when >1). Returned on the transaction + list responses. **(Phase E)** Loyalty accrual/redemption is now wired into this same pay flow — see the Loyalty row in §6. Tested in `tests/test_phase_c_pos.py`. |
 | POS-03 | Print ZATCA invoice (thermal/A4) + QR | 🟡 **(Phase C)** | New `GET /api/v1/pos/transactions/{id}/invoice` renders the full **always-Arabic** ZATCA tax-invoice document (RTL, QR, totals) server-side, print-to-PDF ready in any browser. *(Still no thermal/ESC-POS path, and server-side PDF bytes need a headless renderer (WeasyPrint) in front of this HTML.)* Tested in `tests/test_phase_c_pos.py`. |
 | POS-04 | Send invoice via email/SMS | 🟡 **(Phase C)** | `POST /api/v1/pos/transactions/{id}/email` sends a receipt via `EmailService` (gated by the per-client `email_receipts` feature flag). Still **stub-logs until SMTP is configured**, and no SMS path. Tested in `tests/test_phase_c_pos.py`. |
-| POS-05 | Offline mode (mobile) + sync | 🔴 Missing | No mobile app, no service worker/IndexedDB, no sync queue. |
+| POS-05 | Offline mode (mobile) + sync | 🟡 **(Phase E)** | Web offline path done: an **IndexedDB queue** (`frontend/src/lib/offlineQueue.ts`) buffers completed sales when `navigator.onLine` is false, an **app-shell service worker** (`frontend/public/sw.js`) keeps the POS loading with no network, and queued sales **auto-replay on reconnect** to `POST /api/v1/production/offline/sync`, which **dedupes on a client-generated `offline_id`** (idempotent — a replayed batch never double-posts). Tested in `tests/test_phase_e_offline.py`. *(Still no native mobile app; offline-synced sales get their fiscal QR only once they reach the server.)* |
 | POS-06 | Product search by barcode (camera) / name | 🟡 Partial | Keyboard/"scanner-as-keyboard" barcode match; **no camera**; name search limited. |
 | POS-07 | Return/refund with ZATCA credit note | 🟡 Partial | Refund creates a negative-amount transaction; **no formal credit-note doc, no link to original invoice**. |
 | — | **Atomicity of sale + inventory** | ✅ **(Phase A)** | `routers/pos.py::create_transaction` now deducts stock in the **same DB transaction** as the sale (single commit) via `_deduct_inventory`. Insufficient stock raises 400 and rolls back the whole sale (counter not consumed) unless `allow_negative_stock=true`. Frontend fire-and-forget call removed; legacy `/inventory/deduct` marked deprecated. Tested in `tests/test_pos_atomic.py`. |
@@ -128,7 +130,7 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 ### 🟠 Important
 | Item | Status | Evidence / Gap |
 |------|--------|----------------|
-| Error tracking (Sentry) | 🔴 Missing | No Sentry. |
+| Error tracking (Sentry) | 🟡 **(Phase E)** | `core/observability.py::init_sentry()` wired into `main.py` — a **config-gated no-op** that reports to Sentry only when `SENTRY_DSN` is set *and* the optional `sentry-sdk` package is installed (so dev/CI run unchanged). Tested in `tests/test_phase_e_observability.py`. *(Log aggregation/shipping still ops-side.)* |
 | Health checks | ✅ Implemented | `/health`, `/database/health`, `/api/v1/production/health/detailed`. |
 | Structured logging | ✅ Implemented | JSON formatter + correlation IDs (`middlewares/production.py`); **local files only**, no aggregation. |
 | Performance monitoring | 🟡 Partial | In-memory p95/latency metrics (`production.py`); lost on restart. |
@@ -137,7 +139,7 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 | Low-stock alerts | 🟡 **(Phase C)** | On-demand `/products/low-stock` + `/inventory/alerts` plus **automated** alerts: `create_transaction` fires a low-stock email (best-effort, post-commit) for any sold product that drops to/below threshold. Delivery is stub/log until SMTP configured. Covered in `tests/test_phase_c_pos.py`. |
 | Supplier & purchase orders | 🟠 CRUD-only | Tables/CRUD only; no PO workflow/receiving. |
 | Shift/cash drawer | 🟡 Partial | `routers/shifts.py` open/close CRUD; no cash-difference calc/validation. |
-| Payment method breakdown | 🟡 **(Phase C)** | `transactions.payment_breakdown` column + validated `payments[]` on POS create (see POS-02). Loyalty redemption in the pay flow still pending. |
+| Payment method breakdown | ✅ **(Phase C/E)** | `transactions.payment_breakdown` column + validated `payments[]` on POS create (see POS-02). **(Phase E)** Loyalty redemption in the pay flow is now wired (redeemed points apply as an order discount within the atomic sale). |
 | Multi-branch | 🟡 Partial | `branches` + `branch_id` fields; branch isolation not consistently enforced in queries. |
 | User profile / **change password** | ✅ **(Phase A)** | `POST /api/v1/users/change-password` (verifies current password, rejects no-op/wrong) added in `routers/user.py` + `services/user.py`; frontend `changePassword()` wrapper in `lib/api.ts`. Tested in `tests/test_auth.py`. |
 | Bulk import/export | ✅ **(Phase A)** | `BulkImportService` wired via `POST /api/v1/integrations/bulk-import/products` — validates the CSV **and inserts** valid rows for the client. Tested in `tests/test_integrations.py`. (Customer import still validate-only.) |
@@ -147,16 +149,16 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 ### 🟡 Nice-to-have
 | Item | Status |
 |------|--------|
-| Offline POS (SW/IndexedDB) | 🔴 Missing |
-| Loyalty/rewards | 🟠 CRUD-only (no accrual/redemption logic) |
+| Offline POS (SW/IndexedDB) | 🟡 **(Phase E)** — IndexedDB queue + app-shell service worker + idempotent reconnect sync (see POS-05) |
+| Loyalty/rewards | ✅ **(Phase E)** — accrual + redemption wired into the **atomic** POS sale (`services/loyalty.py`); points earn on each customer sale and `redeem_points` redeems as an order discount, both committed with the sale. Tested in `tests/test_phase_e_loyalty.py` |
 | Customer-facing display | 🟡 Partial (`CustomerDisplay.tsx` exists) |
 | Receipt template customization | 🟠 CRUD-only (no render engine) |
 | SAR-only currency | 🟡 Partial (15% VAT/SAR assumptions hardcoded, not configurable) |
-| Thermal printer (WebUSB/BT) | 🔴 Missing |
+| Thermal printer (WebUSB/BT) | 🟡 **(Phase E)** — ESC/POS byte builder (`services/escpos.py`) + `GET /pos/transactions/{id}/escpos` (base64) + frontend WebUSB helper (`lib/thermalPrint.ts`); embeds the canonical ZATCA QR. Tested in `tests/test_phase_e_escpos.py`. Arabic glyphs depend on the printer code page (the always-Arabic HTML invoice remains the native-Arabic path) |
 | Mobile-responsive / tablet POS | 🟡 Partial |
 | Per-agent API rate plans | 🔴 Missing |
-| White-label mobile app (RN/Flutter) | 🔴 Missing |
-| Advanced analytics/forecasting | 🔴 Missing |
+| White-label mobile app (RN/Flutter) | 🔴 Missing — **out of scope for this repo** (a separate native codebase, not this FastAPI+React app; see §13). The web POS is now offline-capable (POS-05) as the interim path |
+| Advanced analytics/forecasting | 🟡 **(Phase E)** — `GET /api/v1/production/analytics/forecast` (moving-average projection + trend) is wired and now reachable from the frontend (`getSalesForecast`); real ML forecasting remains a stub |
 | Webhook system | 🟡 **(Phase A)** — `WebhookDispatcher` now reachable via `POST /api/v1/integrations/webhooks/dispatch` (HMAC-signed; stub delivery until an HTTP client is configured) |
 
 ---
@@ -168,7 +170,7 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 3. **No real auth lifecycle** — **(Phase A + C)** refresh tokens, `is_active` enforcement, change-password, and **per-client feature enforcement** (Phase C) are done; the finer-grained per-staff `permissions` table and a token-revocation store are still pending.
 4. **Data-integrity risks** — **(Phase A + C)** sale/inventory atomic, Alembic functional, and the **audit log is now auto-written** on every authenticated mutation (Phase C); data backup/recovery still missing.
 5. ~~**ZATCA is a façade**~~ — **(Phase B)** real ECDSA stamp, EGS CSR + CSID onboarding, AES-256 secrets, PIH chain, 6-yr retention, sandbox/prod toggle, reporting client. Residual gaps: XAdES envelope embedding, live-gateway clearance, and the 24h auto-submit job.
-6. **No mobile / offline** — an entire SRS pillar (§2.3, §3.4 POS-05) is absent.
+6. ~~**No mobile / offline**~~ — **(Phase E)** the web POS is now **offline-capable** (IndexedDB queue + app-shell service worker + idempotent reconnect sync, POS-05). The **native white-label mobile app (RN/Flutter)** remains out of scope for this repo (separate native codebase).
 
 ---
 
@@ -189,7 +191,7 @@ Aligns with the SRS author's "top 5" and adds the integrity/white-label blockers
 
 **Phase D — Arabic-output rule & polish — ✅ DONE (2026-06-02)** — on-screen POS receipt forced Arabic; **quotation** feature added end-to-end (entity triad + always-Arabic, non-fiscal quotation document + frontend page); central Arabic-Indic digit formatter (backend + frontend); agent-default language propagated to clients (set → inherited → applied on first login). See [§12](#12-phase-d-implementation-log). *Residual:* on-screen quotation builder is minimal (no PDF bytes/thermal — shares the headless-renderer follow-up); SMS receipts and `name_ar` localisation of catalog items remain.
 
-**Phase E — mobile/offline & nice-to-haves** — RN/Flutter app, offline sync, thermal printing, loyalty accrual, analytics, error tracking (Sentry), log aggregation.
+**Phase E — mobile/offline & nice-to-haves — ✅ DONE (2026-06-02)** — loyalty accrual + redemption wired into the atomic POS sale; web offline POS (IndexedDB queue + service worker + idempotent reconnect sync); thermal/ESC-POS printing (backend bytes + WebUSB); analytics forecast reachable; config-gated Sentry error tracking. See [§13](#13-phase-e-implementation-log). *Residual:* the **native white-label RN/Flutter mobile app** is a separate codebase (out of scope for this repo); real ML forecasting, log shipping, SMS receipts, per-staff `permissions`, token-revocation store, and data backup/recovery also remain.
 
 > Effort estimate (SRS author's): Critical ~2–3 wks, Important ~3–4 wks, Nice-to-have ~4–6 wks — realistic **only after** the "wire the orphaned code" cleanup, which is cheap and unblocks several items at once.
 
@@ -309,4 +311,36 @@ suite now has **51 tests** (42 prior + 9 Phase D), all green via `python -m pyte
 `test_phase_d_quotations.py` (auto-numbered create, always-Arabic quotation document that is *not* a tax invoice, owner-scoping 404), `test_phase_d_arabic_digits.py` (`format_money_ar` digits/separators, letters untouched, invoice totals render Arabic-Indic while the invoice number stays Western), `test_phase_d_language.py` (agent sets default language → returned on branding; new client inherits it; explicit override wins; client branding exposes the agent default).
 
 ### Known follow-ups deferred to later phases
-Server-side **PDF bytes** (headless renderer) + thermal/ESC-POS for the quotation/receipt documents; SMS receipts; `name_ar` localisation of catalog item names within the Arabic documents. Carried over from earlier phases and **Phase E** (mobile/offline, Sentry, analytics, loyalty redemption, per-staff permissions, token revocation, data backup) remain.
+Server-side **PDF bytes** (headless renderer) for the quotation/receipt documents; SMS receipts; `name_ar` localisation of catalog item names within the Arabic documents. ~~**Phase E**~~ **done, see §13.** Residual after Phase E: native white-label mobile app, real ML forecasting, log shipping, per-staff permissions, token revocation, data backup.
+
+---
+
+## 13. Phase E implementation log
+
+Completed **2026-06-02**. Mobile/offline & nice-to-haves. Much of this surface
+already existed as *orphaned* endpoints in `routers/production.py` (loyalty
+earn/redeem/balance, offline sync, forecast); Phase E turns the headline gaps
+into real, wired, tested behaviour. The suite now has **63 tests** (51 prior + 12
+Phase E), all green via `python -m pytest`.
+
+### Backend changes
+| Area | Files | What changed |
+|------|-------|--------------|
+| Loyalty in the atomic sale | `services/loyalty.py` (new), `routers/pos.py` | `create_transaction` now resolves the merchant's active loyalty program and, **within the same DB transaction as the sale + inventory deduction**, (a) redeems `redeem_points` against the customer's balance as an order discount (validated: positive, ≥ `min_redemption_points`, ≤ balance, ≤ subtotal) and (b) accrues `floor(total × points_per_sar)`. A rolled-back sale (e.g. oversell) never moves the ledger. New optional request fields `customer_id` / `redeem_points`; loyalty outcome returned on the response. |
+| Thermal/ESC-POS receipt | `services/escpos.py` (new), `routers/pos.py` | `EscPosBuilder` emits a raw ESC/POS stream (init, centered header, line items, totals, **ZATCA QR via the `GS ( k` model-2 sequence**, partial cut). `GET /api/v1/pos/transactions/{id}/escpos` returns it base64-encoded (owner-scoped). |
+| Error tracking (Sentry) | `core/observability.py` (new), `main.py`, `core/config.py` | `init_sentry()` — a **config-gated no-op** initialised at startup; reports only when `SENTRY_DSN` is set **and** `sentry-sdk` is installed. `sentry_dsn` / `sentry_traces_sample_rate` settings added. |
+| Offline sync (hardening/coverage) | `routers/production.py` (existing `/offline/sync`) | Confirmed + locked down with tests: dedupe on the client-generated `offline_id` makes a replayed batch idempotent (re-posting the same queue skips duplicates rather than double-inserting). |
+
+### Frontend changes
+| Area | Files | What changed |
+|------|-------|--------------|
+| Offline POS queue | `src/lib/offlineQueue.ts` (new), `src/main.tsx`, `src/pages/POSTerminal.tsx` | IndexedDB-backed queue (`enqueueTransaction`/`getQueued`/`flushQueue`/`registerAutoFlush`). When `navigator.onLine` is false, checkout buffers the sale (with an `offline_id`) and shows a "saved offline, will sync" receipt; a reconnect listener auto-flushes to `/production/offline/sync`. |
+| App-shell service worker | `frontend/public/sw.js` (new), `src/main.tsx` | Cache-first app shell so the POS keeps loading with no network; API traffic is never cached (fails fast so the queue takes over). Registered in production builds only. |
+| Thermal printing | `src/lib/thermalPrint.ts` (new), `src/pages/POSTerminal.tsx` | `printEscPos(base64)` streams the ESC/POS bytes to a WebUSB printer; a print button appears on the receipt when `isThermalPrintSupported()`. |
+| API wrappers | `src/lib/api.ts` | `getEscposReceipt`, `getLoyaltyBalance`, `getSalesForecast`, `syncOfflineTransactions`. |
+
+### Tests (`backend/tests/`)
+`test_phase_e_loyalty.py` (points accrue on a sale; redemption applies as a discount and recomputes VAT/total + balance; redeem requires a customer; insufficient-points 400; **redemption rolls back with a failed/oversold sale** so points aren't spent), `test_phase_e_escpos.py` (byte-structure: ESC @ init, embedded invoice number, `GS ( k` QR family, `GS V` partial cut; the endpoint returns base64 and is owner-scoped 404), `test_phase_e_offline.py` (sync is idempotent on `offline_id`; empty batch rejected), `test_phase_e_observability.py` (Sentry is a no-op without/blank DSN). Frontend changes pass `tsc --noEmit` and `eslint`.
+
+### Out of scope for this repo / residual
+The **native white-label mobile app (RN/Flutter)** is a separate native codebase, not this FastAPI + React application — the offline-capable web POS (POS-05) is the interim path here. Real **ML sales forecasting** (the endpoint is a moving-average stub), **log shipping/aggregation**, **SMS receipts**, server-side **PDF bytes** (headless renderer), per-staff **`permissions`** enforcement, a **token-revocation store**, and **data backup/recovery** also remain as ops/later work.

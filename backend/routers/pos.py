@@ -18,6 +18,8 @@ from schemas.auth import UserResponse
 from models.clients import Clients
 from models.products import Products
 from models.transactions import Transactions
+from services import loyalty as loyalty_service
+from services.escpos import build_receipt_base64
 from services.production import EmailService, LowStockChecker, PDFInvoiceService
 from services.system_settings import get_effective_tax_rate
 
@@ -52,6 +54,11 @@ class CreateTransactionRequest(BaseModel):
     # Optional split-tender breakdown (POS-02). When given, the per-method amounts
     # must sum to the invoice total; payment_method is derived ("mixed" if >1).
     payments: Optional[List[PaymentEntry]] = None
+    # Loyalty (Phase E). When a customer is identified, points are accrued on the
+    # sale; ``redeem_points`` redeems against their balance as an order discount.
+    # Both move the loyalty ledger inside the same atomic transaction as the sale.
+    customer_id: Optional[int] = None
+    redeem_points: Optional[int] = 0
     # When False (default) a sale is rejected if any line exceeds available stock.
     # The sale and the stock deduction are committed together in one transaction.
     allow_negative_stock: Optional[bool] = False
@@ -73,6 +80,11 @@ class TransactionResponse(BaseModel):
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     created_at: Optional[datetime] = None
+    # Loyalty outcome of this sale (Phase E); null when no customer/program.
+    loyalty_points_earned: Optional[int] = None
+    loyalty_points_redeemed: Optional[int] = None
+    loyalty_discount: Optional[float] = None
+    loyalty_balance: Optional[int] = None
 
 
 class TransactionListResponse(BaseModel):
@@ -209,6 +221,42 @@ async def create_transaction(
         subtotal += item_total
 
     discount_amount = data.discount_amount or 0
+
+    # ---- Loyalty redemption (Phase E) ----
+    # Redeemed points reduce the order as a discount (before VAT). The point
+    # deduction happens in this same session and is committed atomically with
+    # the sale below, so a rolled-back sale never spends points.
+    program = await loyalty_service.get_active_program(db, str(current_user.id))
+    loyalty_points_redeemed = 0
+    loyalty_discount = 0.0
+    loyalty_balance: Optional[int] = None
+    if data.redeem_points and data.redeem_points > 0:
+        if not data.customer_id:
+            raise HTTPException(
+                status_code=400,
+                detail="customer_id is required to redeem loyalty points",
+            )
+        if not program:
+            raise HTTPException(
+                status_code=400, detail="No active loyalty program configured"
+            )
+        try:
+            redemption = await loyalty_service.redeem_points(
+                db,
+                user_id=str(current_user.id),
+                client_id=client.id,
+                customer_id=data.customer_id,
+                points=int(data.redeem_points),
+                program=program,
+                max_discount=round(subtotal - discount_amount, 2),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        loyalty_points_redeemed = redemption.points_redeemed
+        loyalty_discount = redemption.discount_value
+        loyalty_balance = redemption.remaining_balance
+        discount_amount = round(discount_amount + redemption.discount_value, 2)
+
     taxable_amount = subtotal - discount_amount
     # MA-05: the master's global VAT rate is authoritative; the request rate is
     # only a fallback for installs with no global rate configured.
@@ -309,6 +357,24 @@ async def create_transaction(
     # is not consumed — fixing the previous fire-and-forget deduction gap.
     await _deduct_inventory(db, client.id, data.items, bool(data.allow_negative_stock))
 
+    # ---- Loyalty accrual (Phase E) ----
+    # Earn points for the identified customer on the final total, in the same
+    # transaction as the sale. Runs after any redemption so the returned balance
+    # reflects both movements.
+    loyalty_points_earned = 0
+    if data.customer_id and program:
+        accrual = await loyalty_service.accrue_points(
+            db,
+            user_id=str(current_user.id),
+            client_id=client.id,
+            customer_id=data.customer_id,
+            total_amount=total_amount,
+            program=program,
+        )
+        if accrual:
+            loyalty_points_earned = accrual.points_earned
+            loyalty_balance = accrual.new_balance
+
     await db.commit()
     await db.refresh(transaction)
 
@@ -334,6 +400,10 @@ async def create_transaction(
         customer_name=transaction.customer_name,
         customer_phone=transaction.customer_phone,
         created_at=transaction.created_at,
+        loyalty_points_earned=loyalty_points_earned or None,
+        loyalty_points_redeemed=loyalty_points_redeemed or None,
+        loyalty_discount=loyalty_discount or None,
+        loyalty_balance=loyalty_balance,
     )
 
 
@@ -476,6 +546,47 @@ async def get_invoice_document(
         discount=txn.discount_amount or 0,
     )
     return HTMLResponse(content=html)
+
+
+@router.get("/transactions/{txn_id}/escpos")
+async def get_escpos_receipt(
+    txn_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a base64 ESC/POS byte stream for thermal printing (Phase E).
+
+    The frontend streams the decoded bytes to a WebUSB / Web Bluetooth thermal
+    printer. The embedded QR is the canonical ZATCA TLV payload, so the printed
+    receipt carries the same fiscal QR as the always-Arabic HTML invoice.
+    """
+    client = await get_client_for_user(db, str(current_user.id))
+    txn = await _get_owned_transaction(db, client, txn_id)
+
+    try:
+        line_items = json.loads(txn.items_json) if txn.items_json else []
+    except (ValueError, TypeError):
+        line_items = []
+
+    issue_date = txn.created_at.strftime("%Y-%m-%d %H:%M") if txn.created_at else ""
+    payload = build_receipt_base64(
+        seller_name=client.business_name or "Store",
+        vat_number=client.vat_number or "",
+        invoice_number=txn.invoice_number,
+        issue_date=issue_date,
+        line_items=line_items,
+        subtotal=txn.subtotal or 0,
+        discount=txn.discount_amount or 0,
+        vat_amount=txn.vat_amount or 0,
+        total_amount=txn.total_amount,
+        zatca_qr=txn.zatca_qr or "",
+    )
+    return {
+        "invoice_number": txn.invoice_number,
+        "format": "escpos",
+        "encoding": "base64",
+        "data": payload,
+    }
 
 
 @router.post(
