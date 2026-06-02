@@ -64,6 +64,9 @@ class UserService:
             raise PasswordError("Current password is incorrect")
 
         user.hashed_password = hash_password(new_password)
+        # First password change clears the force-reset flag (first-login flow).
+        if getattr(user, "must_change_password", False):
+            user.must_change_password = False
         await db.commit()
         await db.refresh(user)
         logger.info("Password changed for user %s", user_id)

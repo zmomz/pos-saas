@@ -13,6 +13,7 @@ interface User {
   email: string;
   name?: string;
   role: string; // tenancy role: master | agent | client
+  must_change_password?: boolean;
   last_login?: string;
 }
 

@@ -35,6 +35,12 @@ export default function AgentDashboard() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newClientForm, setNewClientForm] = useState({ business_name: '', email: '', phone: '' });
+  // One-time credentials surfaced after provisioning a client (C-1/CL-01). Shown
+  // once in a modal so the agent can hand them over; never retrievable again.
+  const [createdCreds, setCreatedCreds] = useState<
+    { email: string; temp_password: string; email_delivered: boolean } | null
+  >(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
@@ -57,16 +63,28 @@ export default function AgentDashboard() {
   }
 
   async function handleCreateClient() {
+    setCreateError(null);
     try {
-      await createNewClient({
+      const created = await createNewClient({
         business_name: newClientForm.business_name,
         email: newClientForm.email,
         phone: newClientForm.phone,
       });
       setDialogOpen(false);
       setNewClientForm({ business_name: '', email: '', phone: '' });
+      // Surface the one-time login credentials for the new merchant.
+      if (created?.temp_password) {
+        setCreatedCreds({
+          email: created.email,
+          temp_password: created.temp_password,
+          email_delivered: !!created.email_delivered,
+        });
+      }
       loadData();
     } catch (err) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setCreateError(detail || (err instanceof Error ? err.message : 'Create client failed'));
       console.error('Create client failed:', err);
     }
   }
@@ -222,12 +240,56 @@ export default function AgentDashboard() {
                   onChange={(e) => setNewClientForm({ ...newClientForm, phone: e.target.value })}
                   className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
                 />
+                {createError && (
+                  <p className="text-sm text-red-500">{createError}</p>
+                )}
                 <div className="flex gap-2 justify-end">
                   <Button variant="outline" onClick={() => setDialogOpen(false)} className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}>
                     {t('cancel')}
                   </Button>
                   <Button onClick={handleCreateClient} className="bg-blue-600 hover:bg-blue-700 text-white">
                     {t('save')}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* One-time credentials for a newly provisioned client (C-1/CL-01) */}
+          <Dialog open={!!createdCreds} onOpenChange={(open) => !open && setCreatedCreds(null)}>
+            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+              <DialogHeader>
+                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
+                  {t('client_created') || 'Client created'}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
+                  {createdCreds?.email_delivered
+                    ? (t('credentials_emailed') || 'Login credentials were emailed to the client.')
+                    : (t('credentials_show_once') ||
+                      'Share these login credentials with the client now — they will not be shown again. They must change the password on first login.')}
+                </p>
+                <div className={`rounded-md p-3 font-mono text-sm ${isDark ? 'bg-slate-900 text-slate-200' : 'bg-gray-100 text-gray-800'}`}>
+                  <div>{t('email')}: {createdCreds?.email}</div>
+                  <div>{t('password') || 'Password'}: {createdCreds?.temp_password}</div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (createdCreds) {
+                        navigator.clipboard?.writeText(
+                          `Email: ${createdCreds.email}\nPassword: ${createdCreds.temp_password}`
+                        );
+                      }
+                    }}
+                    className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}
+                  >
+                    {t('copy') || 'Copy'}
+                  </Button>
+                  <Button onClick={() => setCreatedCreds(null)} className="bg-blue-600 hover:bg-blue-700 text-white">
+                    {t('done') || 'Done'}
                   </Button>
                 </div>
               </div>

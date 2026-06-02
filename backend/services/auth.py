@@ -75,6 +75,7 @@ class AuthService:
             "sub": user.id,
             "email": user.email,
             "role": user.role,
+            "must_change_password": bool(getattr(user, "must_change_password", False)),
         }
         if user.name:
             claims["name"] = user.name

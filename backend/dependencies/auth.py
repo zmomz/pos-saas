@@ -89,6 +89,7 @@ async def get_current_user(
         email=payload.get("email", ""),
         name=payload.get("name"),
         role=payload.get("role", "user"),
+        must_change_password=bool(payload.get("must_change_password", False)),
         last_login=last_login,
     )
 

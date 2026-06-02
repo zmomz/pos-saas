@@ -50,6 +50,19 @@ export async function getAgentBranding() {
   return response.data;
 }
 
+export interface CreatedClient {
+  id: number;
+  business_name: string;
+  email: string;
+  phone?: string;
+  subscription_fee?: number;
+  language_preference: string;
+  // One-time provisioning credentials (shown once / emailed).
+  temp_password: string;
+  must_change_password: boolean;
+  email_delivered: boolean;
+}
+
 export async function createNewClient(data: {
   business_name: string;
   email: string;
@@ -57,8 +70,8 @@ export async function createNewClient(data: {
   subscription_fee?: number;
   language_preference?: string;
   features?: string[];
-}) {
-  const response = await client.apiCall.invoke({
+}): Promise<CreatedClient> {
+  const response = await client.apiCall.invoke<CreatedClient>({
     url: '/api/v1/tenant/agent/clients',
     method: 'POST',
     data,
@@ -290,14 +303,25 @@ export async function markNotificationRead(notificationId: string) {
 }
 
 // Create Agent (Master Admin)
+export interface CreatedAgent {
+  id: number;
+  company_name: string;
+  email: string;
+  phone?: string;
+  package_type: number;
+  used_slots: number;
+  is_active: boolean;
+  temp_password: string;
+}
+
 export async function createAgent(data: {
   company_name: string;
   email: string;
   phone?: string;
   package_id?: number;
   package_type?: string;
-}) {
-  const response = await client.apiCall.invoke({
+}): Promise<CreatedAgent> {
+  const response = await client.apiCall.invoke<CreatedAgent>({
     url: '/api/v1/tenant/master/agents',
     method: 'POST',
     data,

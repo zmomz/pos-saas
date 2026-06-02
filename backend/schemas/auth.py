@@ -9,6 +9,9 @@ class UserResponse(BaseModel):
     email: str
     name: Optional[str] = None
     role: str = "user"  # user/admin
+    # True for freshly-provisioned accounts that must reset their temp password
+    # before doing anything else (consumed by the first-login reset screen).
+    must_change_password: bool = False
     last_login: Optional[datetime] = None
 
     class Config:

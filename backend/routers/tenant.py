@@ -14,6 +14,7 @@ from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from core.email import send_provisioning_email
 from core.security import hash_password
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
@@ -93,6 +94,17 @@ class CreateClientRequest(BaseModel):
     # the client overriding that default at creation time.
     language_preference: Optional[str] = None
     features: Optional[List[str]] = None
+
+
+class CreateClientResponse(ClientListItem):
+    """Returned once on client creation. Carries the one-time temp password the
+    merchant uses to log in (force-reset on first login). The credential is never
+    stored in plaintext and is only surfaced here / emailed."""
+
+    temp_password: str
+    must_change_password: bool = True
+    # True when the credentials were actually emailed; False ⇒ surface in the UI.
+    email_delivered: bool = False
 
 class DashboardStatsResponse(BaseModel):
     total_sales: float
@@ -482,37 +494,78 @@ async def get_agent_branding(
     )
 
 
-@router.post("/agent/clients", response_model=ClientListItem)
+@router.post("/agent/clients", response_model=CreateClientResponse)
 async def create_client_for_agent(
     data: CreateClientRequest,
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Agent: Create a new client (deducts slot)"""
+    """Agent: provision a new client merchant (SRS CL-01, deducts a slot).
+
+    Creates a **real login account** for the merchant (own email + generated temp
+    password, force-reset on first login) and links ``Clients.user_id`` to that
+    new user — NOT the agent — so the merchant can sign in and suspension (CL-05)
+    targets the correct account. The slot is deducted atomically (MA-02) so
+    concurrent creates cannot oversell a package.
+    """
     role_info = await get_user_role(db, str(current_user.id))
     if role_info["role"] != "agent":
         raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
 
     agent_id = role_info["entity_id"]
 
-    # Check available slots
+    email = (data.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+
     agent_result = await db.execute(select(Agents).where(Agents.id == agent_id))
     agent = agent_result.scalar_one_or_none()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    used = agent.used_slots or 0
-    if used >= (agent.package_type or 0):
-        raise HTTPException(status_code=400, detail="No available client slots. Please upgrade your package.")
+    # Reject duplicate accounts up-front (clearer than a DB integrity error).
+    existing = await db.execute(select(User).where(func.lower(User.email) == email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="A user with this email already exists")
 
-    # Create client. When the agent doesn't pick a language for the client, the
-    # client inherits the agent's default language (L10N-05).
+    # MA-02: atomic slot deduction. The guarded UPDATE only succeeds while a slot
+    # is free; rowcount==0 means the package is full (or lost a concurrent race).
+    slot_result = await db.execute(
+        update(Agents)
+        .where(
+            Agents.id == agent_id,
+            func.coalesce(Agents.used_slots, 0) < Agents.package_type,
+        )
+        .values(used_slots=func.coalesce(Agents.used_slots, 0) + 1)
+    )
+    if slot_result.rowcount == 0:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="No available client slots. Please upgrade your package.",
+        )
+
+    # Create the merchant's login account.
+    temp_password = secrets.token_urlsafe(9)
+    new_user = User(
+        id=str(uuid.uuid4()),
+        email=email,
+        name=data.business_name,
+        hashed_password=hash_password(temp_password),
+        role="user",  # tier is derived from the Clients row, not this column
+        must_change_password=True,
+        last_login=None,
+    )
+    db.add(new_user)
+
+    # When the agent doesn't pick a language, the client inherits the agent's
+    # default language (L10N-05).
     client_language = data.language_preference or agent.default_language or "en"
     new_client = Clients(
-        user_id=str(current_user.id),
+        user_id=new_user.id,  # the merchant's own account, NOT the agent's
         agent_id=agent_id,
         business_name=data.business_name,
-        email=data.email,
+        email=email,
         phone=data.phone,
         subscription_fee=data.subscription_fee or 0,
         is_active=True,
@@ -522,10 +575,8 @@ async def create_client_for_agent(
     )
     db.add(new_client)
 
-    # Deduct slot
-    await db.execute(
-        update(Agents).where(Agents.id == agent_id).values(used_slots=used + 1)
-    )
+    # Slot decrement + user + client all commit together; any failure above the
+    # commit rolls back the slot decrement too.
     await db.commit()
     await db.refresh(new_client)
 
@@ -533,7 +584,7 @@ async def create_client_for_agent(
     if data.features:
         for feature in data.features:
             cf = Client_features(
-                user_id=str(current_user.id),
+                user_id=new_user.id,
                 client_id=new_client.id,
                 feature_name=feature,
                 is_enabled=True,
@@ -541,7 +592,13 @@ async def create_client_for_agent(
             db.add(cf)
         await db.commit()
 
-    return ClientListItem(
+    # Hand over the credential: email it when SMTP is configured, otherwise the
+    # agent surfaces it from the response (dev/no-SMTP).
+    email_delivered = await send_provisioning_email(
+        to_email=email, business_name=data.business_name, temp_password=temp_password
+    )
+
+    return CreateClientResponse(
         id=new_client.id,
         business_name=new_client.business_name,
         email=new_client.email,
@@ -551,6 +608,9 @@ async def create_client_for_agent(
         zatca_enabled=False,
         language_preference=new_client.language_preference or "en",
         created_at=new_client.created_at,
+        temp_password=temp_password,
+        must_change_password=True,
+        email_delivered=email_delivered,
     )
 
 

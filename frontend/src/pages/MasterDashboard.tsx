@@ -42,6 +42,11 @@ export default function MasterDashboard() {
     package_id: '',
   });
   const [creating, setCreating] = useState(false);
+  // One-time agent login credentials surfaced after creation (MA-01) so the
+  // returned temp password isn't lost.
+  const [createdCreds, setCreatedCreds] = useState<
+    { email: string; temp_password: string } | null
+  >(null);
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
   const { isDark } = useTheme();
@@ -78,7 +83,7 @@ export default function MasterDashboard() {
     setCreating(true);
     try {
       const selectedPkg = packages.find((p) => p.id === Number(newAgentForm.package_id));
-      await createAgent({
+      const created = await createAgent({
         company_name: newAgentForm.company_name,
         email: newAgentForm.email,
         phone: newAgentForm.phone || undefined,
@@ -87,6 +92,9 @@ export default function MasterDashboard() {
       });
       setCreateDialogOpen(false);
       setNewAgentForm({ company_name: '', email: '', phone: '', package_id: '' });
+      if (created?.temp_password) {
+        setCreatedCreds({ email: created.email, temp_password: created.temp_password });
+      }
       await loadData();
     } catch (err) {
       console.error('Create agent failed:', err);
@@ -298,6 +306,45 @@ export default function MasterDashboard() {
                     className="bg-green-600 hover:bg-green-700 text-white"
                   >
                     {creating ? t('loading') : (t('create_agent') || 'Create Agent')}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* One-time credentials for a newly created agent (MA-01) */}
+          <Dialog open={!!createdCreds} onOpenChange={(open) => !open && setCreatedCreds(null)}>
+            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+              <DialogHeader>
+                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
+                  {t('agent_created') || 'Agent created'}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
+                  {t('credentials_show_once') ||
+                    'Share these login credentials with the agent now — they will not be shown again. They must change the password on first login.'}
+                </p>
+                <div className={`rounded-md p-3 font-mono text-sm ${isDark ? 'bg-slate-900 text-slate-200' : 'bg-gray-100 text-gray-800'}`}>
+                  <div>{t('email')}: {createdCreds?.email}</div>
+                  <div>{t('password') || 'Password'}: {createdCreds?.temp_password}</div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (createdCreds) {
+                        navigator.clipboard?.writeText(
+                          `Email: ${createdCreds.email}\nPassword: ${createdCreds.temp_password}`
+                        );
+                      }
+                    }}
+                    className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}
+                  >
+                    {t('copy') || 'Copy'}
+                  </Button>
+                  <Button onClick={() => setCreatedCreds(null)} className="bg-blue-600 hover:bg-blue-700 text-white">
+                    {t('done') || 'Done'}
                   </Button>
                 </div>
               </div>

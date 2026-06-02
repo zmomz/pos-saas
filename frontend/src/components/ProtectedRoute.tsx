@@ -36,6 +36,12 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to="/login" replace />;
   }
 
+  // First-login force-reset: a freshly provisioned account must change its temp
+  // password before reaching any protected page.
+  if (user.must_change_password) {
+    return <Navigate to="/force-reset" replace />;
+  }
+
   const userRole = user.role as UserRole;
 
   if (allowedRoles && allowedRoles.length > 0 && !allowedRoles.includes(userRole)) {

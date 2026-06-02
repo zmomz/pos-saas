@@ -7,6 +7,8 @@ export interface AuthUser {
   email: string;
   name?: string;
   role: string;
+  // True for freshly-provisioned accounts that must reset their temp password.
+  must_change_password?: boolean;
   last_login?: string;
 }
 

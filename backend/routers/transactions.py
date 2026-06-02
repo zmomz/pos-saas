@@ -10,13 +10,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from services.transactions import TransactionsService
-from dependencies.auth import get_current_user
+from dependencies.auth import get_admin_user, get_current_user
 from schemas.auth import UserResponse
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/entities/transactions", tags=["transactions"])
+
+
+def _fiscal_record_locked() -> HTTPException:
+    """C-6: transactions are sequenced, hashed, ZATCA-signed fiscal records.
+
+    They may only be created/mutated through the atomic POS sale path
+    (``/api/v1/pos``) and the refund/credit-note path — never via this generic
+    CRUD triad, which would bypass inventory, the per-client counter, the hash
+    chain and signing. Reads (list/get) remain owner-scoped and allowed.
+    """
+    return HTTPException(
+        status_code=403,
+        detail=(
+            "Transactions are fiscal records and cannot be created, modified, or "
+            "deleted directly. Use the POS sale (/api/v1/pos) and refund endpoints."
+        ),
+    )
 
 
 # ---------- Pydantic Schemas ----------
@@ -154,6 +171,7 @@ async def query_transactionss_all(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
+    current_user: UserResponse = Depends(get_admin_user),
     db: AsyncSession = Depends(get_db),
 ):
     # Query transactionss with filtering, sorting, and pagination without user limitation
@@ -215,23 +233,8 @@ async def create_transactions(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create a new transactions"""
-    logger.debug(f"Creating new transactions with data: {data}")
-    
-    service = TransactionsService(db)
-    try:
-        result = await service.create(data.model_dump(), user_id=str(current_user.id))
-        if not result:
-            raise HTTPException(status_code=400, detail="Failed to create transactions")
-        
-        logger.info(f"Transactions created successfully with id: {result.id}")
-        return result
-    except ValueError as e:
-        logger.error(f"Validation error creating transactions: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error creating transactions: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    """Disabled (C-6): create sales via the atomic POS endpoint instead."""
+    raise _fiscal_record_locked()
 
 
 @router.post("/batch", response_model=List[TransactionsResponse], status_code=201)
@@ -240,24 +243,8 @@ async def create_transactionss_batch(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create multiple transactionss in a single request"""
-    logger.debug(f"Batch creating {len(request.items)} transactionss")
-    
-    service = TransactionsService(db)
-    results = []
-    
-    try:
-        for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=str(current_user.id))
-            if result:
-                results.append(result)
-        
-        logger.info(f"Batch created {len(results)} transactionss successfully")
-        return results
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
+    """Disabled (C-6): create sales via the atomic POS endpoint instead."""
+    raise _fiscal_record_locked()
 
 
 @router.put("/batch", response_model=List[TransactionsResponse])
@@ -266,26 +253,8 @@ async def update_transactionss_batch(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update multiple transactionss in a single request (requires ownership)"""
-    logger.debug(f"Batch updating {len(request.items)} transactionss")
-    
-    service = TransactionsService(db)
-    results = []
-    
-    try:
-        for item in request.items:
-            # Only include non-None values for partial updates
-            update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
-            result = await service.update(item.id, update_dict, user_id=str(current_user.id))
-            if result:
-                results.append(result)
-        
-        logger.info(f"Batch updated {len(results)} transactionss successfully")
-        return results
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
+    """Disabled (C-6): fiscal records are immutable via this triad."""
+    raise _fiscal_record_locked()
 
 
 @router.put("/{id}", response_model=TransactionsResponse)
@@ -295,28 +264,8 @@ async def update_transactions(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update an existing transactions (requires ownership)"""
-    logger.debug(f"Updating transactions {id} with data: {data}")
-
-    service = TransactionsService(db)
-    try:
-        # Only include non-None values for partial updates
-        update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
-        if not result:
-            logger.warning(f"Transactions with id {id} not found for update")
-            raise HTTPException(status_code=404, detail="Transactions not found")
-        
-        logger.info(f"Transactions {id} updated successfully")
-        return result
-    except HTTPException:
-        raise
-    except ValueError as e:
-        logger.error(f"Validation error updating transactions {id}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error updating transactions {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    """Disabled (C-6): fiscal records are immutable via this triad."""
+    raise _fiscal_record_locked()
 
 
 @router.delete("/batch")
@@ -325,24 +274,8 @@ async def delete_transactionss_batch(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete multiple transactionss by their IDs (requires ownership)"""
-    logger.debug(f"Batch deleting {len(request.ids)} transactionss")
-    
-    service = TransactionsService(db)
-    deleted_count = 0
-    
-    try:
-        for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
-            if success:
-                deleted_count += 1
-        
-        logger.info(f"Batch deleted {deleted_count} transactionss successfully")
-        return {"message": f"Successfully deleted {deleted_count} transactionss", "deleted_count": deleted_count}
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
+    """Disabled (C-6): fiscal records cannot be bulk-deleted via this triad."""
+    raise _fiscal_record_locked()
 
 
 @router.delete("/{id}")
@@ -351,20 +284,5 @@ async def delete_transactions(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a single transactions by ID (requires ownership)"""
-    logger.debug(f"Deleting transactions with id: {id}")
-    
-    service = TransactionsService(db)
-    try:
-        success = await service.delete(id, user_id=str(current_user.id))
-        if not success:
-            logger.warning(f"Transactions with id {id} not found for deletion")
-            raise HTTPException(status_code=404, detail="Transactions not found")
-        
-        logger.info(f"Transactions {id} deleted successfully")
-        return {"message": "Transactions deleted successfully", "id": id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting transactions {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    """Disabled (C-6): fiscal records cannot be deleted via this triad."""
+    raise _fiscal_record_locked()

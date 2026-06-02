@@ -33,6 +33,7 @@ import WebhookManagement from './pages/WebhookManagement';
 import UserProfile from './pages/UserProfile';
 import BranchManagement from './pages/BranchManagement';
 import CustomerDisplay from './pages/CustomerDisplay';
+import ForceResetPassword from './pages/ForceResetPassword';
 import NotFound from './pages/NotFound';
 import ProtectedRoute from './components/ProtectedRoute';
 import DashboardLayout from './components/DashboardLayout';
@@ -48,6 +49,8 @@ const AppRoutes = () => (
     <Route path="/auth/callback" element={<AuthCallback />} />
     <Route path="/auth/error" element={<AuthError />} />
     <Route path="/customer-display" element={<CustomerDisplay />} />
+    {/* First-login force-password-change (consumes must_change_password) */}
+    <Route path="/force-reset" element={<ForceResetPassword />} />
 
     {/* Master admin routes */}
     <Route
