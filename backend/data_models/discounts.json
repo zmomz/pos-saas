@@ -1,0 +1,49 @@
+{
+    "title": "discounts",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "Owner user ID"
+        },
+        "code": {
+            "type": "string",
+            "description": "Discount code"
+        },
+        "type": {
+            "type": "string",
+            "description": "Type: percentage or fixed"
+        },
+        "value": {
+            "type": "number",
+            "description": "Discount value (percentage or fixed amount)"
+        },
+        "min_purchase": {
+            "type": "number",
+            "description": "Minimum purchase amount to apply"
+        },
+        "is_active": {
+            "type": "boolean",
+            "description": "Whether discount is active"
+        },
+        "usage_count": {
+            "type": "integer",
+            "description": "Number of times used"
+        },
+        "max_uses": {
+            "type": "integer",
+            "description": "Maximum number of uses"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "code",
+        "type",
+        "value"
+    ]
+}

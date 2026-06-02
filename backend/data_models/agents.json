@@ -1,0 +1,76 @@
+{
+    "title": "agents",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth system"
+        },
+        "company_name": {
+            "type": "string",
+            "description": "Agent company name"
+        },
+        "email": {
+            "type": "string",
+            "description": "Agent email"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Agent phone number"
+        },
+        "package_type": {
+            "type": "integer",
+            "description": "Package size: 10, 50, or 100 client slots"
+        },
+        "used_slots": {
+            "type": "integer",
+            "description": "Number of used client slots",
+            "default": 0
+        },
+        "logo_url": {
+            "type": "string",
+            "description": "Agent logo URL for white-labeling"
+        },
+        "primary_color": {
+            "type": "string",
+            "description": "Primary brand color hex code",
+            "default": "#3B82F6"
+        },
+        "secondary_color": {
+            "type": "string",
+            "description": "Secondary brand color hex code",
+            "default": "#1E40AF"
+        },
+        "font_family": {
+            "type": "string",
+            "description": "Font family for branding",
+            "default": "Inter"
+        },
+        "button_radius": {
+            "type": "string",
+            "description": "Button border radius",
+            "default": "8px"
+        },
+        "is_active": {
+            "type": "boolean",
+            "description": "Whether agent is active",
+            "default": true
+        },
+        "default_language": {
+            "type": "string",
+            "description": "Default language for clients",
+            "default": "en"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "company_name",
+        "email",
+        "package_type"
+    ]
+}

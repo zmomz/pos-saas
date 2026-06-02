@@ -1,0 +1,39 @@
+{
+    "title": "loyalty_points",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "client_id": {
+            "type": "integer",
+            "description": "Client ID"
+        },
+        "customer_id": {
+            "type": "integer",
+            "description": "Customer ID"
+        },
+        "points_balance": {
+            "type": "integer",
+            "description": "Current points balance"
+        },
+        "total_earned": {
+            "type": "integer",
+            "description": "Total points ever earned"
+        },
+        "total_redeemed": {
+            "type": "integer",
+            "description": "Total points ever redeemed"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "customer_id"
+    ]
+}

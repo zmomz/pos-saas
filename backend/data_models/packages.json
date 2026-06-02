@@ -1,0 +1,37 @@
+{
+    "title": "packages",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "name": {
+            "type": "string",
+            "description": "Package name"
+        },
+        "client_slots": {
+            "type": "integer",
+            "description": "Number of client slots: 10, 50, or 100"
+        },
+        "wholesale_price": {
+            "type": "number",
+            "description": "Wholesale price for agents"
+        },
+        "suggested_retail_price": {
+            "type": "number",
+            "description": "Suggested retail price per client"
+        },
+        "is_active": {
+            "type": "boolean",
+            "description": "Whether package is active",
+            "default": true
+        }
+    },
+    "required": [
+        "id",
+        "name",
+        "client_slots",
+        "wholesale_price"
+    ]
+}

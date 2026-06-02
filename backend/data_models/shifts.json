@@ -1,0 +1,71 @@
+{
+    "title": "shifts",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "client_id": {
+            "type": "integer",
+            "description": "Client ID"
+        },
+        "branch_id": {
+            "type": "integer",
+            "description": "Branch ID"
+        },
+        "staff_name": {
+            "type": "string",
+            "description": "Staff member name"
+        },
+        "start_time": {
+            "type": "string",
+            "description": "Shift start time ISO"
+        },
+        "end_time": {
+            "type": "string",
+            "description": "Shift end time ISO"
+        },
+        "opening_cash": {
+            "type": "number",
+            "description": "Opening cash amount"
+        },
+        "closing_cash": {
+            "type": "number",
+            "description": "Closing cash amount"
+        },
+        "expected_cash": {
+            "type": "number",
+            "description": "Expected cash based on transactions"
+        },
+        "cash_difference": {
+            "type": "number",
+            "description": "Difference between expected and actual"
+        },
+        "total_sales": {
+            "type": "number",
+            "description": "Total sales during shift"
+        },
+        "total_transactions": {
+            "type": "integer",
+            "description": "Number of transactions"
+        },
+        "status": {
+            "type": "string",
+            "description": "Status: open, closed"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Shift notes"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "status"
+    ]
+}

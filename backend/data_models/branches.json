@@ -1,0 +1,51 @@
+{
+    "title": "branches",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "client_id": {
+            "type": "integer",
+            "description": "Client ID"
+        },
+        "name": {
+            "type": "string",
+            "description": "Branch name"
+        },
+        "address": {
+            "type": "string",
+            "description": "Branch address"
+        },
+        "city": {
+            "type": "string",
+            "description": "City"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Branch phone"
+        },
+        "manager_name": {
+            "type": "string",
+            "description": "Branch manager name"
+        },
+        "is_active": {
+            "type": "boolean",
+            "description": "Whether branch is active"
+        },
+        "is_main": {
+            "type": "boolean",
+            "description": "Whether this is the main branch"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "name"
+    ]
+}

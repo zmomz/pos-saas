@@ -1,0 +1,40 @@
+{
+    "title": "staff_members",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "Owner user ID"
+        },
+        "name": {
+            "type": "string",
+            "description": "Staff member name"
+        },
+        "email": {
+            "type": "string",
+            "description": "Staff email"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Staff phone"
+        },
+        "role": {
+            "type": "string",
+            "description": "Role: cashier, manager, admin"
+        },
+        "is_active": {
+            "type": "boolean",
+            "description": "Whether staff is active"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "name",
+        "role"
+    ]
+}

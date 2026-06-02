@@ -1,0 +1,364 @@
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { getAgentBranding, updateBranding } from '@/lib/api';
+import { toast } from 'sonner';
+
+const fontOptions = [
+  { value: 'Inter', label: 'Inter' },
+  { value: 'Roboto', label: 'Roboto' },
+  { value: 'Poppins', label: 'Poppins' },
+  { value: 'Cairo', label: 'Cairo' },
+  { value: 'Noto Sans', label: 'Noto Sans' },
+];
+
+const radiusOptions = [
+  { value: '0px', label: '0px (Square)' },
+  { value: '4px', label: '4px (Slight)' },
+  { value: '8px', label: '8px (Medium)' },
+  { value: '12px', label: '12px (Rounded)' },
+  { value: '20px', label: '20px (Pill)' },
+];
+
+export default function BrandingEditor() {
+  const navigate = useNavigate();
+  const { language, setLanguage, t, isRTL } = useLanguage();
+
+  const [logoUrl, setLogoUrl] = useState('');
+  const [primaryColor, setPrimaryColor] = useState('#2563eb');
+  const [secondaryColor, setSecondaryColor] = useState('#1e40af');
+  const [fontFamily, setFontFamily] = useState('Inter');
+  const [buttonRadius, setButtonRadius] = useState('8px');
+  const [companyName, setCompanyName] = useState('My Company');
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadBranding();
+  }, []);
+
+  async function loadBranding() {
+    try {
+      const data = await getAgentBranding();
+      if (data) {
+        setLogoUrl(data.logo_url || '');
+        setPrimaryColor(data.primary_color || '#2563eb');
+        setSecondaryColor(data.secondary_color || '#1e40af');
+        setFontFamily(data.font_family || 'Inter');
+        setButtonRadius(data.button_radius || '8px');
+        setCompanyName(data.company_name || 'My Company');
+      }
+    } catch {
+      // Use defaults if branding not found
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await updateBranding({
+        logo_url: logoUrl,
+        primary_color: primaryColor,
+        secondary_color: secondaryColor,
+        font_family: fontFamily,
+        button_radius: buttonRadius,
+      });
+      toast.success(t('save') + ' ✓', {
+        description: 'Branding updated successfully',
+      });
+    } catch {
+      toast.error('Failed to save branding');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+        <p className="text-slate-300">{t('loading')}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-900" dir={isRTL ? 'rtl' : 'ltr'}>
+      {/* Header */}
+      <header className="border-b border-slate-700 bg-slate-800 px-6 py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              className="text-slate-300 hover:text-white hover:bg-slate-700"
+              onClick={() => navigate('/agent')}
+            >
+              ← {t('back')}
+            </Button>
+            <h1 className="text-xl font-bold text-white">
+              🎨 Brand Editor
+            </h1>
+          </div>
+          <Select
+            value={language}
+            onValueChange={(val) => setLanguage(val as Language)}
+          >
+            <SelectTrigger className="w-[140px] bg-slate-700 border-slate-600 text-white">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-slate-700 border-slate-600">
+              {languageOptions.map((opt) => (
+                <SelectItem
+                  key={opt.value}
+                  value={opt.value}
+                  className="text-white hover:bg-slate-600"
+                >
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-7xl mx-auto p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Form Panel */}
+          <Card className="bg-slate-800 border-slate-700">
+            <CardHeader>
+              <CardTitle className="text-white">{t('branding')} Settings</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {/* Logo URL */}
+              <div className="space-y-2">
+                <Label className="text-slate-300">Logo URL</Label>
+                <Input
+                  value={logoUrl}
+                  onChange={(e) => setLogoUrl(e.target.value)}
+                  placeholder="https://example.com/logo.png"
+                  className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
+                />
+              </div>
+
+              {/* Primary Color */}
+              <div className="space-y-2">
+                <Label className="text-slate-300">Primary Color</Label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={primaryColor}
+                    onChange={(e) => setPrimaryColor(e.target.value)}
+                    className="w-12 h-10 rounded border border-slate-600 cursor-pointer bg-transparent"
+                  />
+                  <Input
+                    value={primaryColor}
+                    onChange={(e) => setPrimaryColor(e.target.value)}
+                    className="bg-slate-700 border-slate-600 text-white font-mono flex-1"
+                  />
+                </div>
+              </div>
+
+              {/* Secondary Color */}
+              <div className="space-y-2">
+                <Label className="text-slate-300">Secondary Color</Label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={secondaryColor}
+                    onChange={(e) => setSecondaryColor(e.target.value)}
+                    className="w-12 h-10 rounded border border-slate-600 cursor-pointer bg-transparent"
+                  />
+                  <Input
+                    value={secondaryColor}
+                    onChange={(e) => setSecondaryColor(e.target.value)}
+                    className="bg-slate-700 border-slate-600 text-white font-mono flex-1"
+                  />
+                </div>
+              </div>
+
+              {/* Font Family */}
+              <div className="space-y-2">
+                <Label className="text-slate-300">Font Family</Label>
+                <Select value={fontFamily} onValueChange={setFontFamily}>
+                  <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-700 border-slate-600">
+                    {fontOptions.map((opt) => (
+                      <SelectItem
+                        key={opt.value}
+                        value={opt.value}
+                        className="text-white hover:bg-slate-600"
+                      >
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Button Radius */}
+              <div className="space-y-2">
+                <Label className="text-slate-300">Button Radius</Label>
+                <Select value={buttonRadius} onValueChange={setButtonRadius}>
+                  <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-700 border-slate-600">
+                    {radiusOptions.map((opt) => (
+                      <SelectItem
+                        key={opt.value}
+                        value={opt.value}
+                        className="text-white hover:bg-slate-600"
+                      >
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Save Button */}
+              <Button
+                onClick={handleSave}
+                disabled={saving}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white mt-4"
+              >
+                {saving ? t('loading') : t('save')}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Live Preview Panel */}
+          <Card className="bg-slate-800 border-slate-700">
+            <CardHeader>
+              <CardTitle className="text-white">Live Preview</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border border-slate-600 bg-slate-900 p-6 space-y-6">
+                {/* Logo Preview */}
+                {logoUrl && (
+                  <div className="flex justify-center">
+                    <img
+                      src={logoUrl}
+                      alt="Logo preview"
+                      className="max-h-16 object-contain"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
+                    />
+                  </div>
+                )}
+
+                {/* Company Name with Font */}
+                <div className="text-center">
+                  <h2
+                    className="text-2xl font-bold text-white"
+                    style={{ fontFamily }}
+                  >
+                    {companyName}
+                  </h2>
+                  <p className="text-slate-400 text-sm mt-1" style={{ fontFamily }}>
+                    Your white-label POS system
+                  </p>
+                </div>
+
+                {/* Color Swatches */}
+                <div className="flex items-center justify-center gap-4">
+                  <div className="text-center">
+                    <div
+                      className="w-16 h-16 rounded-lg border border-slate-600"
+                      style={{ backgroundColor: primaryColor }}
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Primary</p>
+                  </div>
+                  <div className="text-center">
+                    <div
+                      className="w-16 h-16 rounded-lg border border-slate-600"
+                      style={{ backgroundColor: secondaryColor }}
+                    />
+                    <p className="text-xs text-slate-400 mt-1">Secondary</p>
+                  </div>
+                </div>
+
+                {/* Sample Card */}
+                <div
+                  className="rounded-lg p-4 border"
+                  style={{
+                    borderColor: primaryColor,
+                    backgroundColor: `${primaryColor}10`,
+                  }}
+                >
+                  <h3
+                    className="font-semibold text-white mb-2"
+                    style={{ fontFamily }}
+                  >
+                    Sample Product Card
+                  </h3>
+                  <p className="text-slate-400 text-sm" style={{ fontFamily }}>
+                    This is how your branded content will appear to clients.
+                  </p>
+                  <button
+                    className="mt-3 px-4 py-2 text-white font-medium text-sm"
+                    style={{
+                      backgroundColor: primaryColor,
+                      borderRadius: buttonRadius,
+                      fontFamily,
+                    }}
+                  >
+                    Add to Cart
+                  </button>
+                </div>
+
+                {/* Sample Buttons Row */}
+                <div className="flex gap-3 justify-center flex-wrap">
+                  <button
+                    className="px-5 py-2 text-white font-medium text-sm"
+                    style={{
+                      backgroundColor: primaryColor,
+                      borderRadius: buttonRadius,
+                      fontFamily,
+                    }}
+                  >
+                    Primary Button
+                  </button>
+                  <button
+                    className="px-5 py-2 text-white font-medium text-sm"
+                    style={{
+                      backgroundColor: secondaryColor,
+                      borderRadius: buttonRadius,
+                      fontFamily,
+                    }}
+                  >
+                    Secondary Button
+                  </button>
+                </div>
+
+                {/* Font Preview */}
+                <div className="border-t border-slate-700 pt-4">
+                  <p className="text-xs text-slate-500 mb-1">Font: {fontFamily}</p>
+                  <p className="text-slate-300" style={{ fontFamily }}>
+                    The quick brown fox jumps over the lazy dog. 0123456789
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    </div>
+  );
+}

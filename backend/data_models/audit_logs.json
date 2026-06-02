@@ -1,0 +1,31 @@
+{
+    "title": "audit_logs",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User who performed action"
+        },
+        "action": {
+            "type": "string",
+            "description": "Action type: login, transaction, refund, settings_change, product_update"
+        },
+        "details": {
+            "type": "string",
+            "description": "Action details/description"
+        },
+        "ip_address": {
+            "type": "string",
+            "description": "IP address"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "action"
+    ]
+}

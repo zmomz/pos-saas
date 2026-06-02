@@ -1,0 +1,65 @@
+{
+    "title": "clients",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID from auth system"
+        },
+        "agent_id": {
+            "type": "integer",
+            "description": "Reference to agent who owns this client"
+        },
+        "business_name": {
+            "type": "string",
+            "description": "Client business name"
+        },
+        "email": {
+            "type": "string",
+            "description": "Client email"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Client phone"
+        },
+        "subscription_fee": {
+            "type": "number",
+            "description": "Monthly subscription fee"
+        },
+        "is_active": {
+            "type": "boolean",
+            "description": "Whether client is active",
+            "default": true
+        },
+        "vat_number": {
+            "type": "string",
+            "description": "ZATCA VAT registration number"
+        },
+        "invoice_counter": {
+            "type": "integer",
+            "description": "Sequential invoice counter",
+            "default": 0
+        },
+        "language_preference": {
+            "type": "string",
+            "description": "Preferred language: ar, en, hi, ur",
+            "default": "en"
+        },
+        "zatca_enabled": {
+            "type": "boolean",
+            "description": "Whether ZATCA is enabled for this client",
+            "default": false
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "agent_id",
+        "business_name",
+        "email"
+    ]
+}

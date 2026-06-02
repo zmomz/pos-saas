@@ -1,0 +1,37 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# ---- Databases / local data ----
+*.db
+*.sqlite
+*.sqlite3
+backend/app.db
+backend/tests/_test_app.db
+backend/_alembic_baseline.db
+
+# ---- Logs ----
+logs/
+*.log
+
+# ---- Environment / secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Node / frontend ----
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# ---- Editor / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

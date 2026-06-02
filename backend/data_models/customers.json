@@ -1,0 +1,43 @@
+{
+    "title": "customers",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "Owner user ID"
+        },
+        "name": {
+            "type": "string",
+            "description": "Customer full name"
+        },
+        "phone": {
+            "type": "string",
+            "description": "Customer phone number"
+        },
+        "email": {
+            "type": "string",
+            "description": "Customer email"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Additional notes"
+        },
+        "total_purchases": {
+            "type": "number",
+            "description": "Total purchase amount"
+        },
+        "visit_count": {
+            "type": "integer",
+            "description": "Number of visits"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "name"
+    ]
+}

@@ -1,0 +1,36 @@
+{
+    "title": "expenses",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "Owner user ID"
+        },
+        "category": {
+            "type": "string",
+            "description": "Expense category (rent, utilities, supplies, salary, other)"
+        },
+        "amount": {
+            "type": "number",
+            "description": "Expense amount"
+        },
+        "description": {
+            "type": "string",
+            "description": "Expense description"
+        },
+        "expense_date": {
+            "type": "string",
+            "description": "Date of expense"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "category",
+        "amount"
+    ]
+}

@@ -1,0 +1,53 @@
+{
+    "title": "webhooks",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "client_id": {
+            "type": "integer",
+            "description": "Client ID"
+        },
+        "name": {
+            "type": "string",
+            "description": "Webhook name"
+        },
+        "url": {
+            "type": "string",
+            "description": "Webhook endpoint URL"
+        },
+        "events": {
+            "type": "string",
+            "description": "Comma-separated event types: sale.completed, stock.low, customer.new"
+        },
+        "secret_key": {
+            "type": "string",
+            "description": "Secret for HMAC signature"
+        },
+        "is_active": {
+            "type": "boolean",
+            "description": "Whether webhook is active"
+        },
+        "last_triggered": {
+            "type": "string",
+            "description": "Last trigger timestamp"
+        },
+        "failure_count": {
+            "type": "integer",
+            "description": "Consecutive failure count"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "name",
+        "url",
+        "events"
+    ]
+}

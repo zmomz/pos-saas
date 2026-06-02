@@ -1,0 +1,56 @@
+{
+    "title": "purchase_orders",
+    "type": "object",
+    "properties": {
+        "id": {
+            "type": "integer",
+            "description": "Primary key, auto-increment"
+        },
+        "user_id": {
+            "type": "string",
+            "description": "User ID"
+        },
+        "client_id": {
+            "type": "integer",
+            "description": "Client ID"
+        },
+        "supplier_id": {
+            "type": "integer",
+            "description": "Supplier ID"
+        },
+        "order_number": {
+            "type": "string",
+            "description": "PO number like PO-0001"
+        },
+        "status": {
+            "type": "string",
+            "description": "Status: draft, sent, received, cancelled"
+        },
+        "total_amount": {
+            "type": "number",
+            "description": "Total order amount"
+        },
+        "items_json": {
+            "type": "string",
+            "description": "JSON array of order items"
+        },
+        "notes": {
+            "type": "string",
+            "description": "Order notes"
+        },
+        "expected_date": {
+            "type": "string",
+            "description": "Expected delivery date"
+        },
+        "received_date": {
+            "type": "string",
+            "description": "Actual received date"
+        }
+    },
+    "required": [
+        "id",
+        "user_id",
+        "order_number",
+        "status"
+    ]
+}
