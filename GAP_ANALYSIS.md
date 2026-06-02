@@ -6,6 +6,8 @@
 > **▶ Phase A completed 2026-06-02** — see [§9 Phase A implementation log](#9-phase-a-implementation-log) for the full change list, file references, and the `backend/tests/` suite. Status cells touched by Phase A are marked **✅ (Phase A)** below.
 >
 > **▶ Phase B completed 2026-06-02** — ZATCA Phase-2 cryptography is now **real**: per-client EC secp256k1 keypair + PKCS#10 EGS CSR, a verifiable ECDSA-SHA256 cryptographic stamp (the HMAC placeholder is gone), AES-256-GCM secrets at rest, a per-client PIH hash chain, 6-year invoice retention, a sandbox/simulation/production toggle, and a Fatoora onboarding/reporting API client that fails closed (503) until a gateway is configured. See [§10 Phase B implementation log](#10-phase-b-implementation-log). The suite is now **27 tests, all passing**. Cells touched by Phase B are marked **✅ (Phase B)** / **🟡 (Phase B)** below.
+>
+> **▶ Phase C completed 2026-06-02** — the required product features are wired and enforced: master **agent provisioning** (creates a real login + temp password), **slot refill**, a master-set **global VAT rate** that agents/clients inherit and the POS applies authoritatively, **split/mixed payment breakdown**, an **always-Arabic invoice document** endpoint + **email receipts**, **automated low-stock alerts** on each sale, **per-client feature enforcement** with an agent runtime toggle, and an **audit-log middleware** that records every authenticated mutation. See [§11 Phase C implementation log](#11-phase-c-implementation-log). The suite is now **42 tests, all passing**. Cells touched by Phase C are marked **✅ (Phase C)** / **🟡 (Phase C)** below.
 
 ## Legend
 - ✅ **Implemented** — real working logic.
@@ -34,14 +36,14 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 
 | ID | Requirement | Status | Evidence / Gap |
 |----|-------------|--------|----------------|
-| MA-01 | Master creates agent (company, email, phone, package) | 🔴 Missing | Frontend `createAgent` calls `POST /api/v1/tenant/master/agents` (`lib/api.ts:282`) but **no such endpoint exists** — `routers/tenant.py` only has `GET /master/agents` and `POST /master/agents/{id}/toggle`. A generic `POST /api/v1/entities/agents` exists (`routers/agents.py`) but isn't master-scoped and isn't what the UI calls. |
-| MA-02 | Deduct one slot on client creation | ✅ Implemented | `routers/tenant.py:284` checks `used_slots` vs `package_type`, increments on create. |
+| MA-01 | Master creates agent (company, email, phone, package) | ✅ **(Phase C)** | `POST /api/v1/tenant/master/agents` (`routers/tenant.py`) provisions a **real login account** (email + generated `temp_password`) **and** the linked `Agents` row, so the new agent can sign in immediately and resolves as an agent. Accepts `package_id` (→ `client_slots`) or explicit `slots`; rejects duplicate email (409). Tested in `tests/test_phase_c_master.py`. |
+| MA-02 | Deduct one slot on client creation | ✅ Implemented | `routers/tenant.py` checks `used_slots` vs `package_type`, increments on create. |
 | MA-03 | Master sees used vs remaining slots | ✅ Implemented | `tenant.py` `AgentStatsResponse` + `remaining_slots` calc. |
-| MA-04 | Master refills/adds slots | 🔴 Missing | No endpoint to change `package_type`/add slots. |
-| MA-05 | Master sets global tax rate; agents inherit, can't override | 🔴 Missing | VAT is per-product (`models/products.py`, default 15.0); no global tax setting or inheritance. POS hardcodes 15% (`POSTerminal.tsx`). |
+| MA-04 | Master refills/adds slots | ✅ **(Phase C)** | `POST /api/v1/tenant/master/agents/{id}/slots` adds N client slots to `package_type` (master-only, positive-int validated). Tested in `tests/test_phase_c_master.py`. |
+| MA-05 | Master sets global tax rate; agents inherit, can't override | ✅ **(Phase C)** | New `system_settings` store + `services/system_settings.py`: `PUT /api/v1/tenant/master/tax-rate` (master) sets the global VAT; `GET /api/v1/tenant/tax-rate` returns the inherited rate. `routers/pos.py` resolves the **effective** rate via `get_effective_tax_rate` — the global rate **overrides** any per-request `vat_rate`, so agents/clients cannot override it. Tested (5% global applied to a sale) in `tests/test_phase_c_master.py`. |
 | AG-01 | Agent uploads logo to cloud bucket | 🟡 Partial | `routers/storage.py` issues presigned upload URLs but requires external `OSS_SERVICE_URL`/`OSS_API_KEY` (an atoms-style OSS); not a self-hosted/S3 setup. `agents.logo_url` stores the result. |
 | AG-02 | Agent sets primary/secondary color, radius, font | ✅ Implemented | Fields on `models/agents.py`; editor `BrandingEditor.tsx`; persisted via `PUT /api/v1/branding/update` (`routers/features.py:445`). |
-| AG-03 | Agent toggles features per client | 🟡 Partial | `agent_features`/`client_features` tables + features created on client creation (`tenant.py`), but **no runtime per-client toggle endpoint** and features aren't enforced in the UI/route gating. |
+| AG-03 | Agent toggles features per client | ✅ **(Phase C)** | `POST /api/v1/tenant/agent/clients/{client_id}/features` upserts a `client_features` flag at runtime (agent-scoped to their own clients). Enforced by `dependencies/features.require_feature` (default-on; a flag set to `False` 403s the gated route) — demonstrated on the POS email-receipt endpoint. Tested in `tests/test_phase_c_features.py`. |
 | AG-04 | Client login dynamically loads agent theme | ✅ **(Phase A)** | New `frontend/src/contexts/BrandingContext.tsx` fetches agent/client branding on login and applies it at runtime: hex→HSL conversion sets `--primary`/`--ring`/`--accent`/`--radius` CSS variables, `font-family`, and exposes `logoUrl`. Cleared on logout. Wired in `App.tsx` (`<BrandingProvider>`). White-labeling now renders. |
 | — | Revenue split / commission due to master | 🔴 Missing | `packages` has wholesale/retail price fields only; `MasterDashboard.tsx` shows a hardcoded `used_slots * 50` mock. No billing/commission tables or calc. |
 | — | Row-level security (client own data; agent own clients) | ✅ Implemented | `user_id`/`agent_id` scoping in services + `tenant.py`. (Note: enforced in service layer, not via `X-Tenant-ID` header as SRS §5.5 suggests — header is unused.) |
@@ -66,9 +68,9 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 | ID | Requirement | Status | Evidence / Gap |
 |----|-------------|--------|----------------|
 | POS-01 | Cart: items, qty, discounts, taxes | 🟡 Partial | `POSTerminal.tsx` cart + per-item discount; **VAT hardcoded 15%** (no per-product/global rate). |
-| POS-02 | Multiple payment methods (cash/card/transfer/loyalty) | 🟠 Stub | Single `payment_method` string; **no split/breakdown** (cash+card), no loyalty redemption in pay flow. |
-| POS-03 | Print ZATCA invoice (thermal/A4) + QR | 🟡 Partial | QR (TLV) rendered on receipt; **browser-print only**, no thermal/ESC-POS, no A4 PDF. |
-| POS-04 | Send invoice via email/SMS | 🔴 Missing | No email/SMS sending anywhere (stub logger only). |
+| POS-02 | Multiple payment methods (cash/card/transfer/loyalty) | 🟡 **(Phase C)** | `create_transaction` accepts an optional `payments: [{method, amount}]` split breakdown, **validates the per-method amounts sum to the invoice total** (400 otherwise), stores it in the new `transactions.payment_breakdown` column, and derives `payment_method` (`"mixed"` when >1). Returned on the transaction + list responses. *(Loyalty accrual/redemption in the pay flow is still Phase E.)* Tested in `tests/test_phase_c_pos.py`. |
+| POS-03 | Print ZATCA invoice (thermal/A4) + QR | 🟡 **(Phase C)** | New `GET /api/v1/pos/transactions/{id}/invoice` renders the full **always-Arabic** ZATCA tax-invoice document (RTL, QR, totals) server-side, print-to-PDF ready in any browser. *(Still no thermal/ESC-POS path, and server-side PDF bytes need a headless renderer (WeasyPrint) in front of this HTML.)* Tested in `tests/test_phase_c_pos.py`. |
+| POS-04 | Send invoice via email/SMS | 🟡 **(Phase C)** | `POST /api/v1/pos/transactions/{id}/email` sends a receipt via `EmailService` (gated by the per-client `email_receipts` feature flag). Still **stub-logs until SMTP is configured**, and no SMS path. Tested in `tests/test_phase_c_pos.py`. |
 | POS-05 | Offline mode (mobile) + sync | 🔴 Missing | No mobile app, no service worker/IndexedDB, no sync queue. |
 | POS-06 | Product search by barcode (camera) / name | 🟡 Partial | Keyboard/"scanner-as-keyboard" barcode match; **no camera**; name search limited. |
 | POS-07 | Return/refund with ZATCA credit note | 🟡 Partial | Refund creates a negative-amount transaction; **no formal credit-note doc, no link to original invoice**. |
@@ -87,7 +89,7 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 | ZA-05 | 6-year retention | ✅ **(Phase B)** | Every signed invoice is archived in `zatca_documents` with `retention_until` computed from `ZATCA_RETENTION_YEARS` (default 6). Retrievable via `GET /api/v1/zatca/documents`. *(Cold-storage/backup of the archive itself is still ops-side.)* |
 | ZA-06 | Sandbox/test mode | ✅ **(Phase B)** | `ZATCA_ENVIRONMENT` = `sandbox` \| `simulation` \| `production` selects the Fatoora gateway URL **and** the CSR certificate-template-name; defaults to sandbox and fails closed until explicitly opted in. |
 | — | Phase-2 reporting/clearance within 24h | 🟡 **(Phase B)** | `POST /api/v1/zatca/invoices/{doc}/report?clearance=` submits to the Fatoora reporting/clearance endpoints (`ZatcaApiClient.submit_invoice`) and records the response/status on the document. **No scheduler yet** — submission is caller-triggered, not an automatic 24h background job. |
-| — | **Receipts/quotations always Arabic** | 🟡 Partial | PDF/HTML invoice (`production.py` `PDFInvoiceService`) is hardcoded `dir="rtl" lang="ar"` ✅; but the **on-screen POS receipt follows the UI language** (not forced Arabic), and **quotations don't exist** at all. *(Phase D.)* |
+| — | **Receipts/quotations always Arabic** | 🟡 **(Phase C)** | The server-rendered invoice document (`GET /api/v1/pos/transactions/{id}/invoice`, `PDFInvoiceService`) is forced `dir="rtl" lang="ar"` regardless of UI language ✅ (Phase C test asserts it). Still outstanding: the **on-screen POS receipt follows the UI language**, and **quotations don't exist** at all. *(Phase D.)* |
 
 > **Bottom line (post-Phase B):** ZATCA is no longer a QR-only skeleton — the cryptography is real (EC keypair + EGS CSR, ECDSA stamp, encrypted secrets, PIH chain, 6-yr retention, sandbox/prod toggle, onboarding + reporting client). **Remaining before a KSA go-live:** (1) embed the stamp as a XAdES `ds:Signature` envelope in the UBL per the official spec; (2) run live onboarding/clearance against a real Fatoora gateway (the client fails closed until configured); (3) add the automatic 24h clearance/reporting background job. These are the field-SDK / live-credential steps; the in-app cryptographic foundation is now in place.
 
@@ -110,7 +112,7 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 ### 🔴 Critical
 | Item | Status | Evidence / Gap |
 |------|--------|----------------|
-| Granular role permissions (refund/reports/edit) | 🟠 Stub | `permissions` table + grant/revoke (`production.py`) exist but **never enforced** on any route. |
+| Granular role permissions (refund/reports/edit) | 🟡 **(Phase C)** | **Per-client feature flags are now enforced** via `dependencies/features.require_feature` (default-on; agent toggle at `.../clients/{id}/features`). The separate `permissions` grant/revoke table (per-staff action permissions) is still **not enforced** on routes — that finer-grained layer remains. |
 | Session mgmt (refresh tokens, forced logout, timeout) | 🟡 **(Phase A)** | Refresh tokens added: login/register return a `refresh_token`; `POST /api/v1/auth/refresh` mints new access tokens; access/refresh tokens carry a `type` claim and are not interchangeable. No server-side revocation store yet (forced logout still relies on client discard). Tested in `tests/test_auth.py`. |
 | Rate limiting | ✅ Implemented | `RateLimitMiddleware` (token bucket) in `middlewares/production.py` — **but in-memory only** (won't scale across replicas); confirm it's added in `main.py`. |
 | Input validation/sanitization | 🟡 Partial | Pydantic + max-body middleware; no business-rule validation (price>0, etc.). |
@@ -118,7 +120,7 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 | DB migrations (Alembic) | 🟡 **(Phase A)** | `alembic/env.py` now resolves the DB URL from app settings (async-normalized) and supports offline + online modes; `alembic upgrade head` applies the existing revision chain to a fresh DB (verified). Runtime `create_all` still used for dev convenience. |
 | Transaction atomicity | ✅ **(Phase A)** | POS sale + inventory now atomic — see §3. |
 | Data backup/recovery | 🔴 Missing | None. |
-| Audit trail completeness | 🟠 Stub | `audit_logs` is a CRUD table; **not written automatically** on mutations. |
+| Audit trail completeness | 🟡 **(Phase C)** | New `AuditLogMiddleware` (`middlewares/audit.py`) auto-writes an `audit_logs` row for **every authenticated, successful mutation** (POST/PUT/PATCH/DELETE on `/api/v1`, auth paths excluded), resolving the actor from the bearer token; writes are best-effort in their own session so they never break a request. Tested in `tests/test_phase_c_audit.py`. *(Capturing before/after field-level diffs is still future work.)* |
 | ZATCA full compliance | 🟡 **(Phase B)** | Real crypto/onboarding/retention done (see §4); XAdES envelope, live clearance, and the 24h auto-submit job remain. |
 
 ### 🟠 Important
@@ -129,16 +131,16 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 | Structured logging | ✅ Implemented | JSON formatter + correlation IDs (`middlewares/production.py`); **local files only**, no aggregation. |
 | Performance monitoring | 🟡 Partial | In-memory p95/latency metrics (`production.py`); lost on restart. |
 | PDF receipt/invoice export | 🟡 Partial | `PDFInvoiceService` returns **HTML only** (needs a renderer); CSV export exists (`features.py:636`). |
-| Email notifications | 🟡 **(Phase A)** | `EmailService` now reachable via `POST /api/v1/integrations/email/send` (still stub-logs until SMTP configured). |
-| Low-stock alerts | 🟡 Partial | On-demand `/products/low-stock` + `/inventory/alerts` exist (`features.py`); **no automated push/email**. |
+| Email notifications | 🟡 **(Phase A)** | `EmailService` reachable via `POST /api/v1/integrations/email/send` and now also drives receipts (POS-04) + low-stock alerts (still stub-logs until SMTP configured). |
+| Low-stock alerts | 🟡 **(Phase C)** | On-demand `/products/low-stock` + `/inventory/alerts` plus **automated** alerts: `create_transaction` fires a low-stock email (best-effort, post-commit) for any sold product that drops to/below threshold. Delivery is stub/log until SMTP configured. Covered in `tests/test_phase_c_pos.py`. |
 | Supplier & purchase orders | 🟠 CRUD-only | Tables/CRUD only; no PO workflow/receiving. |
 | Shift/cash drawer | 🟡 Partial | `routers/shifts.py` open/close CRUD; no cash-difference calc/validation. |
-| Payment method breakdown | 🔴 Missing | Single string; no per-method amounts. |
+| Payment method breakdown | 🟡 **(Phase C)** | `transactions.payment_breakdown` column + validated `payments[]` on POS create (see POS-02). Loyalty redemption in the pay flow still pending. |
 | Multi-branch | 🟡 Partial | `branches` + `branch_id` fields; branch isolation not consistently enforced in queries. |
 | User profile / **change password** | ✅ **(Phase A)** | `POST /api/v1/users/change-password` (verifies current password, rejects no-op/wrong) added in `routers/user.py` + `services/user.py`; frontend `changePassword()` wrapper in `lib/api.ts`. Tested in `tests/test_auth.py`. |
 | Bulk import/export | ✅ **(Phase A)** | `BulkImportService` wired via `POST /api/v1/integrations/bulk-import/products` — validates the CSV **and inserts** valid rows for the client. Tested in `tests/test_integrations.py`. (Customer import still validate-only.) |
 | Global search & filtering | ✅ **(Phase A)** | `SearchService.global_search` wired via `GET /api/v1/integrations/search?q=` (user-scoped). Tested in `tests/test_integrations.py`. |
-| Server-side pagination | ✅ Implemented (backend) | All entity lists take `skip`/`limit`; **frontend mostly requests large `limit` (100–2000) and renders all** — effectively unpaginated UX. |
+| Server-side pagination | 🟡 **(Phase C)** | Backend lists already take `skip`/`limit`. Frontend now has a reusable `DataPagination` control (`components/DataPagination.tsx`) wired into **ProductManagement** (10/page, bounded DOM). Remaining list pages still render large fetches — roll the same control out across them. |
 
 ### 🟡 Nice-to-have
 | Item | Status |
@@ -161,8 +163,8 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 
 1. ~~**Orphaned service code**~~ — **(Phase A)** Stripe, webhooks, email, bulk-import and search wired (`routers/payment.py`, `routers/integrations.py`). **(Phase B)** ZATCA XML/signing/reporting now wired via `routers/zatca.py` (`zatca_service.generate_xml_invoice` is reached when signing). No orphaned ZATCA code remains.
 2. ~~**White-labeling doesn't render** (AG-04)~~ — **(Phase A)** branding now applied at runtime via `BrandingContext`.
-3. **No real auth lifecycle** — **(Phase A, partial)** refresh tokens, `is_active` enforcement, and change-password are done; **permissions still unenforced** and there is no token-revocation store.
-4. **Data-integrity risks** — **(Phase A, partial)** sale/inventory now atomic and Alembic is functional; backups and full audit-log auto-writing still missing.
+3. **No real auth lifecycle** — **(Phase A + C)** refresh tokens, `is_active` enforcement, change-password, and **per-client feature enforcement** (Phase C) are done; the finer-grained per-staff `permissions` table and a token-revocation store are still pending.
+4. **Data-integrity risks** — **(Phase A + C)** sale/inventory atomic, Alembic functional, and the **audit log is now auto-written** on every authenticated mutation (Phase C); data backup/recovery still missing.
 5. ~~**ZATCA is a façade**~~ — **(Phase B)** real ECDSA stamp, EGS CSR + CSID onboarding, AES-256 secrets, PIH chain, 6-yr retention, sandbox/prod toggle, reporting client. Residual gaps: XAdES envelope embedding, live-gateway clearance, and the 24h auto-submit job.
 6. **No mobile / offline** — an entire SRS pillar (§2.3, §3.4 POS-05) is absent.
 
@@ -181,7 +183,7 @@ Aligns with the SRS author's "top 5" and adds the integrity/white-label blockers
 
 **Phase B — ZATCA Phase-2 (legal, 2–3 wks) — ✅ DONE (2026-06-02)** — real EC keypair + EGS CSR, ECDSA cryptographic stamp/CSID, AES-256 cert/secret storage, sandbox/simulation/production toggle, 6-yr retention, and a Fatoora onboarding + reporting/clearance API client (fails closed to 503 until a gateway is configured). *Residual (needs live gateway / field SDK, tracked in §10 follow-ups):* XAdES `ds:Signature` envelope embedding, live clearance against a real Fatoora endpoint, and an automatic 24h clearance/reporting background job.
 
-**Phase C — required product features (2–4 wks)** — master agent-create (MA-01) + slot refill (MA-04) + global tax (MA-05); PDF invoices; email receipts (POS-04); payment breakdown; automated low-stock alerts; per-client feature enforcement; auto-write audit log; frontend pagination.
+**Phase C — required product features (2–4 wks) — ✅ DONE (2026-06-02)** — master agent-create (MA-01) + slot refill (MA-04) + global tax (MA-05); always-Arabic invoice document; email receipts (POS-04); payment breakdown; automated low-stock alerts; per-client feature enforcement; auto-write audit log; frontend pagination (ProductManagement). See [§11](#11-phase-c-implementation-log). *Residual:* SMTP/SMS delivery, server-side PDF bytes (headless renderer), thermal/ESC-POS, per-staff `permissions` enforcement, pagination rollout to remaining list pages.
 
 **Phase D — Arabic-output rule & polish** — force receipts **and** quotations to Arabic regardless of UI language; add a **quotation** feature (missing entirely); Arabic-Indic digit formatter; agent-default language.
 
@@ -243,3 +245,36 @@ Unit: keypair/CSR validity (VAT + serial present in DER), stamp sign/verify roun
 
 ### Known follow-ups deferred to later phases
 **XAdES `ds:Signature` envelope** embedding into the UBL (current stamp is a real but detached ECDSA signature); **live clearance** against a real Fatoora gateway (client is wired but fails closed until configured); **automatic 24h clearance/reporting background job** (submission is currently caller-triggered — no scheduler). Carried over from Phase A: token-revocation store, per-agent Stripe creds, real SMTP/HTTP delivery, permission enforcement, auto-written audit log.
+
+---
+
+## 11. Phase C implementation log
+
+Completed **2026-06-02**. The required product features are wired and enforced.
+The suite now has **42 tests** (27 prior + 15 Phase C), all green via
+`python -m pytest`.
+
+### Backend changes
+| Area | Files | What changed |
+|------|-------|--------------|
+| Master agent provisioning (MA-01) | `routers/tenant.py` | `POST /master/agents` creates a login `User` (email + `secrets`-generated temp password, bcrypt-hashed) **and** the linked `Agents` row; resolves `client_slots` from a `package_id` or explicit `slots`; 409 on duplicate email. |
+| Slot refill (MA-04) | `routers/tenant.py` | `POST /master/agents/{id}/slots` adds N slots to `package_type` (master-only). |
+| Global tax rate (MA-05) | `models/system_settings.py` (new), `services/system_settings.py` (new), `routers/tenant.py`, `routers/pos.py` | Platform key/value store; `GET /tenant/tax-rate` + `PUT /master/tax-rate`; POS resolves the **effective** VAT via `get_effective_tax_rate` (global rate overrides per-request `vat_rate`). |
+| Payment breakdown (POS-02) | `models/transactions.py`, `routers/pos.py` | New `payment_breakdown` column; `payments[]` validated to sum to total; `payment_method` derived (`mixed`). |
+| Invoice document + email (POS-03/04) | `routers/pos.py` | `GET /pos/transactions/{id}/invoice` (always-Arabic HTML via `PDFInvoiceService`); `POST /pos/transactions/{id}/email` (gated by `email_receipts` feature). |
+| Automated low-stock alerts | `routers/pos.py` | Post-commit best-effort `EmailService.send_low_stock_alert` for sold products at/below threshold. |
+| Per-client feature enforcement (AG-03) | `dependencies/features.py` (new), `routers/tenant.py` | `require_feature(name)` dependency (default-on; `is_enabled=False` → 403); `POST /agent/clients/{id}/features` runtime toggle; `POST /agent/clients/{id}/toggle` suspend/reactivate (CL-05). |
+| Auto-write audit log | `middlewares/audit.py` (new), `services/audit.py` (new), `main.py` | Middleware records authenticated mutations to `audit_logs` (own session, best-effort, auth paths skipped). |
+| Migration | `alembic/versions/c2d3e4f5a6b7_phase_c.py` (new) | Creates `system_settings`, adds `transactions.payment_breakdown`; `alembic upgrade head` applies the full chain to a fresh DB (verified). |
+
+### Frontend changes
+| Area | Files | What changed |
+|------|-------|--------------|
+| Pagination | `components/DataPagination.tsx` (new), `pages/ProductManagement.tsx` | Reusable pagination control; ProductManagement now pages its list (10/page) instead of rendering everything. |
+| API wrappers | `lib/api.ts` | `addAgentSlots`, `getTaxRate`, `setGlobalTaxRate`, `setClientFeature`, `emailReceipt`, `invoiceDocumentPath`. |
+
+### Tests (`backend/tests/`)
+`test_phase_c_master.py` (agent provisioning + login + role, duplicate-email 409, slot refill, global-tax set/get + 5% applied to a sale + non-master 403), `test_phase_c_pos.py` (split payment ok/mismatch, always-Arabic invoice doc, email receipt, low-stock sale succeeds), `test_phase_c_features.py` (agent disables client feature → 403, cross-agent 404, suspend blocks auth), `test_phase_c_audit.py` (mutation writes a row, GET does not).
+
+### Known follow-ups deferred to later phases
+Real SMTP/SMS delivery; server-side **PDF bytes** (headless renderer in front of the Arabic HTML) + thermal/ESC-POS; loyalty redemption in the pay flow; per-staff `permissions` enforcement; pagination rollout to the remaining list pages; field-level audit diffs. Carried over: token-revocation store, per-agent Stripe creds, data backup/recovery. **Phase D** (force on-screen receipts to Arabic + add quotations + Arabic-Indic digits + agent-default language) and **Phase E** (mobile/offline, Sentry, analytics) remain.

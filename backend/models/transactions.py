@@ -16,6 +16,10 @@ class Transactions(Base):
     discount_amount = Column(Float, nullable=True, default=0, server_default='0')
     total_amount = Column(Float, nullable=False)
     payment_method = Column(String, nullable=False)
+    # JSON array of {"method": str, "amount": float} for split/mixed tenders
+    # (cash+card, etc.). Null/empty for single-tender sales where payment_method
+    # alone is sufficient. See POS-02 in the gap analysis.
+    payment_breakdown = Column(String, nullable=True)
     status = Column(String, nullable=True, default='completed', server_default='completed')
     zatca_qr = Column(String, nullable=True)
     zatca_hash = Column(String, nullable=True)

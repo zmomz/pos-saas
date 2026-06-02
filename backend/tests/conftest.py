@@ -114,6 +114,72 @@ async def make_client_account(client: AsyncClient, is_active: bool = True):
     return user, token, client_id
 
 
+async def make_master_account(client: AsyncClient):
+    """Register a user and promote them to platform master (User.role='admin').
+
+    Role resolution (``get_user_role``) treats an admin account with no agent/client
+    row as master. Returns (user_dict, token).
+    """
+    from sqlalchemy import update
+
+    from models.auth import User
+
+    user, token, _ = await register_user(client)
+    async with db_manager.async_session_maker() as db:
+        await db.execute(update(User).where(User.id == user["id"]).values(role="admin"))
+        await db.commit()
+    return user, token
+
+
+async def make_agent_account(client: AsyncClient, package_type: int = 5):
+    """Register a user and attach an owning ``Agents`` row so they resolve as agent.
+
+    Returns (user_dict, token, agent_id).
+    """
+    user, token, _ = await register_user(client)
+    async with db_manager.async_session_maker() as db:
+        agent = Agents(
+            user_id=user["id"],
+            company_name="Agent Co",
+            email=unique_email(),
+            package_type=package_type,
+            used_slots=0,
+            is_active=True,
+        )
+        db.add(agent)
+        await db.commit()
+        await db.refresh(agent)
+        return user, token, agent.id
+
+
+async def make_client_under_agent(client: AsyncClient, agent_id: int, is_active: bool = True):
+    """Register a real login user and attach a ``Clients`` row under ``agent_id``.
+
+    Returns (user_dict, token, client_id).
+    """
+    email = unique_email()
+    resp = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": "Password123", "name": "Merchant"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    user, token = body["user"], body["token"]
+    async with db_manager.async_session_maker() as db:
+        merchant = Clients(
+            user_id=user["id"],
+            agent_id=agent_id,
+            business_name="Shop",
+            email=email,
+            is_active=is_active,
+            invoice_counter=0,
+        )
+        db.add(merchant)
+        await db.commit()
+        await db.refresh(merchant)
+        return user, token, merchant.id
+
+
 async def add_product(client_id: int, user_id: str, name: str = "Widget", quantity: int = 5, price: float = 10.0):
     async with db_manager.async_session_maker() as db:
         product = Products(

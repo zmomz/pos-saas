@@ -24,7 +24,10 @@ import {
   updateProduct,
   deleteProduct,
 } from '@/lib/api';
+import { DataPagination } from '@/components/DataPagination';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+
+const PAGE_SIZE = 10;
 
 interface Product {
   id: number;
@@ -65,6 +68,7 @@ const emptyForm: ProductFormData = {
 
 export default function ProductManagement() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -99,10 +103,13 @@ export default function ProductManagement() {
 
   useEffect(() => {
     const timeout = setTimeout(() => {
+      setPage(1); // reset to first page whenever the filter/search changes
       loadProducts();
     }, 300);
     return () => clearTimeout(timeout);
   }, [search, categoryFilter]);
+
+  const pagedProducts = products.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const totalProducts = products.length;
   const lowStockCount = products.filter((p) => p.quantity < 10).length;
@@ -424,7 +431,7 @@ export default function ProductManagement() {
                   </td>
                 </tr>
               ) : (
-                products.map((product) => (
+                pagedProducts.map((product) => (
                   <tr key={product.id} className="border-t border-slate-700 text-slate-300">
                     <td className="p-3">
                       <div>
@@ -489,6 +496,13 @@ export default function ProductManagement() {
             </tbody>
           </table>
         </div>
+
+        <DataPagination
+          page={page}
+          pageSize={PAGE_SIZE}
+          total={products.length}
+          onPageChange={setPage}
+        />
       </main>
 
       {/* Edit Dialog */}

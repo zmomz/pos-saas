@@ -88,6 +88,13 @@ app = FastAPI(
 
 
 # MODULE_MIDDLEWARE_START
+# Audit trail: records authenticated mutations to audit_logs. Added before CORS
+# so that, at request time, it runs *after* CORS (Starlette executes middleware in
+# reverse order of registration) and therefore only sees real, CORS-approved calls.
+from middlewares.audit import AuditLogMiddleware  # noqa: E402
+
+app.add_middleware(AuditLogMiddleware)
+
 # CORS policy is environment-aware — see core/cors.py. Set ALLOWED_ORIGINS to lock
 # down to specific origins in production.
 app.add_middleware(CORSMiddleware, **get_cors_config())

@@ -6,16 +6,20 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
+from dependencies.features import require_feature
 from schemas.auth import UserResponse
 from models.clients import Clients
 from models.products import Products
 from models.transactions import Transactions
+from services.production import EmailService, LowStockChecker, PDFInvoiceService
+from services.system_settings import get_effective_tax_rate
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +35,23 @@ class CartItem(BaseModel):
     discount: Optional[float] = 0
 
 
+class PaymentEntry(BaseModel):
+    """One tender line of a (possibly split) payment, e.g. cash + card."""
+
+    method: str  # "cash", "card", "transfer", "loyalty"
+    amount: float
+
+
 class CreateTransactionRequest(BaseModel):
     items: List[CartItem]
     payment_method: str  # "cash", "card", "mixed"
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     discount_amount: Optional[float] = 0
-    vat_rate: Optional[float] = 15.0  # Default 15% VAT for Saudi Arabia
+    vat_rate: Optional[float] = 15.0  # fallback; the global rate (MA-05) wins when set
+    # Optional split-tender breakdown (POS-02). When given, the per-method amounts
+    # must sum to the invoice total; payment_method is derived ("mixed" if >1).
+    payments: Optional[List[PaymentEntry]] = None
     # When False (default) a sale is rejected if any line exceeds available stock.
     # The sale and the stock deduction are committed together in one transaction.
     allow_negative_stock: Optional[bool] = False
@@ -51,6 +65,7 @@ class TransactionResponse(BaseModel):
     discount_amount: float
     total_amount: float
     payment_method: str
+    payment_breakdown: Optional[str] = None
     status: str
     zatca_qr: Optional[str] = None
     zatca_hash: Optional[str] = None
@@ -195,9 +210,30 @@ async def create_transaction(
 
     discount_amount = data.discount_amount or 0
     taxable_amount = subtotal - discount_amount
-    vat_rate = data.vat_rate if data.vat_rate is not None else 15.0
+    # MA-05: the master's global VAT rate is authoritative; the request rate is
+    # only a fallback for installs with no global rate configured.
+    vat_rate = await get_effective_tax_rate(db, data.vat_rate)
     vat_amount = round(taxable_amount * (vat_rate / 100), 2)
     total_amount = round(taxable_amount + vat_amount, 2)
+
+    # ---- Payment breakdown (POS-02): validate + summarise split tenders ----
+    payment_breakdown_json: Optional[str] = None
+    payment_method = data.payment_method
+    if data.payments:
+        paid_total = round(sum(p.amount for p in data.payments), 2)
+        if abs(paid_total - total_amount) > 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Payment breakdown total {paid_total:.2f} does not match "
+                    f"invoice total {total_amount:.2f}"
+                ),
+            )
+        payment_breakdown_json = json.dumps(
+            [p.model_dump() for p in data.payments], ensure_ascii=False
+        )
+        methods = [p.method for p in data.payments]
+        payment_method = "mixed" if len(set(methods)) > 1 else methods[0]
 
     # Increment invoice counter
     current_counter = (client.invoice_counter or 0) + 1
@@ -255,7 +291,8 @@ async def create_transaction(
         vat_amount=vat_amount,
         discount_amount=discount_amount,
         total_amount=total_amount,
-        payment_method=data.payment_method,
+        payment_method=payment_method,
+        payment_breakdown=payment_breakdown_json,
         status="completed",
         zatca_qr=zatca_qr,
         zatca_hash=zatca_hash,
@@ -275,6 +312,12 @@ async def create_transaction(
     await db.commit()
     await db.refresh(transaction)
 
+    # ---- Automated low-stock alerts (best-effort, post-commit) ----
+    # After the sale is durably persisted, notify the merchant about any sold
+    # product that has fallen to/below the threshold. Never blocks or fails the
+    # sale — alert dispatch is in stub/log mode until SMTP is configured.
+    await _maybe_send_low_stock_alerts(db, client, data.items)
+
     return TransactionResponse(
         id=transaction.id,
         invoice_number=transaction.invoice_number,
@@ -283,6 +326,7 @@ async def create_transaction(
         discount_amount=transaction.discount_amount or 0,
         total_amount=transaction.total_amount,
         payment_method=transaction.payment_method,
+        payment_breakdown=transaction.payment_breakdown,
         status=transaction.status or "completed",
         zatca_qr=transaction.zatca_qr,
         zatca_hash=transaction.zatca_hash,
@@ -291,6 +335,34 @@ async def create_transaction(
         customer_phone=transaction.customer_phone,
         created_at=transaction.created_at,
     )
+
+
+async def _maybe_send_low_stock_alerts(
+    db: AsyncSession, client: Clients, items: List["CartItem"]
+) -> None:
+    """Dispatch a low-stock alert for any sold product now at/below threshold."""
+    threshold = LowStockChecker.DEFAULT_THRESHOLD
+    product_ids = list({item.product_id for item in items})
+    if not product_ids:
+        return
+    try:
+        result = await db.execute(
+            select(Products).where(
+                Products.client_id == client.id,
+                Products.id.in_(product_ids),
+                Products.quantity <= threshold,
+                Products.is_active == True,  # noqa: E712
+            )
+        )
+        for product in result.scalars().all():
+            await EmailService.send_low_stock_alert(
+                to_email=client.email,
+                product_name=product.name,
+                current_stock=product.quantity or 0,
+                threshold=threshold,
+            )
+    except Exception as exc:  # pragma: no cover - alerts must never break a sale
+        logger.warning("Low-stock alert dispatch failed: %s", exc)
 
 
 @router.get("/transactions", response_model=TransactionListResponse)
@@ -331,6 +403,7 @@ async def list_transactions(
             discount_amount=t.discount_amount or 0,
             total_amount=t.total_amount,
             payment_method=t.payment_method,
+            payment_breakdown=t.payment_breakdown,
             status=t.status or "completed",
             zatca_qr=t.zatca_qr,
             zatca_hash=t.zatca_hash,
@@ -347,4 +420,89 @@ async def list_transactions(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+# ---------- Invoice document & receipt delivery ----------
+class EmailReceiptRequest(BaseModel):
+    to_email: str
+
+
+async def _get_owned_transaction(db: AsyncSession, client: Clients, txn_id: int) -> Transactions:
+    result = await db.execute(
+        select(Transactions).where(
+            Transactions.id == txn_id, Transactions.client_id == client.id
+        )
+    )
+    txn = result.scalar_one_or_none()
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return txn
+
+
+@router.get("/transactions/{txn_id}/invoice", response_class=HTMLResponse)
+async def get_invoice_document(
+    txn_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render the ZATCA tax invoice as an **always-Arabic** print-ready document.
+
+    The receipts/quotations-always-Arabic rule (SRS §7) is enforced here: the
+    document is rendered RTL/Arabic regardless of the caller's UI language. The
+    returned HTML is print-to-PDF ready in any browser; wire a headless renderer
+    (e.g. WeasyPrint) in front of this for server-side PDF bytes.
+    """
+    client = await get_client_for_user(db, str(current_user.id))
+    txn = await _get_owned_transaction(db, client, txn_id)
+
+    try:
+        line_items = json.loads(txn.items_json) if txn.items_json else []
+    except (ValueError, TypeError):
+        line_items = []
+
+    issue_date = txn.created_at.strftime("%Y-%m-%d %H:%M") if txn.created_at else ""
+    html = PDFInvoiceService.generate_invoice_html(
+        seller_name=client.business_name or "Business",
+        seller_vat=client.vat_number or "000000000000000",
+        buyer_name=txn.customer_name or "نقدي",  # "Cash" customer in Arabic
+        invoice_number=txn.invoice_number,
+        issue_date=issue_date,
+        line_items=line_items,
+        subtotal=txn.subtotal or 0,
+        vat_amount=txn.vat_amount or 0,
+        total_amount=txn.total_amount,
+        zatca_qr=txn.zatca_qr or "",
+        discount=txn.discount_amount or 0,
+    )
+    return HTMLResponse(content=html)
+
+
+@router.post(
+    "/transactions/{txn_id}/email",
+    dependencies=[Depends(require_feature("email_receipts"))],
+)
+async def email_invoice_receipt(
+    txn_id: int,
+    data: EmailReceiptRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Email a receipt for a transaction (POS-04).
+
+    Gated by the per-client ``email_receipts`` feature flag (AG-03): an agent can
+    disable receipt emailing for a specific client. Uses the EmailService
+    (stub-logs until SMTP is configured).
+    """
+    client = await get_client_for_user(db, str(current_user.id))
+    txn = await _get_owned_transaction(db, client, txn_id)
+
+    to_email = (data.to_email or "").strip()
+    if not to_email:
+        raise HTTPException(status_code=400, detail="to_email is required")
+
+    return await EmailService.send_transaction_receipt(
+        to_email=to_email,
+        invoice_number=txn.invoice_number,
+        total=txn.total_amount,
     )

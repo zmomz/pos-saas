@@ -510,3 +510,61 @@ export async function updateCategory(id: string, data: Record<string, unknown>) 
 export async function deleteCategory(id: string) {
   await client.entities.categories.delete({ id });
 }
+
+// ---------------------------------------------------------------------------
+// Phase C wiring
+// ---------------------------------------------------------------------------
+
+// Master: add client slots to an agent's package (MA-04)
+export async function addAgentSlots(agentId: number, slots: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/master/agents/${agentId}/slots`,
+    method: 'POST',
+    data: { slots },
+  });
+  return response.data;
+}
+
+// Global tax rate (MA-05)
+export async function getTaxRate() {
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/tenant/tax-rate',
+    method: 'GET',
+    data: {},
+  });
+  return response.data as { tax_rate: number; is_global: boolean };
+}
+
+export async function setGlobalTaxRate(taxRate: number) {
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/tenant/master/tax-rate',
+    method: 'PUT',
+    data: { tax_rate: taxRate },
+  });
+  return response.data;
+}
+
+// Agent: toggle a per-client feature flag at runtime (AG-03)
+export async function setClientFeature(clientId: number, featureName: string, isEnabled: boolean) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/agent/clients/${clientId}/features`,
+    method: 'POST',
+    data: { feature_name: featureName, is_enabled: isEnabled },
+  });
+  return response.data;
+}
+
+// POS-04: email a receipt for a transaction
+export async function emailReceipt(transactionId: number, toEmail: string) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/transactions/${transactionId}/email`,
+    method: 'POST',
+    data: { to_email: toEmail },
+  });
+  return response.data;
+}
+
+// Build the URL of the always-Arabic ZATCA invoice document (print-to-PDF ready).
+export function invoiceDocumentPath(transactionId: number): string {
+  return `/api/v1/pos/transactions/${transactionId}/invoice`;
+}
