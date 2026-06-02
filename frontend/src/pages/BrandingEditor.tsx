@@ -41,6 +41,7 @@ export default function BrandingEditor() {
   const [fontFamily, setFontFamily] = useState('Inter');
   const [buttonRadius, setButtonRadius] = useState('8px');
   const [companyName, setCompanyName] = useState('My Company');
+  const [defaultLanguage, setDefaultLanguage] = useState('en');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -58,6 +59,7 @@ export default function BrandingEditor() {
         setFontFamily(data.font_family || 'Inter');
         setButtonRadius(data.button_radius || '8px');
         setCompanyName(data.company_name || 'My Company');
+        setDefaultLanguage(data.default_language || 'en');
       }
     } catch {
       // Use defaults if branding not found
@@ -75,6 +77,7 @@ export default function BrandingEditor() {
         secondary_color: secondaryColor,
         font_family: fontFamily,
         button_radius: buttonRadius,
+        default_language: defaultLanguage,
       });
       toast.success(t('save') + ' ✓', {
         description: 'Branding updated successfully',
@@ -219,6 +222,27 @@ export default function BrandingEditor() {
                   </SelectTrigger>
                   <SelectContent className="bg-slate-700 border-slate-600">
                     {radiusOptions.map((opt) => (
+                      <SelectItem
+                        key={opt.value}
+                        value={opt.value}
+                        className="text-white hover:bg-slate-600"
+                      >
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Default Language (propagated to new clients — L10N-05) */}
+              <div className="space-y-2">
+                <Label className="text-slate-300">{t('default_language')}</Label>
+                <Select value={defaultLanguage} onValueChange={setDefaultLanguage}>
+                  <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-700 border-slate-600">
+                    {languageOptions.map((opt) => (
                       <SelectItem
                         key={opt.value}
                         value={opt.value}

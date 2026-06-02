@@ -80,13 +80,18 @@ class BrandingResponse(BaseModel):
     font_family: str
     button_radius: str
     company_name: str
+    # Agent-set default UI language; a client loads this on first login unless it
+    # has overridden its own preference (L10N-05).
+    default_language: str = "en"
 
 class CreateClientRequest(BaseModel):
     business_name: str
     email: str
     phone: Optional[str] = None
     subscription_fee: Optional[float] = 0
-    language_preference: Optional[str] = "en"
+    # None ⇒ inherit the agent's default_language (L10N-05). An explicit value is
+    # the client overriding that default at creation time.
+    language_preference: Optional[str] = None
     features: Optional[List[str]] = None
 
 class DashboardStatsResponse(BaseModel):
@@ -473,6 +478,7 @@ async def get_agent_branding(
         font_family=agent.font_family or "Inter",
         button_radius=agent.button_radius or "8px",
         company_name=agent.company_name,
+        default_language=agent.default_language or "en",
     )
 
 
@@ -499,7 +505,9 @@ async def create_client_for_agent(
     if used >= (agent.package_type or 0):
         raise HTTPException(status_code=400, detail="No available client slots. Please upgrade your package.")
 
-    # Create client
+    # Create client. When the agent doesn't pick a language for the client, the
+    # client inherits the agent's default language (L10N-05).
+    client_language = data.language_preference or agent.default_language or "en"
     new_client = Clients(
         user_id=str(current_user.id),
         agent_id=agent_id,
@@ -508,7 +516,7 @@ async def create_client_for_agent(
         phone=data.phone,
         subscription_fee=data.subscription_fee or 0,
         is_active=True,
-        language_preference=data.language_preference or "en",
+        language_preference=client_language,
         zatca_enabled=False,
         invoice_counter=0,
     )
@@ -656,6 +664,7 @@ async def get_client_branding(
         font_family=agent.font_family or "Inter",
         button_radius=agent.button_radius or "8px",
         company_name=agent.company_name,
+        default_language=agent.default_language or "en",
     )
 
 

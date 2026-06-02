@@ -8,6 +8,8 @@
 > **▶ Phase B completed 2026-06-02** — ZATCA Phase-2 cryptography is now **real**: per-client EC secp256k1 keypair + PKCS#10 EGS CSR, a verifiable ECDSA-SHA256 cryptographic stamp (the HMAC placeholder is gone), AES-256-GCM secrets at rest, a per-client PIH hash chain, 6-year invoice retention, a sandbox/simulation/production toggle, and a Fatoora onboarding/reporting API client that fails closed (503) until a gateway is configured. See [§10 Phase B implementation log](#10-phase-b-implementation-log). The suite is now **27 tests, all passing**. Cells touched by Phase B are marked **✅ (Phase B)** / **🟡 (Phase B)** below.
 >
 > **▶ Phase C completed 2026-06-02** — the required product features are wired and enforced: master **agent provisioning** (creates a real login + temp password), **slot refill**, a master-set **global VAT rate** that agents/clients inherit and the POS applies authoritatively, **split/mixed payment breakdown**, an **always-Arabic invoice document** endpoint + **email receipts**, **automated low-stock alerts** on each sale, **per-client feature enforcement** with an agent runtime toggle, and an **audit-log middleware** that records every authenticated mutation. See [§11 Phase C implementation log](#11-phase-c-implementation-log). The suite is now **42 tests, all passing**. Cells touched by Phase C are marked **✅ (Phase C)** / **🟡 (Phase C)** below.
+>
+> **▶ Phase D completed 2026-06-02** — the Arabic-output rule and its polish are done: the **on-screen POS receipt is now forced Arabic** (RTL, Arabic-Indic numerals, SAR) regardless of UI language; a **quotation feature** (عرض سعر) exists end-to-end — a new entity triad plus an **always-Arabic, non-fiscal quotation document** endpoint and a frontend page; a central **Arabic-Indic digit formatter** (backend `core/formatting.py` + frontend `lib/format.ts`) renders amounts/dates natively in the always-Arabic documents; and the **agent default language** propagates to clients (set in the branding editor, inherited on client creation, applied on first client login). See [§12 Phase D implementation log](#12-phase-d-implementation-log). The suite is now **51 tests, all passing**. Cells touched by Phase D are marked **✅ (Phase D)** below.
 
 ## Legend
 - ✅ **Implemented** — real working logic.
@@ -89,7 +91,7 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 | ZA-05 | 6-year retention | ✅ **(Phase B)** | Every signed invoice is archived in `zatca_documents` with `retention_until` computed from `ZATCA_RETENTION_YEARS` (default 6). Retrievable via `GET /api/v1/zatca/documents`. *(Cold-storage/backup of the archive itself is still ops-side.)* |
 | ZA-06 | Sandbox/test mode | ✅ **(Phase B)** | `ZATCA_ENVIRONMENT` = `sandbox` \| `simulation` \| `production` selects the Fatoora gateway URL **and** the CSR certificate-template-name; defaults to sandbox and fails closed until explicitly opted in. |
 | — | Phase-2 reporting/clearance within 24h | 🟡 **(Phase B)** | `POST /api/v1/zatca/invoices/{doc}/report?clearance=` submits to the Fatoora reporting/clearance endpoints (`ZatcaApiClient.submit_invoice`) and records the response/status on the document. **No scheduler yet** — submission is caller-triggered, not an automatic 24h background job. |
-| — | **Receipts/quotations always Arabic** | 🟡 **(Phase C)** | The server-rendered invoice document (`GET /api/v1/pos/transactions/{id}/invoice`, `PDFInvoiceService`) is forced `dir="rtl" lang="ar"` regardless of UI language ✅ (Phase C test asserts it). Still outstanding: the **on-screen POS receipt follows the UI language**, and **quotations don't exist** at all. *(Phase D.)* |
+| — | **Receipts/quotations always Arabic** | ✅ **(Phase D)** | All three fiscal/pre-sale documents are now forced Arabic regardless of UI language: the server invoice document (Phase C), the **on-screen POS receipt** (`POSTerminal.tsx` receipt view is now `dir="rtl" lang="ar"`, Arabic labels, SAR, Arabic-Indic digits — Phase D), and the new **quotation document** (`GET /api/v1/entities/quotations/{id}/document`, `PDFInvoiceService.generate_quotation_html`). Quotations now exist as a full feature. Tested in `tests/test_phase_d_quotations.py`. |
 
 > **Bottom line (post-Phase B):** ZATCA is no longer a QR-only skeleton — the cryptography is real (EC keypair + EGS CSR, ECDSA stamp, encrypted secrets, PIH chain, 6-yr retention, sandbox/prod toggle, onboarding + reporting client). **Remaining before a KSA go-live:** (1) embed the stamp as a XAdES `ds:Signature` envelope in the UBL per the official spec; (2) run live onboarding/clearance against a real Fatoora gateway (the client fails closed until configured); (3) add the automatic 24h clearance/reporting background job. These are the field-SDK / live-credential steps; the in-app cryptographic foundation is now in place.
 
@@ -101,9 +103,9 @@ Second theme: **the safety-critical paths are not safe** — POS sale and invent
 |----|-------------|--------|----------------|
 | L10N-01 | Locale strings ar/en/hi/ur | ✅ Implemented | `lib/i18n.ts`, ~117 keys × 4 languages, complete. |
 | L10N-02 | RTL for ar/ur | ✅ Implemented | `document.documentElement.dir` toggled on language change. |
-| L10N-03 | Arabic-Indic digits for ar/ur | 🟡 Partial | Some reports use `toLocaleString('ar-SA')`; **POS prices/cart use Western digits** (`toFixed(2)`); no central digit formatter. |
+| L10N-03 | Arabic-Indic digits for ar/ur | ✅ **(Phase D)** | Central formatters added: backend `core/formatting.py` (`to_arabic_digits`, `format_money_ar`) renders the always-Arabic invoice/quotation amounts, dates and quantities in Arabic-Indic numerals (٠-٩) with the Arabic decimal/thousands separators; frontend `lib/format.ts` (`toArabicDigits`/`formatNumber`/`formatMoney`) does the same for ar/ur and drives the always-Arabic on-screen receipt. Tested in `tests/test_phase_d_arabic_digits.py`. *(Identifiers like invoice numbers stay Western by design.)* |
 | L10N-04 | Locale date/time (Gregorian) | ✅ Implemented | UTC + `toLocaleString`. |
-| L10N-05 | Agent default language; client override | 🟡 Partial | Client override works (localStorage); **no agent-set default** propagated to client. |
+| L10N-05 | Agent default language; client override | ✅ **(Phase D)** | The agent sets a `default_language` in the branding editor (`PUT /api/v1/branding/update`); it is returned on agent/client branding responses, **inherited by a client at creation** when no explicit language is chosen (`routers/tenant.py`), and **applied on first client login** (`BrandingContext.applyDefaultLanguage`, only when the user hasn't already picked one — explicit choice wins). Tested in `tests/test_phase_d_language.py`. |
 
 ---
 
@@ -185,7 +187,7 @@ Aligns with the SRS author's "top 5" and adds the integrity/white-label blockers
 
 **Phase C — required product features (2–4 wks) — ✅ DONE (2026-06-02)** — master agent-create (MA-01) + slot refill (MA-04) + global tax (MA-05); always-Arabic invoice document; email receipts (POS-04); payment breakdown; automated low-stock alerts; per-client feature enforcement; auto-write audit log; frontend pagination (ProductManagement). See [§11](#11-phase-c-implementation-log). *Residual:* SMTP/SMS delivery, server-side PDF bytes (headless renderer), thermal/ESC-POS, per-staff `permissions` enforcement, pagination rollout to remaining list pages.
 
-**Phase D — Arabic-output rule & polish** — force receipts **and** quotations to Arabic regardless of UI language; add a **quotation** feature (missing entirely); Arabic-Indic digit formatter; agent-default language.
+**Phase D — Arabic-output rule & polish — ✅ DONE (2026-06-02)** — on-screen POS receipt forced Arabic; **quotation** feature added end-to-end (entity triad + always-Arabic, non-fiscal quotation document + frontend page); central Arabic-Indic digit formatter (backend + frontend); agent-default language propagated to clients (set → inherited → applied on first login). See [§12](#12-phase-d-implementation-log). *Residual:* on-screen quotation builder is minimal (no PDF bytes/thermal — shares the headless-renderer follow-up); SMS receipts and `name_ar` localisation of catalog items remain.
 
 **Phase E — mobile/offline & nice-to-haves** — RN/Flutter app, offline sync, thermal printing, loyalty accrual, analytics, error tracking (Sentry), log aggregation.
 
@@ -277,4 +279,34 @@ The suite now has **42 tests** (27 prior + 15 Phase C), all green via
 `test_phase_c_master.py` (agent provisioning + login + role, duplicate-email 409, slot refill, global-tax set/get + 5% applied to a sale + non-master 403), `test_phase_c_pos.py` (split payment ok/mismatch, always-Arabic invoice doc, email receipt, low-stock sale succeeds), `test_phase_c_features.py` (agent disables client feature → 403, cross-agent 404, suspend blocks auth), `test_phase_c_audit.py` (mutation writes a row, GET does not).
 
 ### Known follow-ups deferred to later phases
-Real SMTP/SMS delivery; server-side **PDF bytes** (headless renderer in front of the Arabic HTML) + thermal/ESC-POS; loyalty redemption in the pay flow; per-staff `permissions` enforcement; pagination rollout to the remaining list pages; field-level audit diffs. Carried over: token-revocation store, per-agent Stripe creds, data backup/recovery. **Phase D** (force on-screen receipts to Arabic + add quotations + Arabic-Indic digits + agent-default language) and **Phase E** (mobile/offline, Sentry, analytics) remain.
+Real SMTP/SMS delivery; server-side **PDF bytes** (headless renderer in front of the Arabic HTML) + thermal/ESC-POS; loyalty redemption in the pay flow; per-staff `permissions` enforcement; pagination rollout to the remaining list pages; field-level audit diffs. Carried over: token-revocation store, per-agent Stripe creds, data backup/recovery. ~~**Phase D**~~ **done, see §12.** **Phase E** (mobile/offline, Sentry, analytics) remains.
+
+---
+
+## 12. Phase D implementation log
+
+Completed **2026-06-02**. The Arabic-output rule and its polish are done. The
+suite now has **51 tests** (42 prior + 9 Phase D), all green via `python -m pytest`.
+
+### Backend changes
+| Area | Files | What changed |
+|------|-------|--------------|
+| Arabic-Indic digit formatter (L10N-03) | `core/formatting.py` (new), `services/production.py` | `to_arabic_digits` / `format_money_ar` (Arabic-Indic numerals + Arabic decimal `٫` / thousands `٬` separators); the always-Arabic invoice document now renders amounts, dates and quantities in Arabic-Indic digits (identifiers like the invoice number stay Western by design). |
+| Quotation feature (عرض سعر) | `models/quotations.py`, `services/quotations.py`, `routers/quotations.py` (new triad), `services/production.py` | Standard CRUD entity at `/api/v1/entities/quotations` (auto-assigns a `QT-…` number) **plus** `GET /{id}/document` → `PDFInvoiceService.generate_quotation_html`, an **always-Arabic, non-fiscal** quotation document (RTL/Arabic, Arabic-Indic digits, validity date, explicitly labelled "not a tax invoice" — no ZATCA QR/stamp). Owner-scoped. |
+| Agent default language (L10N-05) | `routers/tenant.py`, `routers/features.py` | `default_language` exposed on the agent/client `BrandingResponse` and settable via `PUT /api/v1/branding/update`; a new client **inherits the agent default** when no language is supplied at creation (explicit value overrides). |
+| Migration | `alembic/versions/d3e4f5a6b7c8_phase_d.py` (new) | Creates the `quotations` table; `alembic upgrade head` applies the full chain to a fresh DB (verified). (The agent `default_language` column already existed from `368d6a17ebd5`.) |
+
+### Frontend changes
+| Area | Files | What changed |
+|------|-------|--------------|
+| Arabic-Indic formatter | `src/lib/format.ts` (new) | `toArabicDigits`, `formatNumber`/`formatMoney` (Arabic-Indic for ar/ur, Western otherwise) and `*Ar` always-Arabic variants. |
+| Always-Arabic on-screen receipt | `src/pages/POSTerminal.tsx` | The post-sale receipt view is now `dir="rtl" lang="ar"` with Arabic labels, SAR, Arabic-Indic numerals and Arabic payment-method names — regardless of the cashier's UI language. |
+| Quotation page | `src/pages/QuotationManagement.tsx` (new), `src/App.tsx`, `src/lib/api.ts` | List/create/delete quotations with live VAT totals; "view" opens the always-Arabic quotation document (fetched with the bearer token into a new tab). Routed under the shared agent/client group; API wrappers + `quotationDocumentPath` added. |
+| Agent default language UI | `src/pages/BrandingEditor.tsx`, `src/contexts/BrandingContext.tsx`, `src/lib/api.ts` | Branding editor gains a default-language selector (persisted via `updateBranding`); `BrandingContext.applyDefaultLanguage` applies the agent default on first client login (only when the user hasn't already chosen — explicit choice wins). |
+| i18n | `src/lib/i18n.ts` | Added `quotations`, `new_quotation`, `item_name`, `add_item`, `notes`, `no_quotations`, `customer_name`, `default_language` to all four languages. |
+
+### Tests (`backend/tests/`)
+`test_phase_d_quotations.py` (auto-numbered create, always-Arabic quotation document that is *not* a tax invoice, owner-scoping 404), `test_phase_d_arabic_digits.py` (`format_money_ar` digits/separators, letters untouched, invoice totals render Arabic-Indic while the invoice number stays Western), `test_phase_d_language.py` (agent sets default language → returned on branding; new client inherits it; explicit override wins; client branding exposes the agent default).
+
+### Known follow-ups deferred to later phases
+Server-side **PDF bytes** (headless renderer) + thermal/ESC-POS for the quotation/receipt documents; SMS receipts; `name_ar` localisation of catalog item names within the Arabic documents. Carried over from earlier phases and **Phase E** (mobile/offline, Sentry, analytics, loyalty redemption, per-staff permissions, token revocation, data backup) remain.

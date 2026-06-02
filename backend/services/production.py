@@ -22,6 +22,8 @@ from xml.etree.ElementTree import Element, SubElement, tostring
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.formatting import format_money_ar, to_arabic_digits
+
 logger = logging.getLogger(__name__)
 
 
@@ -387,11 +389,11 @@ class PDFInvoiceService:
             item_total = item.get("price", 0) * item.get("quantity", 1)
             items_html += f"""
             <tr>
-                <td>{idx}</td>
+                <td>{to_arabic_digits(idx)}</td>
                 <td>{item.get('name', '')}</td>
-                <td>{item.get('quantity', 1)}</td>
-                <td>{item.get('price', 0):.2f} ر.س</td>
-                <td>{item_total:.2f} ر.س</td>
+                <td>{to_arabic_digits(item.get('quantity', 1))}</td>
+                <td>{format_money_ar(item.get('price', 0))} ر.س</td>
+                <td>{format_money_ar(item_total)} ر.س</td>
             </tr>"""
 
         html = f"""<!DOCTYPE html>
@@ -434,7 +436,7 @@ class PDFInvoiceService:
 
     <div>
         <p><strong>رقم الفاتورة:</strong> {invoice_number}</p>
-        <p><strong>التاريخ:</strong> {issue_date}</p>
+        <p><strong>التاريخ:</strong> {to_arabic_digits(issue_date)}</p>
     </div>
 
     <table>
@@ -454,10 +456,10 @@ class PDFInvoiceService:
 
     <div class="totals">
         <table>
-            <tr><td>المجموع الفرعي</td><td>{subtotal:.2f} ر.س</td></tr>
-            <tr><td>الخصم</td><td>{discount:.2f} ر.س</td></tr>
-            <tr><td>ضريبة القيمة المضافة (15%)</td><td>{vat_amount:.2f} ر.س</td></tr>
-            <tr><td><strong>الإجمالي</strong></td><td><strong>{total_amount:.2f} ر.س</strong></td></tr>
+            <tr><td>المجموع الفرعي</td><td>{format_money_ar(subtotal)} ر.س</td></tr>
+            <tr><td>الخصم</td><td>{format_money_ar(discount)} ر.س</td></tr>
+            <tr><td>ضريبة القيمة المضافة (١٥٪)</td><td>{format_money_ar(vat_amount)} ر.س</td></tr>
+            <tr><td><strong>الإجمالي</strong></td><td><strong>{format_money_ar(total_amount)} ر.س</strong></td></tr>
         </table>
     </div>
 
@@ -469,6 +471,123 @@ class PDFInvoiceService:
     <div class="zatca-notice">
         <div class="stamp">فاتورة إلكترونية متوافقة مع هيئة الزكاة والضريبة والجمارك</div>
         <p>ZATCA Compliant E-Invoice</p>
+    </div>
+</body>
+</html>"""
+        return html
+
+    @staticmethod
+    def generate_quotation_html(
+        seller_name: str,
+        seller_vat: str,
+        buyer_name: str,
+        quote_number: str,
+        issue_date: str,
+        valid_until: str,
+        line_items: List[Dict[str, Any]],
+        subtotal: float,
+        vat_amount: float,
+        total_amount: float,
+        discount: float = 0,
+        notes: str = "",
+    ) -> str:
+        """Generate an **always-Arabic** price-quotation (عرض سعر) document.
+
+        Per the SRS "receipts/quotations always Arabic" rule (§7) this is rendered
+        RTL/Arabic with Arabic-Indic numerals regardless of UI language. A
+        quotation is **not** a fiscal document, so — unlike the tax invoice — it
+        carries no ZATCA QR or cryptographic stamp and is clearly labelled
+        "غير ضريبية / not a tax invoice".
+        """
+        items_html = ""
+        for idx, item in enumerate(line_items, 1):
+            item_total = item.get("price", 0) * item.get("quantity", 1)
+            items_html += f"""
+            <tr>
+                <td>{to_arabic_digits(idx)}</td>
+                <td>{item.get('name', '')}</td>
+                <td>{to_arabic_digits(item.get('quantity', 1))}</td>
+                <td>{format_money_ar(item.get('price', 0))} ر.س</td>
+                <td>{format_money_ar(item_total)} ر.س</td>
+            </tr>"""
+
+        notes_html = (
+            f'<div class="notes"><strong>ملاحظات:</strong> {notes}</div>' if notes else ""
+        )
+
+        html = f"""<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: 'Noto Sans Arabic', 'Arial', sans-serif; direction: rtl; padding: 20px; }}
+        .header {{ text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; }}
+        .header h1 {{ margin: 0; font-size: 24px; }}
+        .info {{ display: flex; justify-content: space-between; margin: 15px 0; }}
+        .info-block {{ width: 48%; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
+        th {{ background-color: #f5f5f5; font-weight: bold; }}
+        .totals {{ text-align: left; margin-top: 15px; }}
+        .totals table {{ width: 300px; margin-right: auto; }}
+        .notes {{ margin-top: 15px; font-size: 13px; }}
+        .notice {{ text-align: center; font-size: 12px; color: #666; margin-top: 15px; }}
+        .stamp {{ border: 2px solid #333; padding: 5px 15px; display: inline-block; margin-top: 10px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>عرض سعر</h1>
+        <p>Price Quotation</p>
+    </div>
+
+    <div class="info">
+        <div class="info-block">
+            <h3>البائع</h3>
+            <p><strong>الاسم:</strong> {seller_name}</p>
+            <p><strong>الرقم الضريبي:</strong> {seller_vat}</p>
+        </div>
+        <div class="info-block">
+            <h3>العميل</h3>
+            <p><strong>الاسم:</strong> {buyer_name}</p>
+        </div>
+    </div>
+
+    <div>
+        <p><strong>رقم العرض:</strong> {quote_number}</p>
+        <p><strong>التاريخ:</strong> {to_arabic_digits(issue_date)}</p>
+        <p><strong>صالح حتى:</strong> {to_arabic_digits(valid_until) if valid_until else "—"}</p>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>الصنف</th>
+                <th>الكمية</th>
+                <th>السعر</th>
+                <th>الإجمالي</th>
+            </tr>
+        </thead>
+        <tbody>
+            {items_html}
+        </tbody>
+    </table>
+
+    <div class="totals">
+        <table>
+            <tr><td>المجموع الفرعي</td><td>{format_money_ar(subtotal)} ر.س</td></tr>
+            <tr><td>الخصم</td><td>{format_money_ar(discount)} ر.س</td></tr>
+            <tr><td>ضريبة القيمة المضافة</td><td>{format_money_ar(vat_amount)} ر.س</td></tr>
+            <tr><td><strong>الإجمالي التقديري</strong></td><td><strong>{format_money_ar(total_amount)} ر.س</strong></td></tr>
+        </table>
+    </div>
+
+    {notes_html}
+
+    <div class="notice">
+        <div class="stamp">هذا المستند عرض سعر وليس فاتورة ضريبية</div>
+        <p>This document is a price quotation, not a tax invoice.</p>
     </div>
 </body>
 </html>"""

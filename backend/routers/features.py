@@ -435,6 +435,8 @@ class BrandingUpdateRequest(BaseModel):
     secondary_color: Optional[str] = None
     font_family: Optional[str] = None
     button_radius: Optional[str] = None
+    # Agent's default UI language propagated to their clients (L10N-05).
+    default_language: Optional[str] = None
 
 
 class BrandingUpdateResponse(BaseModel):
@@ -444,6 +446,7 @@ class BrandingUpdateResponse(BaseModel):
     secondary_color: str
     font_family: str
     button_radius: str
+    default_language: str = "en"
 
 
 @router.put("/api/v1/branding/update", response_model=BrandingUpdateResponse)
@@ -479,6 +482,7 @@ async def update_agent_branding(
         secondary_color=agent.secondary_color or "#1E40AF",
         font_family=agent.font_family or "Inter",
         button_radius=agent.button_radius or "8px",
+        default_language=agent.default_language or "en",
     )
 
 

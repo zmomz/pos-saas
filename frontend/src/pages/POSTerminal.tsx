@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getProducts, createTransaction, getTransactions, getDiscounts } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X } from 'lucide-react';
 
 interface Product {
@@ -25,6 +26,7 @@ interface CartItem {
 }
 
 interface Receipt {
+  id?: number;
   invoice_number: string;
   total_amount: number;
   vat_amount: number;
@@ -234,6 +236,7 @@ export default function POSTerminal() {
       const result = await createTransaction({ items, payment_method: paymentMethod });
 
       setReceipt({
+        id: result.id,
         invoice_number: result.invoice_number,
         total_amount: result.total_amount,
         vat_amount: result.vat_amount,
@@ -319,61 +322,73 @@ export default function POSTerminal() {
     );
   }
 
-  // Receipt view (for both sale and refund)
+  // Receipt view (for both sale and refund).
+  //
+  // The receipt is ALWAYS rendered in Arabic (RTL, Arabic-Indic numerals, SAR)
+  // regardless of the cashier's UI language — SRS §7 "receipts/quotations always
+  // Arabic". The surrounding action buttons stay neutral; only the fiscal
+  // receipt content is forced Arabic.
   if (receipt) {
     const isRefund = receipt.payment_method === 'refund';
+    const paymentAr: Record<string, string> = {
+      cash: 'نقدي',
+      card: 'بطاقة',
+      transfer: 'تحويل',
+      refund: 'استرجاع',
+      mixed: 'مدفوعات متعددة',
+    };
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <Card className="w-full max-w-md bg-slate-800 border-slate-700">
-          <CardContent className="p-6 space-y-4">
+          <CardContent dir="rtl" lang="ar" className="p-6 space-y-4 text-right">
             <div className="text-center">
               <h2 className={`text-xl font-bold ${isRefund ? 'text-orange-400' : 'text-green-400'}`}>
-                {isRefund ? '↩ Refund Processed' : `✓ ${t('transaction_success')}`}
+                {isRefund ? '↩ تمت معالجة الاسترجاع' : '✓ تمت العملية بنجاح'}
               </h2>
-              <p className="text-slate-400 mt-1">{t('invoice_number')}: {receipt.invoice_number}</p>
+              <p className="text-slate-400 mt-1">رقم الفاتورة: {receipt.invoice_number}</p>
             </div>
 
             <div className="border-t border-slate-700 pt-4 space-y-2">
               {receipt.items.map((item, idx) => (
                 <div key={idx} className="flex justify-between text-slate-300 text-sm">
-                  <span>{item.name} x{item.quantity}</span>
-                  <span>${(item.price * item.quantity).toFixed(2)}</span>
+                  <span>{item.name} ×{toArabicDigits(item.quantity)}</span>
+                  <span>{formatMoneyAr(item.price * item.quantity)}</span>
                 </div>
               ))}
             </div>
 
             <div className="border-t border-slate-700 pt-3 space-y-1">
               <div className="flex justify-between text-slate-400 text-sm">
-                <span>{t('subtotal')}</span>
-                <span>${receipt.subtotal?.toFixed(2)}</span>
+                <span>المجموع الفرعي</span>
+                <span>{formatMoneyAr(receipt.subtotal || 0)}</span>
               </div>
               {receipt.discount_amount && receipt.discount_amount > 0 && (
                 <div className="flex justify-between text-green-400 text-sm">
-                  <span>Discount ({receipt.discount_code})</span>
-                  <span>-${receipt.discount_amount.toFixed(2)}</span>
+                  <span>الخصم ({receipt.discount_code})</span>
+                  <span>-{formatMoneyAr(receipt.discount_amount)}</span>
                 </div>
               )}
               <div className="flex justify-between text-slate-400 text-sm">
-                <span>{t('vat')}</span>
-                <span>${receipt.vat_amount?.toFixed(2)}</span>
+                <span>ضريبة القيمة المضافة</span>
+                <span>{formatMoneyAr(receipt.vat_amount || 0)}</span>
               </div>
               <div className="flex justify-between text-white font-bold">
-                <span>{t('total')}</span>
-                <span>${receipt.total_amount?.toFixed(2)}</span>
+                <span>الإجمالي</span>
+                <span>{formatMoneyAr(receipt.total_amount || 0)}</span>
               </div>
             </div>
 
             <div className="flex justify-between text-slate-300 text-sm">
-              <span>{t('payment_method')}</span>
+              <span>طريقة الدفع</span>
               <Badge className={`${isRefund ? 'bg-orange-600' : 'bg-blue-600'} text-white`}>
-                {receipt.payment_method}
+                {paymentAr[receipt.payment_method] || receipt.payment_method}
               </Badge>
             </div>
 
             {/* ZATCA QR Code */}
             {receipt.zatca_qr_base64 && (
               <div className="border-t border-slate-700 pt-4">
-                <p className="text-sm text-slate-400 mb-2 text-center">{t('zatca_qr')}</p>
+                <p className="text-sm text-slate-400 mb-2 text-center">رمز الاستجابة السريعة (ZATCA)</p>
                 <div className="flex justify-center">
                   <div className="bg-white p-3 rounded-lg">
                     <img

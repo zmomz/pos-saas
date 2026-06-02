@@ -232,6 +232,7 @@ export async function updateBranding(data: {
   secondary_color?: string;
   font_family?: string;
   button_radius?: string;
+  default_language?: string;
 }) {
   const response = await client.apiCall.invoke({
     url: '/api/v1/branding/update',
@@ -567,4 +568,42 @@ export async function emailReceipt(transactionId: number, toEmail: string) {
 // Build the URL of the always-Arabic ZATCA invoice document (print-to-PDF ready).
 export function invoiceDocumentPath(transactionId: number): string {
   return `/api/v1/pos/transactions/${transactionId}/invoice`;
+}
+
+// ---- Quotations (Phase D) ----
+// A quotation (عرض سعر) is a non-fiscal pre-sale document. Its printable form is
+// always Arabic (see quotationDocumentPath), enforced server-side.
+export async function getQuotations() {
+  const response = await client.entities.quotations.query({ query: {}, limit: 200 });
+  return response.data;
+}
+
+export async function createQuotation(data: {
+  customer_name?: string;
+  customer_phone?: string;
+  items_json?: string;
+  subtotal?: number;
+  vat_amount?: number;
+  discount_amount?: number;
+  total_amount?: number;
+  valid_until?: string;
+  notes?: string;
+  status?: string;
+}) {
+  const response = await client.entities.quotations.create({ data });
+  return response.data;
+}
+
+export async function updateQuotation(id: string, data: Record<string, unknown>) {
+  const response = await client.entities.quotations.update({ id, data });
+  return response.data;
+}
+
+export async function deleteQuotation(id: string) {
+  await client.entities.quotations.delete({ id });
+}
+
+// Always-Arabic quotation document (print-to-PDF ready).
+export function quotationDocumentPath(quotationId: number): string {
+  return `/api/v1/entities/quotations/${quotationId}/document`;
 }

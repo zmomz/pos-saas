@@ -25,6 +25,7 @@ import StaffManagement from './pages/StaffManagement';
 import AuditLog from './pages/AuditLog';
 import CategoryManagement from './pages/CategoryManagement';
 import DiscountManagement from './pages/DiscountManagement';
+import QuotationManagement from './pages/QuotationManagement';
 import SupplierManagement from './pages/SupplierManagement';
 import ShiftManagement from './pages/ShiftManagement';
 import LoyaltyProgram from './pages/LoyaltyProgram';
@@ -102,6 +103,7 @@ const AppRoutes = () => (
       <Route path="/expenses" element={<ExpenseTracking />} />
       <Route path="/categories" element={<CategoryManagement />} />
       <Route path="/discounts" element={<DiscountManagement />} />
+      <Route path="/quotations" element={<QuotationManagement />} />
       <Route path="/suppliers" element={<SupplierManagement />} />
       <Route path="/webhooks" element={<WebhookManagement />} />
     </Route>

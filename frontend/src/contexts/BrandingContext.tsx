@@ -15,6 +15,23 @@ export interface Branding {
   secondary_color: string;
   font_family: string;
   button_radius: string;
+  // Agent-set default UI language; applied on first client login (L10N-05).
+  default_language?: string;
+}
+
+/**
+ * Apply the agent's default language on first login (L10N-05) — but only when
+ * the user hasn't already picked one (an explicit choice always wins). Mirrors
+ * the storage key + RTL handling of `useLanguage` in lib/i18n.ts.
+ */
+function applyDefaultLanguage(lang?: string): void {
+  if (!lang) return;
+  if (localStorage.getItem('pos-language')) return; // user already chose
+  if (!['ar', 'en', 'hi', 'ur'].includes(lang)) return;
+  localStorage.setItem('pos-language', lang);
+  const rtl = lang === 'ar' || lang === 'ur';
+  document.documentElement.dir = rtl ? 'rtl' : 'ltr';
+  document.documentElement.lang = lang;
 }
 
 interface BrandingContextType {
@@ -140,6 +157,7 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
       if (data && data.primary_color) {
         applyBranding(data);
+        applyDefaultLanguage(data.default_language);
         setBranding(data);
       }
     } catch {
