@@ -79,6 +79,17 @@ export default function POSTerminal() {
   const [barcodeInput, setBarcodeInput] = useState('');
   const [barcodeMessage, setBarcodeMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  // POS-06: free-text product name search (complements barcode/SKU lookup).
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // POS-02: split-tender payment. When enabled the cashier allocates the total
+  // across multiple methods; the per-method amounts are sent as payments[].
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitPayments, setSplitPayments] = useState<{ method: string; amount: number }[]>([
+    { method: 'cash', amount: 0 },
+    { method: 'card', amount: 0 },
+  ]);
+
   // Discount state
   const [discountCode, setDiscountCode] = useState('');
   const [appliedDiscount, setAppliedDiscount] = useState<Discount | null>(null);
@@ -237,8 +248,60 @@ export default function POSTerminal() {
   const vatAmount = discountedSubtotal * 0.15;
   const total = discountedSubtotal + vatAmount;
 
+  // POS-06: products filtered by the name-search box (Arabic name included).
+  const filteredProducts = searchQuery.trim()
+    ? products.filter((p) => {
+        const q = searchQuery.trim().toLowerCase();
+        return (
+          p.name.toLowerCase().includes(q) ||
+          (p.name_ar || '').toLowerCase().includes(q) ||
+          (p.sku || '').toLowerCase().includes(q)
+        );
+      })
+    : products;
+
+  // POS-02: split tenders must add up to the invoice total before checkout.
+  const splitTotal = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const splitBalanced = Math.abs(splitTotal - total) < 0.01;
+
+  function updateSplitPayment(idx: number, field: 'method' | 'amount', value: string) {
+    setSplitPayments((prev) =>
+      prev.map((p, i) =>
+        i === idx ? { ...p, [field]: field === 'amount' ? Number(value) || 0 : value } : p
+      )
+    );
+  }
+
+  // Customer-facing display sync: mirror the live cart into the localStorage key
+  // the CustomerDisplay page polls, so a second screen shows items + totals.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'pos-customer-display',
+        JSON.stringify({
+          items: cart.map((item) => ({
+            name: item.product.name,
+            quantity: item.quantity,
+            price: item.product.price,
+          })),
+          subtotal,
+          vat: vatAmount,
+          total,
+          status: cart.length > 0 ? 'active' : 'idle',
+        })
+      );
+    } catch {
+      /* localStorage unavailable — display sync is best-effort */
+    }
+  }, [cart, subtotal, vatAmount, total]);
+
   async function handleCheckout() {
     if (cart.length === 0) return;
+    // POS-02: a split payment must be fully allocated before we send it.
+    if (splitMode && !splitBalanced) {
+      setBarcodeMessage({ text: '✕ Split payments must equal the total', type: 'error' });
+      return;
+    }
     setProcessing(true);
     try {
       const items = cart.map((item) => ({
@@ -248,9 +311,16 @@ export default function POSTerminal() {
         price: item.product.price,
         vat_rate: 0.15,
       }));
-      // Inventory is now deducted atomically by the backend as part of the sale,
-      // so there is no separate fire-and-forget deduction call here.
-      const result = await createTransaction({ items, payment_method: paymentMethod });
+      // POS-01/POS-02: persist the applied discount and (when split) the per-method
+      // tenders. Inventory is deducted atomically by the backend as part of the sale.
+      const result = await createTransaction({
+        items,
+        payment_method: paymentMethod,
+        discount_amount: discountAmount > 0 ? discountAmount : undefined,
+        payments: splitMode
+          ? splitPayments.filter((p) => (Number(p.amount) || 0) > 0)
+          : undefined,
+      });
 
       setReceipt({
         id: result.id,
@@ -258,7 +328,7 @@ export default function POSTerminal() {
         total_amount: result.total_amount,
         vat_amount: result.vat_amount,
         subtotal: result.subtotal,
-        payment_method: paymentMethod,
+        payment_method: result.payment_method || paymentMethod,
         zatca_qr_base64: result.zatca_qr_base64 || '',
         zatca_status: result.zatca_status,
         items: cart.map((item) => ({
@@ -269,10 +339,19 @@ export default function POSTerminal() {
         discount_amount: discountAmount > 0 ? discountAmount : undefined,
         discount_code: appliedDiscount?.code,
       });
+      // Flash the customer-facing display to a "thank you" state.
+      try {
+        localStorage.setItem(
+          'pos-customer-display',
+          JSON.stringify({ items: [], subtotal: 0, vat: 0, total: 0, status: 'paid' })
+        );
+      } catch { /* best-effort */ }
       setQueuedOffline(false);
       setCart([]);
       setAppliedDiscount(null);
       setDiscountCode('');
+      setSplitMode(false);
+      setSplitPayments([{ method: 'cash', amount: 0 }, { method: 'card', amount: 0 }]);
     } catch (err) {
       // Offline POS (Phase E): if the device is offline (or the network call
       // failed), buffer the sale in IndexedDB and replay it on reconnect rather
@@ -686,6 +765,12 @@ export default function POSTerminal() {
                 className="ps-10 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500 focus:border-blue-500"
               />
             </div>
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('search_products')}
+              className="flex-1 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500 focus:border-blue-500"
+            />
           </div>
           {barcodeMessage && (
             <div className={`absolute top-full mt-1 start-0 text-xs px-3 py-1.5 rounded ${
@@ -698,11 +783,11 @@ export default function POSTerminal() {
           )}
         </div>
 
-        {products.length === 0 ? (
+        {filteredProducts.length === 0 ? (
           <div className="text-center text-slate-500 py-12">{t('no_products')}</div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-            {products.map((product) => (
+            {filteredProducts.map((product) => (
               <Card
                 key={product.id}
                 className="bg-slate-800 border-slate-700 cursor-pointer hover:border-blue-500 transition-colors"
@@ -845,17 +930,60 @@ export default function POSTerminal() {
           </div>
 
           <div>
-            <label className="text-slate-400 text-sm block mb-1">{t('payment_method')}</label>
-            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-              <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-slate-700 border-slate-600">
-                <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
-                <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
-                <SelectItem value="bank_transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-slate-400 text-sm">{t('payment_method')}</label>
+              <button
+                type="button"
+                onClick={() => setSplitMode((v) => !v)}
+                className={`text-xs px-2 py-0.5 rounded border ${
+                  splitMode
+                    ? 'bg-blue-600 border-blue-500 text-white'
+                    : 'border-slate-600 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                {t('split_payment')}
+              </button>
+            </div>
+            {!splitMode ? (
+              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-slate-700 border-slate-600">
+                  <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
+                  <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
+                  <SelectItem value="bank_transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
+                </SelectContent>
+              </Select>
+            ) : (
+              <div className="space-y-2">
+                {splitPayments.map((p, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <Select value={p.method} onValueChange={(v) => updateSplitPayment(idx, 'method', v)}>
+                      <SelectTrigger className="bg-slate-700 border-slate-600 text-white flex-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-slate-700 border-slate-600">
+                        <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
+                        <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
+                        <SelectItem value="transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      value={p.amount || ''}
+                      onChange={(e) => updateSplitPayment(idx, 'amount', e.target.value)}
+                      placeholder="0.00"
+                      className="w-24 bg-slate-700 border-slate-600 text-white"
+                    />
+                  </div>
+                ))}
+                <div className={`flex justify-between text-xs ${splitBalanced ? 'text-green-400' : 'text-orange-400'}`}>
+                  <span>{t('allocated')}: ${splitTotal.toFixed(2)}</span>
+                  <span>{t('remaining')}: ${(total - splitTotal).toFixed(2)}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           <Button

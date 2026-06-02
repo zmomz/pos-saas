@@ -116,11 +116,23 @@ export interface TransactionResult {
   zatca_status?: string;
 }
 
+export interface PaymentEntry {
+  method: string; // 'cash' | 'card' | 'transfer' | 'loyalty'
+  amount: number;
+}
+
 export async function createTransaction(data: {
   items: { product_id: number; name: string; quantity: number; price: number; vat_rate: number }[];
   payment_method: string;
   customer_name?: string;
   customer_phone?: string;
+  // POS-01: persist the applied order discount so totals match what the cashier saw.
+  discount_amount?: number;
+  // POS-02: split tenders (cash + card + …). Per-method amounts must sum to the total.
+  payments?: PaymentEntry[];
+  // Loyalty: identify the customer to accrue points; redeem_points spends balance.
+  customer_id?: number;
+  redeem_points?: number;
 }): Promise<TransactionResult> {
   const response = await client.apiCall.invoke<TransactionResult>({
     url: '/api/v1/pos/transaction',

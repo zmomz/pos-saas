@@ -643,6 +643,44 @@ async def get_current_shift(
     }
 
 
+@router.get("/shifts/history")
+async def get_shift_history(
+    limit: int = Query(default=50, ge=1, le=200),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's closed shifts (most recent first) for reconciliation."""
+    from models.shifts import Shifts
+
+    result = await db.execute(
+        select(Shifts)
+        .where(Shifts.user_id == str(current_user.id), Shifts.status == "closed")
+        .order_by(Shifts.id.desc())
+        .limit(limit)
+    )
+    shifts = result.scalars().all()
+    return {
+        "shifts": [
+            {
+                "id": s.id,
+                "staff_name": s.staff_name,
+                "start_time": s.start_time,
+                "end_time": s.end_time,
+                "opening_cash": s.opening_cash,
+                "closing_cash": s.closing_cash,
+                "expected_cash": s.expected_cash,
+                "cash_difference": s.cash_difference,
+                "total_sales": s.total_sales,
+                "total_transactions": s.total_transactions,
+                "branch_id": s.branch_id,
+                "notes": s.notes,
+            }
+            for s in shifts
+        ],
+        "total": len(shifts),
+    }
+
+
 # =============================================================================
 # Loyalty Points Endpoints
 # =============================================================================
@@ -956,13 +994,17 @@ async def sync_offline_transactions(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Sync offline-queued transactions."""
+    """Sync offline-queued transactions through the full atomic sale path (POS-05)."""
     if not data.transactions:
         raise HTTPException(status_code=400, detail="No transactions to sync")
 
+    from routers.pos import get_client_for_user
+
+    client = await get_client_for_user(db, str(current_user.id))
     result = await OfflineSyncService.process_offline_queue(
         db=db,
         user_id=str(current_user.id),
+        client_id=client.id,
         queued_transactions=data.transactions,
     )
     return result

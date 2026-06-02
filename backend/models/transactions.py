@@ -26,5 +26,11 @@ class Transactions(Base):
     items_json = Column(String, nullable=True)
     customer_name = Column(String, nullable=True)
     customer_phone = Column(String, nullable=True)
+    # Shift this sale belongs to (POS-04/shifts). Set when an open shift exists at
+    # sale time so close_shift can reconcile cash against accumulated sales.
+    shift_id = Column(Integer, nullable=True)
+    # Client-generated id for an offline-queued sale (POS-05). Used to dedupe the
+    # sync so re-sending the same queue never double-books a transaction.
+    offline_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

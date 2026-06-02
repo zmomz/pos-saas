@@ -201,6 +201,36 @@ async def _deduct_inventory(
         )
 
 
+# ---------- Helper: accumulate a sale into the open shift ----------
+async def _apply_sale_to_open_shift(
+    db: AsyncSession, user_id: str, amount: float
+) -> Optional[int]:
+    """Add ``amount`` (and one transaction) to the user's open shift, if any.
+
+    Returns the shift id so the sale can be linked to it (``Transactions.shift_id``).
+    Runs inside the caller's transaction so the shift totals and the sale commit
+    together. Refunds pass a negative ``amount`` so reconciliation nets out. Returns
+    None when no shift is open (sales are still allowed without a shift).
+    """
+    from models.shifts import Shifts
+
+    result = await db.execute(
+        select(Shifts).where(Shifts.user_id == user_id, Shifts.status == "open")
+    )
+    shift = result.scalar_one_or_none()
+    if not shift:
+        return None
+    await db.execute(
+        update(Shifts)
+        .where(Shifts.id == shift.id)
+        .values(
+            total_sales=(shift.total_sales or 0) + amount,
+            total_transactions=(shift.total_transactions or 0) + 1,
+        )
+    )
+    return shift.id
+
+
 # ---------- Helper: Get client for current user ----------
 async def get_client_for_user(db: AsyncSession, user_id: str) -> Clients:
     """Get the client record for the current user."""
@@ -358,6 +388,13 @@ async def create_transaction(
             loyalty_points_earned = accrual.points_earned
             loyalty_balance = accrual.new_balance
 
+    # ---- Shift accumulation (POS shifts) ----
+    # Roll this sale into the cashier's open shift so close_shift reconciles cash
+    # against real sales. Linked via shift_id; committed atomically with the sale.
+    transaction.shift_id = await _apply_sale_to_open_shift(
+        db, str(current_user.id), total_amount
+    )
+
     # ---- ZATCA signing on the real sale path (C-3) ----
     # Hash + ECDSA-stamp + hash-chain + archive the invoice inside this same
     # transaction. A signing failure raises and rolls the sale back, so a
@@ -448,6 +485,95 @@ async def _maybe_send_low_stock_alerts(
             )
     except Exception as exc:  # pragma: no cover - alerts must never break a sale
         logger.warning("Low-stock alert dispatch failed: %s", exc)
+
+
+# ---------- Offline sync: route a queued sale through the full atomic path ----------
+async def process_offline_sale(
+    db: AsyncSession, user_id: str, client_id: int, txn: dict
+) -> dict:
+    """Persist one offline-queued sale through the **same** atomic path as a live
+    sale (POS-05): invoice counter, inventory deduction, shift accumulation, and
+    ECDSA signing + hash-chaining — committed together.
+
+    Deduplicates by the client-generated ``offline_id`` so re-syncing the same
+    queue never double-books. Returns ``{"status": "processed"|"skipped",
+    "transaction_id": int|None, "invoice_number": str|None}``.
+    """
+    offline_id = txn.get("offline_id")
+    if offline_id:
+        existing = await db.execute(
+            select(Transactions).where(
+                Transactions.user_id == user_id,
+                Transactions.offline_id == offline_id,
+            )
+        )
+        if existing.scalar_one_or_none():
+            return {"status": "skipped", "transaction_id": None, "invoice_number": None}
+
+    # Re-fetch the client each call so invoice_counter/chain state is current
+    # after the previous queued sale committed.
+    client = (
+        await db.execute(select(Clients).where(Clients.id == client_id))
+    ).scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=403, detail="Unknown client for offline sale")
+
+    raw_items = txn.get("items") or []
+    items = [
+        CartItem(
+            product_id=int(it.get("product_id")),
+            name=str(it.get("name") or "Item"),
+            price=float(it.get("price") or 0),
+            quantity=int(it.get("quantity") or 0),
+            discount=float(it.get("discount") or 0),
+        )
+        for it in raw_items
+        if it.get("product_id") is not None
+    ]
+
+    # Recompute totals from the line items (authoritative), mirroring the live path.
+    subtotal = sum(i.price * i.quantity - (i.discount or 0) for i in items)
+    discount_amount = float(txn.get("discount_amount") or 0)
+    taxable_amount = subtotal - discount_amount
+    vat_rate = await get_effective_tax_rate(db, 15.0)
+    vat_amount = round(taxable_amount * (vat_rate / 100), 2)
+    total_amount = round(taxable_amount + vat_amount, 2)
+
+    current_counter = (client.invoice_counter or 0) + 1
+    await db.execute(
+        update(Clients).where(Clients.id == client.id).values(invoice_counter=current_counter)
+    )
+    invoice_number = f"INV-{client.id:04d}-{current_counter:06d}"
+
+    transaction = Transactions(
+        user_id=user_id,
+        client_id=client.id,
+        invoice_number=invoice_number,
+        offline_id=offline_id,
+        subtotal=subtotal,
+        vat_amount=vat_amount,
+        discount_amount=discount_amount,
+        total_amount=total_amount,
+        payment_method=txn.get("payment_method") or "cash",
+        status="completed",
+        items_json=json.dumps([i.model_dump() for i in items], ensure_ascii=False),
+        customer_name=txn.get("customer_name"),
+        customer_phone=txn.get("customer_phone"),
+    )
+    db.add(transaction)
+
+    await _deduct_inventory(db, client.id, items, bool(txn.get("allow_negative_stock")))
+    transaction.shift_id = await _apply_sale_to_open_shift(db, user_id, total_amount)
+
+    await db.flush()
+    doc, _stamped_qr = await zatca_sale.sign_transaction(db, client, transaction)
+    await db.commit()
+    await db.refresh(transaction)
+    return {
+        "status": "processed",
+        "transaction_id": transaction.id,
+        "invoice_number": transaction.invoice_number,
+    }
 
 
 @router.get("/transactions", response_model=TransactionListResponse)
@@ -592,6 +718,11 @@ async def refund_transaction(
     )
     db.add(credit)
     original.status = "refunded"
+
+    # Net the refund into the open shift (negative amount) so cash reconciles.
+    credit.shift_id = await _apply_sale_to_open_shift(
+        db, str(current_user.id), credit.total_amount
+    )
 
     await db.flush()
     doc, stamped_qr = await zatca_sale.sign_transaction(

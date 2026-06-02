@@ -1127,60 +1127,42 @@ class OfflineSyncService:
     async def process_offline_queue(
         db: AsyncSession,
         user_id: str,
+        client_id: int,
         queued_transactions: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
+        """Process a batch of offline-queued sales (POS-05).
+
+        Each sale is routed through the **full** atomic path (inventory
+        deduction, invoice counter, shift accumulation, ECDSA signing + hash
+        chaining) and deduplicated by ``offline_id`` — so an offline sale is
+        fiscally identical to one rung up live, and re-syncing is idempotent.
+        A failing item is rolled back and reported without dropping the others.
         """
-        Process a batch of offline-queued transactions.
-        Validates, deduplicates, and persists them.
-        """
-        from models.transactions import Transactions
+        # Imported lazily: routers.pos imports services.production at load time,
+        # so importing it at module scope here would be circular.
+        from routers.pos import process_offline_sale
 
         processed = 0
         skipped = 0
         errors = []
+        results: List[Dict[str, Any]] = []
 
         for idx, txn in enumerate(queued_transactions):
             try:
-                # Check for duplicate by offline_id if provided
-                offline_id = txn.get("offline_id")
-                if offline_id:
-                    existing = await db.execute(
-                        select(Transactions).where(
-                            Transactions.user_id == user_id,
-                            Transactions.invoice_number == offline_id,
-                        )
-                    )
-                    if existing.scalar_one_or_none():
-                        skipped += 1
-                        continue
-
-                # Create transaction record
-                transaction = Transactions(
-                    user_id=user_id,
-                    client_id=txn.get("client_id"),
-                    invoice_number=offline_id or f"OFFLINE-{uuid.uuid4().hex[:8].upper()}",
-                    subtotal=txn.get("subtotal", 0),
-                    vat_amount=txn.get("vat_amount", 0),
-                    discount_amount=txn.get("discount_amount", 0),
-                    total_amount=txn.get("total_amount", 0),
-                    payment_method=txn.get("payment_method", "cash"),
-                    status="completed",
-                    items_json=json.dumps(txn.get("items", []), ensure_ascii=False),
-                    customer_name=txn.get("customer_name"),
-                    customer_phone=txn.get("customer_phone"),
-                )
-                db.add(transaction)
-                processed += 1
-
+                outcome = await process_offline_sale(db, user_id, client_id, txn)
+                if outcome["status"] == "skipped":
+                    skipped += 1
+                else:
+                    processed += 1
+                    results.append(outcome)
             except Exception as e:
+                await db.rollback()
                 errors.append({"index": idx, "error": str(e)})
-
-        if processed > 0:
-            await db.commit()
 
         return {
             "processed": processed,
             "skipped_duplicates": skipped,
             "errors": errors,
+            "results": results,
             "total_submitted": len(queued_transactions),
         }
