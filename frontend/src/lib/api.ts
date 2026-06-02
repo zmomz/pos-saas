@@ -1,4 +1,4 @@
-import { createClient, uploadMultipart } from './atomsClient';
+import { createClient, uploadMultipart, getBlob } from './atomsClient';
 
 export const client = createClient();
 
@@ -724,6 +724,19 @@ export async function updateClientSubscription(
 // Agent: upload a white-label logo; returns the served URL (AG-01)
 export async function uploadAgentLogo(file: File): Promise<{ logo_url: string }> {
   return uploadMultipart<{ logo_url: string }>('/api/v1/tenant/agent/logo', file);
+}
+
+// Phase 6 (PDF): download a transaction's invoice as a real PDF and save it.
+export async function downloadInvoicePdf(transactionId: number, invoiceNumber: string) {
+  const blob = await getBlob(`/api/v1/pos/transactions/${transactionId}/pdf`);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${invoiceNumber}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // POS-04: email a receipt for a transaction

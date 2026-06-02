@@ -29,6 +29,9 @@ class Transactions(Base):
     # Shift this sale belongs to (POS-04/shifts). Set when an open shift exists at
     # sale time so close_shift can reconcile cash against accumulated sales.
     shift_id = Column(Integer, nullable=True)
+    # Branch the sale was rung up at (multi-branch). Enables branch-scoped sales
+    # reporting; null for single-branch installs.
+    branch_id = Column(Integer, nullable=True)
     # Client-generated id for an offline-queued sale (POS-05). Used to dedupe the
     # sync so re-sending the same queue never double-books a transaction.
     offline_id = Column(String, nullable=True)

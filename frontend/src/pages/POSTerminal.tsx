@@ -5,12 +5,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, type MyPermissions } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, type MyPermissions } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer } from 'lucide-react';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown } from 'lucide-react';
 
 interface Product {
   id: number;
@@ -566,6 +566,16 @@ export default function POSTerminal() {
               <Button onClick={handleNewSale} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
                 {t('new_sale')}
               </Button>
+              {receipt.id && (
+                <Button
+                  variant="outline"
+                  onClick={() => downloadInvoicePdf(receipt.id!, receipt.invoice_number)}
+                  className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                  title={t('download_pdf') || 'Download PDF'}
+                >
+                  <FileDown className="w-4 h-4" />
+                </Button>
+              )}
               {receipt.id && isThermalPrintSupported() && (
                 <Button
                   variant="outline"

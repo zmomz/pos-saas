@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { client, getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
 import { DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag, BarChart3, Users } from 'lucide-react';
 
@@ -95,7 +96,7 @@ export default function ClientDashboard() {
             </div>
             <div>
               <p className={`text-sm ${isDark ? 'text-green-300' : 'text-green-600'}`}>{t('today_sales')}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>${stats?.today_sales?.toFixed(2) || '0.00'}</p>
+              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats?.today_sales || 0, language)}</p>
             </div>
           </CardContent>
         </Card>
@@ -119,7 +120,7 @@ export default function ClientDashboard() {
             </div>
             <div>
               <p className={`text-sm ${isDark ? 'text-purple-300' : 'text-purple-600'}`}>{t('total_sales')}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>${stats?.total_sales?.toFixed(2) || '0.00'}</p>
+              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats?.total_sales || 0, language)}</p>
             </div>
           </CardContent>
         </Card>
@@ -182,7 +183,7 @@ export default function ClientDashboard() {
                 <div>
                   <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('subscription_fee')}</p>
                   <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                    ${subscription.subscription_fee.toFixed(2)} / {t(subscription.billing_cycle) || subscription.billing_cycle}
+                    {formatMoney(subscription.subscription_fee, language)} / {t(subscription.billing_cycle) || subscription.billing_cycle}
                   </p>
                 </div>
                 <div>
@@ -209,7 +210,7 @@ export default function ClientDashboard() {
                     {subscription.payments.slice(0, 6).map((p) => (
                       <div key={p.id} className={`flex justify-between text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
                         <span>{p.period_start || (p.created_at ? p.created_at.slice(0, 10) : '')}</span>
-                        <span>${p.amount.toFixed(2)}</span>
+                        <span>{formatMoney(p.amount, language)}</span>
                       </div>
                     ))}
                   </div>
@@ -244,7 +245,7 @@ export default function ClientDashboard() {
                 transactions.map((tx) => (
                   <tr key={tx.id} className={`border-t ${isDark ? 'border-slate-700 text-slate-300' : 'border-gray-200 text-gray-700'}`}>
                     <td className="p-3 font-mono">{tx.invoice_number}</td>
-                    <td className="p-3">${tx.total_amount?.toFixed(2)}</td>
+                    <td className="p-3">{formatMoney(tx.total_amount || 0, language)}</td>
                     <td className="p-3">
                       <Badge className={isDark ? 'bg-slate-700 text-slate-300' : 'bg-gray-200 text-gray-700'}>{tx.payment_method}</Badge>
                     </td>

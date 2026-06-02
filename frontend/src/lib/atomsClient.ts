@@ -206,6 +206,12 @@ const auth = {
   },
 };
 
+/** GET a binary response (e.g. a generated PDF) as a Blob, with auth attached. */
+export async function getBlob(url: string): Promise<Blob> {
+  const res = await http.get(url, { responseType: 'blob' });
+  return res.data as Blob;
+}
+
 /** POST a multipart/form-data upload (e.g. AG-01 agent logo). Returns the body. */
 export async function uploadMultipart<T = unknown>(url: string, file: File, field = 'file'): Promise<T> {
   const form = new FormData();

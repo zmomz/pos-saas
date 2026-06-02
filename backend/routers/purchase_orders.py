@@ -223,6 +223,86 @@ async def create_purchase_orders(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+class ReceivePurchaseOrderResponse(BaseModel):
+    id: int
+    status: str
+    received_date: Optional[str] = None
+    received_items: int
+    message: str
+
+
+@router.post("/{id}/receive", response_model=ReceivePurchaseOrderResponse)
+async def receive_purchase_order(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Receive a purchase order: increment stock for each line and close the PO.
+
+    Real procurement workflow (Phase 6): parses ``items_json`` (a list of
+    ``{product_id, quantity, cost?}``), adds the received quantities back to the
+    owner's product stock, records the receive date, and advances the PO status
+    to ``received``. Idempotent guard: a PO already received is rejected so stock
+    is never double-counted.
+    """
+    from sqlalchemy import select, update
+
+    from models.products import Products
+    from models.purchase_orders import Purchase_orders
+
+    po = (
+        await db.execute(
+            select(Purchase_orders).where(
+                Purchase_orders.id == id,
+                Purchase_orders.user_id == str(current_user.id),
+            )
+        )
+    ).scalar_one_or_none()
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase_orders not found")
+    if (po.status or "").lower() == "received":
+        raise HTTPException(status_code=400, detail="Purchase order already received")
+
+    try:
+        items = json.loads(po.items_json) if po.items_json else []
+    except (ValueError, TypeError):
+        items = []
+
+    received = 0
+    for line in items:
+        pid = line.get("product_id")
+        qty = int(line.get("quantity") or 0)
+        if not pid or qty <= 0:
+            continue
+        result = await db.execute(
+            update(Products)
+            .where(Products.id == pid, Products.user_id == str(current_user.id))
+            .values(quantity=Products.quantity + qty)
+        )
+        if result.rowcount:
+            received += 1
+            cost = line.get("cost")
+            if cost is not None:
+                await db.execute(
+                    update(Products).where(Products.id == pid).values(cost_price=cost)
+                )
+
+    received_date = date.today().isoformat()
+    await db.execute(
+        update(Purchase_orders)
+        .where(Purchase_orders.id == id)
+        .values(status="received", received_date=received_date)
+    )
+    await db.commit()
+    return ReceivePurchaseOrderResponse(
+        id=id,
+        status="received",
+        received_date=received_date,
+        received_items=received,
+        message=f"Received {received} line(s) into inventory",
+    )
+
+
 @router.post("/batch", response_model=List[Purchase_ordersResponse], status_code=201)
 async def create_purchase_orderss_batch(
     request: Purchase_ordersBatchCreateRequest,

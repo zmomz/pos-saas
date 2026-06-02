@@ -65,6 +65,8 @@ class CreateTransactionRequest(BaseModel):
     # When False (default) a sale is rejected if any line exceeds available stock.
     # The sale and the stock deduction are committed together in one transaction.
     allow_negative_stock: Optional[bool] = False
+    # Branch the sale is rung up at (multi-branch). Enables branch-scoped reports.
+    branch_id: Optional[int] = None
 
 
 class TransactionResponse(BaseModel):
@@ -360,6 +362,7 @@ async def create_transaction(
         items_json=items_json,
         customer_name=data.customer_name,
         customer_phone=data.customer_phone,
+        branch_id=data.branch_id,
     )
     db.add(transaction)
 
@@ -580,25 +583,29 @@ async def process_offline_sale(
 async def list_transactions(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    branch_id: Optional[int] = Query(None, description="Filter to one branch (multi-branch)"),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List transactions for the current client with pagination."""
+    """List transactions for the current client, optionally scoped to a branch."""
     client = await get_client_for_user(db, str(current_user.id))
 
     offset = (page - 1) * page_size
 
+    filters = [Transactions.client_id == client.id]
+    if branch_id is not None:
+        filters.append(Transactions.branch_id == branch_id)
+
     # Get total count
     count_result = await db.execute(
-        select(func.count(Transactions.id))
-        .where(Transactions.client_id == client.id)
+        select(func.count(Transactions.id)).where(*filters)
     )
     total = count_result.scalar() or 0
 
     # Get paginated transactions
     result = await db.execute(
         select(Transactions)
-        .where(Transactions.client_id == client.id)
+        .where(*filters)
         .order_by(Transactions.created_at.desc())
         .offset(offset)
         .limit(page_size)
@@ -817,6 +824,59 @@ async def get_invoice_document(
         discount=txn.discount_amount or 0,
     )
     return HTMLResponse(content=html)
+
+
+@router.get("/transactions/{txn_id}/pdf")
+async def get_invoice_pdf(
+    txn_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the tax invoice as real ``application/pdf`` bytes (Phase 6 PDF).
+
+    Rendered server-side with the fiscal ZATCA QR embedded. The frontend offers
+    this as a "Download PDF" action on receipts/invoices.
+    """
+    from fastapi.responses import Response
+
+    from services.pdf_render import invoice_pdf_bytes
+
+    client = await get_client_for_user(db, str(current_user.id))
+    txn = await _get_owned_transaction(db, client, txn_id)
+
+    try:
+        line_items = json.loads(txn.items_json) if txn.items_json else []
+    except (ValueError, TypeError):
+        line_items = []
+
+    issue_date = txn.created_at.strftime("%Y-%m-%d %H:%M") if txn.created_at else ""
+    qr_png = (
+        zatca_service_mod.render_qr_png_base64(txn.zatca_qr) if txn.zatca_qr else None
+    )
+    try:
+        pdf_bytes = invoice_pdf_bytes(
+            seller_name=client.business_name or "Business",
+            seller_vat=client.vat_number or "000000000000000",
+            buyer_name=txn.customer_name or "Cash",
+            invoice_number=txn.invoice_number,
+            issue_date=issue_date,
+            line_items=line_items,
+            subtotal=txn.subtotal or 0,
+            discount=txn.discount_amount or 0,
+            vat_amount=txn.vat_amount or 0,
+            total_amount=txn.total_amount,
+            qr_png_base64=qr_png,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{txn.invoice_number}.pdf"'
+        },
+    )
 
 
 @router.get("/transactions/{txn_id}/escpos")
