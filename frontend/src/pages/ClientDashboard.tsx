@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getClientDashboard, getClientBranding, getTransactions } from '@/lib/api';
+import { client, getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag, BarChart3, Users } from 'lucide-react';
@@ -29,6 +29,8 @@ export default function ClientDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [brandName, setBrandName] = useState('');
+  const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null);
+  const [paying, setPaying] = useState(false);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
@@ -40,14 +42,16 @@ export default function ClientDashboard() {
 
   async function loadData() {
     try {
-      const [dashData, brandData, txData] = await Promise.all([
+      const [dashData, brandData, txData, subData] = await Promise.all([
         getClientDashboard(),
         getClientBranding().catch(() => null),
         getTransactions(1, 10),
+        getClientSubscription().catch(() => null),
       ]);
       setStats(dashData);
       setBrandName(brandData?.company_name || '');
       setTransactions(txData?.transactions || txData || []);
+      setSubscription(subData);
     } catch (err) {
       console.error('Failed to load:', err);
     } finally {
@@ -58,6 +62,18 @@ export default function ClientDashboard() {
   async function handleLogout() {
     await client.auth.logout();
     navigate('/');
+  }
+
+  async function handlePaySubscription() {
+    setPaying(true);
+    try {
+      const updated = await payClientSubscription();
+      setSubscription(updated);
+    } catch (err) {
+      console.error('Subscription payment failed:', err);
+    } finally {
+      setPaying(false);
+    }
   }
 
   if (loading) {
@@ -155,6 +171,54 @@ export default function ClientDashboard() {
           {t('staff') || 'Staff'}
         </Button>
       </div>
+
+      {/* Subscription panel (CL-04) */}
+      {subscription && (subscription.subscription_fee > 0 || subscription.payments.length > 0) && (
+        <section>
+          <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('subscription')}</h2>
+          <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+            <CardContent className="p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('subscription_fee')}</p>
+                  <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                    ${subscription.subscription_fee.toFixed(2)} / {t(subscription.billing_cycle) || subscription.billing_cycle}
+                  </p>
+                </div>
+                <div>
+                  <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('next_billing')}</p>
+                  <p className={isDark ? 'text-slate-200' : 'text-slate-800'}>{subscription.next_billing_date || '—'}</p>
+                </div>
+                <div>
+                  <Badge className={subscription.subscription_status === 'active' ? 'bg-green-600 text-white' : subscription.subscription_status === 'suspended' ? 'bg-red-600 text-white' : 'bg-amber-600 text-white'}>
+                    {subscription.subscription_status}
+                  </Badge>
+                </div>
+                <Button
+                  onClick={handlePaySubscription}
+                  disabled={paying || subscription.subscription_fee <= 0}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {paying ? t('loading') : (t('pay_now') || 'Pay now')}
+                </Button>
+              </div>
+              {subscription.payments.length > 0 && (
+                <div className="border-t pt-3 border-slate-700/50">
+                  <p className={`text-sm mb-2 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('payment_history')}</p>
+                  <div className="space-y-1">
+                    {subscription.payments.slice(0, 6).map((p) => (
+                      <div key={p.id} className={`flex justify-between text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                        <span>{p.period_start || (p.created_at ? p.created_at.slice(0, 10) : '')}</span>
+                        <span>${p.amount.toFixed(2)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      )}
 
       {/* Recent Transactions */}
       <section>

@@ -12,7 +12,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
-import { getAgentBranding, updateBranding } from '@/lib/api';
+import { getAgentBranding, updateBranding, uploadAgentLogo } from '@/lib/api';
+import { config } from '@/lib/config';
 import { toast } from 'sonner';
 
 const fontOptions = [
@@ -43,7 +44,27 @@ export default function BrandingEditor() {
   const [companyName, setCompanyName] = useState('My Company');
   const [defaultLanguage, setDefaultLanguage] = useState('en');
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { logo_url } = await uploadAgentLogo(file);
+      // Store an absolute URL so client apps on another origin can load it.
+      const absolute = logo_url.startsWith('http') ? logo_url : `${config.API_BASE_URL}${logo_url}`;
+      setLogoUrl(absolute);
+      toast.success(t('upload_logo') || 'Logo uploaded');
+    } catch (err) {
+      console.error('Logo upload failed:', err);
+      toast.error((err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Upload failed');
+    } finally {
+      setUploading(false);
+      e.target.value = '';
+    }
+  }
 
   useEffect(() => {
     loadBranding();
@@ -145,9 +166,25 @@ export default function BrandingEditor() {
               <CardTitle className="text-white">{t('branding')} Settings</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5">
-              {/* Logo URL */}
+              {/* Logo: upload a file (AG-01) or paste a URL */}
               <div className="space-y-2">
-                <Label className="text-slate-300">Logo URL</Label>
+                <Label className="text-slate-300">{t('logo') || 'Logo'}</Label>
+                <div className="flex items-center gap-3">
+                  {logoUrl && (
+                    <img src={logoUrl} alt="logo" className="w-12 h-12 rounded object-contain bg-white p-1" />
+                  )}
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      onChange={handleLogoUpload}
+                      className="hidden"
+                    />
+                    <span className="inline-block px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm">
+                      {uploading ? (t('loading') || '...') : (t('upload_logo') || 'Upload logo')}
+                    </span>
+                  </label>
+                </div>
                 <Input
                   value={logoUrl}
                   onChange={(e) => setLogoUrl(e.target.value)}

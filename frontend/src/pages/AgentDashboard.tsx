@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getAgentClients, getAgentBranding, createNewClient, toggleClient } from '@/lib/api';
+import { client, getAgentClients, getAgentBranding, createNewClient, toggleClient, setClientFeature } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Users, DollarSign, CreditCard, Clock, UserPlus, Palette, ShoppingBag, BarChart3 } from 'lucide-react';
@@ -34,7 +34,11 @@ export default function AgentDashboard() {
   const [branding, setBranding] = useState<Branding | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [newClientForm, setNewClientForm] = useState({ business_name: '', email: '', phone: '' });
+  const [newClientForm, setNewClientForm] = useState({ business_name: '', email: '', phone: '', subscription_fee: '', billing_cycle: 'monthly' });
+  // AG-03: per-client feature-toggle dialog. The toggleable feature set mirrors
+  // the backend require_feature gates (default-enabled until explicitly disabled).
+  const [featureClient, setFeatureClient] = useState<ClientItem | null>(null);
+  const [featureBusy, setFeatureBusy] = useState(false);
   // One-time credentials surfaced after provisioning a client (C-1/CL-01). Shown
   // once in a modal so the agent can hand them over; never retrievable again.
   const [createdCreds, setCreatedCreds] = useState<
@@ -69,9 +73,10 @@ export default function AgentDashboard() {
         business_name: newClientForm.business_name,
         email: newClientForm.email,
         phone: newClientForm.phone,
+        subscription_fee: newClientForm.subscription_fee ? Number(newClientForm.subscription_fee) : undefined,
       });
       setDialogOpen(false);
-      setNewClientForm({ business_name: '', email: '', phone: '' });
+      setNewClientForm({ business_name: '', email: '', phone: '', subscription_fee: '', billing_cycle: 'monthly' });
       // Surface the one-time login credentials for the new merchant.
       if (created?.temp_password) {
         setCreatedCreds({
@@ -103,10 +108,25 @@ export default function AgentDashboard() {
     }
   }
 
+  async function handleSetFeature(featureName: string, isEnabled: boolean) {
+    if (!featureClient) return;
+    setFeatureBusy(true);
+    try {
+      await setClientFeature(featureClient.id, featureName, isEnabled);
+    } catch (err) {
+      console.error('Set feature failed:', err);
+    } finally {
+      setFeatureBusy(false);
+    }
+  }
+
   async function handleLogout() {
     await client.auth.logout();
     navigate('/');
   }
+
+  // Toggleable features matching the backend require_feature() gates (AG-03).
+  const TOGGLEABLE_FEATURES = ['inventory', 'discounts', 'loyalty', 'zatca', 'email_receipts'];
 
   const remainingSlots = (branding?.client_slots || 0) - (branding?.used_slots || 0);
   const activeClients = clients.filter((c) => c.is_active);
@@ -240,6 +260,30 @@ export default function AgentDashboard() {
                   onChange={(e) => setNewClientForm({ ...newClientForm, phone: e.target.value })}
                   className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
                 />
+                {/* CL-03: subscription fee + billing cycle */}
+                <div className="flex gap-2">
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder={t('subscription_fee')}
+                    value={newClientForm.subscription_fee}
+                    onChange={(e) => setNewClientForm({ ...newClientForm, subscription_fee: e.target.value })}
+                    className={isDark ? 'bg-slate-700 border-slate-600 text-white flex-1' : 'bg-white border-gray-300 text-slate-900 flex-1'}
+                  />
+                  <Select
+                    value={newClientForm.billing_cycle}
+                    onValueChange={(v) => setNewClientForm({ ...newClientForm, billing_cycle: v })}
+                  >
+                    <SelectTrigger className={isDark ? 'bg-slate-700 border-slate-600 text-white w-32' : 'bg-white border-gray-300 text-slate-900 w-32'}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className={isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-200'}>
+                      <SelectItem value="monthly" className={isDark ? 'text-white hover:bg-slate-700' : 'text-slate-900 hover:bg-gray-100'}>{t('monthly') || 'Monthly'}</SelectItem>
+                      <SelectItem value="yearly" className={isDark ? 'text-white hover:bg-slate-700' : 'text-slate-900 hover:bg-gray-100'}>{t('yearly') || 'Yearly'}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 {createError && (
                   <p className="text-sm text-red-500">{createError}</p>
                 )}
@@ -295,6 +339,40 @@ export default function AgentDashboard() {
               </div>
             </DialogContent>
           </Dialog>
+
+          {/* AG-03: per-client feature toggles */}
+          <Dialog open={!!featureClient} onOpenChange={(open) => !open && setFeatureClient(null)}>
+            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+              <DialogHeader>
+                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
+                  {t('features') || 'Features'} — {featureClient?.business_name}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                  {t('feature_toggle_hint') || 'Enable or disable capabilities for this client. Features are on by default.'}
+                </p>
+                {TOGGLEABLE_FEATURES.map((f) => (
+                  <div key={f} className="flex items-center justify-between gap-2">
+                    <span className={isDark ? 'text-slate-200' : 'text-slate-800'}>{t(f) || f}</span>
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={featureBusy} onClick={() => handleSetFeature(f, true)} className="bg-green-600 hover:bg-green-700 text-white text-xs">
+                        {t('enable') || 'Enable'}
+                      </Button>
+                      <Button size="sm" disabled={featureBusy} variant="outline" onClick={() => handleSetFeature(f, false)} className={isDark ? 'border-red-600 text-red-400 hover:bg-red-600/10 text-xs' : 'border-red-300 text-red-700 hover:bg-red-50 text-xs'}>
+                        {t('disable') || 'Disable'}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                <div className="flex justify-end pt-2">
+                  <Button onClick={() => setFeatureClient(null)} className="bg-blue-600 hover:bg-blue-700 text-white">
+                    {t('done') || 'Done'}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <div className={`overflow-x-auto rounded-lg border ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
@@ -322,23 +400,33 @@ export default function AgentDashboard() {
                     </Badge>
                   </td>
                   <td className="p-3">
-                    <Button
-                      size="sm"
-                      variant={c.is_active ? 'destructive' : 'default'}
-                      onClick={() => handleToggleClient(c.id)}
-                      disabled={togglingId === c.id}
-                      className={
-                        c.is_active
-                          ? 'bg-red-600 hover:bg-red-700 text-white text-xs'
-                          : 'bg-green-600 hover:bg-green-700 text-white text-xs'
-                      }
-                    >
-                      {togglingId === c.id
-                        ? '...'
-                        : c.is_active
-                          ? (t('deactivate') || 'Deactivate')
-                          : (t('activate') || 'Activate')}
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant={c.is_active ? 'destructive' : 'default'}
+                        onClick={() => handleToggleClient(c.id)}
+                        disabled={togglingId === c.id}
+                        className={
+                          c.is_active
+                            ? 'bg-red-600 hover:bg-red-700 text-white text-xs'
+                            : 'bg-green-600 hover:bg-green-700 text-white text-xs'
+                        }
+                      >
+                        {togglingId === c.id
+                          ? '...'
+                          : c.is_active
+                            ? (t('deactivate') || 'Deactivate')
+                            : (t('activate') || 'Activate')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setFeatureClient(c)}
+                        className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700 text-xs' : 'border-gray-300 text-gray-700 hover:bg-gray-100 text-xs'}
+                      >
+                        {t('features') || 'Features'}
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}

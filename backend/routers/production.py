@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
+from dependencies.features import require_feature
 from schemas.auth import UserResponse
 from services.production import (
     AnalyticsService,
@@ -684,7 +685,7 @@ async def get_shift_history(
 # =============================================================================
 # Loyalty Points Endpoints
 # =============================================================================
-@router.post("/loyalty/earn")
+@router.post("/loyalty/earn", dependencies=[Depends(require_feature("loyalty"))])
 async def earn_loyalty_points(
     data: LoyaltyEarnRequest,
     current_user: UserResponse = Depends(get_current_user),
@@ -732,7 +733,7 @@ async def earn_loyalty_points(
     }
 
 
-@router.post("/loyalty/redeem")
+@router.post("/loyalty/redeem", dependencies=[Depends(require_feature("loyalty"))])
 async def redeem_loyalty_points(
     data: LoyaltyRedeemRequest,
     current_user: UserResponse = Depends(get_current_user),

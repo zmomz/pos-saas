@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getMasterAgents, toggleAgent, getPackages, createAgent } from '@/lib/api';
+import { client, getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Settings, Shield } from 'lucide-react';
@@ -15,8 +15,9 @@ interface Agent {
   id: number;
   company_name: string;
   email: string;
-  package_type: string;
-  client_slots: number;
+  // The backend returns package_type as the agent's TOTAL client-slot count
+  // (add_agent_slots increments it). MA-03: display used/total from this field.
+  package_type: number;
   used_slots: number;
   is_active: boolean;
 }
@@ -42,6 +43,12 @@ export default function MasterDashboard() {
     package_id: '',
   });
   const [creating, setCreating] = useState(false);
+  // MA-04: add-slots dialog. MA-05: master global tax-rate dialog.
+  const [slotDialog, setSlotDialog] = useState<{ agentId: number; company: string } | null>(null);
+  const [slotAmount, setSlotAmount] = useState('1');
+  const [taxDialogOpen, setTaxDialogOpen] = useState(false);
+  const [taxInput, setTaxInput] = useState('15');
+  const [savingTax, setSavingTax] = useState(false);
   // One-time agent login credentials surfaced after creation (MA-01) so the
   // returned temp password isn't lost.
   const [createdCreds, setCreatedCreds] = useState<
@@ -100,6 +107,44 @@ export default function MasterDashboard() {
       console.error('Create agent failed:', err);
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleAddSlots() {
+    if (!slotDialog) return;
+    const n = Number(slotAmount);
+    if (!Number.isFinite(n) || n <= 0) return;
+    try {
+      await addAgentSlots(slotDialog.agentId, n);
+      setSlotDialog(null);
+      setSlotAmount('1');
+      await loadData();
+    } catch (err) {
+      console.error('Add slots failed:', err);
+    }
+  }
+
+  async function openTaxDialog() {
+    try {
+      const data = await getTaxRate();
+      setTaxInput(String(data?.tax_rate ?? 15));
+    } catch {
+      setTaxInput('15');
+    }
+    setTaxDialogOpen(true);
+  }
+
+  async function handleSaveTax() {
+    const rate = Number(taxInput);
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) return;
+    setSavingTax(true);
+    try {
+      await setGlobalTaxRate(rate);
+      setTaxDialogOpen(false);
+    } catch (err) {
+      console.error('Save tax rate failed:', err);
+    } finally {
+      setSavingTax(false);
     }
   }
 
@@ -205,6 +250,14 @@ export default function MasterDashboard() {
         >
           <BarChart3 className="h-4 w-4 mr-2" />
           {t('notifications') || 'Notifications'}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={openTaxDialog}
+          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
+        >
+          <DollarSign className="h-4 w-4 mr-2" />
+          {t('tax_rate') || 'Tax Rate'}
         </Button>
       </div>
 
@@ -350,6 +403,74 @@ export default function MasterDashboard() {
               </div>
             </DialogContent>
           </Dialog>
+
+          {/* MA-04: add client slots to an agent's package */}
+          <Dialog open={!!slotDialog} onOpenChange={(open) => !open && setSlotDialog(null)}>
+            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+              <DialogHeader>
+                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
+                  {t('add_slots') || 'Add Slots'} — {slotDialog?.company}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <label className={`text-sm mb-1 block ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                    {t('slots') || 'Slots'}
+                  </label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={slotAmount}
+                    onChange={(e) => setSlotAmount(e.target.value)}
+                    className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
+                  />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" onClick={() => setSlotDialog(null)} className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}>
+                    {t('cancel')}
+                  </Button>
+                  <Button onClick={handleAddSlots} className="bg-blue-600 hover:bg-blue-700 text-white">
+                    {t('add_slots') || 'Add Slots'}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* MA-05: master global VAT/tax-rate setting */}
+          <Dialog open={taxDialogOpen} onOpenChange={setTaxDialogOpen}>
+            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+              <DialogHeader>
+                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
+                  {t('tax_rate') || 'Global Tax Rate'}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <label className={`text-sm mb-1 block ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                    {t('tax_rate') || 'Tax Rate'} (%)
+                  </label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.1"
+                    value={taxInput}
+                    onChange={(e) => setTaxInput(e.target.value)}
+                    className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
+                  />
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" onClick={() => setTaxDialogOpen(false)} className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}>
+                    {t('cancel')}
+                  </Button>
+                  <Button onClick={handleSaveTax} disabled={savingTax} className="bg-green-600 hover:bg-green-700 text-white">
+                    {savingTax ? t('loading') : (t('save') || 'Save')}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </div>
 
         <div className={`overflow-x-auto rounded-lg border ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
@@ -370,21 +491,31 @@ export default function MasterDashboard() {
                   <td className="p-3">{agent.company_name}</td>
                   <td className="p-3">{agent.email}</td>
                   <td className="p-3">{agent.package_type}</td>
-                  <td className="p-3">{agent.used_slots}/{agent.client_slots}</td>
+                  <td className="p-3">{agent.used_slots ?? 0}/{agent.package_type ?? 0}</td>
                   <td className="p-3">
                     <Badge className={agent.is_active ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}>
                       {agent.is_active ? t('active') : t('inactive')}
                     </Badge>
                   </td>
                   <td className="p-3">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleToggle(agent.id)}
-                      className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-                    >
-                      {t('toggle')}
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleToggle(agent.id)}
+                        className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
+                      >
+                        {t('toggle')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setSlotDialog({ agentId: agent.id, company: agent.company_name }); setSlotAmount('1'); }}
+                        className={isDark ? 'border-blue-600 text-blue-400 hover:bg-blue-600/10' : 'border-blue-300 text-blue-700 hover:bg-blue-50'}
+                      >
+                        + {t('slots') || 'Slots'}
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}

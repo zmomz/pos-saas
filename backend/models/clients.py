@@ -14,6 +14,12 @@ class Clients(Base):
     email = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     subscription_fee = Column(Float, nullable=True)
+    # Subscription lifecycle (CL-03/CL-04). billing_cycle is 'monthly'|'yearly';
+    # subscription_status is 'active'|'past_due'|'suspended'. next_billing_date is
+    # an ISO date string advanced each time the client pays.
+    billing_cycle = Column(String, nullable=True, default='monthly', server_default='monthly')
+    subscription_status = Column(String, nullable=True, default='active', server_default='active')
+    next_billing_date = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
     vat_number = Column(String, nullable=True)
     invoice_counter = Column(Integer, nullable=True, default=0, server_default='0')

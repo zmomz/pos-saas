@@ -1,4 +1,4 @@
-import { createClient } from './atomsClient';
+import { createClient, uploadMultipart } from './atomsClient';
 
 export const client = createClient();
 
@@ -652,6 +652,78 @@ export async function setClientFeature(clientId: number, featureName: string, is
     data: { feature_name: featureName, is_enabled: isEnabled },
   });
   return response.data;
+}
+
+// Agent: suspend a client whose subscription is past due (CL-05)
+export async function suspendOverdueClient(clientId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/agent/clients/${clientId}/suspend-overdue`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5: subscription (CL-03/CL-04) + white-label logo upload (AG-01)
+// ---------------------------------------------------------------------------
+export interface SubscriptionPayment {
+  id: number;
+  amount: number;
+  billing_cycle?: string;
+  period_start?: string;
+  period_end?: string;
+  method?: string;
+  created_at?: string;
+}
+
+export interface SubscriptionStatus {
+  client_id: number;
+  business_name: string;
+  subscription_fee: number;
+  billing_cycle: string;
+  subscription_status: string;
+  next_billing_date?: string;
+  is_active: boolean;
+  payments: SubscriptionPayment[];
+}
+
+// Client: read own subscription status + payment history (CL-04)
+export async function getClientSubscription() {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: '/api/v1/tenant/client/subscription',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: pay the current subscription period (CL-04)
+export async function payClientSubscription() {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: '/api/v1/tenant/client/subscription/pay',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Agent: set a client's subscription fee / billing cycle (CL-03)
+export async function updateClientSubscription(
+  clientId: number,
+  data: { subscription_fee?: number; billing_cycle?: string }
+) {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: `/api/v1/tenant/agent/clients/${clientId}/subscription`,
+    method: 'PUT',
+    data,
+  });
+  return response.data;
+}
+
+// Agent: upload a white-label logo; returns the served URL (AG-01)
+export async function uploadAgentLogo(file: File): Promise<{ logo_url: string }> {
+  return uploadMultipart<{ logo_url: string }>('/api/v1/tenant/agent/logo', file);
 }
 
 // POS-04: email a receipt for a transaction

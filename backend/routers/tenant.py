@@ -2,13 +2,14 @@ import json
 import logging
 import hashlib
 import base64
+import os
 import secrets
 import struct
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,7 @@ from models.products import Products
 from models.transactions import Transactions
 from models.agent_features import Agent_features
 from models.client_features import Client_features
+from models.subscription_payments import Subscription_payments
 from services.system_settings import (
     GLOBAL_TAX_RATE_KEY,
     get_global_tax_rate,
@@ -494,6 +496,66 @@ async def get_agent_branding(
     )
 
 
+# Agent logo upload (AG-01). Stored locally and served from /uploads; the cloud
+# bucket path (routers/storage.py) remains available for S3-backed deployments.
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_LOGO_DIR = os.path.join(_BACKEND_ROOT, "uploads", "logos")
+_ALLOWED_LOGO_TYPES = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/svg+xml": "svg",
+}
+_MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2 MB
+
+
+class LogoUploadResponse(BaseModel):
+    logo_url: str
+
+
+@router.post("/agent/logo", response_model=LogoUploadResponse)
+async def upload_agent_logo(
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: upload a white-label logo (AG-01).
+
+    Validates the MIME type (png/jpeg/webp/svg) and a 2 MB size cap, stores the
+    file under ``uploads/logos/``, and persists the served URL on the agent so
+    every client of that agent picks up the new logo via the branding endpoint.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can upload a logo")
+
+    ext = _ALLOWED_LOGO_TYPES.get((file.content_type or "").lower())
+    if not ext:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported image type. Use PNG, JPEG, WebP, or SVG.",
+        )
+
+    contents = await file.read()
+    if len(contents) > _MAX_LOGO_BYTES:
+        raise HTTPException(status_code=413, detail="Logo exceeds the 2 MB size limit")
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    os.makedirs(_LOGO_DIR, exist_ok=True)
+    filename = f"agent-{role_info['entity_id']}-{secrets.token_hex(6)}.{ext}"
+    with open(os.path.join(_LOGO_DIR, filename), "wb") as fh:
+        fh.write(contents)
+
+    logo_url = f"/uploads/logos/{filename}"
+    await db.execute(
+        update(Agents).where(Agents.id == role_info["entity_id"]).values(logo_url=logo_url)
+    )
+    await db.commit()
+    return LogoUploadResponse(logo_url=logo_url)
+
+
 @router.post("/agent/clients", response_model=CreateClientResponse)
 async def create_client_for_agent(
     data: CreateClientRequest,
@@ -726,6 +788,201 @@ async def get_client_branding(
         company_name=agent.company_name,
         default_language=agent.default_language or "en",
     )
+
+
+# ---------- Subscription (CL-03 / CL-04) ----------
+class SubscriptionPaymentItem(BaseModel):
+    id: int
+    amount: float
+    billing_cycle: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    method: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class SubscriptionResponse(BaseModel):
+    client_id: int
+    business_name: str
+    subscription_fee: float
+    billing_cycle: str
+    subscription_status: str
+    next_billing_date: Optional[str] = None
+    is_active: bool
+    payments: List[SubscriptionPaymentItem] = []
+
+
+class UpdateSubscriptionRequest(BaseModel):
+    subscription_fee: Optional[float] = None
+    billing_cycle: Optional[str] = None  # 'monthly' | 'yearly'
+
+
+def _advance_billing_date(start: datetime, cycle: str) -> str:
+    """Return the next billing date (ISO date) one cycle after ``start``."""
+    days = 365 if (cycle or "monthly") == "yearly" else 30
+    return (start + timedelta(days=days)).date().isoformat()
+
+
+async def _client_for_current_user(db: AsyncSession, user_id: str) -> Clients:
+    result = await db.execute(select(Clients).where(Clients.user_id == str(user_id)))
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=403, detail="Only clients have a subscription")
+    return merchant
+
+
+async def _subscription_payload(db: AsyncSession, merchant: Clients) -> SubscriptionResponse:
+    rows = (
+        await db.execute(
+            select(Subscription_payments)
+            .where(Subscription_payments.client_id == merchant.id)
+            .order_by(Subscription_payments.id.desc())
+            .limit(24)
+        )
+    ).scalars().all()
+    return SubscriptionResponse(
+        client_id=merchant.id,
+        business_name=merchant.business_name,
+        subscription_fee=merchant.subscription_fee or 0,
+        billing_cycle=merchant.billing_cycle or "monthly",
+        subscription_status=merchant.subscription_status or "active",
+        next_billing_date=merchant.next_billing_date,
+        is_active=merchant.is_active if merchant.is_active is not None else True,
+        payments=[
+            SubscriptionPaymentItem(
+                id=p.id,
+                amount=p.amount,
+                billing_cycle=p.billing_cycle,
+                period_start=p.period_start,
+                period_end=p.period_end,
+                method=p.method,
+                created_at=p.created_at,
+            )
+            for p in rows
+        ],
+    )
+
+
+@router.get("/client/subscription", response_model=SubscriptionResponse)
+async def get_client_subscription(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: own subscription status, next billing date, and payment history (CL-04)."""
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    return await _subscription_payload(db, merchant)
+
+
+@router.post("/client/subscription/pay", response_model=SubscriptionResponse)
+async def pay_client_subscription(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: pay the current subscription period (CL-04).
+
+    Records a payment in the ledger, advances ``next_billing_date`` by one
+    billing cycle, and marks the subscription active. (Stripe Connect via the
+    agent's gateway is the production path; this records the settled payment.)
+    """
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    fee = merchant.subscription_fee or 0
+    if fee <= 0:
+        raise HTTPException(status_code=400, detail="No subscription fee is configured")
+
+    now = datetime.now(timezone.utc)
+    cycle = merchant.billing_cycle or "monthly"
+    period_start = now.date().isoformat()
+    period_end = _advance_billing_date(now, cycle)
+
+    db.add(
+        Subscription_payments(
+            user_id=str(current_user.id),
+            client_id=merchant.id,
+            amount=fee,
+            billing_cycle=cycle,
+            period_start=period_start,
+            period_end=period_end,
+            method="manual",
+        )
+    )
+    await db.execute(
+        update(Clients)
+        .where(Clients.id == merchant.id)
+        .values(subscription_status="active", next_billing_date=period_end)
+    )
+    await db.commit()
+    await db.refresh(merchant)
+    return await _subscription_payload(db, merchant)
+
+
+@router.put("/agent/clients/{client_id}/subscription", response_model=SubscriptionResponse)
+async def update_client_subscription(
+    client_id: int,
+    data: UpdateSubscriptionRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: set a client's subscription fee / billing cycle (CL-03)."""
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    result = await db.execute(
+        select(Clients).where(
+            Clients.id == client_id, Clients.agent_id == role_info["entity_id"]
+        )
+    )
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    values: dict = {}
+    if data.subscription_fee is not None:
+        if data.subscription_fee < 0:
+            raise HTTPException(status_code=400, detail="subscription_fee cannot be negative")
+        values["subscription_fee"] = data.subscription_fee
+    if data.billing_cycle is not None:
+        if data.billing_cycle not in ("monthly", "yearly"):
+            raise HTTPException(status_code=400, detail="billing_cycle must be monthly or yearly")
+        values["billing_cycle"] = data.billing_cycle
+    if values:
+        await db.execute(update(Clients).where(Clients.id == client_id).values(**values))
+        await db.commit()
+        await db.refresh(merchant)
+    return await _subscription_payload(db, merchant)
+
+
+@router.post("/agent/clients/{client_id}/suspend-overdue", response_model=ToggleResponse)
+async def suspend_overdue_client(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: suspend a client whose subscription is past due (CL-05 non-payment).
+
+    Marks ``subscription_status='suspended'`` and ``is_active=False`` so the
+    merchant is blocked at authentication until they pay.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    result = await db.execute(
+        select(Clients).where(
+            Clients.id == client_id, Clients.agent_id == role_info["entity_id"]
+        )
+    )
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    await db.execute(
+        update(Clients)
+        .where(Clients.id == client_id)
+        .values(is_active=False, subscription_status="suspended")
+    )
+    await db.commit()
+    return ToggleResponse(success=True, is_active=False)
 
 
 # ---------- Public Endpoints (no auth required) ----------

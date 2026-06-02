@@ -206,6 +206,15 @@ const auth = {
   },
 };
 
+/** POST a multipart/form-data upload (e.g. AG-01 agent logo). Returns the body. */
+export async function uploadMultipart<T = unknown>(url: string, file: File, field = 'file'): Promise<T> {
+  const form = new FormData();
+  form.append(field, file);
+  // Let the browser set the multipart boundary; override the JSON default.
+  const res = await http.post<T>(url, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  return res.data;
+}
+
 export function createClient() {
   return {
     apiCall: { invoke },

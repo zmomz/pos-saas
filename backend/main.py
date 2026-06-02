@@ -118,6 +118,18 @@ app.add_middleware(CORSMiddleware, **get_cors_config())
 # MODULE_MIDDLEWARE_END
 
 
+# Serve locally-uploaded assets (e.g. agent white-label logos, AG-01). Created
+# on demand; mounting an absent directory would raise, so ensure it exists.
+try:
+    from fastapi.staticfiles import StaticFiles
+
+    _UPLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+    os.makedirs(_UPLOADS_DIR, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=_UPLOADS_DIR), name="uploads")
+except Exception as _exc:  # pragma: no cover - static serving is best-effort
+    logging.getLogger(__name__).warning("Static /uploads mount skipped: %s", _exc)
+
+
 # Auto-discover and include all routers from the local `routers` package
 def include_routers_from_package(app: FastAPI, package_name: str = "routers") -> None:
     """Discover and include all APIRouter objects from a package.
