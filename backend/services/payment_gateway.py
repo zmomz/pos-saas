@@ -306,3 +306,26 @@ def get_gateway() -> PaymentGateway:
         logger.debug("Resolved Moyasar payment gateway from MOYASAR_API_KEY")
         return MoyasarGateway(api_key)
     return SandboxGateway()
+
+
+def get_gateway_for(gateway_name: Optional[str]) -> PaymentGateway:
+    """Resolve the gateway that should **reverse** a tender captured by ``gateway_name``.
+
+    Refund-to-origin (PAY-10, F-004) must route back through the same provider that
+    captured the charge — a sandbox-captured tender reverses via the sandbox even if
+    a live key is later configured, and a Moyasar-captured tender reverses via
+    Moyasar (raising :class:`GatewayNotConfigured` if the key is now absent, so the
+    operator is told the reversal could not be processed online).
+    """
+    name = (gateway_name or "").strip().lower()
+    if name == "sandbox":
+        return SandboxGateway()
+    if name == "moyasar":
+        api_key = getattr(settings, "moyasar_api_key", "") or ""
+        if api_key:
+            return MoyasarGateway(api_key)
+        raise GatewayNotConfigured(
+            "Moyasar gateway not configured; cannot reverse a Moyasar tender online"
+        )
+    # Unknown/legacy capture gateway — fall back to the active gateway.
+    return get_gateway()

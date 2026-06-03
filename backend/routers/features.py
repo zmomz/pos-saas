@@ -857,8 +857,8 @@ async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
 
     # Cash drawer reconciliation — cash tenders only (POS-09). Delegated to the
     # shared helper so the report and the stored shift (close_shift, F-009) agree
-    # exactly. Refund-to-origin is not yet wired (F-004) so a refund is treated as
-    # cash paid out of the drawer.
+    # exactly. With refund-to-origin wired (F-004), only the cash leg of a refund
+    # is cash paid out of the drawer; a card refund is reversed to the card.
     recon = await compute_shift_cash_reconciliation(db, shift)
     cash_sales = recon["cash_sales"]
     cash_refunds = recon["cash_refunds"]

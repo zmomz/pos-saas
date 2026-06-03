@@ -29,6 +29,7 @@ from services.payment_gateway import (
     GatewayNotConfigured,
     PaymentDeclined,
     get_gateway,
+    get_gateway_for,
     normalize_tender_type,
     requires_capture,
 )
@@ -388,6 +389,93 @@ def _persist_tenders(
                 decline_reason=row["decline_reason"],
             )
         )
+
+
+# ---------- Helper: Saudi-real refund-to-origin (PAY-10, F-004) ----------
+async def _refund_tenders(
+    db: AsyncSession,
+    original: Transactions,
+    refund_amount: float,
+) -> List[dict]:
+    """Route a refund back to the original sale's tenders (PAY-10, F-004).
+
+    Allocates ``refund_amount`` across the original sale's captured tenders in
+    proportion to each leg's share of that sale, and for every **card-like** leg
+    calls the **capturing** gateway's ``refund`` so the money is actually reversed
+    to origin — a card/Mada refund goes back to the card, not the drawer. Each
+    reversed leg becomes a ``refunded`` tender row (persisted by the caller against
+    the credit note) carrying the gateway refund reference, so the reversal is
+    auditable and the drawer reconciliation can separate the cash portion of a
+    refund from the card portion.
+
+    A gateway refund failure raises ``HTTPException(502)`` so the whole credit note
+    rolls back (mirrors the capture-decline rollback on the sale path). Cash /
+    transfer / loyalty legs settle internally (no gateway round-trip) but are still
+    recorded. A legacy sale captured before tender capture (F-001) has no tender
+    rows to route to and returns ``[]`` — the credit note then nets the drawer as
+    cash out via the legacy fallback in ``compute_shift_cash_reconciliation``.
+
+    Returns the persistable ``refunded`` tender rows (possibly empty).
+    """
+    if refund_amount <= 0:
+        return []
+    original_tenders = (
+        await db.execute(
+            select(PaymentTenders).where(
+                PaymentTenders.transaction_id == original.id,
+                PaymentTenders.status.in_(("captured", "authorized")),
+            )
+        )
+    ).scalars().all()
+    if not original_tenders:
+        return []
+
+    captured_sum = sum(float(t.amount or 0) for t in original_tenders)
+    rows: List[dict] = []
+    for ot in original_tenders:
+        share = (float(ot.amount or 0) / captured_sum) if captured_sum else 0.0
+        leg_amount = round(refund_amount * share, 2)
+        if leg_amount <= 0:
+            continue
+        row = {
+            "tender_type": ot.tender_type,
+            "amount": leg_amount,
+            "gateway": ot.gateway,
+            "status": "refunded",
+            "network": ot.network,
+            "approval_code": None,
+            "rrn": ot.rrn,
+            "gateway_ref": ot.gateway_ref,
+            "last4": ot.last4,
+            "token": ot.token,
+            "decline_reason": None,
+        }
+        if requires_capture(ot.tender_type) and ot.gateway_ref:
+            gateway = get_gateway_for(ot.gateway)
+            try:
+                result = await gateway.refund(ot.gateway_ref, leg_amount)
+            except GatewayNotConfigured as exc:
+                logger.warning(
+                    "Refund-to-origin not configured for %s: %s", ot.tender_type, exc
+                )
+                raise HTTPException(status_code=502, detail=f"Refund not processed: {exc}")
+            except PaymentDeclined as exc:
+                logger.info(
+                    "Refund for %s declined by %s: %s", ot.tender_type, exc.gateway, exc.reason
+                )
+                raise HTTPException(status_code=502, detail=f"Refund declined: {exc.reason}")
+            if not result.approved:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Refund declined for {ot.tender_type}: {result.decline_reason or 'declined'}",
+                )
+            row.update(
+                gateway=result.gateway or ot.gateway,
+                approval_code=result.approval_code,
+                gateway_ref=result.gateway_ref or ot.gateway_ref,
+            )
+        rows.append(row)
+    return rows
 
 
 # ---------- Helper: Get client for current user ----------
@@ -1132,6 +1220,15 @@ async def refund_transaction(
     )
 
     await db.flush()
+
+    # PAY-10 / F-004: route the refund back to the original tender(s). Each
+    # card-like leg is reversed through the capturing gateway; every reversed leg
+    # is recorded as a `refunded` tender on the credit note so the money movement
+    # is auditable and the drawer reconciliation can tell the cash portion of a
+    # refund from the card portion. A gateway failure rolls the credit note back.
+    refund_tender_rows = await _refund_tenders(db, original, refund_total)
+    _persist_tenders(db, str(current_user.id), client.id, credit.id, refund_tender_rows)
+
     doc, stamped_qr = await zatca_sale.sign_transaction(
         db,
         client,

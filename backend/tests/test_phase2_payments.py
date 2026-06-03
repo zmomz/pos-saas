@@ -264,6 +264,147 @@ async def test_charge_endpoint_rejects_cash(client):
 
 
 # ---------------------------------------------------------------------------
+# F-004 / PAY-10: refunds route back to the original tender
+# ---------------------------------------------------------------------------
+async def _open_shift(client, headers, opening_cash=100.0):
+    resp = await client.post(
+        "/api/v1/production/shifts/open",
+        json={"opening_cash": opening_cash},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_card_refund_routes_to_origin_and_not_the_drawer(client):
+    """F-004 / PAY-10: refunding a card sale reverses the charge through the
+    capturing gateway — a ``refunded`` tender on the credit note carries the
+    gateway refund reference (sandbox ``rfnd_…``) — and the money does NOT come
+    out of the cash drawer (only a cash refund is cash paid out)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    pid = await add_product(client_id, user["id"], name="Combo", quantity=10, price=100.0)
+
+    await _open_shift(client, headers, opening_cash=100.0)
+
+    # 1 unit @ 100 + 15% VAT = 115.00 paid by Mada.
+    sale = await client.post(
+        "/api/v1/pos/transaction",
+        json={
+            "items": [{"product_id": pid, "name": "Combo", "price": 100.0, "quantity": 1}],
+            "payment_method": "mada",
+        },
+        headers=headers,
+    )
+    assert sale.status_code == 200, sale.text
+    sale_id = sale.json()["id"]
+
+    refund = await client.post(
+        f"/api/v1/pos/transactions/{sale_id}/refund", headers=headers
+    )
+    assert refund.status_code == 200, refund.text
+    credit_id = refund.json()["credit_note_id"]
+
+    # The refund is routed back to the card: a `refunded` tender on the credit note
+    # carries the gateway refund handle, proving gateway.refund(tender_ref) ran.
+    refunded = await _tenders_for_txn(credit_id)
+    assert len(refunded) == 1, refunded
+    r = refunded[0]
+    assert r["tender_type"] == "mada"
+    assert r["status"] == "refunded"
+    assert r["gateway"] == "sandbox"
+    assert r["network"] == "MADA"
+    assert (r["gateway_ref"] or "").startswith("rfnd_")
+    assert abs(r["amount"] - 115.0) < 0.01
+
+    # The card refund did NOT debit the cash drawer.
+    x = (await client.get("/api/v1/reports/zreport", headers=headers)).json()
+    assert abs(x["cash"]["cash_refunds"]) < 0.01
+    # opening 100 only — no cash ever moved (the sale was card, the refund a reversal).
+    assert abs(x["cash"]["expected_cash"] - 100.0) < 0.01
+
+
+async def test_cash_refund_is_recorded_and_still_debits_the_drawer(client):
+    """A cash refund has no gateway leg but is still recorded as a ``refunded``
+    cash tender and remains cash paid out of the drawer (F-004 must not change the
+    cash-refund drawer math, only the card-refund math)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    pid = await add_product(client_id, user["id"], name="Cola", quantity=50, price=10.0)
+
+    await _open_shift(client, headers, opening_cash=100.0)
+
+    # 2 @ 10 + 15% = 23.00 cash.
+    sale = await client.post(
+        "/api/v1/pos/transaction",
+        json={
+            "items": [{"product_id": pid, "name": "Cola", "price": 10.0, "quantity": 2}],
+            "payment_method": "cash",
+        },
+        headers=headers,
+    )
+    assert sale.status_code == 200, sale.text
+    sale_id = sale.json()["id"]
+
+    refund = await client.post(
+        f"/api/v1/pos/transactions/{sale_id}/refund", headers=headers
+    )
+    assert refund.status_code == 200, refund.text
+    credit_id = refund.json()["credit_note_id"]
+
+    refunded = await _tenders_for_txn(credit_id)
+    assert len(refunded) == 1, refunded
+    r = refunded[0]
+    assert r["tender_type"] == "cash"
+    assert r["status"] == "refunded"
+    # Cash settles internally — no gateway reversal handle.
+    assert not (r["gateway_ref"] or "").startswith("rfnd_")
+    assert abs(r["amount"] - 23.0) < 0.01
+
+    # The cash refund IS cash out of the drawer: opening 100 + cash 23 − refund 23.
+    x = (await client.get("/api/v1/reports/zreport", headers=headers)).json()
+    assert abs(x["cash"]["cash_refunds"] - 23.0) < 0.01
+    assert abs(x["cash"]["expected_cash"] - 100.0) < 0.01
+
+
+async def test_partial_card_refund_reverses_only_the_returned_share(client):
+    """A partial (line-level) refund of a card sale reverses only the returned
+    units' share back to the card (POS-07 × PAY-10)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    pid = await add_product(client_id, user["id"], name="Combo", quantity=10, price=100.0)
+
+    # 2 units @ 100 + 15% VAT = 230.00 paid by Mada.
+    sale = await client.post(
+        "/api/v1/pos/transaction",
+        json={
+            "items": [{"product_id": pid, "name": "Combo", "price": 100.0, "quantity": 2}],
+            "payment_method": "mada",
+        },
+        headers=headers,
+    )
+    assert sale.status_code == 200, sale.text
+    sale_id = sale.json()["id"]
+
+    # Return only 1 of the 2 units → half the invoice → 115.00 reversed to the card.
+    refund = await client.post(
+        f"/api/v1/pos/transactions/{sale_id}/refund",
+        json={"lines": [{"product_id": pid, "quantity": 1}]},
+        headers=headers,
+    )
+    assert refund.status_code == 200, refund.text
+    body = refund.json()
+    assert body["original_status"] == "partial_refunded"
+
+    refunded = await _tenders_for_txn(body["credit_note_id"])
+    assert len(refunded) == 1, refunded
+    assert refunded[0]["tender_type"] == "mada"
+    assert refunded[0]["status"] == "refunded"
+    assert (refunded[0]["gateway_ref"] or "").startswith("rfnd_")
+    assert abs(refunded[0]["amount"] - 115.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
 # Sandbox gateway unit behavior
 # ---------------------------------------------------------------------------
 async def test_sandbox_gateway_approve_and_decline():
@@ -272,3 +413,10 @@ async def test_sandbox_gateway_approve_and_decline():
     assert ok.approved and ok.approval_code and ok.rrn and ok.network == "MADA"
     no = await gw.charge(23.0, "mada", simulate="decline")
     assert not no.approved and no.decline_reason
+
+
+async def test_sandbox_gateway_refund_returns_a_handle():
+    gw = SandboxGateway()
+    res = await gw.refund("sbx_deadbeef", 50.0)
+    assert res.approved and res.gateway == "sandbox"
+    assert (res.gateway_ref or "").startswith("rfnd_")

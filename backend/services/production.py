@@ -1331,10 +1331,13 @@ async def compute_shift_cash_reconciliation(db: AsyncSession, shift) -> Dict[str
 
     Cash is summed from the real captured ``payment_tenders`` rows (F-001),
     falling back to a legacy sale's ``payment_method == 'cash'`` when it predates
-    tender capture so historical shifts still reconcile. Refund-to-origin is not
-    yet wired (F-004), so a refund (credit note) is treated as cash paid out of
-    the drawer. This is the single source of truth shared by ``close_shift`` and
-    the Z/X-report aggregator, so the printed report and the stored shift agree.
+    tender capture so historical shifts still reconcile. With refund-to-origin
+    wired (F-004), only the **cash** portion of a refund is cash paid out of the
+    drawer — a card/Mada refund goes back to the card via the gateway, so it is
+    read from the credit note's ``refunded`` tender rows (a legacy credit note with
+    no recorded refund tenders still falls back to its full total as cash out).
+    This is the single source of truth shared by ``close_shift`` and the Z/X-report
+    aggregator, so the printed report and the stored shift agree.
 
     Returns ``{cash_sales, cash_refunds, expected_cash}`` (all rounded to 2dp).
     """
@@ -1347,11 +1350,11 @@ async def compute_shift_cash_reconciliation(db: AsyncSession, shift) -> Dict[str
     transactions = txn_result.scalars().all()
 
     sale_ids: List[int] = []
-    cash_refunds = 0.0
+    credit_note_ids: List[int] = []
     for t in transactions:
         status = t.status or "completed"
         if status == "credit_note":
-            cash_refunds += abs(float(t.total_amount or 0))
+            credit_note_ids.append(t.id)
         elif status == "voided":
             continue
         else:  # completed / refunded / partial_refunded — original sale rows
@@ -1369,6 +1372,19 @@ async def compute_shift_cash_reconciliation(db: AsyncSession, shift) -> Dict[str
         for tr in tender_result.scalars().all():
             tenders_by_txn.setdefault(tr.transaction_id, []).append(tr)
 
+    # Refund-to-origin tenders for the credit notes (F-004): only the cash leg of
+    # a refund leaves the drawer; the card leg was reversed to the card.
+    refund_tenders_by_txn: Dict[int, list] = {}
+    if credit_note_ids:
+        refund_result = await db.execute(
+            select(PaymentTenders).where(
+                PaymentTenders.transaction_id.in_(credit_note_ids),
+                PaymentTenders.status == "refunded",
+            )
+        )
+        for tr in refund_result.scalars().all():
+            refund_tenders_by_txn.setdefault(tr.transaction_id, []).append(tr)
+
     cash_sales = 0.0
     for t in transactions:
         status = t.status or "completed"
@@ -1382,6 +1398,20 @@ async def compute_shift_cash_reconciliation(db: AsyncSession, shift) -> Dict[str
         elif (t.payment_method or "") == "cash":
             # Legacy sale without captured tenders: attribute its total to cash.
             cash_sales += float(t.total_amount or 0)
+
+    cash_refunds = 0.0
+    for t in transactions:
+        if (t.status or "") != "credit_note":
+            continue
+        rows = refund_tenders_by_txn.get(t.id)
+        if rows:
+            for tr in rows:
+                if (tr.tender_type or "") == "cash":
+                    cash_refunds += float(tr.amount or 0)
+        else:
+            # Legacy credit note without recorded refund tenders: treat its full
+            # total as cash paid out (pre-F-004 behavior).
+            cash_refunds += abs(float(t.total_amount or 0))
 
     cash_sales = round(cash_sales, 2)
     cash_refunds = round(cash_refunds, 2)
