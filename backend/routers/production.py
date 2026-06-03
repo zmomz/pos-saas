@@ -19,6 +19,10 @@ from core.database import get_db
 from dependencies.auth import get_current_user
 from dependencies.features import require_feature
 from schemas.auth import UserResponse
+
+# Imported at module level so ``Base.metadata.create_all`` registers the table on a
+# fresh DB — the inter-branch transfer endpoint below only references it lazily (F-032).
+from models.stock_transfers import Stock_transfers  # noqa: F401
 from services.production import (
     AnalyticsService,
     BulkImportService,
@@ -1102,6 +1106,123 @@ async def get_branch_inventory(
         "branches": inventory,
         "total_branches": len(inventory),
         "total_products": len(products),
+    }
+
+
+class StockTransferRequest(BaseModel):
+    from_branch_id: int
+    to_branch_id: int
+    # Either a product_id (preferred) or a product_name (resolved within the client).
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None
+    quantity: int
+
+
+@router.post("/branches/transfer")
+async def transfer_branch_stock(
+    data: StockTransferRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move stock between two branches on the per-branch ledger (INV-05, F-032).
+
+    Decrements the source branch and increments the destination branch atomically on
+    ``product_branch_stock`` (the ledger the POS deducts from), then writes a
+    ``stock_transfers`` audit row. This wires up the Branch Management "Transfer
+    Stock" dialog, which previously POSTed to a route that did not exist (404 — a
+    dead-end UI). Owner-scoped: both branches and the product must belong to the
+    caller's client (SEC-02). Insufficient source stock → 400.
+    """
+    from models.branches import Branches
+    from models.clients import Clients
+    from models.products import Products
+    from models.stock_transfers import Stock_transfers as StockTransfers
+    from services.branch_stock import get_or_init_row
+
+    logger.debug("[TRANSFER] user=%s from=%s to=%s qty=%s", current_user.id, data.from_branch_id, data.to_branch_id, data.quantity)
+
+    # POS features are client-scoped — resolve the caller's client row.
+    client = (
+        await db.execute(select(Clients).where(Clients.user_id == str(current_user.id)))
+    ).scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=403, detail="Only clients can transfer stock")
+
+    qty = int(data.quantity or 0)
+    if qty <= 0:
+        raise HTTPException(status_code=400, detail="Transfer quantity must be positive")
+    if int(data.from_branch_id) == int(data.to_branch_id):
+        raise HTTPException(status_code=400, detail="Source and destination branches must differ")
+
+    # Both branches must belong to the caller (owner-scoped — SEC-02).
+    branch_rows = (
+        await db.execute(
+            select(Branches).where(
+                Branches.user_id == str(current_user.id),
+                Branches.id.in_([int(data.from_branch_id), int(data.to_branch_id)]),
+            )
+        )
+    ).scalars().all()
+    found_ids = {b.id for b in branch_rows}
+    if int(data.from_branch_id) not in found_ids or int(data.to_branch_id) not in found_ids:
+        raise HTTPException(status_code=404, detail="Branch not found")
+
+    # Resolve the product within the caller's client scope (by id, else by exact name).
+    prod_query = select(Products).where(Products.client_id == client.id)
+    if data.product_id is not None:
+        prod_query = prod_query.where(Products.id == int(data.product_id))
+    elif (data.product_name or "").strip():
+        prod_query = prod_query.where(Products.name == data.product_name.strip())
+    else:
+        raise HTTPException(status_code=400, detail="A product_id or product_name is required")
+    product = (await db.execute(prod_query)).scalars().first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # Move stock on the per-branch ledger (source−, dest+), seeding ledger rows the
+    # same way the sale path does. The helpers do not commit — we commit once below
+    # so the two legs + the audit row land atomically (roll back wholly on any raise).
+    src = await get_or_init_row(
+        db, str(current_user.id), client.id, int(data.from_branch_id), product
+    )
+    if (src.quantity or 0) < qty:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient stock for '{product.name}' at the source branch: "
+                f"requested {qty}, available {src.quantity or 0}"
+            ),
+        )
+    dst = await get_or_init_row(
+        db, str(current_user.id), client.id, int(data.to_branch_id), product
+    )
+    src.quantity = (src.quantity or 0) - qty
+    dst.quantity = (dst.quantity or 0) + qty
+
+    record = StockTransfers(
+        user_id=str(current_user.id),
+        client_id=client.id,
+        from_branch_id=int(data.from_branch_id),
+        to_branch_id=int(data.to_branch_id),
+        product_id=product.id,
+        product_name=product.name,
+        quantity=qty,
+        status="received",
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+
+    return {
+        "id": record.id,
+        "from_branch_id": record.from_branch_id,
+        "to_branch_id": record.to_branch_id,
+        "product_id": record.product_id,
+        "product_name": record.product_name,
+        "quantity": record.quantity,
+        "status": record.status,
+        "from_branch_quantity": src.quantity,
+        "to_branch_quantity": dst.quantity,
     }
 
 

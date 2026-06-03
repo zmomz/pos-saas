@@ -41,8 +41,13 @@ interface BranchFormData {
 interface TransferData {
   from_branch_id: string;
   to_branch_id: string;
-  product_name: string;
+  product_id: string;
   quantity: number;
+}
+
+interface ProductOption {
+  id: string;
+  name: string;
 }
 
 const emptyForm: BranchFormData = {
@@ -61,8 +66,10 @@ export default function BranchManagement() {
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [selectedBranch, setSelectedBranch] = useState<Branch | null>(null);
   const [branchInventory, setBranchInventory] = useState<BranchInventory[]>([]);
+  const [products, setProducts] = useState<ProductOption[]>([]);
   const [formData, setFormData] = useState<BranchFormData>(emptyForm);
-  const [transferData, setTransferData] = useState<TransferData>({ from_branch_id: '', to_branch_id: '', product_name: '', quantity: 1 });
+  const [transferData, setTransferData] = useState<TransferData>({ from_branch_id: '', to_branch_id: '', product_id: '', quantity: 1 });
+  const [transferError, setTransferError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(false);
 
@@ -70,7 +77,20 @@ export default function BranchManagement() {
 
   useEffect(() => {
     loadBranches();
+    loadProducts();
   }, []);
+
+  async function loadProducts() {
+    try {
+      const res = await client.entities.products.query({ query: {}, limit: 500 });
+      const data = res.data;
+      const list = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+      setProducts(list.map((p: { id: string | number; name: string }) => ({ id: String(p.id), name: p.name })));
+    } catch (err) {
+      console.error('Failed to load products:', err);
+      setProducts([]);
+    }
+  }
 
   async function loadBranches() {
     setLoading(true);
@@ -167,19 +187,26 @@ export default function BranchManagement() {
 
   async function handleTransferStock() {
     setSubmitting(true);
+    setTransferError(null);
     try {
       await client.apiCall.invoke({
         url: '/api/v1/production/branches/transfer',
         method: 'POST',
-        data: transferData,
+        data: {
+          from_branch_id: Number(transferData.from_branch_id),
+          to_branch_id: Number(transferData.to_branch_id),
+          product_id: Number(transferData.product_id),
+          quantity: transferData.quantity,
+        },
       });
       setTransferOpen(false);
-      setTransferData({ from_branch_id: '', to_branch_id: '', product_name: '', quantity: 1 });
+      setTransferData({ from_branch_id: '', to_branch_id: '', product_id: '', quantity: 1 });
       if (selectedBranch) {
         await loadBranchInventory(selectedBranch.id);
       }
     } catch (err) {
       console.error('Failed to transfer stock:', err);
+      setTransferError(t('transfer_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -248,8 +275,8 @@ export default function BranchManagement() {
           <p className="text-slate-400 text-sm mt-1">Manage your business locations and inventory</p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={() => setTransferOpen(true)} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
-            <ArrowRightLeft className="h-4 w-4 mr-2" /> Transfer Stock
+          <Button onClick={() => { setTransferError(null); setTransferOpen(true); }} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
+            <ArrowRightLeft className="h-4 w-4 mr-2" /> {t('transfer_stock')}
           </Button>
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
@@ -368,49 +395,61 @@ export default function BranchManagement() {
       <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
         <DialogContent className="bg-slate-800 border-slate-700 text-white">
           <DialogHeader>
-            <DialogTitle className="text-white">Transfer Stock Between Branches</DialogTitle>
+            <DialogTitle className="text-white">{t('transfer_stock')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">From Branch</label>
+              <label className="text-sm text-slate-400 mb-1 block">{t('from_branch')}</label>
               <select
                 value={transferData.from_branch_id}
                 onChange={(e) => setTransferData((d) => ({ ...d, from_branch_id: e.target.value }))}
                 className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
               >
-                <option value="">Select branch</option>
+                <option value="">{t('select_branch')}</option>
                 {branches.filter((b) => b.is_active).map((b) => (
                   <option key={b.id} value={b.id}>{b.name}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">To Branch</label>
+              <label className="text-sm text-slate-400 mb-1 block">{t('to_branch')}</label>
               <select
                 value={transferData.to_branch_id}
                 onChange={(e) => setTransferData((d) => ({ ...d, to_branch_id: e.target.value }))}
                 className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
               >
-                <option value="">Select branch</option>
+                <option value="">{t('select_branch')}</option>
                 {branches.filter((b) => b.is_active && b.id !== transferData.from_branch_id).map((b) => (
                   <option key={b.id} value={b.id}>{b.name}</option>
                 ))}
               </select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">Product Name</label>
-              <Input value={transferData.product_name} onChange={(e) => setTransferData((d) => ({ ...d, product_name: e.target.value }))} placeholder="Product to transfer" className="bg-slate-700 border-slate-600 text-white" />
+              <label className="text-sm text-slate-400 mb-1 block">{t('product')}</label>
+              <select
+                value={transferData.product_id}
+                onChange={(e) => setTransferData((d) => ({ ...d, product_id: e.target.value }))}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              >
+                <option value="">{t('select_product')}</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">Quantity</label>
+              <label className="text-sm text-slate-400 mb-1 block">{t('quantity')}</label>
               <Input type="number" value={transferData.quantity} onChange={(e) => setTransferData((d) => ({ ...d, quantity: parseInt(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
             </div>
+            {transferError && (
+              <p role="alert" className="text-sm text-red-400">{transferError}</p>
+            )}
             <Button
               onClick={handleTransferStock}
-              disabled={submitting || !transferData.from_branch_id || !transferData.to_branch_id || !transferData.product_name || transferData.quantity <= 0}
+              disabled={submitting || !transferData.from_branch_id || !transferData.to_branch_id || !transferData.product_id || transferData.quantity <= 0}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white"
             >
-              {submitting ? t('loading') : 'Transfer Stock'}
+              {submitting ? t('loading') : t('transfer_stock')}
             </Button>
           </div>
         </DialogContent>
