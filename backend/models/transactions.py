@@ -39,5 +39,10 @@ class Transactions(Base):
     # Client-generated id for an offline-queued sale (POS-05). Used to dedupe the
     # sync so re-sending the same queue never double-books a transaction.
     offline_id = Column(String, nullable=True)
+    # Original sale this credit note reverses (POS-07 partial/line refunds). Set on
+    # a credit_note row so we can sum already-refunded quantities per line across
+    # multiple partial refunds and decide refunded vs partial_refunded. Null on a
+    # sale row.
+    original_transaction_id = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

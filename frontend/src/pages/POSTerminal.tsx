@@ -50,7 +50,10 @@ interface Transaction {
   vat_amount: number;
   subtotal: number;
   payment_method: string;
-  items?: { name: string; quantity: number; price: number }[];
+  status?: string;
+  items_json?: string;
+  // POS-07: product_id is needed to drive partial/line-level refunds.
+  items?: { product_id?: number; name: string; quantity: number; price: number; discount?: number }[];
   created_at?: string;
 }
 
@@ -116,6 +119,10 @@ export default function POSTerminal() {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [refundProcessing, setRefundProcessing] = useState(false);
+  // POS-07: per-line quantity to return, keyed by the line's index in the
+  // selected transaction. Defaults to the full sold quantity (whole-invoice
+  // refund); the cashier can dial any line down for a partial/line-level refund.
+  const [refundQty, setRefundQty] = useState<Record<number, number>>({});
 
   // Offline POS (Phase E) state.
   const [queuedOffline, setQueuedOffline] = useState(false);
@@ -171,7 +178,21 @@ export default function POSTerminal() {
     setLoadingTransactions(true);
     try {
       const data = await getTransactions(1, 20);
-      setRecentTransactions(data?.transactions || data?.items || data || []);
+      const raw = (data?.transactions || data?.items || data || []) as Transaction[];
+      // POS-07: parse items_json into typed line items (with product_id) so the
+      // refund panel can offer per-line quantity selection.
+      const parsed = raw.map((txn) => {
+        let items = txn.items;
+        if (!items && txn.items_json) {
+          try {
+            items = JSON.parse(txn.items_json);
+          } catch {
+            items = [];
+          }
+        }
+        return { ...txn, items: items || [] };
+      });
+      setRecentTransactions(parsed);
     } catch (err) {
       console.error('Failed to load transactions:', err);
     } finally {
@@ -497,29 +518,74 @@ export default function POSTerminal() {
     }
   }
 
+  // POS-07: select a sale for refund and default every line's return quantity to
+  // its full sold quantity (whole-invoice refund as the starting point).
+  function selectTransactionForRefund(txn: Transaction) {
+    setSelectedTransaction(txn);
+    const defaults: Record<number, number> = {};
+    (txn.items || []).forEach((item, idx) => {
+      defaults[idx] = item.quantity;
+    });
+    setRefundQty(defaults);
+  }
+
+  function setLineRefundQty(idx: number, value: number, max: number) {
+    const clamped = Math.max(0, Math.min(value, max));
+    setRefundQty((prev) => ({ ...prev, [idx]: clamped }));
+  }
+
+  // Sum of the selected return quantities — drives the live refund total.
+  const refundHasLineItems = (selectedTransaction?.items?.length ?? 0) > 0;
+  const refundLines = (selectedTransaction?.items || [])
+    .map((item, idx) => ({ item, qty: refundQty[idx] ?? 0 }))
+    .filter((l) => l.qty > 0);
+  const refundSelectedAmount = refundLines.reduce(
+    (sum, l) => sum + l.item.price * l.qty,
+    0
+  );
+  const refundAnythingSelected = refundLines.length > 0;
+  const refundIsPartial =
+    refundAnythingSelected &&
+    (selectedTransaction?.items || []).some((item, idx) => (refundQty[idx] ?? 0) < item.quantity);
+  // When the original lines can't be parsed we fall back to a whole-invoice
+  // refund (legacy behavior), so the button stays enabled.
+  const canSubmitRefund = refundHasLineItems ? refundAnythingSelected : true;
+
   async function handleRefund() {
-    if (!selectedTransaction?.id) return;
+    if (!selectedTransaction?.id || !canSubmitRefund) return;
     setRefundProcessing(true);
     try {
-      // POS-07: the backend issues a real ZATCA credit note (type 381),
-      // restores inventory, and signs it. No more negative-price fake refund.
-      const result = await refundTransaction(selectedTransaction.id);
+      // POS-07: build the returned lines. When the original lines carry a
+      // product_id we send them so the backend credits only those units
+      // (partial/line-level); otherwise we fall back to a whole-invoice refund.
+      const selected = (selectedTransaction.items || [])
+        .map((item, idx) => ({ item, qty: refundQty[idx] ?? 0 }))
+        .filter((l) => l.qty > 0);
+      const haveProductIds = selected.every((l) => typeof l.item.product_id === 'number');
+      const lines = haveProductIds
+        ? selected.map((l) => ({ product_id: l.item.product_id as number, quantity: l.qty }))
+        : undefined;
+
+      // The backend issues a real ZATCA credit note (type 381), restores the
+      // returned units, and signs it. No negative-price fake refund.
+      const result = await refundTransaction(selectedTransaction.id, lines);
 
       setReceipt({
         invoice_number: result.credit_note_number,
         total_amount: result.total_amount,
-        vat_amount: -(selectedTransaction.vat_amount || 0),
-        subtotal: -(selectedTransaction.subtotal || 0),
+        vat_amount: 0,
+        subtotal: 0,
         payment_method: 'refund',
         zatca_qr_base64: result.zatca_qr_base64 || '',
         zatca_status: result.zatca_status,
-        items: (selectedTransaction.items || []).map((item) => ({
-          name: item.name,
-          quantity: item.quantity,
-          price: -Math.abs(item.price),
+        items: selected.map((l) => ({
+          name: l.item.name,
+          quantity: l.qty,
+          price: -Math.abs(l.item.price),
         })),
       });
       setSelectedTransaction(null);
+      setRefundQty({});
     } catch (err) {
       console.error('Refund failed:', err);
     } finally {
@@ -532,6 +598,7 @@ export default function POSTerminal() {
     setCart([]);
     setMode('sale');
     setSelectedTransaction(null);
+    setRefundQty({});
     setAppliedDiscount(null);
     setDiscountCode('');
   }
@@ -732,7 +799,7 @@ export default function POSTerminal() {
           </div>
           <div className="flex items-center gap-2">
             <Button
-              onClick={() => { setMode('sale'); setSelectedTransaction(null); }}
+              onClick={() => { setMode('sale'); setSelectedTransaction(null); setRefundQty({}); }}
               className="bg-blue-600 hover:bg-blue-700 text-white"
             >
               <ShoppingCart className="w-4 h-4 me-2" />
@@ -766,7 +833,7 @@ export default function POSTerminal() {
                         ? 'border-orange-500 ring-1 ring-orange-500'
                         : 'hover:border-slate-500'
                     }`}
-                    onClick={() => setSelectedTransaction(txn)}
+                    onClick={() => selectTransactionForRefund(txn)}
                   >
                     <CardContent className="p-4">
                       <div className="flex justify-between items-center">
@@ -794,58 +861,113 @@ export default function POSTerminal() {
           <div className="w-full lg:w-96 bg-slate-800 border-t lg:border-t-0 lg:border-s border-slate-700 p-4">
             {selectedTransaction ? (
               <div className="space-y-4">
-                <h3 className="text-white font-semibold">Refund Details</h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-white font-semibold">{t('refund_details')}</h3>
+                  {selectedTransaction.status === 'partial_refunded' && (
+                    <Badge className="bg-orange-900 text-orange-300 text-xs">
+                      {t('already_partially_refunded')}
+                    </Badge>
+                  )}
+                </div>
                 <div className="bg-slate-700 rounded-lg p-4 space-y-2">
                   <div className="flex justify-between text-slate-300 text-sm">
-                    <span>Invoice</span>
+                    <span>{t('invoice')}</span>
                     <span>{selectedTransaction.invoice_number}</span>
                   </div>
                   <div className="flex justify-between text-slate-300 text-sm">
                     <span>{t('payment_method')}</span>
                     <span>{selectedTransaction.payment_method}</span>
                   </div>
-                  {selectedTransaction.items && selectedTransaction.items.length > 0 && (
-                    <div className="border-t border-slate-600 pt-2 mt-2 space-y-1">
-                      {selectedTransaction.items.map((item, idx) => (
-                        <div key={idx} className="flex justify-between text-slate-400 text-xs">
-                          <span>{item.name} x{item.quantity}</span>
-                          <span>${(item.price * item.quantity).toFixed(2)}</span>
-                        </div>
-                      ))}
+
+                  {refundHasLineItems ? (
+                    <div className="border-t border-slate-600 pt-2 mt-2 space-y-2">
+                      {/* POS-07: choose how many of each line to return. */}
+                      <p className="text-slate-400 text-xs">{t('select_return_qty')}</p>
+                      {selectedTransaction.items!.map((item, idx) => {
+                        const qty = refundQty[idx] ?? 0;
+                        return (
+                          <div key={idx} className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-slate-200 text-xs truncate">{item.name}</p>
+                              <p className="text-slate-500 text-[11px]">
+                                ${Math.abs(item.price).toFixed(2)} · {item.quantity} {t('sold')}
+                              </p>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 w-7 p-0 border-slate-500 text-slate-200"
+                                onClick={() => setLineRefundQty(idx, qty - 1, item.quantity)}
+                                disabled={qty <= 0}
+                              >
+                                −
+                              </Button>
+                              <Input
+                                type="number"
+                                value={qty}
+                                min={0}
+                                max={item.quantity}
+                                onChange={(e) =>
+                                  setLineRefundQty(idx, Number(e.target.value), item.quantity)
+                                }
+                                className="h-7 w-12 text-center bg-slate-800 border-slate-500 text-white text-xs"
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 w-7 p-0 border-slate-500 text-slate-200"
+                                onClick={() => setLineRefundQty(idx, qty + 1, item.quantity)}
+                                disabled={qty >= item.quantity}
+                              >
+                                +
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  )}
+                  ) : null}
+
                   <div className="border-t border-slate-600 pt-2 mt-2">
-                    <div className="flex justify-between text-slate-400 text-sm">
-                      <span>{t('subtotal')}</span>
-                      <span>${selectedTransaction.subtotal?.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-400 text-sm">
-                      <span>{t('vat')}</span>
-                      <span>${selectedTransaction.vat_amount?.toFixed(2)}</span>
-                    </div>
                     <div className="flex justify-between text-white font-bold mt-1">
-                      <span>Refund Amount</span>
-                      <span className="text-orange-400">${selectedTransaction.total_amount?.toFixed(2)}</span>
+                      <span>
+                        {t('refund_amount')}
+                        {refundHasLineItems && refundIsPartial && (
+                          <span className="ms-2 text-orange-300 text-xs font-normal">
+                            ({t('partial_refund')})
+                          </span>
+                        )}
+                      </span>
+                      <span className="text-orange-400">
+                        $
+                        {(refundHasLineItems
+                          ? refundSelectedAmount
+                          : selectedTransaction.total_amount || 0
+                        ).toFixed(2)}
+                      </span>
                     </div>
                   </div>
                 </div>
 
                 <Button
                   onClick={handleRefund}
-                  disabled={refundProcessing || !canRefund}
+                  disabled={refundProcessing || !canRefund || !canSubmitRefund}
                   className="w-full bg-orange-600 hover:bg-orange-700 text-white py-6 text-lg disabled:opacity-50"
                 >
-                  {refundProcessing ? t('loading') : '↩ Process Refund'}
+                  {refundProcessing ? t('loading') : `↩ ${t('process_refund')}`}
                 </Button>
                 {!canRefund && (
                   <p className="text-center text-sm text-orange-400/80 mt-2">
-                    You don't have permission to issue refunds.
+                    {t('refund_no_permission')}
                   </p>
                 )}
               </div>
             ) : (
               <div className="flex items-center justify-center h-full text-slate-500">
-                <p className="text-center">Select a transaction to process refund</p>
+                <p className="text-center">{t('select_transaction_refund')}</p>
               </div>
             )}
           </div>

@@ -182,15 +182,28 @@ export interface RefundResult {
   zatca_qr_base64?: string;
   zatca_document_id: number;
   zatca_status: string;
+  // POS-07: "refunded" when fully returned, "partial_refunded" when a balance remains.
+  original_status: string;
+}
+
+// POS-07: one returned line for a partial/line-level refund.
+export interface RefundLine {
+  product_id: number;
+  quantity: number;
 }
 
 // POS-07: refund a sale by issuing a ZATCA credit note (type 381). Restores
 // inventory and signs the credit note server-side; returns its number + QR.
-export async function refundTransaction(transactionId: number): Promise<RefundResult> {
+// Pass `lines` to return only selected units (partial/line-level refund); omit
+// it to refund the whole remaining balance.
+export async function refundTransaction(
+  transactionId: number,
+  lines?: RefundLine[],
+): Promise<RefundResult> {
   const response = await client.apiCall.invoke<RefundResult>({
     url: `/api/v1/pos/transactions/${transactionId}/refund`,
     method: 'POST',
-    data: {},
+    data: lines && lines.length > 0 ? { lines } : {},
   });
   return response.data;
 }

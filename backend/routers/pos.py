@@ -893,6 +893,22 @@ async def list_transactions(
 
 
 # ---------- Refund / ZATCA credit note (POS-07) ----------
+class RefundLine(BaseModel):
+    """One line to return on a partial/line-level refund (POS-07).
+
+    ``quantity`` is how many units of ``product_id`` to credit; it must not exceed
+    the units still un-refunded on the original invoice. Omit the whole ``lines``
+    list to refund the entire remaining balance (the legacy whole-invoice refund).
+    """
+
+    product_id: int
+    quantity: float
+
+
+class RefundRequest(BaseModel):
+    lines: Optional[List[RefundLine]] = None
+
+
 class RefundResponse(BaseModel):
     credit_note_id: int
     original_transaction_id: int
@@ -902,6 +918,35 @@ class RefundResponse(BaseModel):
     zatca_qr_base64: Optional[str] = None
     zatca_document_id: int
     zatca_status: str
+    # POS-07: "refunded" when every line is now fully returned, "partial_refunded"
+    # when a balance remains on the original invoice.
+    original_status: str = "refunded"
+
+
+async def _refunded_quantities(db: AsyncSession, original_id: int) -> dict:
+    """Sum already-refunded quantities per product across prior credit notes that
+    reference ``original_id`` (POS-07). Lets a second partial refund see what the
+    first one already returned so the invoice can never be over-refunded."""
+    rows = (
+        await db.execute(
+            select(Transactions).where(
+                Transactions.original_transaction_id == original_id,
+                Transactions.status == "credit_note",
+            )
+        )
+    ).scalars().all()
+    refunded: dict[int, float] = {}
+    for cn in rows:
+        try:
+            cn_items = json.loads(cn.items_json) if cn.items_json else []
+        except (ValueError, TypeError):
+            cn_items = []
+        for it in cn_items:
+            pid = it.get("product_id")
+            if pid is None:
+                continue
+            refunded[int(pid)] = refunded.get(int(pid), 0.0) + float(it.get("quantity") or 0)
+    return refunded
 
 
 async def _restore_inventory(db: AsyncSession, client_id: int, items: List[dict]) -> None:
@@ -927,16 +972,25 @@ async def _restore_inventory(db: AsyncSession, client_id: int, items: List[dict]
 async def refund_transaction(
     txn_id: int,
     background_tasks: BackgroundTasks,
+    payload: Optional[RefundRequest] = None,
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Refund a sale by issuing a ZATCA **credit note** (POS-07).
 
-    Replaces the previous negative-price fake refund. Creates a type-381 credit
-    note that references the original invoice, restores inventory, advances the
-    hash chain, is ECDSA-signed and queued for Fatoora reporting — all atomically.
-    The credit-note transaction stores negative amounts so sales reports net out;
-    the signed ZATCA document carries the compliant positive credit-note amounts.
+    Supports **full, partial, and line-level** refunds. Omit ``lines`` (or POST an
+    empty body) to refund the whole remaining balance; pass
+    ``lines:[{product_id, quantity}]`` to return only selected units. Quantities
+    are validated against what is still un-refunded across any earlier partial
+    refunds, so an invoice can never be over-refunded.
+
+    Creates a type-381 credit note that references the original invoice, restores
+    only the returned units to stock (branch-aware), advances the hash chain, is
+    ECDSA-signed and queued for Fatoora reporting — all atomically. The credit-note
+    transaction stores negative amounts (prorated to the returned lines) so sales
+    reports net out; the signed ZATCA document carries the compliant positive
+    credit-note amounts. The original lands in ``refunded`` when everything is
+    returned, else ``partial_refunded`` while a balance remains.
     """
     client = await get_client_for_user(db, str(current_user.id))
     original = await _get_owned_transaction(db, client, txn_id)
@@ -951,16 +1005,93 @@ async def refund_transaction(
     except (ValueError, TypeError):
         items = []
 
-    # Restore to the same stock pool the sale deducted from (branch ledger when
-    # the original sale was branch-tagged, else client-level product quantity).
+    # Aggregate the original lines by product so duplicate lines and per-line
+    # discounts collapse to one authoritative entry per SKU.
+    orig_by_pid: dict[int, dict] = {}
+    for it in items:
+        pid = it.get("product_id")
+        if pid is None:
+            continue
+        pid = int(pid)
+        entry = orig_by_pid.setdefault(
+            pid,
+            {"product_id": pid, "name": it.get("name") or "Item",
+             "price": float(it.get("price") or 0), "quantity": 0.0, "discount": 0.0},
+        )
+        entry["quantity"] += float(it.get("quantity") or 0)
+        entry["discount"] += float(it.get("discount") or 0)
+
+    already = await _refunded_quantities(db, original.id)
+
+    # Resolve the requested quantities: explicit lines, else the whole remaining
+    # balance (legacy whole-invoice refund).
+    requested: dict[int, float] = {}
+    if payload and payload.lines:
+        for ln in payload.lines:
+            q = float(ln.quantity or 0)
+            if q <= 0:
+                continue
+            requested[int(ln.product_id)] = requested.get(int(ln.product_id), 0.0) + q
+        if not requested:
+            raise HTTPException(status_code=400, detail="No refund quantities specified")
+    else:
+        for pid, e in orig_by_pid.items():
+            remaining = e["quantity"] - already.get(pid, 0.0)
+            if remaining > 1e-9:
+                requested[pid] = remaining
+        if not requested:
+            raise HTTPException(status_code=400, detail="Transaction already refunded")
+
+    # Validate every requested line against what is still refundable.
+    for pid, q in requested.items():
+        if pid not in orig_by_pid:
+            raise HTTPException(
+                status_code=400, detail=f"Product {pid} is not on the original invoice"
+            )
+        remaining = orig_by_pid[pid]["quantity"] - already.get(pid, 0.0)
+        if q > remaining + 1e-9:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Refund quantity {q} exceeds remaining {remaining} for product {pid}",
+            )
+
+    # Build the returned-line list (drives stock restore, the credit-note
+    # items_json, and the proportional amounts), prorating per-line discounts.
+    refund_items: List[dict] = []
+    for pid, q in requested.items():
+        e = orig_by_pid[pid]
+        frac = (q / e["quantity"]) if e["quantity"] else 0.0
+        refund_items.append({
+            "product_id": pid,
+            "name": e["name"],
+            "price": e["price"],
+            "quantity": q,
+            "discount": round(e["discount"] * frac, 4),
+        })
+
+    # Prorate the order-level discount/VAT/total by the share of the line subtotal
+    # being returned. A full refund (ratio == 1.0) reproduces the original amounts
+    # exactly; partial refunds net only their share.
+    orig_line_subtotal = sum(
+        e["price"] * e["quantity"] - e["discount"] for e in orig_by_pid.values()
+    )
+    refund_line_subtotal = sum(it["price"] * it["quantity"] - it["discount"] for it in refund_items)
+    ratio = (refund_line_subtotal / orig_line_subtotal) if orig_line_subtotal else 0.0
+    refund_subtotal = round(refund_line_subtotal, 2)
+    refund_discount = round((original.discount_amount or 0) * ratio, 2)
+    refund_vat = round((original.vat_amount or 0) * ratio, 2)
+    refund_total = round((original.total_amount or 0) * ratio, 2)
+
+    # Restore only the returned units to the same stock pool the sale deducted
+    # from (branch ledger when the original was branch-tagged, else client-level).
     if original.branch_id:
         from services.branch_stock import restore_branch_inventory
 
         await restore_branch_inventory(
-            db, str(current_user.id), client.id, int(original.branch_id), items
+            db, str(current_user.id), client.id, int(original.branch_id), refund_items
         )
     else:
-        await _restore_inventory(db, client.id, items)
+        await _restore_inventory(db, client.id, refund_items)
 
     # Allocate the credit note its own sequential invoice number.
     current_counter = (client.invoice_counter or 0) + 1
@@ -973,19 +1104,27 @@ async def refund_transaction(
         user_id=str(current_user.id),
         client_id=client.id,
         invoice_number=credit_number,
-        subtotal=-(original.subtotal or 0),
-        vat_amount=-(original.vat_amount or 0),
-        discount_amount=-(original.discount_amount or 0),
-        total_amount=-(original.total_amount or 0),
+        subtotal=-refund_subtotal,
+        vat_amount=-refund_vat,
+        discount_amount=-refund_discount,
+        total_amount=-refund_total,
         payment_method="refund",
         status="credit_note",
-        items_json=original.items_json,
+        items_json=json.dumps(refund_items, ensure_ascii=False),
+        original_transaction_id=original.id,
         customer_name=original.customer_name,
         customer_phone=original.customer_phone,
         customer_vat_number=original.customer_vat_number,
     )
     db.add(credit)
-    original.status = "refunded"
+
+    # Decide the original's new state: fully refunded once every line's
+    # cumulative refunded quantity reaches its sold quantity, else partial.
+    fully_refunded = all(
+        (already.get(pid, 0.0) + requested.get(pid, 0.0)) >= e["quantity"] - 1e-9
+        for pid, e in orig_by_pid.items()
+    )
+    original.status = "refunded" if fully_refunded else "partial_refunded"
 
     # Net the refund into the open shift (negative amount) so cash reconciles.
     credit.shift_id = await _apply_sale_to_open_shift(
@@ -1032,6 +1171,7 @@ async def refund_transaction(
         zatca_qr_base64=zatca_service_mod.render_qr_png_base64(stamped_qr),
         zatca_document_id=document_id,
         zatca_status="signed",
+        original_status=original.status,
     )
 
 

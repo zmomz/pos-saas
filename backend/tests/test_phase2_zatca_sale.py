@@ -248,6 +248,104 @@ async def test_double_refund_is_rejected(client):
 
 
 # ---------------------------------------------------------------------------
+# POS-07: partial / line-level refunds (F-007)
+# ---------------------------------------------------------------------------
+async def _txn_status(txn_id: int) -> str:
+    async with db_manager.async_session_maker() as db:
+        row = (
+            await db.execute(select(Transactions).where(Transactions.id == txn_id))
+        ).scalar_one()
+        return row.status
+
+
+async def test_partial_refund_credits_one_unit_and_marks_partial_refunded(client):
+    """Refund 1 of 3 units → credit note nets one unit (incl. its VAT share),
+    stock goes up by exactly 1, and the original lands in ``partial_refunded``."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Cola", quantity=10, price=10.0)
+
+    sale = await _sale(client, headers, pid, qty=3)         # subtotal 30, VAT 4.5, total 34.5
+    assert await get_product_quantity(pid) == 7             # 10 - 3 sold
+
+    resp = await client.post(
+        f"/api/v1/pos/transactions/{sale['id']}/refund",
+        json={"lines": [{"product_id": pid, "quantity": 1}]},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    refund = resp.json()
+    # One of three units → a third of the 34.5 invoice = 11.5 (negative on the note).
+    assert refund["total_amount"] == -11.5
+    assert refund["original_status"] == "partial_refunded"
+
+    # Only the returned unit is restored.
+    assert await get_product_quantity(pid) == 8
+    # The original invoice reflects the partial state for the next refund.
+    assert await _txn_status(sale["id"]) == "partial_refunded"
+
+
+async def test_successive_partial_refunds_complete_to_refunded(client):
+    """Two partial refunds that together return every unit flip the original to
+    ``refunded`` and the second cannot over-refund the remaining balance."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Cola", quantity=10, price=10.0)
+
+    sale = await _sale(client, headers, pid, qty=3)
+
+    r1 = await client.post(
+        f"/api/v1/pos/transactions/{sale['id']}/refund",
+        json={"lines": [{"product_id": pid, "quantity": 1}]},
+        headers=headers,
+    )
+    assert r1.status_code == 200
+    assert r1.json()["original_status"] == "partial_refunded"
+
+    # Returning the remaining 2 units completes the refund.
+    r2 = await client.post(
+        f"/api/v1/pos/transactions/{sale['id']}/refund",
+        json={"lines": [{"product_id": pid, "quantity": 2}]},
+        headers=headers,
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["original_status"] == "refunded"
+    assert await get_product_quantity(pid) == 10            # all stock restored
+    assert await _txn_status(sale["id"]) == "refunded"
+
+    # A third refund has nothing left to return.
+    r3 = await client.post(
+        f"/api/v1/pos/transactions/{sale['id']}/refund", headers=headers
+    )
+    assert r3.status_code == 400
+    assert "already refunded" in r3.json()["detail"].lower()
+
+
+async def test_partial_refund_rejects_over_quantity(client):
+    """Asking to return more units than were sold (net of prior refunds) is a 400
+    and restores nothing."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Cola", quantity=10, price=10.0)
+
+    sale = await _sale(client, headers, pid, qty=2)
+
+    resp = await client.post(
+        f"/api/v1/pos/transactions/{sale['id']}/refund",
+        json={"lines": [{"product_id": pid, "quantity": 3}]},   # only 2 were sold
+        headers=headers,
+    )
+    assert resp.status_code == 400
+    assert "exceeds" in resp.json()["detail"].lower()
+    # Nothing changed: stock still reflects the 2 sold, original still completed.
+    assert await get_product_quantity(pid) == 8
+    assert await _txn_status(sale["id"]) == "completed"
+
+
+# ---------------------------------------------------------------------------
 # Reporting: retry on 5xx, fail closed to "pending" when unconfigured
 # ---------------------------------------------------------------------------
 async def test_reporting_retries_on_5xx_then_reports(client, monkeypatch):
