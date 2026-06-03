@@ -21,6 +21,7 @@ from models.customers import Customers
 from models.products import Products
 from models.transactions import Transactions
 from models.payment_tenders import PaymentTenders
+from models.terminals import Terminals
 # Imported so the per-branch stock table registers on Base.metadata at startup
 # (services.branch_stock is only imported lazily inside handlers).
 from models.product_branch_stock import Product_branch_stock  # noqa: F401
@@ -35,6 +36,7 @@ from services.payment_gateway import (
     PaymentDeclined,
     get_gateway,
     get_gateway_for,
+    get_terminal_gateway,
     normalize_tender_type,
     requires_capture,
 )
@@ -72,6 +74,10 @@ class PaymentEntry(BaseModel):
     tender_type: Optional[str] = None
     token: Optional[str] = None
     simulate: Optional[str] = None
+    # In-store SoftPOS capture (HW-03/PAY-05, F-005). When set, this leg is pushed
+    # to the named (owner-scoped) terminal for a real approval instead of the online
+    # gateway; a decline blocks the whole sale.
+    terminal_id: Optional[int] = None
 
 
 class CreateTransactionRequest(BaseModel):
@@ -111,6 +117,10 @@ class CreateTransactionRequest(BaseModel):
     # simulate hint ("approve"/"decline").
     payment_token: Optional[str] = None
     payment_simulate: Optional[str] = None
+    # In-store SoftPOS terminal for a single card-like tender (HW-03/PAY-05). When
+    # set, the card leg is captured on this owner-scoped terminal; a decline blocks
+    # the sale.
+    payment_terminal_id: Optional[int] = None
 
 
 class TenderInfo(BaseModel):
@@ -304,11 +314,15 @@ async def _capture_tenders(specs: List[dict]) -> List[dict]:
     a persisted sale (F-001). Cash/transfer/loyalty settle internally and are
     recorded without a gateway round-trip.
 
-    Each spec is ``{tender_type|method, amount, token, simulate}``.
+    Each spec is ``{tender_type|method, amount, token, simulate, _gateway?}``. A
+    spec may carry a pre-resolved ``_gateway`` (an in-store SoftPOS terminal — set
+    by :func:`_attach_terminal_gateways`); otherwise the active online/sandbox
+    gateway captures it.
     """
-    gateway = get_gateway()
+    default_gateway = get_gateway()
     captured: List[dict] = []
     for spec in specs:
+        gateway = spec.get("_gateway") or default_gateway
         ttype = normalize_tender_type(spec.get("tender_type") or spec.get("method"))
         amount = round(float(spec.get("amount") or 0), 2)
         row = {
@@ -365,6 +379,7 @@ def _build_tender_specs(data: "CreateTransactionRequest", total_amount: float) -
                 "amount": p.amount,
                 "token": p.token,
                 "simulate": p.simulate,
+                "terminal_id": p.terminal_id,
             }
             for p in data.payments
         ]
@@ -374,8 +389,40 @@ def _build_tender_specs(data: "CreateTransactionRequest", total_amount: float) -
             "amount": total_amount,
             "token": data.payment_token,
             "simulate": data.payment_simulate,
+            "terminal_id": data.payment_terminal_id,
         }
     ]
+
+
+async def _attach_terminal_gateways(
+    db: AsyncSession, user_id: str, specs: List[dict]
+) -> None:
+    """Resolve an in-store SoftPOS terminal for any spec that names one (HW-03/F-005).
+
+    For each spec carrying a ``terminal_id``, verify the terminal belongs to the
+    caller (SEC-02) and is active, then attach its provider's gateway as
+    ``spec["_gateway"]`` so :func:`_capture_tenders` pushes that leg to the paired
+    terminal for a real approval. A card leg with no terminal still routes to the
+    active online/sandbox gateway. An unknown/foreign/inactive terminal is a 400 so
+    the sale fails closed rather than silently falling back to the online gateway.
+    """
+    for spec in specs:
+        terminal_id = spec.get("terminal_id")
+        if not terminal_id:
+            continue
+        terminal = (
+            await db.execute(
+                select(Terminals).where(
+                    Terminals.id == terminal_id,
+                    Terminals.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if terminal is None:
+            raise HTTPException(status_code=400, detail=f"Terminal {terminal_id} not found")
+        if (terminal.status or "active") != "active":
+            raise HTTPException(status_code=400, detail=f"Terminal {terminal_id} is not active")
+        spec["_gateway"] = get_terminal_gateway(terminal.provider)
 
 
 def _persist_tenders(
@@ -619,8 +666,12 @@ async def create_transaction(
     # invoice counter is consumed or any row is written. A decline raises 402 here
     # and, since nothing has committed, the whole sale rolls back — a "Mada"/card
     # sale can no longer complete without proof it was charged (F-001). Cash and
-    # internal tenders pass through with no gateway round-trip.
-    captured_tenders = await _capture_tenders(_build_tender_specs(data, total_amount))
+    # internal tenders pass through with no gateway round-trip. A leg may name an
+    # in-store SoftPOS terminal (HW-03/F-005) — resolved here to the paired device
+    # so the customer taps and the approval is captured before any row is written.
+    tender_specs = _build_tender_specs(data, total_amount)
+    await _attach_terminal_gateways(db, str(current_user.id), tender_specs)
+    captured_tenders = await _capture_tenders(tender_specs)
 
     # Increment invoice counter
     current_counter = (client.invoice_counter or 0) + 1
@@ -1451,6 +1502,21 @@ async def get_escpos_receipt(
         line_items = []
 
     issue_date = txn.created_at.strftime("%Y-%m-%d %H:%M") if txn.created_at else ""
+
+    # HW-04: kick the cash drawer when the sale took any cash. Prefer the captured
+    # tenders (handles a split with a cash leg); fall back to the method label for
+    # legacy tender-less sales.
+    cash_legs = (
+        await db.execute(
+            select(func.count(PaymentTenders.id)).where(
+                PaymentTenders.transaction_id == txn.id,
+                PaymentTenders.tender_type == "cash",
+                PaymentTenders.status == "captured",
+            )
+        )
+    ).scalar() or 0
+    open_drawer = cash_legs > 0 or normalize_tender_type(txn.payment_method) == "cash"
+
     payload = build_receipt_base64(
         seller_name=client.business_name or "Store",
         vat_number=client.vat_number or "",
@@ -1462,6 +1528,7 @@ async def get_escpos_receipt(
         vat_amount=txn.vat_amount or 0,
         total_amount=txn.total_amount,
         zatca_qr=txn.zatca_qr or "",
+        open_drawer=open_drawer,
     )
     return {
         "invoice_number": txn.invoice_number,

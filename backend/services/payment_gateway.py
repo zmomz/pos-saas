@@ -19,8 +19,10 @@ knows which provider ran:
   :class:`GatewayNotConfigured` and the resolver falls back to the sandbox.
 
 Provider split (per INTENDED_BEHAVIOR.md §4.6): Moyasar first for online/Mada;
-Tap/HyperPay/PayTabs slot in behind this same interface later, and in-store
-SoftPOS terminal capture (Geidea, PAY-05/HW-03) is a separate adapter/finding.
+Tap/HyperPay/PayTabs slot in behind this same interface later. In-store SoftPOS
+terminal capture is :class:`GeideaTerminalGateway` (PAY-05/HW-03, F-005) — the
+amount is pushed to a paired Geidea SoftPOS terminal which prompts the customer to
+tap and returns a real approval/RRN/network (or a decline that blocks the sale).
 """
 from __future__ import annotations
 
@@ -292,6 +294,178 @@ class MoyasarGateway(PaymentGateway):
 
 
 # ---------------------------------------------------------------------------
+# In-store SoftPOS terminal capture (PAY-05 / HW-03, F-005)
+# ---------------------------------------------------------------------------
+# The terminal providers the POS can push a card-like tender to. Geidea SoftPOS
+# is the first (operator-selected) in-store provider; PAX/Urovo/N-Genius slot in
+# behind the same :class:`GeideaTerminalGateway`-shaped interface later.
+TERMINAL_PROVIDERS: tuple[str, ...] = ("geidea",)
+
+
+class GeideaTerminalGateway(PaymentGateway):
+    """In-store SoftPOS terminal capture via **Geidea** (PAY-05 / HW-03, F-005).
+
+    Unlike the online gateways (Moyasar), an in-store capture is initiated against
+    a *paired* SoftPOS terminal: the POS pushes ``{terminal, amount}`` to Geidea,
+    the customer taps their Mada/Apple Pay card on the device, and the device
+    returns a real approval (network + approval code + RRN) or a decline. A decline
+    raises :class:`PaymentDeclined`, which rolls the whole sale back (PAY-05).
+
+    Two modes, selected by credentials (mirrors Moyasar's "implemented but inactive
+    until a live key is set"):
+
+    * **sandbox** (default, no ``GEIDEA_API_KEY``): a deterministic, hardware-free
+      simulation so the in-store flow is demonstrable on any install (OPS-08).
+      Approves by default; ``simulate="decline"`` forces a terminal decline. It
+      reports ``gateway="geidea"`` so a refund routes back through this same
+      adapter (refund-to-origin, F-004).
+    * **live** (``GEIDEA_API_KEY`` set + a paired terminal serial): a real
+      server→Geidea capture. NOTE: this needs live Geidea merchant credentials and
+      a physically paired SoftPOS device — an operator/hardware step flagged in the
+      hand-off; until then the sandbox path runs.
+    """
+
+    name = "geidea"
+    _BASE_URL = "https://api.merchant.geidea.net/pgw/api/v1"
+
+    def __init__(self, api_key: Optional[str] = None, *, terminal_serial: Optional[str] = None):
+        self._api_key = api_key or ""
+        self._terminal_serial = terminal_serial
+
+    @property
+    def live(self) -> bool:
+        """True once real Geidea credentials are configured."""
+        return bool(self._api_key)
+
+    async def charge(
+        self,
+        amount: float,
+        tender_type: str,
+        *,
+        currency: str = "SAR",
+        token: Optional[str] = None,
+        simulate: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> GatewayResult:
+        tender_type = normalize_tender_type(tender_type)
+        if not self.live:
+            # Hardware-free sandbox simulation (OPS-08). A real capture activates
+            # once GEIDEA_API_KEY + a paired terminal exist.
+            if (simulate or "").strip().lower() == "decline":
+                return GatewayResult(
+                    approved=False,
+                    gateway=self.name,
+                    decline_reason="terminal_declined",
+                )
+            ref = uuid.uuid4().hex
+            return GatewayResult(
+                approved=True,
+                gateway=self.name,
+                # SoftPOS is Mada-first in KSA; honour an explicit wallet network.
+                network=_SANDBOX_NETWORK.get(tender_type, "MADA"),
+                approval_code=ref[:6].upper(),
+                rrn=ref[6:18],
+                gateway_ref=f"geidea_sbx_{ref}",
+                last4=ref[-4:],
+                token=f"tok_geidea_{ref[:16]}",
+            )
+
+        # ---- live capture against the paired Geidea SoftPOS terminal ----
+        import httpx  # local import keeps module import cheap
+
+        amount_minor = int(round(amount * 100))
+        payload = {
+            "amount": amount_minor,
+            "currency": currency,
+            "terminalSerial": (metadata or {}).get("terminal_serial") or self._terminal_serial,
+            "captureMethod": "terminal",
+            "merchantReferenceId": (metadata or {}).get("reference"),
+        }
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as http:
+                resp = await http.post(
+                    f"{self._BASE_URL}/terminal/charge",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                )
+        except httpx.HTTPError as exc:  # network/terminal unreachable
+            raise PaymentDeclined(f"geidea terminal error: {exc}", gateway=self.name)
+
+        if resp.status_code >= 500:
+            raise PaymentDeclined(
+                f"geidea server error {resp.status_code}", gateway=self.name
+            )
+        body = resp.json() if resp.content else {}
+        status = (body.get("status") or "").lower()
+        if status in ("approved", "captured", "success"):
+            return GatewayResult(
+                approved=True,
+                gateway=self.name,
+                network=(body.get("network") or tender_type).upper(),
+                approval_code=body.get("approvalCode") or body.get("authCode"),
+                rrn=body.get("rrn") or body.get("retrievalReferenceNumber"),
+                gateway_ref=body.get("transactionId") or body.get("id"),
+                last4=(body.get("maskedPan") or "")[-4:] or None,
+                token=body.get("cardToken"),
+            )
+        return GatewayResult(
+            approved=False,
+            gateway=self.name,
+            decline_reason=(body.get("detailedResponseMessage") or status or "declined"),
+        )
+
+    async def refund(self, gateway_ref: str, amount: float) -> GatewayResult:
+        if not self.live:
+            ref = uuid.uuid4().hex
+            return GatewayResult(
+                approved=True,
+                gateway=self.name,
+                gateway_ref=f"rfnd_{ref}",
+                approval_code=ref[:6].upper(),
+            )
+        import httpx
+
+        amount_minor = int(round(amount * 100))
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as http:
+                resp = await http.post(
+                    f"{self._BASE_URL}/terminal/refund",
+                    json={"transactionId": gateway_ref, "amount": amount_minor},
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                )
+        except httpx.HTTPError as exc:
+            raise PaymentDeclined(f"geidea refund error: {exc}", gateway=self.name)
+        body = resp.json() if resp.content else {}
+        ok = resp.status_code < 400 and (body.get("status") or "").lower() in (
+            "refunded",
+            "approved",
+            "success",
+        )
+        return GatewayResult(
+            approved=ok,
+            gateway=self.name,
+            gateway_ref=body.get("transactionId") or gateway_ref,
+            decline_reason=None if ok else (body.get("detailedResponseMessage") or "refund_failed"),
+        )
+
+
+def get_terminal_gateway(provider: str = "geidea") -> GeideaTerminalGateway:
+    """Resolve the in-store terminal gateway for ``provider`` (PAY-05/HW-03).
+
+    Today only Geidea SoftPOS is wired (the operator's choice). It runs live once
+    ``GEIDEA_API_KEY`` is configured, otherwise as the deterministic sandbox so the
+    terminal flow is demonstrable without hardware.
+    """
+    api_key = getattr(settings, "geidea_api_key", "") or ""
+    terminal_serial = getattr(settings, "geidea_terminal_serial", "") or None
+    if (provider or "geidea").strip().lower() != "geidea":
+        # Unknown provider — fall back to the sandbox Geidea adapter so the capture
+        # path still works rather than dead-ending.
+        return GeideaTerminalGateway()
+    return GeideaTerminalGateway(api_key, terminal_serial=terminal_serial)
+
+
+# ---------------------------------------------------------------------------
 # Resolver
 # ---------------------------------------------------------------------------
 def get_gateway() -> PaymentGateway:
@@ -320,6 +494,10 @@ def get_gateway_for(gateway_name: Optional[str]) -> PaymentGateway:
     name = (gateway_name or "").strip().lower()
     if name == "sandbox":
         return SandboxGateway()
+    if name == "geidea":
+        # In-store terminal refund (HW-03): reverse through the same SoftPOS
+        # adapter, live or sandbox per current credentials.
+        return get_terminal_gateway("geidea")
     if name == "moyasar":
         api_key = getattr(settings, "moyasar_api_key", "") or ""
         if api_key:

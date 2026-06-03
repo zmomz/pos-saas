@@ -141,6 +141,9 @@ export interface PaymentEntry {
   tender_type?: string;
   token?: string;
   simulate?: string;
+  // HW-03/PAY-05: push this card-like leg to a paired in-store SoftPOS terminal
+  // for a real approval instead of the online gateway. A decline blocks the sale.
+  terminal_id?: number;
 }
 
 export async function createTransaction(data: {
@@ -168,6 +171,8 @@ export async function createTransaction(data: {
   // Single-tender capture hints (PAY-01) when not using split payments.
   payment_token?: string;
   payment_simulate?: string;
+  // HW-03/PAY-05: capture a single card-like tender on a paired SoftPOS terminal.
+  payment_terminal_id?: number;
 }): Promise<TransactionResult> {
   const response = await client.apiCall.invoke<TransactionResult>({
     url: '/api/v1/pos/transaction',
@@ -208,6 +213,71 @@ export async function refundTransaction(
     url: `/api/v1/pos/transactions/${transactionId}/refund`,
     method: 'POST',
     data: lines && lines.length > 0 ? { lines } : {},
+  });
+  return response.data;
+}
+
+// HW-03/PAY-05: integrated in-store SoftPOS terminals (F-005).
+export interface Terminal {
+  id: number;
+  provider: string;
+  label?: string;
+  serial?: string;
+  branch_id?: number;
+  status: string;
+}
+
+export interface TerminalChargeResult {
+  approved: boolean;
+  tender_id?: number;
+  tender_type: string;
+  amount: number;
+  network?: string;
+  approval_code?: string;
+  rrn?: string;
+  gateway_ref?: string;
+  last4?: string;
+  gateway: string;
+  status: string;
+}
+
+// Register an in-store SoftPOS terminal the merchant has paired (provider 'geidea').
+export async function registerTerminal(data: {
+  provider?: string;
+  label?: string;
+  serial?: string;
+  branch_id?: number;
+}): Promise<Terminal> {
+  const response = await client.apiCall.invoke<Terminal>({
+    url: '/api/v1/payments/terminals',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+// List the caller's registered terminals (owner-scoped).
+export async function listTerminals(): Promise<Terminal[]> {
+  const response = await client.apiCall.invoke<Terminal[]>({
+    url: '/api/v1/payments/terminals',
+    method: 'GET',
+  });
+  return response.data;
+}
+
+// Push an amount to a paired SoftPOS terminal and capture the approval (HW-03).
+// A decline throws (the SDK surfaces the 402) so checkout can block the sale.
+export async function chargeTerminal(data: {
+  terminal_id: number;
+  amount: number;
+  tender_type?: string;
+  currency?: string;
+  simulate?: string;
+}): Promise<TerminalChargeResult> {
+  const response = await client.apiCall.invoke<TerminalChargeResult>({
+    url: '/api/v1/payments/terminal/charge',
+    method: 'POST',
+    data,
   });
   return response.data;
 }

@@ -62,6 +62,19 @@ class EscPosBuilder:
         """GS V 66 0 — partial cut (feed then cut)."""
         return self.raw(bytes([GS, ord("V"), 66, 0]))
 
+    def kick_drawer(self, pin: int = 0, on_ms: int = 25, off_ms: int = 250) -> "EscPosBuilder":
+        """ESC p m t1 t2 — pulse the cash-drawer kick connector (HW-04).
+
+        Emits ``0x1B 0x70`` followed by the connector pin (0 or 1) and the on/off
+        pulse durations (in 2ms units, clamped to a byte). A drawer wired to the
+        printer's RJ11 kick port opens when this pulse prints — sent on cash sales
+        so the till opens automatically.
+        """
+        m = 1 if pin else 0
+        t1 = max(0, min(on_ms, 255))
+        t2 = max(0, min(off_ms, 255))
+        return self.raw(bytes([ESC, ord("p"), m, t1, t2]))
+
     def qr(self, data: str, size: int = 6) -> "EscPosBuilder":
         """Embed a QR code using the GS ( k model-2 command sequence."""
         payload = data.encode("utf-8")
@@ -101,9 +114,18 @@ def build_receipt(
     total_amount: float,
     zatca_qr: str,
     width: int = 42,
+    open_drawer: bool = False,
 ) -> bytes:
-    """Render a transaction as an ESC/POS byte stream for an 80mm printer."""
+    """Render a transaction as an ESC/POS byte stream for an 80mm printer.
+
+    When ``open_drawer`` is true (a cash sale) the stream carries a cash-drawer
+    kick pulse (HW-04) so a connected till opens as the receipt prints.
+    """
     b = EscPosBuilder()
+
+    if open_drawer:
+        # Pulse the drawer first so the till opens for the cashier immediately.
+        b.kick_drawer()
 
     b.align("center").bold(True).double_size(True)
     b.line(seller_name or "Store")
