@@ -719,6 +719,112 @@ async def export_transactions_csv(
 
 
 # ============================================================
+# PAYMENT-METHOD BREAKDOWN (RPT-03) — how a period's revenue was tendered
+# ============================================================
+# Groups a date window's captured tenders by method (cash / mada / card /
+# applepay / stcpay / tabby / tamara / transfer / loyalty) from the real
+# ``payment_tenders`` rows (F-001) — not the ``payment_method`` label. ``refunds``
+# is the amount reversed back to that tender (refund-to-origin, F-004), so ``net``
+# is what each method actually collected for the period. Aggregated in SQL (one
+# GROUP BY, bounded by the number of distinct tender types) — never the OPS-05
+# load-everything anti-pattern.
+
+
+class PaymentBreakdownTender(BaseModel):
+    tender_type: str
+    collected: float
+    refunds: float
+    net: float
+    count: int
+
+
+class PaymentBreakdownResponse(BaseModel):
+    days: int
+    tenders: List[PaymentBreakdownTender]
+    total_collected: float
+    total_refunds: float
+    net: float
+
+
+@router.get("/api/v1/reports/payment-breakdown", response_model=PaymentBreakdownResponse)
+async def get_payment_breakdown(
+    days: int = Query(30, ge=1, le=365),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Payment-method breakdown for the period (RPT-03).
+
+    Sales-by-tender and refunds-by-tender from the captured ``payment_tenders``
+    rows (F-001/F-004), grouped per method. Card-like legs carry a real approval,
+    so the breakdown is what the merchant truly collected per method — not a sum
+    of method labels. ``net = collected - refunds``.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
+
+    from models.payment_tenders import PaymentTenders
+
+    # OPS-05: aggregate in the database. One GROUP BY over the (already lean)
+    # tenders table keyed by (tender_type, status); the result set is bounded by
+    # the number of distinct tender types, never the transaction count, so this
+    # stays flat as a client's volume grows.
+    result = await db.execute(
+        select(
+            PaymentTenders.tender_type,
+            PaymentTenders.status,
+            func.coalesce(func.sum(PaymentTenders.amount), 0.0).label("amount"),
+            func.count().label("cnt"),
+        ).where(
+            and_(
+                PaymentTenders.client_id == client_id,
+                PaymentTenders.created_at >= start_date,
+                PaymentTenders.status != "declined",
+            )
+        ).group_by(PaymentTenders.tender_type, PaymentTenders.status)
+    )
+
+    buckets: dict = {}
+    for tender_type, status, amount, cnt in result.all():
+        key = tender_type or "unknown"
+        bucket = buckets.setdefault(key, {"collected": 0.0, "refunds": 0.0, "count": 0})
+        amount = float(amount or 0)
+        if status == "refunded":
+            # Money reversed back to this tender (refund-to-origin, F-004).
+            bucket["refunds"] += amount
+        else:  # captured / authorized — money taken in on a sale
+            bucket["collected"] += amount
+            bucket["count"] += int(cnt or 0)
+
+    tenders = [
+        PaymentBreakdownTender(
+            tender_type=k,
+            collected=round(v["collected"], 2),
+            refunds=round(v["refunds"], 2),
+            net=round(v["collected"] - v["refunds"], 2),
+            count=v["count"],
+        )
+        for k, v in buckets.items()
+    ]
+    # Largest net contributor first; ties broken by name for a deterministic order.
+    tenders.sort(key=lambda t: (-t.net, t.tender_type))
+
+    total_collected = round(sum(t.collected for t in tenders), 2)
+    total_refunds = round(sum(t.refunds for t in tenders), 2)
+
+    return PaymentBreakdownResponse(
+        days=days,
+        tenders=tenders,
+        total_collected=total_collected,
+        total_refunds=total_refunds,
+        net=round(total_collected - total_refunds, 2),
+    )
+
+
+# ============================================================
 # Z-REPORT / X-REPORT (RPT-06, PRN-05) — fiscal day-close
 # ============================================================
 # A Z-report reconciles a single shift: sales grouped by tender (the real

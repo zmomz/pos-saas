@@ -476,6 +476,17 @@ export async function exportCSV() {
   return response.data;
 }
 
+// RPT-03: payment-method breakdown for the period (cash/Mada/card/wallet/BNPL/
+// loyalty) from the real captured tenders, with refunds-to-origin netted out.
+export async function getPaymentBreakdown(days = 30) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/payment-breakdown?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.

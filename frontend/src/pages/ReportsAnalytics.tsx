@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
-import { getSalesSummary, getTopProducts, exportCSV } from '@/lib/api';
+import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +34,14 @@ interface TopProduct {
   total_revenue: number;
 }
 
+interface PaymentTender {
+  tender_type: string;
+  collected: number;
+  refunds: number;
+  net: number;
+  count: number;
+}
+
 const reportTranslations: Record<string, Record<string, string>> = {
   en: {
     reports_analytics: 'Reports & Analytics',
@@ -55,6 +63,23 @@ const reportTranslations: Record<string, Record<string, string>> = {
     loading: 'Loading...',
     no_data: 'No data available',
     sar: 'SAR',
+    payment_breakdown: 'Payment Breakdown',
+    method: 'Method',
+    collected: 'Collected',
+    refunds: 'Refunds',
+    net: 'Net',
+    txns: 'Txns',
+    total: 'Total',
+    error_loading: 'Could not load data. Please retry.',
+    tender_cash: 'Cash',
+    tender_card: 'Card',
+    tender_mada: 'Mada',
+    tender_applepay: 'Apple Pay',
+    tender_stcpay: 'STC Pay',
+    tender_tabby: 'Tabby',
+    tender_tamara: 'Tamara',
+    tender_transfer: 'Bank Transfer',
+    tender_loyalty: 'Loyalty',
   },
   ar: {
     reports_analytics: 'التقارير والتحليلات',
@@ -76,6 +101,23 @@ const reportTranslations: Record<string, Record<string, string>> = {
     loading: 'جاري التحميل...',
     no_data: 'لا توجد بيانات',
     sar: 'ر.س',
+    payment_breakdown: 'تفصيل طرق الدفع',
+    method: 'الطريقة',
+    collected: 'المحصّل',
+    refunds: 'المستردات',
+    net: 'الصافي',
+    txns: 'العمليات',
+    total: 'الإجمالي',
+    error_loading: 'تعذّر تحميل البيانات. حاول مرة أخرى.',
+    tender_cash: 'نقدي',
+    tender_card: 'بطاقة',
+    tender_mada: 'مدى',
+    tender_applepay: 'أبل باي',
+    tender_stcpay: 'STC Pay',
+    tender_tabby: 'تابي',
+    tender_tamara: 'تمارا',
+    tender_transfer: 'تحويل بنكي',
+    tender_loyalty: 'نقاط الولاء',
   },
   hi: {
     reports_analytics: 'रिपोर्ट और विश्लेषण',
@@ -97,6 +139,23 @@ const reportTranslations: Record<string, Record<string, string>> = {
     loading: 'लोड हो रहा है...',
     no_data: 'कोई डेटा उपलब्ध नहीं',
     sar: 'SAR',
+    payment_breakdown: 'भुगतान विवरण',
+    method: 'विधि',
+    collected: 'एकत्रित',
+    refunds: 'रिफंड',
+    net: 'शुद्ध',
+    txns: 'लेनदेन',
+    total: 'कुल',
+    error_loading: 'डेटा लोड नहीं हो सका। पुनः प्रयास करें।',
+    tender_cash: 'नकद',
+    tender_card: 'कार्ड',
+    tender_mada: 'मदा',
+    tender_applepay: 'ऐपल पे',
+    tender_stcpay: 'STC पे',
+    tender_tabby: 'टैबी',
+    tender_tamara: 'तमारा',
+    tender_transfer: 'बैंक ट्रांसफर',
+    tender_loyalty: 'लॉयल्टी',
   },
   ur: {
     reports_analytics: 'رپورٹس اور تجزیات',
@@ -118,6 +177,23 @@ const reportTranslations: Record<string, Record<string, string>> = {
     loading: 'لوڈ ہو رہا ہے...',
     no_data: 'کوئی ڈیٹا دستیاب نہیں',
     sar: 'SAR',
+    payment_breakdown: 'ادائیگی کی تفصیل',
+    method: 'طریقہ',
+    collected: 'وصول شدہ',
+    refunds: 'ری فنڈز',
+    net: 'خالص',
+    txns: 'لین دین',
+    total: 'کل',
+    error_loading: 'ڈیٹا لوڈ نہیں ہو سکا۔ دوبارہ کوشش کریں۔',
+    tender_cash: 'نقد',
+    tender_card: 'کارڈ',
+    tender_mada: 'مدیٰ',
+    tender_applepay: 'ایپل پے',
+    tender_stcpay: 'STC پے',
+    tender_tabby: 'ٹیبی',
+    tender_tamara: 'تمارا',
+    tender_transfer: 'بینک منتقلی',
+    tender_loyalty: 'وفاداری',
   },
 };
 
@@ -127,8 +203,11 @@ export default function ReportsAnalytics() {
   const [period, setPeriod] = useState<string>('daily');
   const [salesData, setSalesData] = useState<SalesDataPoint[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
+  const [paymentTenders, setPaymentTenders] = useState<PaymentTender[]>([]);
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
+  const [loadingPayments, setLoadingPayments] = useState(true);
+  const [paymentError, setPaymentError] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const tr = useCallback(
@@ -144,6 +223,7 @@ export default function ReportsAnalytics() {
 
   useEffect(() => {
     fetchTopProducts();
+    fetchPaymentBreakdown();
   }, []);
 
   async function fetchSalesData() {
@@ -168,6 +248,31 @@ export default function ReportsAnalytics() {
     } finally {
       setLoadingProducts(false);
     }
+  }
+
+  async function fetchPaymentBreakdown() {
+    setLoadingPayments(true);
+    setPaymentError(false);
+    try {
+      const result = await getPaymentBreakdown(30);
+      setPaymentTenders(result?.tenders || []);
+    } catch {
+      // RPT-03: surface a real error distinct from "no data" so a failed fetch
+      // doesn't masquerade as an empty period (the broader page-wide offline/
+      // error states are F-051).
+      setPaymentError(true);
+      setPaymentTenders([]);
+    } finally {
+      setLoadingPayments(false);
+    }
+  }
+
+  // Localize a tender_type to its display label; fall back to the raw type for
+  // any tender the UI doesn't yet have a label for.
+  function tenderLabel(type: string): string {
+    const key = `tender_${type}`;
+    const label = reportTranslations[language]?.[key] || reportTranslations.en[key];
+    return label || type;
   }
 
   async function handleExportCSV() {
@@ -361,6 +466,83 @@ export default function ReportsAnalytics() {
                 );
               })}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Payment Breakdown (RPT-03) */}
+      <Card className="bg-slate-800 border-slate-700 mb-8">
+        <CardHeader>
+          <CardTitle className="text-white">{tr('payment_breakdown')}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loadingPayments ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : paymentError ? (
+            <p className="text-red-400 text-center py-8">{tr('error_loading')}</p>
+          ) : paymentTenders.length === 0 ? (
+            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="border-slate-700 hover:bg-slate-800">
+                  <TableHead className="text-slate-400">{tr('method')}</TableHead>
+                  <TableHead className="text-slate-400 text-end">{tr('collected')}</TableHead>
+                  <TableHead className="text-slate-400 text-end">{tr('refunds')}</TableHead>
+                  <TableHead className="text-slate-400 text-end">{tr('net')}</TableHead>
+                  <TableHead className="text-slate-400 text-end">{tr('txns')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paymentTenders.map((t) => (
+                  <TableRow
+                    key={t.tender_type}
+                    className="border-slate-700 hover:bg-slate-750"
+                  >
+                    <TableCell className="text-white font-medium">
+                      {tenderLabel(t.tender_type)}
+                    </TableCell>
+                    <TableCell className="text-slate-300 text-end">
+                      {tr('sar')} {t.collected.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-slate-300 text-end">
+                      {t.refunds > 0
+                        ? `- ${tr('sar')} ${t.refunds.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                        : '—'}
+                    </TableCell>
+                    <TableCell className="text-white text-end font-medium">
+                      {tr('sar')} {t.net.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-slate-400 text-end">{t.count}</TableCell>
+                  </TableRow>
+                ))}
+                <TableRow className="border-slate-700 bg-slate-850 font-semibold">
+                  <TableCell className="text-white">{tr('total')}</TableCell>
+                  <TableCell className="text-white text-end">
+                    {tr('sar')} {paymentTenders
+                      .reduce((s, t) => s + t.collected, 0)
+                      .toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </TableCell>
+                  <TableCell className="text-white text-end">
+                    {tr('sar')} {paymentTenders
+                      .reduce((s, t) => s + t.refunds, 0)
+                      .toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </TableCell>
+                  <TableCell className="text-white text-end">
+                    {tr('sar')} {paymentTenders
+                      .reduce((s, t) => s + t.net, 0)
+                      .toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </TableCell>
+                  <TableCell className="text-slate-400 text-end">
+                    {paymentTenders.reduce((s, t) => s + t.count, 0)}
+                  </TableCell>
+                </TableRow>
+              </TableBody>
+            </Table>
           )}
         </CardContent>
       </Card>
