@@ -1315,3 +1315,79 @@ class OfflineSyncService:
             "results": results,
             "total_submitted": len(queued_transactions),
         }
+
+
+# =============================================================================
+# Shift cash-drawer reconciliation (POS-09, F-009)
+# =============================================================================
+async def compute_shift_cash_reconciliation(db: AsyncSession, shift) -> Dict[str, float]:
+    """Compute the expected cash drawer for a shift from **cash tenders only**.
+
+    The physical drawer holds the opening float plus cash taken in, minus cash
+    paid back out (refunds) — it never holds card/Mada/transfer/BNPL money. So
+    reconciling against gross sales (``opening + total_sales``) overstates the
+    expected cash by every non-cash sale, making the close-time variance wrong
+    whenever any non-cash sale occurred (POS-09 drawer reconciliation).
+
+    Cash is summed from the real captured ``payment_tenders`` rows (F-001),
+    falling back to a legacy sale's ``payment_method == 'cash'`` when it predates
+    tender capture so historical shifts still reconcile. Refund-to-origin is not
+    yet wired (F-004), so a refund (credit note) is treated as cash paid out of
+    the drawer. This is the single source of truth shared by ``close_shift`` and
+    the Z/X-report aggregator, so the printed report and the stored shift agree.
+
+    Returns ``{cash_sales, cash_refunds, expected_cash}`` (all rounded to 2dp).
+    """
+    from models.payment_tenders import PaymentTenders
+    from models.transactions import Transactions
+
+    txn_result = await db.execute(
+        select(Transactions).where(Transactions.shift_id == shift.id)
+    )
+    transactions = txn_result.scalars().all()
+
+    sale_ids: List[int] = []
+    cash_refunds = 0.0
+    for t in transactions:
+        status = t.status or "completed"
+        if status == "credit_note":
+            cash_refunds += abs(float(t.total_amount or 0))
+        elif status == "voided":
+            continue
+        else:  # completed / refunded / partial_refunded — original sale rows
+            sale_ids.append(t.id)
+
+    # Real captured tenders for the sale rows, grouped per transaction.
+    tenders_by_txn: Dict[int, list] = {}
+    if sale_ids:
+        tender_result = await db.execute(
+            select(PaymentTenders).where(
+                PaymentTenders.transaction_id.in_(sale_ids),
+                PaymentTenders.status != "declined",
+            )
+        )
+        for tr in tender_result.scalars().all():
+            tenders_by_txn.setdefault(tr.transaction_id, []).append(tr)
+
+    cash_sales = 0.0
+    for t in transactions:
+        status = t.status or "completed"
+        if status in ("credit_note", "voided"):
+            continue
+        rows = tenders_by_txn.get(t.id)
+        if rows:
+            for tr in rows:
+                if (tr.tender_type or "") == "cash":
+                    cash_sales += float(tr.amount or 0)
+        elif (t.payment_method or "") == "cash":
+            # Legacy sale without captured tenders: attribute its total to cash.
+            cash_sales += float(t.total_amount or 0)
+
+    cash_sales = round(cash_sales, 2)
+    cash_refunds = round(cash_refunds, 2)
+    expected_cash = round((shift.opening_cash or 0) + cash_sales - cash_refunds, 2)
+    return {
+        "cash_sales": cash_sales,
+        "cash_refunds": cash_refunds,
+        "expected_cash": expected_cash,
+    }

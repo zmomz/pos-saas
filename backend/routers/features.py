@@ -777,6 +777,7 @@ async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
     point) — gross sales are **not** treated as drawer cash.
     """
     from models.payment_tenders import PaymentTenders
+    from services.production import compute_shift_cash_reconciliation
 
     txn_result = await db.execute(
         select(Transactions).where(
@@ -854,12 +855,14 @@ async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
         for k, v in sorted(tender_totals.items())
     ]
 
-    # Cash drawer reconciliation — cash tenders only (POS-09). Refunds reduce the
-    # drawer; refund-to-origin is not yet wired (F-004) so a refund is treated as
-    # cash paid out for drawer purposes.
-    cash_sales = round(tender_totals.get("cash", {}).get("amount", 0.0), 2)
-    cash_refunds = round(refunds_total, 2)
-    expected_cash = round((shift.opening_cash or 0) + cash_sales - cash_refunds, 2)
+    # Cash drawer reconciliation — cash tenders only (POS-09). Delegated to the
+    # shared helper so the report and the stored shift (close_shift, F-009) agree
+    # exactly. Refund-to-origin is not yet wired (F-004) so a refund is treated as
+    # cash paid out of the drawer.
+    recon = await compute_shift_cash_reconciliation(db, shift)
+    cash_sales = recon["cash_sales"]
+    cash_refunds = recon["cash_refunds"]
+    expected_cash = recon["expected_cash"]
     counted_cash = shift.closing_cash if shift.status == "closed" else None
     variance = (
         round(counted_cash - expected_cash, 2) if counted_cash is not None else None

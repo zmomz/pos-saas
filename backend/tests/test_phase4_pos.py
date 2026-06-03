@@ -250,6 +250,62 @@ async def test_zreport_groups_by_tender_and_reconciles_variance(client):
     assert "ليس فاتورة ضريبية" in doc.text     # "not a tax invoice"
 
 
+async def test_close_shift_expected_cash_counts_cash_tenders_only(client):
+    """POS-09 / F-009: closing the drawer must reconcile against CASH tenders
+    only — not gross sales. With one cash sale (23) and one card/Mada sale (115),
+    the expected drawer is opening + 23, NOT opening + 138. The cash-blind math
+    (``opening + total_sales``) would expect 238 and report a 115 SAR shortfall."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    cash_pid = await add_product(client_id, user["id"], name="Cola", quantity=50, price=10.0)
+    card_pid = await add_product(client_id, user["id"], name="Combo", quantity=50, price=100.0)
+
+    await _open_shift(client, headers, opening_cash=100.0)
+    await _sale(client, headers, cash_pid, qty=2)        # 2*10 + 15% = 23.00 (cash)
+    await _card_sale(client, headers, card_pid, qty=1)   # 100 + 15% = 115.00 (mada)
+
+    # Only the 23.00 cash leg ever entered the drawer.
+    close = await client.post(
+        "/api/v1/production/shifts/close",
+        json={"closing_cash": 123.0},
+        headers=headers,
+    )
+    assert close.status_code == 200, close.text
+    body = close.json()
+    assert abs(body["expected_cash"] - 123.0) < 0.01      # opening 100 + cash 23
+    assert abs(body["cash_sales"] - 23.0) < 0.01
+    assert abs(body["cash_refunds"]) < 0.01
+    assert abs(body["cash_difference"]) < 0.01
+    assert body["reconciliation"] == "balanced"
+    # Gross sales are still tracked (and are NOT the drawer expectation).
+    assert abs(body["total_sales"] - 138.0) < 0.01
+
+
+async def test_close_shift_expected_cash_matches_zreport(client):
+    """The close-time drawer math and the Z-report aggregator share one helper,
+    so the stored shift and the printed Z-report must always agree (F-008/F-009)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    cash_pid = await add_product(client_id, user["id"], name="Cola", quantity=50, price=10.0)
+    card_pid = await add_product(client_id, user["id"], name="Combo", quantity=50, price=100.0)
+
+    open_resp = await _open_shift(client, headers, opening_cash=200.0)
+    shift_id = open_resp["id"]
+    await _sale(client, headers, cash_pid, qty=2)        # 23.00 cash
+    await _card_sale(client, headers, card_pid, qty=1)   # 115.00 mada
+
+    close = await client.post(
+        "/api/v1/production/shifts/close",
+        json={"closing_cash": 223.0},
+        headers=headers,
+    )
+    assert close.status_code == 200, close.text
+
+    z = (await client.get(f"/api/v1/reports/zreport?shift_id={shift_id}", headers=headers)).json()
+    assert abs(z["cash"]["expected_cash"] - close.json()["expected_cash"]) < 0.01
+    assert abs(z["cash"]["expected_cash"] - 223.0) < 0.01
+
+
 async def test_zreport_scopes_to_owner_and_404s_unknown_shift(client):
     user_a, token_a, _ = await make_client_account(client)
     headers_a = auth_headers(token_a)

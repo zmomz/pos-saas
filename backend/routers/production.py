@@ -28,6 +28,7 @@ from services.production import (
     PDFInvoiceService,
     SearchService,
     WebhookDispatcher,
+    compute_shift_cash_reconciliation,
     performance_monitor,
     rate_limiter,
     zatca_service,
@@ -579,8 +580,12 @@ async def close_shift(
         raise HTTPException(status_code=404, detail="No open shift found")
 
     now = datetime.now(timezone.utc)
-    expected_cash = (shift.opening_cash or 0) + (shift.total_sales or 0)
-    cash_difference = data.closing_cash - expected_cash
+    # Reconcile the drawer against CASH tenders only — not gross sales (POS-09,
+    # F-009). The shared helper is the single source of truth used by the
+    # Z/X-report too, so the printed report and the stored shift always agree.
+    recon = await compute_shift_cash_reconciliation(db, shift)
+    expected_cash = recon["expected_cash"]
+    cash_difference = round(data.closing_cash - expected_cash, 2)
 
     await db.execute(
         update(Shifts)
@@ -605,6 +610,8 @@ async def close_shift(
         "closing_cash": data.closing_cash,
         "expected_cash": expected_cash,
         "cash_difference": cash_difference,
+        "cash_sales": recon["cash_sales"],
+        "cash_refunds": recon["cash_refunds"],
         "total_sales": shift.total_sales,
         "total_transactions": shift.total_transactions,
         "reconciliation": "balanced" if abs(cash_difference) < 0.01 else ("over" if cash_difference > 0 else "short"),
