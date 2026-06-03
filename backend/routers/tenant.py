@@ -1046,6 +1046,81 @@ async def pay_client_subscription(
     return await _subscription_payload(db, merchant)
 
 
+# ---------- Client self-service profile (CL-02 first-login business type) ----------
+# Valid POS modes. ``business_type`` discriminates retail vs restaurant and gates
+# the restaurant vertical (RST-*, see routers/restaurant.py); it is set as a
+# default by the agent at provisioning and the client confirms/changes it during
+# the first-login setup flow (CL-02).
+_VALID_BUSINESS_TYPES = ("retail", "restaurant", "both")
+
+
+class ClientProfileResponse(BaseModel):
+    client_id: int
+    business_name: str
+    business_type: str
+    language_preference: str
+
+
+class UpdateBusinessTypeRequest(BaseModel):
+    business_type: str
+
+
+@router.get("/client/profile", response_model=ClientProfileResponse)
+async def get_client_profile(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: read own profile (business_type drives retail/restaurant POS mode, CL-02).
+
+    Used by the first-login setup screen to pre-select the agent-provisioned
+    business type before the client confirms it. Scoped to the caller's own
+    ``Clients`` row (``_client_for_current_user`` 403s a non-client).
+    """
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    return ClientProfileResponse(
+        client_id=merchant.id,
+        business_name=merchant.business_name,
+        business_type=(merchant.business_type or "retail"),
+        language_preference=merchant.language_preference or "en",
+    )
+
+
+@router.post("/client/business-type", response_model=ClientProfileResponse)
+async def set_client_business_type(
+    data: UpdateBusinessTypeRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: set own business type during first-login setup (SRS CL-02).
+
+    "Client picks language and business type during first-login setup." The agent
+    seeds a default at provisioning; here the merchant confirms/changes it on their
+    own account. The selection drives retail vs restaurant POS mode and gates the
+    restaurant vertical (RST-*). Scoped to the caller's own ``Clients`` row via
+    ``_client_for_current_user`` — a client can only ever change their **own**
+    business type (SEC-02); a non-client (agent/master/no-client account) gets 403.
+    """
+    business_type = (data.business_type or "").strip().lower()
+    if business_type not in _VALID_BUSINESS_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="business_type must be one of: retail, restaurant, both",
+        )
+
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    await db.execute(
+        update(Clients).where(Clients.id == merchant.id).values(business_type=business_type)
+    )
+    await db.commit()
+    await db.refresh(merchant)
+    return ClientProfileResponse(
+        client_id=merchant.id,
+        business_name=merchant.business_name,
+        business_type=(merchant.business_type or "retail"),
+        language_preference=merchant.language_preference or "en",
+    )
+
+
 @router.put("/agent/clients/{client_id}/subscription", response_model=SubscriptionResponse)
 async def update_client_subscription(
     client_id: int,

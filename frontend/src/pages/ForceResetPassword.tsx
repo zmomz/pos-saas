@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
-import { changePassword } from '@/lib/api';
+import {
+  changePassword,
+  getClientProfile,
+  setBusinessType as apiSetBusinessType,
+  type BusinessType,
+} from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 
 /**
@@ -25,6 +30,27 @@ export default function ForceResetPassword() {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // CL-02: the client picks their business type during first-login setup. Only
+  // a client tenancy has one; pre-select the agent-provisioned default.
+  const isClient = user?.role === 'client';
+  const [businessType, setBusinessType] = useState<BusinessType>('retail');
+
+  useEffect(() => {
+    if (!isClient) return;
+    let cancelled = false;
+    getClientProfile()
+      .then((profile) => {
+        if (!cancelled && profile?.business_type) {
+          setBusinessType(profile.business_type);
+        }
+      })
+      .catch(() => {
+        // No profile / not a client → keep the retail default; non-fatal.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isClient]);
 
   async function handleSubmit() {
     setError(null);
@@ -38,6 +64,11 @@ export default function ForceResetPassword() {
     }
     setSubmitting(true);
     try {
+      // Persist the chosen business type BEFORE changing the password so a
+      // failure here is cleanly retryable (the temp password is still valid).
+      if (isClient) {
+        await apiSetBusinessType(businessType);
+      }
       await changePassword(currentPassword, newPassword);
       await refetch();
       navigate('/', { replace: true });
@@ -79,6 +110,29 @@ export default function ForceResetPassword() {
               </SelectContent>
             </Select>
           </div>
+
+          {/* CL-02: guided first-login business-type step. Drives retail vs
+              restaurant POS mode and gates the restaurant vertical (RST-*).
+              Only a client tenancy has a business type. */}
+          {isClient && (
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">{t('choose_business_type')}</label>
+              <Select
+                value={businessType}
+                onValueChange={(v) => setBusinessType(v as BusinessType)}
+              >
+                <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="retail">{t('business_type_retail')}</SelectItem>
+                  <SelectItem value="restaurant">{t('business_type_restaurant')}</SelectItem>
+                  <SelectItem value="both">{t('business_type_both')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">{t('business_type_hint')}</p>
+            </div>
+          )}
 
           <Input
             type="password"

@@ -431,6 +431,38 @@ export async function changePassword(currentPassword: string, newPassword: strin
   return response.data;
 }
 
+// Client self-service profile (CL-02 first-login business type)
+export type BusinessType = 'retail' | 'restaurant' | 'both';
+
+export interface ClientProfile {
+  client_id: number;
+  business_name: string;
+  business_type: BusinessType;
+  language_preference: string;
+}
+
+// Read the caller's own client profile (used to pre-select business type on the
+// first-login setup screen). 403s for non-clients.
+export async function getClientProfile(): Promise<ClientProfile> {
+  const response = await client.apiCall.invoke<ClientProfile>({
+    url: '/api/v1/tenant/client/profile',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// CL-02: the client confirms/sets their own business type during first-login.
+// Drives retail vs restaurant POS mode; scoped server-side to the caller's own row.
+export async function setBusinessType(businessType: BusinessType): Promise<ClientProfile> {
+  const response = await client.apiCall.invoke<ClientProfile>({
+    url: '/api/v1/tenant/client/business-type',
+    method: 'POST',
+    data: { business_type: businessType },
+  });
+  return response.data;
+}
+
 // Agent Branding
 export async function updateBranding(data: {
   logo_url?: string;
