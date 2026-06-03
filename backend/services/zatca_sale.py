@@ -310,6 +310,56 @@ async def report_document(
     return doc.status
 
 
+async def report_pending_documents(
+    db,
+    client_id: int,
+    *,
+    statuses: Tuple[str, ...] = ("pending", "failed"),
+) -> dict:
+    """Resubmit every stuck (pending/failed) document for a client to Fatoora.
+
+    The sale-time reporting (``report_document_background``) fires **once** via
+    ``BackgroundTasks``. On a default, un-onboarded install it fails closed to
+    ``pending`` and is never retried — even after the operator later completes
+    onboarding (ZA-06 demands a retrying background job; ZA-08 demands stuck docs
+    be reconcilable). This sweep walks the client's pending/failed backlog in
+    counter order and resubmits each through the **same** routing as the live
+    path (clearance for ``standard``, reporting for ``simplified`` — derived from
+    the stored ``invoice_subtype``).
+
+    Idempotent: already-``cleared``/``reported`` documents are not selected, so
+    re-running after a successful sweep is a no-op; a still-unconfigured gateway
+    simply leaves each document ``pending`` again. Runs inside the caller's
+    transaction (no commit) so the whole sweep is atomic with the caller.
+
+    Returns a summary ``{processed, cleared, reported, pending, failed}``.
+    """
+    creds = (
+        await db.execute(
+            select(ZatcaCredentials).where(ZatcaCredentials.client_id == client_id)
+        )
+    ).scalar_one_or_none()
+
+    docs = (
+        await db.execute(
+            select(ZatcaDocuments)
+            .where(
+                ZatcaDocuments.client_id == client_id,
+                ZatcaDocuments.status.in_(statuses),
+            )
+            .order_by(ZatcaDocuments.icv.asc(), ZatcaDocuments.id.asc())
+        )
+    ).scalars().all()
+
+    summary = {"processed": 0, "cleared": 0, "reported": 0, "pending": 0, "failed": 0}
+    for doc in docs:
+        result_status = await report_document(db, doc, creds)
+        summary["processed"] += 1
+        if result_status in summary:
+            summary[result_status] += 1
+    return summary
+
+
 async def report_document_background(document_id: int, client_id: int) -> None:
     """BackgroundTasks entry point: report one document in its own DB session.
 

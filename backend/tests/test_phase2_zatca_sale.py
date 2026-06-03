@@ -580,3 +580,119 @@ def test_pdf_buyer_block_renders_vat_when_present(monkeypatch):
     assert with_vat[:4] == b"%PDF" and without_vat[:4] == b"%PDF"
     # The buyer-VAT line is rendered only in the first document.
     assert len(with_vat) > len(without_vat)
+
+
+# ---------------------------------------------------------------------------
+# F-020 (ZA-06 retry / ZA-08): reconcile sweep resubmits stuck pending/failed
+# documents once the client is onboarded — fail-closed is no longer a dead end.
+# ---------------------------------------------------------------------------
+def _mock_accepting_gateway(monkeypatch):
+    """Patch ZATCA to a configured Fatoora that accepts every submission."""
+    monkeypatch.setattr(zatca, "resolve_base_url", lambda environment=None: "http://mock-fatoora")
+
+    class _FakeApi:
+        async def submit_invoice(self, **kwargs):
+            return {"reportingStatus": "REPORTED"}
+
+    monkeypatch.setattr(
+        zatca.ZatcaApiClient, "from_settings",
+        classmethod(lambda cls, environment=None: _FakeApi()),
+    )
+
+
+async def _force_stuck_and_onboard(client_id: int, statuses):
+    """Set each of the client's documents to a stuck status, then onboard.
+
+    Returns nothing; leaves the gateway creds onboarded so a sweep can submit.
+    """
+    async with db_manager.async_session_maker() as db:
+        docs = (
+            await db.execute(
+                select(ZatcaDocuments)
+                .where(ZatcaDocuments.client_id == client_id)
+                .order_by(ZatcaDocuments.icv.asc())
+            )
+        ).scalars().all()
+        for doc, st in zip(docs, statuses):
+            doc.status = st
+        creds = (
+            await db.execute(select(ZatcaCredentials).where(ZatcaCredentials.client_id == client_id))
+        ).scalar_one()
+        creds.onboarded = True
+        creds.production_csid = "csid-token"
+        creds.production_secret_enc = zatca.encrypt_secret("prod-secret")
+        await db.commit()
+
+
+async def test_report_pending_sweep_resubmits_stuck_documents(client, monkeypatch):
+    """A default install leaves docs stuck at pending/failed; after onboarding the
+    sweep resubmits the whole backlog and flips them to reported (ZA-06/ZA-08)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Cola", quantity=50, price=1000.0)
+
+    # Two B2C sales while the gateway is unconfigured -> documents fail closed.
+    await _sale(client, headers, pid, price=1000.0, qty=1)
+    await _sale(client, headers, pid, price=1000.0, qty=1)
+
+    # Force the stuck states deterministically (one pending, one failed), independent
+    # of background-task timing, then complete onboarding.
+    await _force_stuck_and_onboard(client_id, ["pending", "failed"])
+
+    _mock_accepting_gateway(monkeypatch)
+
+    resp = await client.post("/api/v1/zatca/documents/report-pending", headers=headers)
+    assert resp.status_code == 200, resp.text
+    summary = resp.json()
+    assert summary["processed"] == 2
+    assert summary["reported"] == 2          # both B2C simplified -> reported
+    assert summary["pending"] == 0 and summary["failed"] == 0
+
+    # Persisted: no document remains stuck.
+    docs = await _docs(client_id)
+    assert [d["status"] for d in docs] == ["reported", "reported"]
+
+    # Idempotent: a second sweep has nothing to do.
+    again = await client.post("/api/v1/zatca/documents/report-pending", headers=headers)
+    assert again.status_code == 200
+    assert again.json()["processed"] == 0
+
+
+async def test_report_pending_clears_standard_b2b_documents(client, monkeypatch):
+    """A stuck *standard* (B2B) document is *cleared* by the sweep, not merely
+    reported — the sweep preserves the ZA-06 clearance/reporting routing."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+
+    # Sign a standard (B2B, >= 1,000 SAR) invoice directly; it lands signed.
+    doc_id, subtype, _xml = await _sign_synthetic(
+        client_id, user["id"], buyer_vat="310000000000003", total=2300.0
+    )
+    assert subtype == "standard"
+
+    await _force_stuck_and_onboard(client_id, ["pending"])
+    _mock_accepting_gateway(monkeypatch)
+
+    resp = await client.post("/api/v1/zatca/documents/report-pending", headers=headers)
+    assert resp.status_code == 200, resp.text
+    summary = resp.json()
+    assert summary["processed"] == 1
+    assert summary["cleared"] == 1 and summary["reported"] == 0
+
+    docs = await _docs(client_id)
+    assert docs[0]["status"] == "cleared"
+
+
+async def test_report_pending_requires_onboarding(client):
+    """The sweep refuses with a clear 400 until production onboarding is done."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Cola", quantity=10, price=10.0)
+    await _sale(client, headers, pid)
+
+    resp = await client.post("/api/v1/zatca/documents/report-pending", headers=headers)
+    assert resp.status_code == 400
+    assert "onboarding" in resp.json()["detail"].lower()

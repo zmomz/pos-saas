@@ -27,7 +27,7 @@ from models.transactions import Transactions
 from models.zatca_credentials import ZatcaCredentials
 from models.zatca_documents import ZatcaDocuments
 from schemas.auth import UserResponse
-from services import zatca
+from services import zatca, zatca_sale
 from services.production import zatca_service
 
 logger = logging.getLogger(__name__)
@@ -94,6 +94,14 @@ class ReportResponse(BaseModel):
     document_id: int
     status: str
     response: dict
+
+
+class ReportPendingResponse(BaseModel):
+    processed: int
+    cleared: int
+    reported: int
+    pending: int
+    failed: int
 
 
 class IntegrityResponse(BaseModel):
@@ -422,6 +430,33 @@ async def report_invoice(
     doc.submitted_at = datetime.now(timezone.utc)
     await db.commit()
     return ReportResponse(document_id=doc.id, status=doc.status, response=response)
+
+
+# ---------------------------------------------------------------------------
+# Reconcile — resubmit all stuck pending/failed documents (ZA-06 retry / ZA-08)
+# ---------------------------------------------------------------------------
+@router.post("/documents/report-pending", response_model=ReportPendingResponse)
+async def report_pending_documents(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch-resubmit every stuck (pending/failed) document to Fatoora.
+
+    Sale-time reporting fires once and fails closed to ``pending`` on an
+    un-onboarded install; nothing resubmits those documents afterwards. Once the
+    operator completes onboarding, this sweep reconciles the backlog — routing
+    each document by its stored subtype (``standard`` → clearance, ``simplified``
+    → reporting). Idempotent: already cleared/reported documents are skipped, so
+    re-running is safe. Returns counts by resulting status.
+    """
+    client = await _get_client(db, str(current_user.id))
+    creds = await _get_or_create_creds(db, client)
+    if not (creds.onboarded and creds.production_csid and creds.production_secret_enc):
+        raise HTTPException(status_code=400, detail="Complete production onboarding first.")
+
+    summary = await zatca_sale.report_pending_documents(db, client.id)
+    await db.commit()
+    return ReportPendingResponse(**summary)
 
 
 # ---------------------------------------------------------------------------
