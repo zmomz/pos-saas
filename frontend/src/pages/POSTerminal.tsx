@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, type MyPermissions } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, type MyPermissions, type TenderInfo } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
@@ -39,6 +39,8 @@ interface Receipt {
   items: { name: string; quantity: number; price: number }[];
   discount_amount?: number;
   discount_code?: string;
+  // Captured tenders (PAY-01) — show the network/approval proof on the receipt.
+  tenders?: TenderInfo[];
 }
 
 interface Transaction {
@@ -416,6 +418,7 @@ export default function POSTerminal() {
         })),
         discount_amount: discountAmount > 0 ? discountAmount : undefined,
         discount_code: appliedDiscount?.code,
+        tenders: result.tenders,
       });
       // Flash the customer-facing display to a "thank you" state.
       try {
@@ -552,9 +555,25 @@ export default function POSTerminal() {
     const paymentAr: Record<string, string> = {
       cash: 'نقدي',
       card: 'بطاقة',
+      mada: 'مدى',
+      applepay: 'Apple Pay',
+      stcpay: 'STC Pay',
+      tabby: 'تابي',
+      tamara: 'تمارا',
       transfer: 'تحويل',
       refund: 'استرجاع',
       mixed: 'مدفوعات متعددة',
+    };
+    // Arabic tender labels for the captured-approval lines (always-Arabic receipt).
+    const tenderAr: Record<string, string> = {
+      cash: 'نقدي',
+      card: 'بطاقة',
+      mada: 'مدى',
+      applepay: 'Apple Pay',
+      stcpay: 'STC Pay',
+      tabby: 'تابي',
+      tamara: 'تمارا',
+      transfer: 'تحويل',
     };
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
@@ -603,6 +622,27 @@ export default function POSTerminal() {
                 {paymentAr[receipt.payment_method] || receipt.payment_method}
               </Badge>
             </div>
+
+            {/* PAY-01: captured tender approval (network + auth code) for card-like
+                tenders, so the receipt proves the card was actually charged. */}
+            {receipt.tenders && receipt.tenders.some((tn) => tn.approval_code) && (
+              <div className="border-t border-slate-700 pt-3 space-y-1">
+                {receipt.tenders
+                  .filter((tn) => tn.approval_code)
+                  .map((tn, idx) => (
+                    <div key={idx} className="flex justify-between text-slate-400 text-xs">
+                      <span>
+                        {tenderAr[tn.tender_type] || tn.tender_type}
+                        {tn.last4 ? ` ••${toArabicDigits(tn.last4)}` : ''}
+                      </span>
+                      <span className="font-mono">
+                        {tn.network ? `${tn.network} · ` : ''}
+                        موافقة {tn.approval_code}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            )}
 
             {/* ZATCA QR Code */}
             {receipt.zatca_qr_base64 && (
@@ -1090,7 +1130,12 @@ export default function POSTerminal() {
                 </SelectTrigger>
                 <SelectContent className="bg-slate-700 border-slate-600">
                   <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
+                  <SelectItem value="mada" className="text-white hover:bg-slate-600">{t('tender_mada')}</SelectItem>
                   <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
+                  <SelectItem value="applepay" className="text-white hover:bg-slate-600">{t('tender_applepay')}</SelectItem>
+                  <SelectItem value="stcpay" className="text-white hover:bg-slate-600">{t('tender_stcpay')}</SelectItem>
+                  <SelectItem value="tabby" className="text-white hover:bg-slate-600">{t('tender_tabby')}</SelectItem>
+                  <SelectItem value="tamara" className="text-white hover:bg-slate-600">{t('tender_tamara')}</SelectItem>
                   <SelectItem value="bank_transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
                 </SelectContent>
               </Select>
@@ -1104,7 +1149,12 @@ export default function POSTerminal() {
                       </SelectTrigger>
                       <SelectContent className="bg-slate-700 border-slate-600">
                         <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
+                        <SelectItem value="mada" className="text-white hover:bg-slate-600">{t('tender_mada')}</SelectItem>
                         <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
+                        <SelectItem value="applepay" className="text-white hover:bg-slate-600">{t('tender_applepay')}</SelectItem>
+                        <SelectItem value="stcpay" className="text-white hover:bg-slate-600">{t('tender_stcpay')}</SelectItem>
+                        <SelectItem value="tabby" className="text-white hover:bg-slate-600">{t('tender_tabby')}</SelectItem>
+                        <SelectItem value="tamara" className="text-white hover:bg-slate-600">{t('tender_tamara')}</SelectItem>
                         <SelectItem value="transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
                       </SelectContent>
                     </Select>

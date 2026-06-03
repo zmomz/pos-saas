@@ -19,10 +19,18 @@ from schemas.auth import UserResponse
 from models.clients import Clients
 from models.products import Products
 from models.transactions import Transactions
+from models.payment_tenders import PaymentTenders
 # Imported so the per-branch stock table registers on Base.metadata at startup
 # (services.branch_stock is only imported lazily inside handlers).
 from models.product_branch_stock import Product_branch_stock  # noqa: F401
 from services import loyalty as loyalty_service
+from services.payment_gateway import (
+    GatewayNotConfigured,
+    PaymentDeclined,
+    get_gateway,
+    normalize_tender_type,
+    requires_capture,
+)
 from services import zatca as zatca_service_mod
 from services import zatca_sale
 from services.escpos import build_receipt_base64
@@ -46,8 +54,17 @@ class CartItem(BaseModel):
 class PaymentEntry(BaseModel):
     """One tender line of a (possibly split) payment, e.g. cash + card."""
 
-    method: str  # "cash", "card", "transfer", "loyalty"
+    method: str  # "cash", "card", "mada", "applepay", "stcpay", "tabby", "tamara", "transfer", "loyalty"
     amount: float
+    # Saudi-real tender capture (PAY-01/05). When the tender is card-like the POS
+    # asks the gateway for a real approval before the sale completes. ``token`` is
+    # the gateway-side card token from client tokenization (no PAN reaches us —
+    # PAY-09). ``simulate`` is a sandbox-only hint ("approve"/"decline") that real
+    # gateways ignore. ``tender_type`` overrides ``method`` when the caller wants
+    # the canonical type explicitly.
+    tender_type: Optional[str] = None
+    token: Optional[str] = None
+    simulate: Optional[str] = None
 
 
 class CreateTransactionRequest(BaseModel):
@@ -70,6 +87,24 @@ class CreateTransactionRequest(BaseModel):
     allow_negative_stock: Optional[bool] = False
     # Branch the sale is rung up at (multi-branch). Enables branch-scoped reports.
     branch_id: Optional[int] = None
+    # Single-tender capture hints (used when ``payments`` is not given): the
+    # gateway card token from client-side tokenization, and a sandbox-only
+    # simulate hint ("approve"/"decline").
+    payment_token: Optional[str] = None
+    payment_simulate: Optional[str] = None
+
+
+class TenderInfo(BaseModel):
+    """A captured tender on the sale (PAY-01). Carries only PCI-safe fields."""
+
+    tender_type: str
+    amount: float
+    network: Optional[str] = None
+    approval_code: Optional[str] = None
+    rrn: Optional[str] = None
+    last4: Optional[str] = None
+    gateway: Optional[str] = None
+    status: str = "captured"
 
 
 class TransactionResponse(BaseModel):
@@ -99,6 +134,9 @@ class TransactionResponse(BaseModel):
     loyalty_points_redeemed: Optional[int] = None
     loyalty_discount: Optional[float] = None
     loyalty_balance: Optional[int] = None
+    # Captured tenders (PAY-01): the network/approval proof for each card-like
+    # tender, so the receipt can show how the sale was really paid.
+    tenders: Optional[List[TenderInfo]] = None
 
 
 class TransactionListResponse(BaseModel):
@@ -236,6 +274,116 @@ async def _apply_sale_to_open_shift(
     return shift.id
 
 
+# ---------- Helper: Saudi-real tender capture (PAY-01/05) ----------
+async def _capture_tenders(specs: List[dict]) -> List[dict]:
+    """Capture each tender via the active gateway, returning persistable rows.
+
+    For a card-like tender (card/mada/applepay/stcpay/tabby/tamara) the gateway is
+    asked for a real approval; a decline (or an unconfigured real gateway) raises
+    ``HTTPException(402)``. Because the caller is mid-transaction and has not
+    committed, that raise rolls the whole sale back — a declined card never leaves
+    a persisted sale (F-001). Cash/transfer/loyalty settle internally and are
+    recorded without a gateway round-trip.
+
+    Each spec is ``{tender_type|method, amount, token, simulate}``.
+    """
+    gateway = get_gateway()
+    captured: List[dict] = []
+    for spec in specs:
+        ttype = normalize_tender_type(spec.get("tender_type") or spec.get("method"))
+        amount = round(float(spec.get("amount") or 0), 2)
+        row = {
+            "tender_type": ttype,
+            "amount": amount,
+            "gateway": None,
+            "status": "captured",
+            "network": None,
+            "approval_code": None,
+            "rrn": None,
+            "gateway_ref": None,
+            "last4": None,
+            "token": None,
+            "decline_reason": None,
+        }
+        if requires_capture(ttype) and amount > 0:
+            try:
+                result = await gateway.charge(
+                    amount,
+                    ttype,
+                    token=spec.get("token"),
+                    simulate=spec.get("simulate"),
+                )
+            except GatewayNotConfigured as exc:
+                logger.warning("Tender capture not configured for %s: %s", ttype, exc)
+                raise HTTPException(status_code=402, detail=f"Payment not captured: {exc}")
+            except PaymentDeclined as exc:
+                logger.info("Tender %s declined by %s: %s", ttype, exc.gateway, exc.reason)
+                raise HTTPException(status_code=402, detail=f"Payment declined: {exc.reason}")
+            if not result.approved:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"Payment declined for {ttype}: {result.decline_reason or 'declined'}",
+                )
+            row.update(
+                gateway=result.gateway,
+                network=result.network,
+                approval_code=result.approval_code,
+                rrn=result.rrn,
+                gateway_ref=result.gateway_ref,
+                last4=result.last4,
+                token=result.token,
+            )
+        captured.append(row)
+    return captured
+
+
+def _build_tender_specs(data: "CreateTransactionRequest", total_amount: float) -> List[dict]:
+    """Derive the per-tender capture specs from a sale request (split or single)."""
+    if data.payments:
+        return [
+            {
+                "tender_type": p.tender_type or p.method,
+                "amount": p.amount,
+                "token": p.token,
+                "simulate": p.simulate,
+            }
+            for p in data.payments
+        ]
+    return [
+        {
+            "tender_type": data.payment_method,
+            "amount": total_amount,
+            "token": data.payment_token,
+            "simulate": data.payment_simulate,
+        }
+    ]
+
+
+def _persist_tenders(
+    db: AsyncSession, user_id: str, client_id: int, txn_id: int, captured: List[dict]
+) -> None:
+    """Write the captured tender rows for a sale (links them to the transaction)."""
+    for row in captured:
+        db.add(
+            PaymentTenders(
+                user_id=user_id,
+                client_id=client_id,
+                transaction_id=txn_id,
+                tender_type=row["tender_type"],
+                amount=row["amount"],
+                network=row["network"],
+                approval_code=row["approval_code"],
+                rrn=row["rrn"],
+                gateway_ref=row["gateway_ref"],
+                last4=row["last4"],
+                token=row["token"],
+                gateway=row["gateway"],
+                status=row["status"],
+                decline_reason=row["decline_reason"],
+            )
+        )
+
+
 # ---------- Helper: Get client for current user ----------
 async def get_client_for_user(db: AsyncSession, user_id: str) -> Clients:
     """Get the client record for the current user."""
@@ -327,6 +475,14 @@ async def create_transaction(
         )
         methods = [p.method for p in data.payments]
         payment_method = "mixed" if len(set(methods)) > 1 else methods[0]
+
+    # ---- Saudi-real tender capture (PAY-01/05) ----
+    # Push every card-like tender to the gateway for a real approval BEFORE the
+    # invoice counter is consumed or any row is written. A decline raises 402 here
+    # and, since nothing has committed, the whole sale rolls back — a "Mada"/card
+    # sale can no longer complete without proof it was charged (F-001). Cash and
+    # internal tenders pass through with no gateway round-trip.
+    captured_tenders = await _capture_tenders(_build_tender_specs(data, total_amount))
 
     # Increment invoice counter
     current_counter = (client.invoice_counter or 0) + 1
@@ -422,6 +578,9 @@ async def create_transaction(
     # transaction. A signing failure raises and rolls the sale back, so a
     # completed sale is never silently left unsigned.
     await db.flush()  # assign transaction.id before signing
+    # Persist the captured tenders against the now-known transaction id. These
+    # carry the real network/approval/RRN proof for card-like tenders (PAY-01).
+    _persist_tenders(db, str(current_user.id), client.id, transaction.id, captured_tenders)
     # ZA-06: a VAT-registered buyer on the transaction routes the invoice to B2B
     # clearance (the buyer VAT field itself is captured by F-018).
     doc, stamped_qr = await zatca_sale.sign_transaction(
@@ -483,6 +642,20 @@ async def create_transaction(
         loyalty_points_redeemed=loyalty_points_redeemed or None,
         loyalty_discount=loyalty_discount or None,
         loyalty_balance=loyalty_balance,
+        tenders=[
+            TenderInfo(
+                tender_type=row["tender_type"],
+                amount=row["amount"],
+                network=row["network"],
+                approval_code=row["approval_code"],
+                rrn=row["rrn"],
+                last4=row["last4"],
+                gateway=row["gateway"],
+                status=row["status"],
+            )
+            for row in captured_tenders
+        ]
+        or None,
     )
 
 
@@ -593,6 +766,30 @@ async def process_offline_sale(
     transaction.shift_id = await _apply_sale_to_open_shift(db, user_id, total_amount)
 
     await db.flush()
+    # Record the tender for the queued sale. Offline sales are cash or were
+    # captured on-device, so we do not re-charge a gateway here — we persist the
+    # recorded method so the tender ledger stays consistent with online sales.
+    _persist_tenders(
+        db,
+        user_id,
+        client.id,
+        transaction.id,
+        [
+            {
+                "tender_type": normalize_tender_type(transaction.payment_method),
+                "amount": total_amount,
+                "gateway": None,
+                "status": "captured",
+                "network": None,
+                "approval_code": None,
+                "rrn": None,
+                "gateway_ref": None,
+                "last4": None,
+                "token": None,
+                "decline_reason": None,
+            }
+        ],
+    )
     doc, _stamped_qr = await zatca_sale.sign_transaction(
         db, client, transaction,
         buyer_vat=getattr(transaction, "customer_vat_number", None),

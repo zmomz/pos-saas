@@ -99,6 +99,19 @@ export async function getClientBranding() {
 }
 
 // POS endpoints
+// PAY-01: a captured tender on the sale — the network/approval proof for a
+// card-like payment. Carries only PCI-safe fields (never a PAN).
+export interface TenderInfo {
+  tender_type: string;
+  amount: number;
+  network?: string;
+  approval_code?: string;
+  rrn?: string;
+  last4?: string;
+  gateway?: string;
+  status: string;
+}
+
 export interface TransactionResult {
   id: number;
   invoice_number: string;
@@ -114,11 +127,20 @@ export interface TransactionResult {
   zatca_hash?: string;
   zatca_document_id?: number;
   zatca_status?: string;
+  // Captured tenders (PAY-01) — how the sale was really paid.
+  tenders?: TenderInfo[];
 }
 
 export interface PaymentEntry {
-  method: string; // 'cash' | 'card' | 'transfer' | 'loyalty'
+  // 'cash' | 'card' | 'mada' | 'applepay' | 'stcpay' | 'tabby' | 'tamara' | 'transfer' | 'loyalty'
+  method: string;
   amount: number;
+  // Card-like tenders capture a real gateway approval (PAY-01/05). token is the
+  // gateway card token from client tokenization (no PAN); simulate is a
+  // sandbox-only hint ('approve'/'decline') ignored by real gateways.
+  tender_type?: string;
+  token?: string;
+  simulate?: string;
 }
 
 export async function createTransaction(data: {
@@ -135,6 +157,9 @@ export async function createTransaction(data: {
   redeem_points?: number;
   // Multi-branch: tag the sale to a branch so its stock ledger is deducted.
   branch_id?: number;
+  // Single-tender capture hints (PAY-01) when not using split payments.
+  payment_token?: string;
+  payment_simulate?: string;
 }): Promise<TransactionResult> {
   const response = await client.apiCall.invoke<TransactionResult>({
     url: '/api/v1/pos/transaction',

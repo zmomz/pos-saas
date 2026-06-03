@@ -46,7 +46,8 @@ Severity: `BLOCKER` (core flow unusable / P0 table-stake absent / compliance-blo
 
 ### PAY — Payments (Saudi-real)
 
-**F-001 — POS sale records payment-method LABELS only; no real terminal/gateway approval is ever captured** · `MISSING_SIDE_EFFECT` / `MARKET_GAP`
+**F-001 — ✅ DONE — POS sale records payment-method LABELS only; no real terminal/gateway approval is ever captured** · `MISSING_SIDE_EFFECT` / `MARKET_GAP`
+- **Fixed (gateway capture wired into the atomic sale):** a new pluggable gateway abstraction (`services/payment_gateway.py`: `PaymentGateway` ABC, deterministic `SandboxGateway`, real `MoyasarGateway` online adapter, `get_gateway()` resolver) is invoked inside `create_transaction` (`routers/pos.py::_capture_tenders`) for every card-like tender (mada/card/applepay/stcpay/tabby/tamara) **before the invoice counter is consumed**. A decline raises 402 and, since nothing has committed, rolls the whole sale back; an approval persists a `payment_tenders` row carrying the real network + approval_code + RRN + gateway_ref (no PAN — PAY-09). The sale response now returns the captured `tenders`, and the always-Arabic receipt prints the approval. Sandbox is the OPS-08 graceful-degradation default; Moyasar activates once `MOYASAR_API_KEY` + a client-side token are present (live-credential step flagged to the operator). Tests: `tests/test_phase2_payments.py::test_card_decline_blocks_sale_and_persists_nothing`, `::test_card_approve_captures_approval_on_tender`, `::test_split_card_plus_cash_captures_only_card_leg`, `::test_cash_sale_records_tender_without_gateway_approval`.
 - Violated: PAY-05 (P0) *"push the amount to a connected Mada/card terminal and capture the approval onto the invoice; decline blocks the sale"*; PAY-01 (P0) *"the invoice records the network … and approval/RRN"*; IB §4.4 atomic step ③.
 - Manifests: a cashier rings a "card"/"Mada" sale that completes with **zero proof a card was charged** — indistinguishable from cash; a decline cannot block the sale because no authorization is attempted. This is the single biggest POS gap.
 - Evidence: `backend/routers/pos.py:312-329` (breakdown is label-only), `:354-370` (txn built with only `payment_method`/`payment_breakdown`); model has no tender fields `backend/models/transactions.py:18-22`; frontend sends labels only `frontend/src/pages/POSTerminal.tsx:385-401`, picker offers cash/card only `:1092-1093`. **Searched** backend for `approval|network|last4|capture|authorize|gateway_ref|acquirer`, repo for `mada|moyasar|geidea|tabby|tamara|terminal|rrn` → all hits are markdown/i18n/UI labels, none in capture code.
@@ -54,7 +55,8 @@ Severity: `BLOCKER` (core flow unusable / P0 table-stake absent / compliance-blo
 - Fix: Add a `payment_tenders` table + a gateway/terminal abstraction; for card/Mada tenders capture a real approval (Geidea SoftPOS in-store / Moyasar online) inside the atomic sale; decline → roll back.
 - Catch forever: pytest — a card tender with a stub gateway returning DECLINE returns 4xx and persists no transaction; APPROVE stores non-null `approval_code`/`rrn`.
 
-**F-002 — No Mada / Apple Pay / STC Pay / BNPL integration anywhere** · `MARKET_GAP`
+**F-002 — ✅ DONE (abstraction + online adapter; in-store terminal still F-005) — No Mada / Apple Pay / STC Pay / BNPL integration anywhere** · `MARKET_GAP`
+- **Fixed (pluggable gateway layer + Saudi tender taxonomy + capture endpoint):** `services/payment_gateway.py` defines `SUPPORTED_TENDER_TYPES` (cash/card/**mada/applepay/stcpay/tabby/tamara**/transfer/loyalty) and `CARD_LIKE_TENDERS`; per-tender routing runs every card-like leg of a split through the gateway. New `routers/payments_gateway.py` exposes `GET /api/v1/payments/tender-types` (drives the POS picker) and `POST /api/v1/payments/charge` (terminal/online pre-auth surface). The **Moyasar** online adapter is the first real provider (selected by `MOYASAR_API_KEY`); Tap/HyperPay/PayTabs slot behind the same interface later. **In-store SoftPOS terminal capture (Geidea, PAY-05/HW-03) remains F-005** — the online gateways do not do in-store capture. Tests: `tests/test_phase2_payments.py::test_tender_type_enum_includes_saudi_tenders`, `::test_tender_types_endpoint_lists_saudi_tenders`, `::test_charge_endpoint_declines_then_approves`, `::test_charge_endpoint_rejects_cash`.
 - Violated: PAY-01..04 (all P0) — Mada first-class, Apple Pay/STC Pay, Tabby/Tamara BNPL, split across all.
 - Manifests: end customer cannot pay how Saudis pay; `PaymentEntry` accepts arbitrary method strings that never route to any provider.
 - Evidence: `backend/routers/pos.py:46-50` (`PaymentEntry` = method+amount only); no `payments_terminal.py`/gateway adapter (full router listing confirmed); repo grep `moyasar|tabby|tamara|stc|apple|geidea` → only docs/i18n.
@@ -62,7 +64,8 @@ Severity: `BLOCKER` (core flow unusable / P0 table-stake absent / compliance-blo
 - Fix: Pluggable gateway layer (Moyasar online; Geidea in-store) with per-tender routing.
 - Catch forever: pytest asserting a `/payments` capture endpoint exists and the tender-type enum includes mada/applepay/stcpay/tabby/tamara.
 
-**F-003 — `payment_tenders`, `terminals`, `payment_accounts` models/tables absent** · `MISSING_SIDE_EFFECT`
+**F-003 — ✅ DONE (`payment_tenders`; `terminals`/`payment_accounts` deferred) — `payment_tenders`, `terminals`, `payment_accounts` models/tables absent** · `MISSING_SIDE_EFFECT`
+- **Fixed (`payment_tenders` model + Alembic migration):** `models/payment_tenders.py` carries `tender_type/amount/network/approval_code/rrn/gateway_ref/last4/token/gateway/status/decline_reason` and **no `pan`/`card_number` column** (PCI minimization, PAY-09). Alembic revision `a1b2c3d4e5f6` (chained from `f5a6b7c8d9e0`) creates it; `alembic upgrade head` is clean on an empty DB. `terminals` (PAY-05/HW-03 in-store) and `payment_accounts` (PAY-06 per-client gateway creds) are deferred to F-005 / a follow-up — today the platform `MOYASAR_API_KEY` drives the single online gateway. Test: `tests/test_phase2_payments.py::test_payment_tenders_schema_carries_proof_but_no_pan`.
 - Violated: IB §4.6 entities; srs.md §6 schema (`payment_accounts`, `terminals`); PAY-09 (P0) *"store only tokens/last-4/network"*.
 - Manifests: without `payment_tenders`, PAY-09 PCI minimization and PAY-10 refund-to-origin are structurally impossible.
 - Evidence: full `backend/models/*.py` listing has no tender/terminal/account model; `models/transactions.py:1-39` has no tender columns.
@@ -567,5 +570,11 @@ Severity: `BLOCKER` (core flow unusable / P0 table-stake absent / compliance-blo
 5. **F-008/F-053** — no Z-report endpoint or printable (fiscal day-close).
 6. **F-029/F-028/F-025** — reseller depth: no commission ledger, no dunning/proration/merchant-invoice, no custom domain/branded email.
 7. **F-009/F-016/F-032/F-052/F-040** — live bugs/dead-ends: cash-blind shift math, shift screen field mismatch, stock-transfer 404 dead-end, notifications never render, client-trusted discount amounts.
+
+**Traceability (closed findings → SRS ID → deterministic test):**
+- F-017 → ZA-06 → `tests/test_phase2_zatca_sale.py::test_classify_invoice_subtype_routing` (+ `_b2b_/_b2c_` cases).
+- F-001 → PAY-01/PAY-05 → `tests/test_phase2_payments.py::test_card_decline_blocks_sale_and_persists_nothing`, `::test_card_approve_captures_approval_on_tender`.
+- F-002 → PAY-01..04/PAY-06 → `tests/test_phase2_payments.py::test_tender_type_enum_includes_saudi_tenders`, `::test_charge_endpoint_declines_then_approves`.
+- F-003 → PAY-09 → `tests/test_phase2_payments.py::test_payment_tenders_schema_carries_proof_but_no_pan`.
 
 > **Reminder to the operator:** this is a *prioritized backlog of suspicions for human review and test-promotion, not a release gate.* Each finding ships with a "make it catchable forever" test idea — promote those into `pytest`/Playwright as findings are closed (Prompt 3 closes one per session, building to the `INTENDED_BEHAVIOR.md` design + a deterministic test). Several spec "suspected-absent" items were **refuted** (Alembic chain, audit middleware, triad pagination, i18n parity) — fold those corrections back into `INTENDED_BEHAVIOR.md` §4.18/4.17 and `CLAUDE.md`.
