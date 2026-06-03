@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getAgentClients, getAgentBranding, createNewClient, toggleClient, setClientFeature } from '@/lib/api';
+import { client, getAgentClients, getAgentBranding, createNewClient, toggleClient, setClientFeature, resetClientPassword } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -43,10 +43,11 @@ export default function AgentDashboard() {
   // One-time credentials surfaced after provisioning a client (C-1/CL-01). Shown
   // once in a modal so the agent can hand them over; never retrievable again.
   const [createdCreds, setCreatedCreds] = useState<
-    { email: string; temp_password: string; email_delivered: boolean } | null
+    { email: string; temp_password: string; email_delivered: boolean; reset?: boolean } | null
   >(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [resettingId, setResettingId] = useState<number | null>(null);
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
   const { isDark } = useTheme();
@@ -106,6 +107,25 @@ export default function AgentDashboard() {
       console.error('Toggle client failed:', err);
     } finally {
       setTogglingId(null);
+    }
+  }
+
+  // RSL-06: agent resets a locked-out merchant's password and relays the new
+  // one-time credential (force-reset on next login).
+  async function handleResetPassword(clientId: number) {
+    setResettingId(clientId);
+    try {
+      const result = await resetClientPassword(clientId);
+      setCreatedCreds({
+        email: result.email,
+        temp_password: result.temp_password,
+        email_delivered: !!result.email_delivered,
+        reset: true,
+      });
+    } catch (err) {
+      console.error('Reset client password failed:', err);
+    } finally {
+      setResettingId(null);
     }
   }
 
@@ -305,13 +325,17 @@ export default function AgentDashboard() {
             <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
               <DialogHeader>
                 <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
-                  {t('client_created') || 'Client created'}
+                  {createdCreds?.reset
+                    ? (t('password_reset_done') || 'Password reset')
+                    : (t('client_created') || 'Client created')}
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-3">
                 <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
                   {createdCreds?.email_delivered
-                    ? (t('credentials_emailed') || 'Login credentials were emailed to the client.')
+                    ? (createdCreds?.reset
+                      ? (t('new_password_emailed') || 'The new password was emailed to the client.')
+                      : (t('credentials_emailed') || 'Login credentials were emailed to the client.'))
                     : (t('credentials_show_once') ||
                       'Share these login credentials with the client now — they will not be shown again. They must change the password on first login.')}
                 </p>
@@ -426,6 +450,16 @@ export default function AgentDashboard() {
                         className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700 text-xs' : 'border-gray-300 text-gray-700 hover:bg-gray-100 text-xs'}
                       >
                         {t('features') || 'Features'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleResetPassword(c.id)}
+                        disabled={resettingId === c.id}
+                        title={t('reset_password') || 'Reset password'}
+                        className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700 text-xs' : 'border-gray-300 text-gray-700 hover:bg-gray-100 text-xs'}
+                      >
+                        {resettingId === c.id ? '...' : (t('reset_password') || 'Reset Password')}
                       </Button>
                     </div>
                   </td>

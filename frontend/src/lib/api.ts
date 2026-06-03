@@ -561,6 +561,26 @@ export async function toggleClient(clientId: number) {
   return response.data;
 }
 
+export interface ResetPasswordResult {
+  success: boolean;
+  client_id: number;
+  email: string;
+  temp_password: string;
+  must_change_password: boolean;
+  email_delivered: boolean;
+}
+
+// Agent: reset the password of one of their own client merchants (RSL-06). Returns
+// a one-time temp password (force-reset on next login) for the agent to relay.
+export async function resetClientPassword(clientId: number): Promise<ResetPasswordResult> {
+  const response = await client.apiCall.invoke<ResetPasswordResult>({
+    url: `/api/v1/tenant/agent/clients/${clientId}/reset-password`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
 // Package Management (Master Admin)
 export async function getPackagesList() {
   const response = await client.apiCall.invoke({

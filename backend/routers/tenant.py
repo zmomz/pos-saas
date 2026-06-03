@@ -28,6 +28,7 @@ from models.transactions import Transactions
 from models.agent_features import Agent_features
 from models.client_features import Client_features
 from models.subscription_payments import Subscription_payments
+from models.audit_logs import Audit_logs
 from services.system_settings import (
     GLOBAL_TAX_RATE_KEY,
     get_global_tax_rate,
@@ -719,6 +720,97 @@ async def toggle_client(
     )
     await db.commit()
     return ToggleResponse(success=True, is_active=new_status)
+
+
+class ResetClientPasswordResponse(BaseModel):
+    success: bool
+    client_id: int
+    email: str
+    temp_password: str
+    must_change_password: bool
+    email_delivered: bool
+
+
+@router.post(
+    "/agent/clients/{client_id}/reset-password",
+    response_model=ResetClientPasswordResponse,
+)
+async def reset_client_password(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: reset the password of one of their own client merchants (SRS RSL-06).
+
+    Reseller-grade support: when a merchant is locked out, the **owning** agent
+    issues a fresh one-time password (force-reset on next login) without the
+    platform master being involved. Scoped to the agent's own clients exactly like
+    :func:`toggle_client` — a non-owning agent gets 404 (SEC-02). The new password
+    targets the merchant's **own** login account (``Clients.user_id``), never the
+    agent's. The credential is emailed when SMTP is configured and is always
+    surfaced in the response for the agent to relay; only the bcrypt hash is
+    stored (never plaintext). The reset is recorded in the audit log.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    result = await db.execute(
+        select(Clients).where(
+            Clients.id == client_id, Clients.agent_id == role_info["entity_id"]
+        )
+    )
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    # The merchant's own login account — NOT the agent's.
+    user_result = await db.execute(select(User).where(User.id == merchant.user_id))
+    merchant_user = user_result.scalar_one_or_none()
+    if not merchant_user:
+        raise HTTPException(status_code=404, detail="Client login account not found")
+
+    # Generate + store only the bcrypt hash; force a change on next login.
+    temp_password = secrets.token_urlsafe(9)
+    await db.execute(
+        update(User)
+        .where(User.id == merchant.user_id)
+        .values(
+            hashed_password=hash_password(temp_password),
+            must_change_password=True,
+        )
+    )
+    # Security trail (RSL-06): who reset which client. The password is not stored.
+    db.add(
+        Audit_logs(
+            user_id=str(current_user.id),
+            action="AGENT_RESET_CLIENT_PASSWORD",
+            entity_type="clients",
+            entity_id=str(client_id),
+            details=(
+                f"Agent {role_info['entity_id']} reset the login password "
+                f"for client {client_id} ({merchant.email})"
+            ),
+        )
+    )
+    await db.commit()
+
+    # Hand over the credential: email it when SMTP is configured, otherwise the
+    # agent surfaces it from the response (dev/no-SMTP).
+    email_delivered = await send_provisioning_email(
+        to_email=merchant.email,
+        business_name=merchant.business_name,
+        temp_password=temp_password,
+    )
+
+    return ResetClientPasswordResponse(
+        success=True,
+        client_id=client_id,
+        email=merchant.email,
+        temp_password=temp_password,
+        must_change_password=True,
+        email_delivered=email_delivered,
+    )
 
 
 @router.post("/agent/clients/{client_id}/features", response_model=FeatureToggleResponse)
