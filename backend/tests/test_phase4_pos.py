@@ -174,3 +174,93 @@ async def test_offline_sync_signs_deducts_and_dedupes(client):
     body2 = resp2.json()
     assert body2["processed"] == 0 and body2["skipped_duplicates"] == 1
     assert await get_product_quantity(pid) == 7
+
+
+# ---------------------------------------------------------------------------
+# Z-report / X-report (RPT-06, PRN-05, F-008): groups the shift by tender and
+# reconciles cash against cash tenders only — not gross sales.
+# ---------------------------------------------------------------------------
+async def _card_sale(client, headers, pid, *, price=100.0, qty=1, method="mada"):
+    resp = await client.post(
+        "/api/v1/pos/transaction",
+        json={
+            "items": [{"product_id": pid, "name": "Combo", "price": price, "quantity": qty}],
+            "payment_method": method,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+async def test_zreport_groups_by_tender_and_reconciles_variance(client):
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    cash_pid = await add_product(client_id, user["id"], name="Cola", quantity=50, price=10.0)
+    card_pid = await add_product(client_id, user["id"], name="Combo", quantity=50, price=100.0)
+
+    open_resp = await _open_shift(client, headers, opening_cash=100.0)
+    shift_id = open_resp["id"]
+
+    cash_sale = await _sale(client, headers, cash_pid, qty=2)  # 2*10 + 15% = 23.00 (cash)
+    await _card_sale(client, headers, card_pid, qty=1)         # 100 + 15% = 115.00 (mada)
+
+    # Refund the cash sale in full → a credit note nets the cash back out.
+    refund = await client.post(
+        f"/api/v1/pos/transactions/{cash_sale['id']}/refund", headers=headers
+    )
+    assert refund.status_code == 200, refund.text
+
+    # --- X-report (shift still open): no counted cash yet ---
+    x = (await client.get("/api/v1/reports/zreport", headers=headers)).json()
+    assert x["report_type"] == "X"
+    tenders = {t["tender_type"]: t for t in x["tenders"]}
+    assert abs(tenders["cash"]["amount"] - 23.0) < 0.01
+    assert abs(tenders["mada"]["amount"] - 115.0) < 0.01
+    assert abs(x["totals"]["gross_sales"] - 138.0) < 0.01
+    assert abs(x["totals"]["refunds"] - 23.0) < 0.01
+    assert abs(x["totals"]["net_sales"] - 115.0) < 0.01
+    assert x["totals"]["refund_count"] == 1
+    # Cash drawer counts cash tenders only (POS-09): opening + cash_sales − cash_refunds.
+    assert abs(x["cash"]["expected_cash"] - 100.0) < 0.01
+    assert x["cash"]["counted_cash"] is None
+    assert x["cash"]["variance"] is None
+
+    # --- Close, then the Z-report carries the counted cash + variance ---
+    close = await client.post(
+        "/api/v1/production/shifts/close",
+        json={"closing_cash": 100.0},
+        headers=headers,
+    )
+    assert close.status_code == 200, close.text
+
+    z = (await client.get(f"/api/v1/reports/zreport?shift_id={shift_id}", headers=headers)).json()
+    assert z["report_type"] == "Z"
+    assert abs(z["cash"]["counted_cash"] - 100.0) < 0.01
+    assert abs(z["cash"]["variance"]) < 0.01
+    assert z["cash"]["reconciliation"] == "balanced"
+
+    # The printable is an always-Arabic, non-fiscal management document (PRN-05).
+    doc = await client.get(
+        f"/api/v1/reports/zreport/document?shift_id={shift_id}", headers=headers
+    )
+    assert doc.status_code == 200, doc.text
+    assert 'dir="rtl"' in doc.text
+    assert "تقرير إغلاق الوردية" in doc.text  # Z-report title in Arabic
+    assert "ليس فاتورة ضريبية" in doc.text     # "not a tax invoice"
+
+
+async def test_zreport_scopes_to_owner_and_404s_unknown_shift(client):
+    user_a, token_a, _ = await make_client_account(client)
+    headers_a = auth_headers(token_a)
+    await _open_shift(client, headers_a, opening_cash=50.0)
+    a_shift = (await client.get("/api/v1/reports/zreport", headers=headers_a)).json()
+    a_shift_id = a_shift["shift"]["id"]
+
+    # A second client cannot read the first client's shift report.
+    _, token_b, _ = await make_client_account(client)
+    headers_b = auth_headers(token_b)
+    cross = await client.get(
+        f"/api/v1/reports/zreport?shift_id={a_shift_id}", headers=headers_b
+    )
+    assert cross.status_code == 404, cross.text

@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -687,6 +688,280 @@ async def export_transactions_csv(
         ])
 
     return {"csv_content": output.getvalue(), "row_count": len(transactions)}
+
+
+# ============================================================
+# Z-REPORT / X-REPORT (RPT-06, PRN-05) — fiscal day-close
+# ============================================================
+# A Z-report reconciles a single shift: sales grouped by tender (the real
+# captured ``payment_tenders`` rows from F-001, not labels), VAT collected vs
+# reversed, discounts, voids, refunds, and — critically — the cash drawer
+# (expected vs counted + variance) computed against **cash tenders only**, not
+# gross sales. Run against an open shift it is an X-report (mid-shift, no
+# counted cash yet); against a closed shift it is the Z-report emitted on close.
+
+
+class ZReportTender(BaseModel):
+    tender_type: str
+    amount: float
+    count: int
+
+
+class ZReportShiftInfo(BaseModel):
+    id: int
+    staff_name: Optional[str] = None
+    branch_id: Optional[int] = None
+    status: str
+    opening_cash: float
+    closing_cash: Optional[float] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+
+
+class ZReportTotals(BaseModel):
+    gross_sales: float
+    refunds: float
+    net_sales: float
+    discounts: float
+    vat_collected: float
+    vat_reversed: float
+    net_vat: float
+    sale_count: int
+    refund_count: int
+    void_count: int
+    voids: float
+
+
+class ZReportCash(BaseModel):
+    opening_cash: float
+    cash_sales: float
+    cash_refunds: float
+    expected_cash: float
+    counted_cash: Optional[float] = None
+    variance: Optional[float] = None
+    reconciliation: Optional[str] = None
+
+
+class ZReportResponse(BaseModel):
+    report_type: str  # "Z" (closed shift) or "X" (open shift)
+    shift: ZReportShiftInfo
+    totals: ZReportTotals
+    tenders: List[ZReportTender]
+    cash: ZReportCash
+
+
+async def _resolve_shift(db: AsyncSession, user_id: str, shift_id: Optional[int]):
+    """Resolve the target shift: the given id (scoped to the caller) or, when
+    omitted, the caller's currently open shift (X-report). Returns the Shifts row
+    or None."""
+    from models.shifts import Shifts
+
+    if shift_id is not None:
+        result = await db.execute(
+            select(Shifts).where(Shifts.id == shift_id, Shifts.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    result = await db.execute(
+        select(Shifts).where(Shifts.user_id == user_id, Shifts.status == "open")
+    )
+    return result.scalar_one_or_none()
+
+
+async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
+    """Aggregate one shift's transactions into the Z/X-report structure.
+
+    Sales-by-tender is built from the real ``payment_tenders`` rows (F-001); a
+    sale predating tender capture falls back to its ``payment_method`` so legacy
+    data still reconciles. Cash variance uses cash tenders only (the POS-09 fix
+    point) — gross sales are **not** treated as drawer cash.
+    """
+    from models.payment_tenders import PaymentTenders
+
+    txn_result = await db.execute(
+        select(Transactions).where(
+            and_(
+                Transactions.shift_id == shift.id,
+                Transactions.client_id == client_id,
+            )
+        )
+    )
+    transactions = txn_result.scalars().all()
+
+    gross_sales = 0.0
+    refunds_total = 0.0
+    vat_collected = 0.0
+    vat_reversed = 0.0
+    discounts = 0.0
+    voids_total = 0.0
+    sale_count = 0
+    refund_count = 0
+    void_count = 0
+    sale_ids: List[int] = []
+
+    for t in transactions:
+        status = t.status or "completed"
+        if status == "credit_note":
+            refunds_total += abs(float(t.total_amount or 0))
+            vat_reversed += abs(float(t.vat_amount or 0))
+            refund_count += 1
+        elif status == "voided":
+            voids_total += abs(float(t.total_amount or 0))
+            void_count += 1
+        else:  # completed / refunded / partial_refunded — original sale rows
+            gross_sales += float(t.total_amount or 0)
+            vat_collected += float(t.vat_amount or 0)
+            discounts += float(t.discount_amount or 0)
+            sale_count += 1
+            sale_ids.append(t.id)
+
+    # Real captured tenders for the sale rows, grouped per transaction.
+    tenders_by_txn: dict = {}
+    if sale_ids:
+        tender_result = await db.execute(
+            select(PaymentTenders).where(
+                and_(
+                    PaymentTenders.transaction_id.in_(sale_ids),
+                    PaymentTenders.status != "declined",
+                )
+            )
+        )
+        for tr in tender_result.scalars().all():
+            tenders_by_txn.setdefault(tr.transaction_id, []).append(tr)
+
+    tender_totals: dict = {}
+    for t in transactions:
+        status = t.status or "completed"
+        if status in ("credit_note", "voided"):
+            continue
+        rows = tenders_by_txn.get(t.id)
+        if rows:
+            for tr in rows:
+                bucket = tender_totals.setdefault(
+                    tr.tender_type or "unknown", {"amount": 0.0, "count": 0}
+                )
+                bucket["amount"] += float(tr.amount or 0)
+                bucket["count"] += 1
+        else:
+            # Legacy sale without captured tenders: attribute to its method.
+            ttype = t.payment_method or "unknown"
+            bucket = tender_totals.setdefault(ttype, {"amount": 0.0, "count": 0})
+            bucket["amount"] += float(t.total_amount or 0)
+            bucket["count"] += 1
+
+    tenders = [
+        {"tender_type": k, "amount": round(v["amount"], 2), "count": v["count"]}
+        for k, v in sorted(tender_totals.items())
+    ]
+
+    # Cash drawer reconciliation — cash tenders only (POS-09). Refunds reduce the
+    # drawer; refund-to-origin is not yet wired (F-004) so a refund is treated as
+    # cash paid out for drawer purposes.
+    cash_sales = round(tender_totals.get("cash", {}).get("amount", 0.0), 2)
+    cash_refunds = round(refunds_total, 2)
+    expected_cash = round((shift.opening_cash or 0) + cash_sales - cash_refunds, 2)
+    counted_cash = shift.closing_cash if shift.status == "closed" else None
+    variance = (
+        round(counted_cash - expected_cash, 2) if counted_cash is not None else None
+    )
+    reconciliation = None
+    if variance is not None:
+        reconciliation = (
+            "balanced" if abs(variance) < 0.01 else ("over" if variance > 0 else "short")
+        )
+
+    return {
+        "report_type": "Z" if shift.status == "closed" else "X",
+        "shift": {
+            "id": shift.id,
+            "staff_name": shift.staff_name,
+            "branch_id": shift.branch_id,
+            "status": shift.status,
+            "opening_cash": shift.opening_cash or 0,
+            "closing_cash": shift.closing_cash,
+            "start_time": shift.start_time,
+            "end_time": shift.end_time,
+        },
+        "totals": {
+            "gross_sales": round(gross_sales, 2),
+            "refunds": round(refunds_total, 2),
+            "net_sales": round(gross_sales - refunds_total, 2),
+            "discounts": round(discounts, 2),
+            "vat_collected": round(vat_collected, 2),
+            "vat_reversed": round(vat_reversed, 2),
+            "net_vat": round(vat_collected - vat_reversed, 2),
+            "sale_count": sale_count,
+            "refund_count": refund_count,
+            "void_count": void_count,
+            "voids": round(voids_total, 2),
+        },
+        "tenders": tenders,
+        "cash": {
+            "opening_cash": round(shift.opening_cash or 0, 2),
+            "cash_sales": cash_sales,
+            "cash_refunds": cash_refunds,
+            "expected_cash": expected_cash,
+            "counted_cash": counted_cash,
+            "variance": variance,
+            "reconciliation": reconciliation,
+        },
+    }
+
+
+@router.get("/api/v1/reports/zreport", response_model=ZReportResponse)
+async def get_zreport(
+    shift_id: Optional[int] = Query(None, description="Shift to report on; omit for the current open shift"),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Z-report (closed shift) / X-report (open shift): tenders, VAT, discounts,
+    voids, refunds and cash variance for a single shift (RPT-06)."""
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    shift = await _resolve_shift(db, str(current_user.id), shift_id)
+    if not shift:
+        detail = "Shift not found" if shift_id is not None else "No open shift to report on"
+        raise HTTPException(status_code=404, detail=detail)
+
+    data = await _aggregate_zreport(db, client_id, shift)
+    return ZReportResponse(**data)
+
+
+@router.get("/api/v1/reports/zreport/document", response_class=HTMLResponse)
+async def get_zreport_document(
+    shift_id: Optional[int] = Query(None, description="Shift to print; omit for the current open shift"),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render the Z/X-report as an **always-Arabic** print-ready document (PRN-05).
+
+    Enforces the fiscal/management-document Arabic rule (SRS §7) server-side: the
+    report renders RTL/Arabic regardless of the caller's UI language. Print-to-PDF
+    ready in any browser (80mm or A4)."""
+    from services.production import PDFInvoiceService
+
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    shift = await _resolve_shift(db, str(current_user.id), shift_id)
+    if not shift:
+        detail = "Shift not found" if shift_id is not None else "No open shift to report on"
+        raise HTTPException(status_code=404, detail=detail)
+
+    data = await _aggregate_zreport(db, client_id, shift)
+
+    client_row = (
+        await db.execute(select(Clients).where(Clients.id == client_id))
+    ).scalar_one_or_none()
+    business_name = client_row.business_name if client_row else "—"
+
+    html = PDFInvoiceService.generate_zreport_html(business_name=business_name, data=data)
+    return HTMLResponse(content=html)
 
 
 # ============================================================

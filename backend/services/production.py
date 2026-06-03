@@ -619,6 +619,145 @@ class PDFInvoiceService:
 </html>"""
         return html
 
+    # Arabic labels for the Saudi tender taxonomy (PAY-01..04). Used by the
+    # always-Arabic Z-report so "sales by tender" reads in Arabic regardless of
+    # the cashier's UI language (L10N-06 / PRN-05).
+    _TENDER_LABELS_AR = {
+        "cash": "نقدي",
+        "card": "بطاقة",
+        "mada": "مدى",
+        "applepay": "Apple Pay",
+        "stcpay": "STC Pay",
+        "tabby": "تابي",
+        "tamara": "تمارا",
+        "transfer": "تحويل بنكي",
+        "loyalty": "نقاط الولاء",
+        "refund": "استرجاع",
+    }
+
+    @staticmethod
+    def generate_zreport_html(business_name: str, data: Dict[str, Any]) -> str:
+        """Generate the **always-Arabic** Z-report / X-report printable (PRN-05).
+
+        ``data`` is the structure produced by the ``/reports/zreport`` aggregator:
+        the shift header, sales-by-tender breakdown, VAT/discount/void/refund
+        totals and the cash drawer reconciliation (expected vs counted + variance).
+        Per the fiscal-document rule (SRS §7 / L10N-06) it renders RTL/Arabic with
+        Arabic-Indic numerals regardless of the UI language. A Z-report is a
+        management/fiscal-close document, not a tax invoice, so it carries **no**
+        ZATCA QR or cryptographic stamp.
+        """
+        shift = data.get("shift", {})
+        totals = data.get("totals", {})
+        cash = data.get("cash", {})
+        report_type = data.get("report_type", "Z")
+
+        is_close = report_type == "Z"
+        title_ar = "تقرير إغلاق الوردية (Z)" if is_close else "تقرير الوردية الحالية (X)"
+        title_en = "Z-Report (Shift Close)" if is_close else "X-Report (Current Shift)"
+
+        tender_rows = ""
+        for tender in data.get("tenders", []):
+            label = PDFInvoiceService._TENDER_LABELS_AR.get(
+                tender.get("tender_type", ""), tender.get("tender_type", "")
+            )
+            tender_rows += f"""
+            <tr>
+                <td>{label}</td>
+                <td>{to_arabic_digits(tender.get('count', 0))}</td>
+                <td>{format_money_ar(tender.get('amount', 0))} ر.س</td>
+            </tr>"""
+        if not tender_rows:
+            tender_rows = '<tr><td colspan="3">لا توجد مبيعات</td></tr>'
+
+        # Reconciliation badge — only meaningful once the drawer has been counted.
+        recon = cash.get("reconciliation")
+        recon_ar = {"balanced": "مطابق", "over": "زيادة", "short": "عجز"}.get(recon or "", "—")
+        counted_html = (
+            f"<tr><td>النقد المحسوب</td><td>{format_money_ar(cash.get('counted_cash', 0))} ر.س</td></tr>"
+            if cash.get("counted_cash") is not None
+            else ""
+        )
+        variance_html = (
+            f"<tr><td><strong>الفرق ({recon_ar})</strong></td>"
+            f"<td><strong>{format_money_ar(cash.get('variance', 0))} ر.س</strong></td></tr>"
+            if cash.get("variance") is not None
+            else "<tr><td colspan='2'>لم يتم جرد الدرج بعد</td></tr>"
+        )
+
+        html = f"""<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: 'Noto Sans Arabic', 'Arial', sans-serif; direction: rtl; padding: 20px; }}
+        .header {{ text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; }}
+        .header h1 {{ margin: 0; font-size: 22px; }}
+        .meta {{ margin: 15px 0; font-size: 14px; }}
+        .meta p {{ margin: 4px 0; }}
+        h3 {{ border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 20px; }}
+        table {{ width: 100%; border-collapse: collapse; margin: 10px 0; }}
+        th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
+        th {{ background-color: #f5f5f5; font-weight: bold; }}
+        .totals table, .cash table {{ width: 360px; margin-right: auto; }}
+        .notice {{ text-align: center; font-size: 12px; color: #666; margin-top: 20px; }}
+        .stamp {{ border: 2px solid #333; padding: 5px 15px; display: inline-block; margin-top: 10px; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{title_ar}</h1>
+        <p>{title_en} — {business_name}</p>
+    </div>
+
+    <div class="meta">
+        <p><strong>رقم الوردية:</strong> {to_arabic_digits(shift.get('id', ''))}</p>
+        <p><strong>الكاشير:</strong> {shift.get('staff_name') or '—'}</p>
+        <p><strong>وقت الفتح:</strong> {to_arabic_digits(shift.get('start_time') or '—')}</p>
+        <p><strong>وقت الإغلاق:</strong> {to_arabic_digits(shift.get('end_time') or '—')}</p>
+    </div>
+
+    <h3>المبيعات حسب طريقة الدفع</h3>
+    <table>
+        <thead>
+            <tr><th>طريقة الدفع</th><th>العدد</th><th>المبلغ</th></tr>
+        </thead>
+        <tbody>{tender_rows}</tbody>
+    </table>
+
+    <h3>الإجماليات</h3>
+    <div class="totals">
+        <table>
+            <tr><td>إجمالي المبيعات ({to_arabic_digits(totals.get('sale_count', 0))} فاتورة)</td><td>{format_money_ar(totals.get('gross_sales', 0))} ر.س</td></tr>
+            <tr><td>المرتجعات ({to_arabic_digits(totals.get('refund_count', 0))})</td><td>{format_money_ar(totals.get('refunds', 0))} ر.س</td></tr>
+            <tr><td>الإلغاءات ({to_arabic_digits(totals.get('void_count', 0))})</td><td>{format_money_ar(totals.get('voids', 0))} ر.س</td></tr>
+            <tr><td>الخصومات</td><td>{format_money_ar(totals.get('discounts', 0))} ر.س</td></tr>
+            <tr><td>ضريبة القيمة المضافة المحصّلة</td><td>{format_money_ar(totals.get('vat_collected', 0))} ر.س</td></tr>
+            <tr><td>ضريبة القيمة المضافة المعكوسة</td><td>{format_money_ar(totals.get('vat_reversed', 0))} ر.س</td></tr>
+            <tr><td><strong>صافي المبيعات</strong></td><td><strong>{format_money_ar(totals.get('net_sales', 0))} ر.س</strong></td></tr>
+        </table>
+    </div>
+
+    <h3>تسوية النقدية في الدرج</h3>
+    <div class="cash">
+        <table>
+            <tr><td>النقد الافتتاحي</td><td>{format_money_ar(cash.get('opening_cash', 0))} ر.س</td></tr>
+            <tr><td>مبيعات نقدية</td><td>{format_money_ar(cash.get('cash_sales', 0))} ر.س</td></tr>
+            <tr><td>مرتجعات نقدية</td><td>{format_money_ar(cash.get('cash_refunds', 0))} ر.س</td></tr>
+            <tr><td><strong>النقد المتوقع</strong></td><td><strong>{format_money_ar(cash.get('expected_cash', 0))} ر.س</strong></td></tr>
+            {counted_html}
+            {variance_html}
+        </table>
+    </div>
+
+    <div class="notice">
+        <div class="stamp">تقرير إداري — ليس فاتورة ضريبية</div>
+        <p>Management report — not a tax invoice.</p>
+    </div>
+</body>
+</html>"""
+        return html
+
 
 # =============================================================================
 # Email Service (Stub with Logging)

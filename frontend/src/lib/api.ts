@@ -402,6 +402,35 @@ export async function exportCSV() {
   return response.data;
 }
 
+// RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
+// sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
+// for the current open shift.
+export async function getZReport(shiftId?: number) {
+  const query = shiftId != null ? `?shift_id=${shiftId}` : '';
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/zreport${query}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// Open the always-Arabic Z/X-report printable (PRN-05) in a print window. The
+// document is fetched with the auth token attached, then written into a new
+// window for print-to-PDF (window.open alone can't send the Bearer header).
+export async function printZReport(shiftId?: number) {
+  const query = shiftId != null ? `?shift_id=${shiftId}` : '';
+  const blob = await getBlob(`/api/v1/reports/zreport/document${query}`);
+  const html = await blob.text();
+  const win = window.open('', '_blank');
+  if (!win) return;
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  win.print();
+}
+
 // Notifications
 export async function getNotifications() {
   const response = await client.apiCall.invoke({

@@ -9,9 +9,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { client } from '@/lib/api';
+import { client, printZReport } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { Clock, DollarSign, PlayCircle, StopCircle, History } from 'lucide-react';
+import { Clock, PlayCircle, StopCircle, History, Receipt } from 'lucide-react';
 
 interface Shift {
   id: string;
@@ -36,6 +36,8 @@ export default function ShiftManagement() {
   const [openingCash, setOpeningCash] = useState('');
   const [closingCash, setClosingCash] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  // RPT-06/PRN-05: id of the shift just closed, so its Z-report can be (re)printed.
+  const [lastClosedShiftId, setLastClosedShiftId] = useState<number | null>(null);
 
   const { t } = useLanguage();
 
@@ -106,6 +108,18 @@ export default function ShiftManagement() {
       if (res.data) {
         setShiftHistory((prev) => [res.data, ...prev]);
       }
+      // POS-09/RPT-06: closing a shift emits its Z-report. The close response
+      // carries the shift id directly, so this works regardless of how the
+      // current/history reads are shaped.
+      const closedId = res.data?.id;
+      if (closedId != null) {
+        setLastClosedShiftId(Number(closedId));
+        try {
+          await printZReport(Number(closedId));
+        } catch (e) {
+          console.error('Failed to print Z-report:', e);
+        }
+      }
       await loadShiftData();
     } catch (err) {
       console.error('Failed to close shift:', err);
@@ -164,17 +178,37 @@ export default function ShiftManagement() {
                 <Badge className="bg-green-500/20 text-green-400">Active</Badge>
                 {currentShift.staff_name && <span className="text-slate-400 text-sm">Staff: {currentShift.staff_name}</span>}
               </div>
-              <Button onClick={() => setCloseShiftDialog(true)} className="bg-red-600 hover:bg-red-700 text-white">
-                <StopCircle className="h-4 w-4 mr-2" /> Close Shift
-              </Button>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={() => setCloseShiftDialog(true)} className="bg-red-600 hover:bg-red-700 text-white">
+                  <StopCircle className="h-4 w-4 mr-2" /> Close Shift
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => printZReport()}
+                  className="border-slate-600 text-slate-200 hover:bg-slate-700"
+                >
+                  <Receipt className="h-4 w-4 mr-2" /> {t('x_report')}
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="text-center py-8">
               <Clock className="h-12 w-12 text-slate-600 mx-auto mb-3" />
               <p className="text-slate-400 mb-4">No active shift. Open a new shift to start recording transactions.</p>
-              <Button onClick={() => setOpenShiftDialog(true)} className="bg-green-600 hover:bg-green-700 text-white">
-                <PlayCircle className="h-4 w-4 mr-2" /> Open New Shift
-              </Button>
+              <div className="flex items-center justify-center gap-3">
+                <Button onClick={() => setOpenShiftDialog(true)} className="bg-green-600 hover:bg-green-700 text-white">
+                  <PlayCircle className="h-4 w-4 mr-2" /> Open New Shift
+                </Button>
+                {lastClosedShiftId != null && (
+                  <Button
+                    variant="outline"
+                    onClick={() => printZReport(lastClosedShiftId)}
+                    className="border-slate-600 text-slate-200 hover:bg-slate-700"
+                  >
+                    <Receipt className="h-4 w-4 mr-2" /> {t('print_last_z_report')}
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </CardContent>
@@ -200,12 +234,13 @@ export default function ShiftManagement() {
                   <th className="p-3 text-start">Difference</th>
                   <th className="p-3 text-start">Sales Total</th>
                   <th className="p-3 text-start">Transactions</th>
+                  <th className="p-3 text-start">{t('z_report')}</th>
                 </tr>
               </thead>
               <tbody>
                 {shiftHistory.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-6 text-center text-slate-500">No shift history</td>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">No shift history</td>
                   </tr>
                 ) : (
                   shiftHistory.map((shift) => (
@@ -223,6 +258,16 @@ export default function ShiftManagement() {
                       </td>
                       <td className="p-3 text-white font-medium">SAR {shift.sales_total?.toFixed(2) || '0.00'}</td>
                       <td className="p-3">{shift.transaction_count || 0}</td>
+                      <td className="p-3">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => printZReport(Number(shift.id))}
+                          className="text-blue-400 hover:bg-slate-700"
+                        >
+                          <Receipt className="h-4 w-4 mr-1" /> {t('z_report')}
+                        </Button>
+                      </td>
                     </tr>
                   ))
                 )}
