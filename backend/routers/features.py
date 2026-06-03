@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, update, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_db
+from core.database import get_db, db_manager
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
 from models.auth import User
@@ -514,6 +514,25 @@ class SalesSummaryResponse(BaseModel):
     total_transactions: int
 
 
+def _period_bucket(dialect_name: str, period: str):
+    """SQL expression bucketing ``created_at`` into a period key.
+
+    Pushed into the database so the report aggregate runs as a single
+    ``GROUP BY`` instead of pulling every transaction into Python and grouping
+    in a loop (OPS-05 — server-side aggregation, no load-everything). Date
+    formatting is dialect-specific (sqlite ``strftime`` vs postgres ``to_char``),
+    so we branch on the active dialect.
+    """
+    col = Transactions.created_at
+    if dialect_name == "sqlite":
+        fmt = {"daily": "%Y-%m-%d", "weekly": "%Y-W%W", "monthly": "%Y-%m"}[period]
+        return func.strftime(fmt, col)
+    # PostgreSQL (and other ``to_char``-capable dialects). ``IW``/``IYYY`` give
+    # the ISO week so weekly buckets line up with the calendar week.
+    fmt = {"daily": "YYYY-MM-DD", "weekly": 'IYYY-"W"IW', "monthly": "YYYY-MM"}[period]
+    return func.to_char(col, fmt)
+
+
 class TopProductItem(BaseModel):
     product_id: int
     name: str
@@ -540,47 +559,42 @@ async def get_sales_summary(
     client_id = role_info["entity_id"]
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Get all transactions in the period
+    # OPS-05: aggregate in the database (one GROUP BY) rather than loading every
+    # transaction in the window into memory and grouping in Python. The result
+    # set is bounded by the number of distinct periods (<= ``days``), not by the
+    # transaction count, so this stays flat as a client's volume grows.
+    dialect_name = db_manager.engine.dialect.name if db_manager.engine is not None else "sqlite"
+    bucket = _period_bucket(dialect_name, period)
     result = await db.execute(
-        select(Transactions).where(
+        select(
+            bucket.label("period"),
+            func.coalesce(func.sum(Transactions.total_amount), 0.0).label("total"),
+            func.count().label("cnt"),
+        ).where(
             and_(
                 Transactions.client_id == client_id,
                 Transactions.created_at >= start_date,
             )
-        ).order_by(Transactions.created_at.asc())
+        ).group_by(bucket).order_by(bucket)
     )
-    transactions = result.scalars().all()
+    rows = result.all()
 
-    # Group by period
-    grouped: dict = {}
-    for t in transactions:
-        if t.created_at is None:
-            continue
-        if period == "daily":
-            key = t.created_at.strftime("%Y-%m-%d")
-        elif period == "weekly":
-            # ISO week
-            key = f"{t.created_at.isocalendar()[0]}-W{t.created_at.isocalendar()[1]:02d}"
-        else:  # monthly
-            key = t.created_at.strftime("%Y-%m")
-
-        if key not in grouped:
-            grouped[key] = {"total": 0.0, "count": 0}
-        grouped[key]["total"] += float(t.total_amount or 0)
-        grouped[key]["count"] += 1
-
-    items = [
-        SalesSummaryItem(
-            period=k,
-            total_sales=round(v["total"], 2),
-            transaction_count=v["count"],
-            avg_transaction=round(v["total"] / v["count"], 2) if v["count"] > 0 else 0,
+    items: List[SalesSummaryItem] = []
+    total_sales = 0.0
+    total_transactions = 0
+    for period_key, total, count in rows:
+        total = float(total or 0)
+        count = int(count or 0)
+        items.append(
+            SalesSummaryItem(
+                period=period_key,
+                total_sales=round(total, 2),
+                transaction_count=count,
+                avg_transaction=round(total / count, 2) if count > 0 else 0,
+            )
         )
-        for k, v in sorted(grouped.items())
-    ]
-
-    total_sales = sum(v["total"] for v in grouped.values())
-    total_transactions = sum(v["count"] for v in grouped.values())
+        total_sales += total
+        total_transactions += count
 
     return SalesSummaryResponse(
         items=items,
@@ -604,24 +618,26 @@ async def get_top_products(
     client_id = role_info["entity_id"]
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Get transactions and parse items_json
-    result = await db.execute(
-        select(Transactions).where(
+    # OPS-05: the per-product totals live inside each transaction's ``items_json``
+    # blob, so this cannot collapse into a pure SQL GROUP BY portably. Instead we
+    # stream the window through a server-side cursor (selecting only the JSON
+    # column, never the full ORM row) and fold each transaction into a bounded
+    # accumulator keyed by product — so peak memory is O(distinct products), not
+    # O(transactions), and we never materialize the whole period at once.
+    product_sales: dict = {}
+    result = await db.stream_scalars(
+        select(Transactions.items_json).where(
             and_(
                 Transactions.client_id == client_id,
                 Transactions.created_at >= start_date,
             )
         )
     )
-    transactions = result.scalars().all()
-
-    # Aggregate product sales
-    product_sales: dict = {}
-    for t in transactions:
-        if not t.items_json:
+    async for items_json in result:
+        if not items_json:
             continue
         try:
-            items = json.loads(t.items_json)
+            items = json.loads(items_json)
         except (json.JSONDecodeError, TypeError):
             continue
         for item in items:
@@ -666,16 +682,6 @@ async def export_transactions_csv(
     client_id = role_info["entity_id"]
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
-    result = await db.execute(
-        select(Transactions).where(
-            and_(
-                Transactions.client_id == client_id,
-                Transactions.created_at >= start_date,
-            )
-        ).order_by(Transactions.created_at.desc())
-    )
-    transactions = result.scalars().all()
-
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -683,7 +689,18 @@ async def export_transactions_csv(
         "Total", "Payment Method", "Status", "Customer Name", "Customer Phone"
     ])
 
-    for t in transactions:
+    # OPS-05: stream the rows through a server-side cursor and write each as we
+    # go, rather than materializing the whole period into a Python list first.
+    row_count = 0
+    result = await db.stream_scalars(
+        select(Transactions).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+            )
+        ).order_by(Transactions.created_at.desc())
+    )
+    async for t in result:
         writer.writerow([
             t.invoice_number,
             t.created_at.isoformat() if t.created_at else "",
@@ -696,8 +713,9 @@ async def export_transactions_csv(
             t.customer_name or "",
             t.customer_phone or "",
         ])
+        row_count += 1
 
-    return {"csv_content": output.getvalue(), "row_count": len(transactions)}
+    return {"csv_content": output.getvalue(), "row_count": row_count}
 
 
 # ============================================================
