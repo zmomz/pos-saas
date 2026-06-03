@@ -18,6 +18,7 @@ interface Customer {
   name: string;
   phone?: string;
   email?: string;
+  vat_number?: string;
   address?: string;
   notes?: string;
   total_purchases?: number;
@@ -29,6 +30,7 @@ interface CustomerFormData {
   name: string;
   phone: string;
   email: string;
+  vat_number: string;
   address: string;
   notes: string;
 }
@@ -37,6 +39,7 @@ const emptyForm: CustomerFormData = {
   name: '',
   phone: '',
   email: '',
+  vat_number: '',
   address: '',
   notes: '',
 };
@@ -91,6 +94,7 @@ export default function CustomerManagement() {
         name: formData.name,
         phone: formData.phone || undefined,
         email: formData.email || undefined,
+        vat_number: formData.vat_number || undefined,
         address: formData.address || undefined,
         notes: formData.notes || undefined,
       });
@@ -110,6 +114,7 @@ export default function CustomerManagement() {
       name: customer.name,
       phone: customer.phone || '',
       email: customer.email || '',
+      vat_number: customer.vat_number || '',
       address: customer.address || '',
       notes: customer.notes || '',
     });
@@ -124,6 +129,7 @@ export default function CustomerManagement() {
         name: formData.name,
         phone: formData.phone || undefined,
         email: formData.email || undefined,
+        vat_number: formData.vat_number || undefined,
         address: formData.address || undefined,
         notes: formData.notes || undefined,
       });
@@ -185,6 +191,15 @@ export default function CustomerManagement() {
             value={formData.email}
             onChange={(e) => handleFormChange('email', e.target.value)}
             placeholder="email@example.com"
+            className="bg-slate-700 border-slate-600 text-white"
+          />
+        </div>
+        <div>
+          <label className="text-sm text-slate-400 mb-1 block">VAT Number (B2B)</label>
+          <Input
+            value={formData.vat_number}
+            onChange={(e) => handleFormChange('vat_number', e.target.value)}
+            placeholder="3xxxxxxxxxxxxx3"
             className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
@@ -306,6 +321,7 @@ export default function CustomerManagement() {
               <th className="p-3 text-start">Name</th>
               <th className="p-3 text-start">Phone</th>
               <th className="p-3 text-start">Email</th>
+              <th className="p-3 text-start">VAT Number</th>
               <th className="p-3 text-start">Address</th>
               <th className="p-3 text-start">Actions</th>
             </tr>
@@ -313,7 +329,7 @@ export default function CustomerManagement() {
           <tbody>
             {filteredCustomers.length === 0 ? (
               <tr>
-                <td colSpan={5} className="p-6 text-center text-slate-500">
+                <td colSpan={6} className="p-6 text-center text-slate-500">
                   No customers found
                 </td>
               </tr>
@@ -323,6 +339,7 @@ export default function CustomerManagement() {
                   <td className="p-3 text-white font-medium">{customer.name}</td>
                   <td className="p-3">{customer.phone || '—'}</td>
                   <td className="p-3">{customer.email || '—'}</td>
+                  <td className="p-3">{customer.vat_number || '—'}</td>
                   <td className="p-3 max-w-[200px] truncate">{customer.address || '—'}</td>
                   <td className="p-3">
                     <div className="flex gap-2">

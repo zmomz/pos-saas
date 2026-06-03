@@ -26,6 +26,10 @@ class Transactions(Base):
     items_json = Column(String, nullable=True)
     customer_name = Column(String, nullable=True)
     customer_phone = Column(String, nullable=True)
+    # Buyer VAT registration number captured at sale time (F-018). Drives the ZA-06
+    # standard(B2B clearance)-vs-simplified(B2C reporting) routing and is rendered
+    # into the invoice buyer block (UBL/PDF/HTML). Null for B2C sales.
+    customer_vat_number = Column(String, nullable=True)
     # Shift this sale belongs to (POS-04/shifts). Set when an open shift exists at
     # sale time so close_shift can reconcile cash against accumulated sales.
     shift_id = Column(Integer, nullable=True)

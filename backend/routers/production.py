@@ -353,6 +353,7 @@ async def generate_pdf_invoice(
         seller_name=seller_name,
         seller_vat=seller_vat,
         buyer_name=txn.customer_name or "عميل",
+        buyer_vat=txn.customer_vat_number or "",
         invoice_number=txn.invoice_number,
         issue_date=txn.created_at.strftime("%Y-%m-%d") if txn.created_at else "",
         line_items=items,

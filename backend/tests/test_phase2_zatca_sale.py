@@ -434,3 +434,149 @@ async def test_b2b_below_threshold_is_reported_not_cleared(client, monkeypatch):
     status, clearance_used = await _report_capturing_clearance(client_id, doc_id, monkeypatch)
     assert clearance_used is False
     assert status == "reported"
+
+
+# ---------------------------------------------------------------------------
+# F-018 (CRM-01 / ZA-06): buyer VAT captured on the sale path + rendered into
+# the invoice buyer block, making a B2B standard invoice actually possible.
+# ---------------------------------------------------------------------------
+async def _txn_buyer_vat(txn_id: int):
+    async with db_manager.async_session_maker() as db:
+        return (
+            await db.execute(
+                select(Transactions.customer_vat_number).where(Transactions.id == txn_id)
+            )
+        ).scalar_one()
+
+
+async def test_b2b_sale_captures_buyer_vat_into_xml_and_invoice(client):
+    """A sale with an explicit buyer VAT ≥ threshold yields a standard invoice
+    whose UBL carries the buyer CompanyID, and the HTML/PDF printables show it."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Bulk", quantity=10, price=1000.0)
+
+    resp = await client.post(
+        "/api/v1/pos/transaction",
+        json={
+            "items": [{"product_id": pid, "name": "Bulk", "price": 1000.0, "quantity": 1}],
+            "payment_method": "cash",
+            "customer_name": "Acme LLC",
+            "customer_vat_number": "310000000000003",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    txn_id = body["id"]
+
+    # The buyer VAT is persisted on the transaction (F-018).
+    assert await _txn_buyer_vat(txn_id) == "310000000000003"
+
+    # The signed UBL carries the buyer tax block + the standard subtype marker (ZA-06).
+    docs = await _docs(client_id)
+    assert len(docs) == 1
+    xml = docs[0]["signed_xml"]
+    assert "AccountingCustomerParty" in xml
+    assert "310000000000003" in xml
+    assert zatca_sale.INVOICE_TYPE_NAME_STANDARD in xml
+
+    # The always-Arabic HTML invoice (printable) renders the buyer VAT.
+    html_resp = await client.get(
+        f"/api/v1/pos/transactions/{txn_id}/invoice", headers=headers
+    )
+    assert html_resp.status_code == 200
+    assert "310000000000003" in html_resp.text
+
+    # The A4 PDF endpoint returns real PDF bytes for the same invoice.
+    pdf_resp = await client.get(
+        f"/api/v1/pos/transactions/{txn_id}/pdf", headers=headers
+    )
+    assert pdf_resp.status_code == 200
+    assert pdf_resp.headers["content-type"] == "application/pdf"
+    assert pdf_resp.content[:4] == b"%PDF"
+
+
+async def test_buyer_vat_resolved_from_saved_customer_record(client):
+    """A sale tagged only with customer_id inherits that customer's saved VAT,
+    so a B2B sale clears without the cashier re-typing the number (CRM-01)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Bulk", quantity=10, price=1000.0)
+
+    # Create a B2B customer carrying a VAT number via the entity triad.
+    cust_resp = await client.post(
+        "/api/v1/entities/customers",
+        json={"name": "Acme LLC", "vat_number": "311111111111113"},
+        headers=headers,
+    )
+    assert cust_resp.status_code == 201, cust_resp.text
+    customer_id = cust_resp.json()["id"]
+
+    resp = await client.post(
+        "/api/v1/pos/transaction",
+        json={
+            "items": [{"product_id": pid, "name": "Bulk", "price": 1000.0, "quantity": 1}],
+            "payment_method": "cash",
+            "customer_id": customer_id,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    txn_id = resp.json()["id"]
+
+    # The buyer VAT was resolved from the saved customer and stamped on the sale.
+    assert await _txn_buyer_vat(txn_id) == "311111111111113"
+    xml = (await _docs(client_id))[0]["signed_xml"]
+    assert "311111111111113" in xml
+    assert zatca_sale.INVOICE_TYPE_NAME_STANDARD in xml
+
+
+async def test_b2c_sale_has_no_buyer_vat_block(client):
+    """An ordinary B2C sale captures no buyer VAT and emits no buyer tax block."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Cola", quantity=10, price=1000.0)
+
+    body = await _sale(client, headers, pid, name="Cola", price=1000.0, qty=1)
+    assert await _txn_buyer_vat(body["id"]) is None
+    xml = (await _docs(client_id))[0]["signed_xml"]
+    # The UBL buyer PartyTaxScheme is only emitted when a buyer VAT is present.
+    assert "PartyTaxScheme" in xml  # seller block always present
+    assert "AccountingCustomerParty" in xml
+    # No buyer CompanyID: the customer party carries a name only.
+    cust_block = xml.split("AccountingCustomerParty", 1)[1]
+    assert "CompanyID" not in cust_block.split("PaymentMeans", 1)[0]
+
+
+def test_pdf_buyer_block_renders_vat_when_present(monkeypatch):
+    """Unit: the buyer VAT is threaded into the A4 PDF buyer block when present
+    and omitted otherwise. fpdf2 zlib-compresses content streams, so we assert the
+    extra buyer-VAT line enlarges the document rather than grepping raw bytes; the
+    visible-text rendering is covered by the always-Arabic HTML printable test."""
+    from services import pdf_render
+
+    # Force the deterministic Latin-1 fallback so the comparison is stable across
+    # environments regardless of whether the Arabic font/shapers are installed.
+    monkeypatch.setattr(pdf_render, "_arabic_available", lambda: False)
+    common = dict(
+        seller_name="Seller",
+        seller_vat="300000000000003",
+        buyer_name="Acme LLC",
+        invoice_number="INV-0001-000001",
+        issue_date="2026-06-03",
+        line_items=[{"name": "Bulk", "quantity": 1, "price": 1000.0}],
+        subtotal=1000.0,
+        discount=0.0,
+        vat_amount=150.0,
+        total_amount=1150.0,
+    )
+    with_vat = pdf_render.invoice_pdf_bytes(buyer_vat="310000000000003", **common)
+    without_vat = pdf_render.invoice_pdf_bytes(buyer_vat="", **common)
+
+    assert with_vat[:4] == b"%PDF" and without_vat[:4] == b"%PDF"
+    # The buyer-VAT line is rendered only in the first document.
+    assert len(with_vat) > len(without_vat)

@@ -185,7 +185,8 @@ Severity: `BLOCKER` (core flow unusable / P0 table-stake absent / compliance-blo
 - Fix: Compute invoice type from buyer-VAT-present **AND** total ≥ 1,000 SAR in `sign_transaction`, store on the doc, pass `clearance=(type=="standard")` through the report chain.
 - Catch forever: pytest — B2B sale ≥ 1,000 SAR drives `submit_invoice(clearance=True)` → `status="cleared"`; B2C → `status="reported"`.
 
-**F-018 — No buyer VAT captured or rendered → B2B standard invoices are structurally impossible** · `MISSING_SIDE_EFFECT`
+**F-018 — ✅ DONE — No buyer VAT captured or rendered → B2B standard invoices are structurally impossible** · `MISSING_SIDE_EFFECT`
+- **Fixed (buyer VAT captured on the sale path + rendered into every buyer block):** `customers.vat_number` (CRM-01) and `transactions.customer_vat_number` are added (Alembic `b2c3d4e5f6a7`, chained from `a1b2c3d4e5f6`; `alembic upgrade head` clean on an empty DB). `CreateTransactionRequest` gains `customer_vat_number`; `create_transaction` resolves the buyer VAT from the explicit field **or** the selected customer's saved record (trusted, user-scoped) and stamps it onto the transaction — so a sale tagged only with `customer_id` for a VAT-registered customer routes to B2B clearance with no re-typing. The captured VAT threads into `sign_transaction` (already wired by F-017), the UBL buyer `cac:AccountingCustomerParty//cac:PartyTaxScheme/cbc:CompanyID` (emitted only when present), and the **always-Arabic** A4 PDF (`pdf_render.py`, Arabic + Latin), the HTML invoice (`production.py::generate_invoice_html`), and the credit-note path (inherits the original sale's buyer VAT). Customer triad schemas + `CustomerManagement.tsx` (form field + table column) + `api.ts` wrappers carry `vat_number`. Tests: `tests/test_phase2_zatca_sale.py::test_b2b_sale_captures_buyer_vat_into_xml_and_invoice`, `::test_buyer_vat_resolved_from_saved_customer_record`, `::test_b2c_sale_has_no_buyer_vat_block`, `::test_pdf_buyer_block_renders_vat_when_present`. **Also closes F-037** (same root — the customer VAT field + triad + form + buyer-block flow).
 - Violated: ZA-06 / PRN-02 *"buyer block (B2B: name/VAT)"* / CRM-01 (P0) customer VAT number.
 - Manifests: `buyer_vat` is hardcoded `""` on the sign call; `customers` model has no `vat_number`; `transactions` carries only `customer_name`. The UBL builder emits a buyer `PartyTaxScheme` only `if buyer_vat:` — never truthy. A4 PDF renders buyer name only.
 - Evidence: `backend/services/zatca_sale.py:134`; `backend/routers/zatca.py:329`; `backend/models/customers.py` (no vat); `backend/models/transactions.py:27`; `backend/services/production.py:292`; `backend/services/pdf_render.py:102-105`. (Same root as **F-029**.)
@@ -335,7 +336,8 @@ Severity: `BLOCKER` (core flow unusable / P0 table-stake absent / compliance-blo
 
 ### CRM / PRC — Customers, loyalty, pricing
 
-**F-037 — Customer record has no VAT number (blocks B2B clearance)** · `MISSING_SIDE_EFFECT`
+**F-037 — ✅ DONE (with F-018) — Customer record has no VAT number (blocks B2B clearance)** · `MISSING_SIDE_EFFECT`
+- **Fixed with F-018:** `customers.vat_number` added to the model + triad schemas (`routers/customers.py`) + `CustomerManagement.tsx` form/table + `api.ts` `createCustomer`; it resolves onto the sale's `customer_vat_number` and flows into the invoice buyer block. See F-018 for the full description and tests.
 - Violated: CRM-01 (P0) customer VAT number for B2B invoices. (Same root as F-018; tracked here for the CRM family.)
 - Evidence: `backend/models/customers.py:6-19` (no `vat_number`); `CustomerManagement.tsx` no field. (`clients`/`suppliers` models DO have vat_number — only the customer is missing it.)
 - Severity: MAJOR · Confidence: HIGH
@@ -573,6 +575,7 @@ Severity: `BLOCKER` (core flow unusable / P0 table-stake absent / compliance-blo
 
 **Traceability (closed findings → SRS ID → deterministic test):**
 - F-017 → ZA-06 → `tests/test_phase2_zatca_sale.py::test_classify_invoice_subtype_routing` (+ `_b2b_/_b2c_` cases).
+- F-018 / F-037 → ZA-06 / CRM-01 / PRN-02 → `tests/test_phase2_zatca_sale.py::test_b2b_sale_captures_buyer_vat_into_xml_and_invoice`, `::test_buyer_vat_resolved_from_saved_customer_record`, `::test_b2c_sale_has_no_buyer_vat_block`, `::test_pdf_buyer_block_renders_vat_when_present`.
 - F-001 → PAY-01/PAY-05 → `tests/test_phase2_payments.py::test_card_decline_blocks_sale_and_persists_nothing`, `::test_card_approve_captures_approval_on_tender`.
 - F-002 → PAY-01..04/PAY-06 → `tests/test_phase2_payments.py::test_tender_type_enum_includes_saudi_tenders`, `::test_charge_endpoint_declines_then_approves`.
 - F-003 → PAY-09 → `tests/test_phase2_payments.py::test_payment_tenders_schema_carries_proof_but_no_pan`.

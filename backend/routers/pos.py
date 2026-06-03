@@ -17,6 +17,7 @@ from dependencies.features import require_feature
 from dependencies.permissions import require_permission
 from schemas.auth import UserResponse
 from models.clients import Clients
+from models.customers import Customers
 from models.products import Products
 from models.transactions import Transactions
 from models.payment_tenders import PaymentTenders
@@ -72,6 +73,11 @@ class CreateTransactionRequest(BaseModel):
     payment_method: str  # "cash", "card", "mixed"
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
+    # Buyer VAT registration number for a B2B sale (F-018 / ZA-06). When given (or
+    # resolvable from ``customer_id``'s saved record) the invoice carries the buyer
+    # tax block and routes to clearance once it clears the threshold. Optional —
+    # ordinary B2C sales leave it unset.
+    customer_vat_number: Optional[str] = None
     discount_amount: Optional[float] = 0
     vat_rate: Optional[float] = 15.0  # fallback; the global rate (MA-05) wins when set
     # Optional split-tender breakdown (POS-02). When given, the per-method amounts
@@ -505,6 +511,25 @@ async def create_transaction(
         ensure_ascii=False,
     )
 
+    # ---- Buyer VAT capture (F-018 / ZA-06) ----
+    # A VAT-registered buyer makes this a B2B supply. Prefer the explicit request
+    # value (ad-hoc business walk-in); otherwise fall back to the saved customer's
+    # VAT number (trusted record, scoped to this user). The captured number is
+    # stamped onto the transaction so the invoice buyer block and the
+    # clearance/reporting routing are driven by it (see sign_transaction below).
+    buyer_vat = (data.customer_vat_number or "").strip() or None
+    if not buyer_vat and data.customer_id:
+        cust = (
+            await db.execute(
+                select(Customers).where(
+                    Customers.id == data.customer_id,
+                    Customers.user_id == str(current_user.id),
+                )
+            )
+        ).scalar_one_or_none()
+        if cust and (cust.vat_number or "").strip():
+            buyer_vat = cust.vat_number.strip()
+
     # Create transaction record. The fiscal QR/hash are populated by signing
     # below (C-3) — never with the old unsigned Phase-1 TLV.
     transaction = Transactions(
@@ -521,6 +546,7 @@ async def create_transaction(
         items_json=items_json,
         customer_name=data.customer_name,
         customer_phone=data.customer_phone,
+        customer_vat_number=buyer_vat,
         branch_id=data.branch_id,
     )
     db.add(transaction)
@@ -582,10 +608,10 @@ async def create_transaction(
     # carry the real network/approval/RRN proof for card-like tenders (PAY-01).
     _persist_tenders(db, str(current_user.id), client.id, transaction.id, captured_tenders)
     # ZA-06: a VAT-registered buyer on the transaction routes the invoice to B2B
-    # clearance (the buyer VAT field itself is captured by F-018).
+    # clearance; the captured buyer VAT (F-018) is rendered into the UBL buyer block.
     doc, stamped_qr = await zatca_sale.sign_transaction(
         db, client, transaction,
-        buyer_vat=getattr(transaction, "customer_vat_number", None),
+        buyer_vat=transaction.customer_vat_number,
     )
     document_id = doc.id
 
@@ -759,6 +785,7 @@ async def process_offline_sale(
         items_json=json.dumps([i.model_dump() for i in items], ensure_ascii=False),
         customer_name=txn.get("customer_name"),
         customer_phone=txn.get("customer_phone"),
+        customer_vat_number=(txn.get("customer_vat_number") or "").strip() or None,
     )
     db.add(transaction)
 
@@ -792,7 +819,7 @@ async def process_offline_sale(
     )
     doc, _stamped_qr = await zatca_sale.sign_transaction(
         db, client, transaction,
-        buyer_vat=getattr(transaction, "customer_vat_number", None),
+        buyer_vat=transaction.customer_vat_number,
     )
     await db.commit()
     await db.refresh(transaction)
@@ -955,6 +982,7 @@ async def refund_transaction(
         items_json=original.items_json,
         customer_name=original.customer_name,
         customer_phone=original.customer_phone,
+        customer_vat_number=original.customer_vat_number,
     )
     db.add(credit)
     original.status = "refunded"
@@ -974,7 +1002,7 @@ async def refund_transaction(
         billing_reference=original.invoice_number,
         # ZA-06: a B2B credit note inherits the original sale's buyer VAT so it is
         # cleared/reported on the same path as the invoice it reverses.
-        buyer_vat=getattr(original, "customer_vat_number", None),
+        buyer_vat=credit.customer_vat_number,
     )
     document_id = doc.id
 
@@ -1054,6 +1082,7 @@ async def get_invoice_document(
         seller_name=client.business_name or "Business",
         seller_vat=client.vat_number or "000000000000000",
         buyer_name=txn.customer_name or "نقدي",  # "Cash" customer in Arabic
+        buyer_vat=txn.customer_vat_number or "",
         invoice_number=txn.invoice_number,
         issue_date=issue_date,
         line_items=line_items,
@@ -1098,6 +1127,7 @@ async def get_invoice_pdf(
             seller_name=client.business_name or "Business",
             seller_vat=client.vat_number or "000000000000000",
             buyer_name=txn.customer_name or "Cash",
+            buyer_vat=txn.customer_vat_number or "",
             invoice_number=txn.invoice_number,
             issue_date=issue_date,
             line_items=line_items,

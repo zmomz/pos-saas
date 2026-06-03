@@ -32,6 +32,7 @@ _L = {
     "seller": "البائع",
     "vat_no": "الرقم الضريبي",
     "buyer": "المشتري",
+    "buyer_vat_no": "الرقم الضريبي للمشتري",
     "invoice_no": "رقم الفاتورة",
     "date": "التاريخ",
     "item": "الصنف",
@@ -77,6 +78,7 @@ def _render_arabic(
     seller_name,
     seller_vat,
     buyer_name,
+    buyer_vat,
     invoice_number,
     issue_date,
     line_items,
@@ -102,6 +104,10 @@ def _render_arabic(
     line(f"{_L['seller']}: {seller_name}")
     line(f"{_L['vat_no']}: {seller_vat}")
     line(f"{_L['buyer']}: {buyer_name}")
+    # B2B buyer tax block (PRN-02): render the buyer VAT only when present, so B2C
+    # invoices stay unchanged.
+    if buyer_vat:
+        line(f"{_L['buyer_vat_no']}: {buyer_vat}")
     line(f"{_L['invoice_no']}: {invoice_number}")
     line(f"{_L['date']}: {issue_date}")
     pdf.ln(3)
@@ -149,6 +155,7 @@ def _render_latin(
     seller_name,
     seller_vat,
     buyer_name,
+    buyer_vat,
     invoice_number,
     issue_date,
     line_items,
@@ -172,6 +179,8 @@ def _render_latin(
     pdf.cell(0, 6, _safe(f"Seller: {seller_name}"), ln=True)
     pdf.cell(0, 6, _safe(f"VAT No: {seller_vat}"), ln=True)
     pdf.cell(0, 6, _safe(f"Buyer: {buyer_name}"), ln=True)
+    if buyer_vat:
+        pdf.cell(0, 6, _safe(f"Buyer VAT: {buyer_vat}"), ln=True)
     pdf.cell(0, 6, _safe(f"Invoice #: {invoice_number}"), ln=True)
     pdf.cell(0, 6, _safe(f"Date: {issue_date}"), ln=True)
     pdf.ln(3)
@@ -218,6 +227,7 @@ def invoice_pdf_bytes(
     seller_vat: str,
     buyer_name: str,
     invoice_number: str,
+    buyer_vat: str = "",
     issue_date: str,
     line_items: List[dict],
     subtotal: float,
@@ -241,6 +251,7 @@ def invoice_pdf_bytes(
         seller_name=seller_name,
         seller_vat=seller_vat,
         buyer_name=buyer_name,
+        buyer_vat=buyer_vat,
         invoice_number=invoice_number,
         issue_date=issue_date,
         line_items=line_items,

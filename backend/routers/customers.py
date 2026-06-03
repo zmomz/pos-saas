@@ -26,6 +26,7 @@ class CustomersData(BaseModel):
     name: str
     phone: str = None
     email: str = None
+    vat_number: str = None  # buyer VAT for B2B invoices (CRM-01)
     notes: str = None
     total_purchases: float = None
     visit_count: int = None
@@ -36,6 +37,7 @@ class CustomersUpdateData(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None
+    vat_number: Optional[str] = None  # buyer VAT for B2B invoices (CRM-01)
     notes: Optional[str] = None
     total_purchases: Optional[float] = None
     visit_count: Optional[int] = None
@@ -48,6 +50,7 @@ class CustomersResponse(BaseModel):
     name: str
     phone: Optional[str] = None
     email: Optional[str] = None
+    vat_number: Optional[str] = None
     notes: Optional[str] = None
     total_purchases: Optional[float] = None
     visit_count: Optional[int] = None

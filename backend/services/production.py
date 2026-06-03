@@ -398,8 +398,13 @@ class PDFInvoiceService:
         total_amount: float,
         zatca_qr: str,
         discount: float = 0,
+        buyer_vat: str = "",
     ) -> str:
-        """Generate Arabic-only HTML invoice suitable for PDF conversion."""
+        """Generate Arabic-only HTML invoice suitable for PDF conversion.
+
+        ``buyer_vat`` renders the B2B buyer tax block (PRN-02) when present; it is
+        omitted for ordinary B2C invoices.
+        """
         items_html = ""
         for idx, item in enumerate(line_items, 1):
             item_total = item.get("price", 0) * item.get("quantity", 1)
@@ -411,6 +416,10 @@ class PDFInvoiceService:
                 <td>{format_money_ar(item.get('price', 0))} ر.س</td>
                 <td>{format_money_ar(item_total)} ر.س</td>
             </tr>"""
+
+        buyer_vat_html = (
+            f"<p><strong>الرقم الضريبي:</strong> {buyer_vat}</p>" if buyer_vat else ""
+        )
 
         html = f"""<!DOCTYPE html>
 <html dir="rtl" lang="ar">
@@ -447,6 +456,7 @@ class PDFInvoiceService:
         <div class="info-block">
             <h3>المشتري</h3>
             <p><strong>الاسم:</strong> {buyer_name}</p>
+            {buyer_vat_html}
         </div>
     </div>
 

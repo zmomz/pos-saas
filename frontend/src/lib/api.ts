@@ -148,6 +148,10 @@ export async function createTransaction(data: {
   payment_method: string;
   customer_name?: string;
   customer_phone?: string;
+  // F-018/ZA-06: buyer VAT for a B2B sale. When set (or resolvable from the
+  // selected customer's saved record) the invoice carries the buyer tax block and
+  // routes to clearance once it clears the threshold.
+  customer_vat_number?: string;
   // POS-01: persist the applied order discount so totals match what the cashier saw.
   discount_amount?: number;
   // POS-02: split tenders (cash + card + …). Per-method amounts must sum to the total.
@@ -496,6 +500,7 @@ export async function createCustomer(data: {
   name: string;
   phone?: string;
   email?: string;
+  vat_number?: string;
   address?: string;
   notes?: string;
 }) {
