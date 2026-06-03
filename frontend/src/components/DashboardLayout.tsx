@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage, languageOptions, Language } from '@/lib/i18n';
 import OnboardingTour from '@/components/OnboardingTour';
+import OfflineBanner from '@/components/states/OfflineBanner';
 import {
   LayoutDashboard,
   Users,
@@ -244,6 +245,9 @@ const DashboardLayout: React.FC = () => {
             </button>
           </div>
         </header>
+
+        {/* Global offline banner (UX-02 / F-051) — covers every back-office page. */}
+        <OfflineBanner />
 
         {/* Page content */}
         <main className="flex-1 p-4 sm:p-6 overflow-auto">

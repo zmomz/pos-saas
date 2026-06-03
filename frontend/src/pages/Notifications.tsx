@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { getNotifications, markNotificationRead } from '@/lib/api';
+import ErrorState from '@/components/states/ErrorState';
+import PermissionDenied from '@/components/states/PermissionDenied';
 
 interface Notification {
   id: string;
@@ -21,6 +23,10 @@ export default function Notifications() {
   const { language, setLanguage, t, isRTL } = useLanguage();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  // UX-02 (F-051): a failed fetch must not collapse into the empty state, and a
+  // 403 gets its own in-page permission state rather than a misleading "empty".
+  const [error, setError] = useState(false);
+  const [denied, setDenied] = useState(false);
 
   useEffect(() => {
     fetchNotifications();
@@ -29,9 +35,14 @@ export default function Notifications() {
   async function fetchNotifications() {
     try {
       setLoading(true);
+      setError(false);
+      setDenied(false);
       const data = await getNotifications();
       setNotifications(data?.notifications || []);
-    } catch {
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 403) setDenied(true);
+      else setError(true);
       setNotifications([]);
     } finally {
       setLoading(false);
@@ -141,8 +152,14 @@ export default function Notifications() {
           </div>
         )}
 
+        {/* Permission-denied state (in-page, UX-02) */}
+        {!loading && denied && <PermissionDenied />}
+
+        {/* Error state — distinct from empty (UX-02) */}
+        {!loading && !denied && error && <ErrorState onRetry={fetchNotifications} />}
+
         {/* Empty state */}
-        {!loading && notifications.length === 0 && (
+        {!loading && !denied && !error && notifications.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-slate-400">
             <Bell className="mb-4 h-16 w-16 opacity-30" />
             <p className="text-lg">
@@ -152,7 +169,7 @@ export default function Notifications() {
         )}
 
         {/* Notification list */}
-        {!loading && notifications.length > 0 && (
+        {!loading && !denied && !error && notifications.length > 0 && (
           <div className="space-y-3">
             {notifications.map((notification) => (
               <Card

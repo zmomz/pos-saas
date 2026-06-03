@@ -207,6 +207,10 @@ export default function ReportsAnalytics() {
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
+  // UX-02 (F-051): a failed fetch on any panel must surface a real error state
+  // distinct from "no data" — generalizing the RPT-03 payment-panel pattern.
+  const [salesError, setSalesError] = useState(false);
+  const [productsError, setProductsError] = useState(false);
   const [paymentError, setPaymentError] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -228,10 +232,13 @@ export default function ReportsAnalytics() {
 
   async function fetchSalesData() {
     setLoadingSales(true);
+    setSalesError(false);
     try {
       const result = await getSalesSummary(period);
       setSalesData(result?.data || []);
     } catch {
+      // A failed fetch must not look like an empty period (UX-02).
+      setSalesError(true);
       setSalesData([]);
     } finally {
       setLoadingSales(false);
@@ -240,10 +247,13 @@ export default function ReportsAnalytics() {
 
   async function fetchTopProducts() {
     setLoadingProducts(true);
+    setProductsError(false);
     try {
       const result = await getTopProducts(10);
       setTopProducts(result?.products || []);
     } catch {
+      // A failed fetch must not look like "no products sold" (UX-02).
+      setProductsError(true);
       setTopProducts([]);
     } finally {
       setLoadingProducts(false);
@@ -438,6 +448,8 @@ export default function ReportsAnalytics() {
                 <div key={i} className="h-8 bg-slate-700 rounded animate-pulse" />
               ))}
             </div>
+          ) : salesError ? (
+            <p className="text-red-400 text-center py-8">{tr('error_loading')}</p>
           ) : salesData.length === 0 ? (
             <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
           ) : (
@@ -559,6 +571,8 @@ export default function ReportsAnalytics() {
                 <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
               ))}
             </div>
+          ) : productsError ? (
+            <p className="text-red-400 text-center py-8">{tr('error_loading')}</p>
           ) : topProducts.length === 0 ? (
             <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
           ) : (
