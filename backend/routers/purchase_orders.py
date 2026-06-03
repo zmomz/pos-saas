@@ -223,6 +223,25 @@ async def create_purchase_orders(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+class ReceiveLineInput(BaseModel):
+    """A single line being received now (a partial receipt against the PO)."""
+    product_id: int
+    quantity: int
+    cost: Optional[float] = None
+
+
+class ReceivePurchaseOrderRequest(BaseModel):
+    """Optional body for ``/receive`` (INV-07/INV-09).
+
+    - ``branch_id`` — receive into the per-branch stock ledger the POS deducts
+      from (omit to fall back to the client-level aggregate ``products.quantity``).
+    - ``lines`` — a partial receipt: only these ``{product_id, quantity, cost?}``
+      are received (omit to receive the full remaining balance of every line).
+    """
+    branch_id: Optional[int] = None
+    lines: Optional[List[ReceiveLineInput]] = None
+
+
 class ReceivePurchaseOrderResponse(BaseModel):
     id: int
     status: str
@@ -231,21 +250,71 @@ class ReceivePurchaseOrderResponse(BaseModel):
     message: str
 
 
+def _remaining_by_product(items: list) -> dict:
+    """Outstanding (ordered − already-received) quantity per product across the PO."""
+    remaining: dict = {}
+    for line in items:
+        pid = line.get("product_id")
+        if pid is None:
+            continue
+        ordered = int(line.get("quantity") or 0)
+        already = int(line.get("received") or 0)
+        remaining[pid] = remaining.get(pid, 0) + max(0, ordered - already)
+    return remaining
+
+
+def _apply_received_to_lines(items: list, to_receive: dict) -> dict:
+    """Fold ``to_receive`` (product_id → qty) into each line's ``received`` field.
+
+    Fills lines for a product in order up to each line's ordered quantity so the
+    PO's own ``items_json`` is the durable record of how much has been received
+    (enabling successive partial receipts to complete to ``received`` exactly once).
+    Returns the actual quantity applied per product.
+    """
+    remaining = dict(to_receive)
+    applied: dict = {}
+    for line in items:
+        pid = line.get("product_id")
+        if pid is None:
+            continue
+        ordered = int(line.get("quantity") or 0)
+        already = int(line.get("received") or 0)
+        line_remaining = max(0, ordered - already)
+        want = remaining.get(pid, 0)
+        if want <= 0 or line_remaining <= 0:
+            continue
+        take = min(want, line_remaining)
+        line["received"] = already + take
+        remaining[pid] = want - take
+        applied[pid] = applied.get(pid, 0) + take
+    return applied
+
+
 @router.post("/{id}/receive", response_model=ReceivePurchaseOrderResponse)
 async def receive_purchase_order(
     id: int,
+    request: Optional[ReceivePurchaseOrderRequest] = Body(None),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Receive a purchase order: increment stock for each line and close the PO.
+    """Receive a purchase order into stock and advance its status (INV-07/INV-09).
 
-    Real procurement workflow (Phase 6): parses ``items_json`` (a list of
-    ``{product_id, quantity, cost?}``), adds the received quantities back to the
-    owner's product stock, records the receive date, and advances the PO status
-    to ``received``. Idempotent guard: a PO already received is rejected so stock
-    is never double-counted.
+    Parses ``items_json`` (a list of ``{product_id, quantity, cost?}``) and adds
+    the received quantities to stock. Improvements over the original flat receive:
+
+    - **Branch-aware (INV-07):** when ``branch_id`` is given the stock lands in the
+      per-branch ledger (``product_branch_stock``) the POS actually deducts from,
+      not just the client-level aggregate.
+    - **Partial receipts (INV-07):** an optional ``lines`` body receives only the
+      selected quantities; the PO becomes ``partially_received`` while a balance
+      remains and ``received`` only once every line is fully received.
+    - **Moving-average cost (INV-09):** ``cost_price`` is re-weighted by the prior
+      on-hand at the receiving location, not flat-overwritten — so margin reports
+      reflect real landed cost.
+
+    Idempotent guard: a fully-received PO is rejected so stock is never double-counted.
     """
-    from sqlalchemy import select, update
+    from sqlalchemy import select
 
     from models.products import Products
     from models.purchase_orders import Purchase_orders
@@ -267,39 +336,132 @@ async def receive_purchase_order(
         items = json.loads(po.items_json) if po.items_json else []
     except (ValueError, TypeError):
         items = []
+    if not isinstance(items, list):
+        items = []
 
-    received = 0
+    remaining_by_pid = _remaining_by_product(items)
+
+    # A legacy PO with no receivable product lines (e.g. a product_name-only PO
+    # from the older create form) is simply closed — there is nothing to land in
+    # stock, but the operator still wants it marked received.
+    if not remaining_by_pid:
+        received_date = date.today().isoformat()
+        po.status = "received"
+        po.received_date = received_date
+        await db.commit()
+        return ReceivePurchaseOrderResponse(
+            id=id,
+            status="received",
+            received_date=received_date,
+            received_items=0,
+            message="Purchase order closed (no stock lines to receive)",
+        )
+
+    branch_id = request.branch_id if request else None
+    cost_override: dict = {}
+    if request and request.lines:
+        to_receive: dict = {}
+        for line_in in request.lines:
+            if line_in.quantity is None or line_in.quantity <= 0:
+                continue
+            to_receive[line_in.product_id] = (
+                to_receive.get(line_in.product_id, 0) + int(line_in.quantity)
+            )
+            if line_in.cost is not None:
+                cost_override[line_in.product_id] = line_in.cost
+        # Reject receiving more than the outstanding balance for any product.
+        for pid, qty in to_receive.items():
+            if qty > remaining_by_pid.get(pid, 0):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Cannot receive {qty} unit(s) of product {pid}: only "
+                        f"{remaining_by_pid.get(pid, 0)} remaining on this order"
+                    ),
+                )
+    else:
+        # No explicit lines → receive the full remaining balance of every line.
+        to_receive = {pid: qty for pid, qty in remaining_by_pid.items() if qty > 0}
+
+    if not to_receive:
+        raise HTTPException(status_code=400, detail="Nothing left to receive on this order")
+
+    # Default per-product cost = the PO line's cost (overridable per receive line).
+    cost_by_pid: dict = {}
     for line in items:
         pid = line.get("product_id")
-        qty = int(line.get("quantity") or 0)
-        if not pid or qty <= 0:
-            continue
-        result = await db.execute(
-            update(Products)
-            .where(Products.id == pid, Products.user_id == str(current_user.id))
-            .values(quantity=Products.quantity + qty)
-        )
-        if result.rowcount:
-            received += 1
-            cost = line.get("cost")
-            if cost is not None:
-                await db.execute(
-                    update(Products).where(Products.id == pid).values(cost_price=cost)
-                )
+        if pid is not None and line.get("cost") is not None:
+            cost_by_pid[pid] = line.get("cost")
 
-    received_date = date.today().isoformat()
-    await db.execute(
-        update(Purchase_orders)
-        .where(Purchase_orders.id == id)
-        .values(status="received", received_date=received_date)
+    applied = _apply_received_to_lines(items, to_receive)
+
+    client = None
+    if branch_id is not None:
+        from routers.pos import get_client_for_user
+
+        client = await get_client_for_user(db, str(current_user.id))
+
+    received_lines = 0
+    for pid, qty in applied.items():
+        if qty <= 0:
+            continue
+        product = (
+            await db.execute(
+                select(Products).where(
+                    Products.id == pid, Products.user_id == str(current_user.id)
+                )
+            )
+        ).scalar_one_or_none()
+        if not product:
+            continue
+        received_lines += 1
+        cost = cost_override.get(pid, cost_by_pid.get(pid))
+
+        if branch_id is not None:
+            from services.branch_stock import get_or_init_row
+
+            row = await get_or_init_row(
+                db, str(current_user.id), client.id, branch_id, product
+            )
+            prior_qty = row.quantity or 0
+            row.quantity = prior_qty + qty
+        else:
+            prior_qty = product.quantity or 0
+            product.quantity = prior_qty + qty
+
+        # Moving-average cost (INV-09): re-weight by the on-hand at the location
+        # being replenished, never a flat overwrite.
+        if cost is not None:
+            prior_cost = product.cost_price or 0
+            denom = prior_qty + qty
+            product.cost_price = (
+                ((prior_qty * prior_cost) + (qty * cost)) / denom if denom > 0 else cost
+            )
+
+    # Fully received only when every line's received reaches its ordered quantity.
+    fully_received = all(
+        int(line.get("received") or 0) >= int(line.get("quantity") or 0)
+        for line in items
+        if line.get("product_id") is not None
     )
+    new_status = "received" if fully_received else "partially_received"
+    received_date = date.today().isoformat() if fully_received else po.received_date
+
+    po.items_json = json.dumps(items)
+    po.status = new_status
+    po.received_date = received_date
     await db.commit()
+
     return ReceivePurchaseOrderResponse(
         id=id,
-        status="received",
+        status=new_status,
         received_date=received_date,
-        received_items=received,
-        message=f"Received {received} line(s) into inventory",
+        received_items=received_lines,
+        message=(
+            f"Received {received_lines} line(s) into "
+            f"{'branch' if branch_id is not None else 'client'} stock"
+            + ("" if fully_received else "; order partially received")
+        ),
     )
 
 

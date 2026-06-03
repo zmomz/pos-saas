@@ -653,13 +653,20 @@ export async function deleteCustomer(id: string) {
   await client.entities.customers.delete({ id });
 }
 
-// Procurement (Phase 6): receive a purchase order — the backend increments
-// product stock, records cost, and advances the PO to 'received' (idempotent).
-export async function receivePurchaseOrder(poId: number) {
+// Procurement (Phase 6 / F-034): receive a purchase order. The backend lands
+// stock in the per-branch ledger when `branch_id` is given (else the client-level
+// aggregate), supports partial receipts via `lines` (the PO becomes
+// 'partially_received' while a balance remains), re-weights cost as a moving
+// average, and is idempotent once fully received. Omit options to receive the
+// full remaining balance into client-level stock (legacy behavior).
+export async function receivePurchaseOrder(
+  poId: number,
+  options?: { branch_id?: number; lines?: { product_id: number; quantity: number; cost?: number }[] },
+) {
   const response = await client.apiCall.invoke({
     url: `/api/v1/entities/purchase_orders/${poId}/receive`,
     method: 'POST',
-    data: {},
+    data: options || {},
   });
   return response.data;
 }

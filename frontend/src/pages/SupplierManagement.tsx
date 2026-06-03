@@ -260,6 +260,8 @@ export default function SupplierManagement() {
     const colors: Record<string, string> = {
       draft: 'bg-gray-500/20 text-gray-400',
       sent: 'bg-blue-500/20 text-blue-400',
+      ordered: 'bg-blue-500/20 text-blue-400',
+      partially_received: 'bg-amber-500/20 text-amber-400',
       received: 'bg-green-500/20 text-green-400',
       cancelled: 'bg-red-500/20 text-red-400',
       active: 'bg-green-500/20 text-green-400',
@@ -460,9 +462,10 @@ export default function SupplierManagement() {
                     <td className="p-3">{getStatusBadge(po.status)}</td>
                     <td className="p-3">{po.order_date ? new Date(po.order_date).toLocaleDateString() : '—'}</td>
                     <td className="p-3">
-                      {(po.status === 'draft' || po.status === 'sent') && (
+                      {po.status !== 'received' && po.status !== 'cancelled' && (
                         <Button size="sm" onClick={() => handleReceiveStock(po)} className="bg-green-600 hover:bg-green-700 text-white text-xs">
-                          <CheckCircle className="h-3 w-3 mr-1" /> Receive
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                          {po.status === 'partially_received' ? 'Receive Remaining' : 'Receive'}
                         </Button>
                       )}
                     </td>
