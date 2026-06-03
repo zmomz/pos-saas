@@ -154,6 +154,10 @@ export async function createTransaction(data: {
   customer_vat_number?: string;
   // POS-01: persist the applied order discount so totals match what the cashier saw.
   discount_amount?: number;
+  // PRC-01: a discount code the server validates and prices authoritatively. When
+  // set, the server recomputes the discount from the rule and consumes one use —
+  // the client-sent discount_amount is not trusted for the coded portion.
+  discount_code?: string;
   // POS-02: split tenders (cash + card + …). Per-method amounts must sum to the total.
   payments?: PaymentEntry[];
   // Loyalty: identify the customer to accrue points; redeem_points spends balance.
@@ -663,6 +667,30 @@ export async function getAuditLogs() {
 }
 
 // Discount Management
+
+// PRC-01: validate a discount code server-side and get the authoritative amount.
+// The POS must not trust a client-computed discount; this is the source of truth
+// for whether a code applies (active / min-purchase / usage cap) and its value.
+export interface DiscountValidation {
+  valid: boolean;
+  code: string;
+  type: string;
+  value: number;
+  discount_amount: number;
+}
+
+export async function validateDiscount(
+  code: string,
+  subtotal: number,
+): Promise<DiscountValidation> {
+  const response = await client.apiCall.invoke<DiscountValidation>({
+    url: '/api/v1/entities/discounts/validate',
+    method: 'POST',
+    data: { code, subtotal },
+  });
+  return response.data;
+}
+
 export async function getDiscounts() {
   const response = await client.entities.discounts.query({
     query: {},

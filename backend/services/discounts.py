@@ -1,12 +1,36 @@
 import logging
 from typing import Optional, Dict, Any, List
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.discounts import Discounts
 
 logger = logging.getLogger(__name__)
+
+
+class DiscountValidationError(ValueError):
+    """A discount code failed server-side validation (mapped to HTTP 400).
+
+    Raised by ``DiscountsService.validate`` when a code is unknown, inactive,
+    below its ``min_purchase`` floor, or has exhausted its ``max_uses`` cap.
+    PRC-01 requires the server — not the client — to make this judgement.
+    """
+
+
+def compute_discount_amount(discount: Discounts, subtotal: float) -> float:
+    """Server-authoritative discount amount for ``subtotal`` (never client-trusted).
+
+    Percentage discounts apply ``value`` % of the order subtotal; any other type
+    (``fixed``/``flat``) applies a flat ``value``. The result is clamped to
+    ``[0, subtotal]`` so a discount can never push the order negative (PRC-01).
+    """
+    value = float(discount.value or 0)
+    if (discount.type or "").lower() in ("percentage", "percent", "%"):
+        amount = subtotal * (value / 100.0)
+    else:  # fixed / flat
+        amount = value
+    return round(max(0.0, min(amount, subtotal)), 2)
 
 
 # ------------------ Service Layer ------------------
@@ -137,6 +161,70 @@ class DiscountsService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Error deleting discounts {obj_id}: {str(e)}")
+            raise
+
+    async def get_by_code(self, code: str, user_id: str) -> Optional[Discounts]:
+        """Look up a discount by code within the owner's scope (case-insensitive)."""
+        try:
+            result = await self.db.execute(
+                select(Discounts).where(
+                    func.lower(Discounts.code) == (code or "").strip().lower(),
+                    Discounts.user_id == str(user_id),
+                )
+            )
+            return result.scalars().first()
+        except Exception as e:
+            logger.error(f"Error fetching discount by code: {str(e)}")
+            raise
+
+    async def validate(self, code: str, subtotal: float, user_id: str) -> Discounts:
+        """Validate a discount code for an order subtotal (PRC-01). Read-only.
+
+        Enforces, server-side: the code exists in the caller's scope, is active,
+        the order meets ``min_purchase``, and the ``max_uses`` cap is not already
+        exhausted. Raises ``DiscountValidationError`` (→ HTTP 400) otherwise.
+        Does **not** consume a use — call ``consume`` for that, atomically with
+        the sale, so a rolled-back sale never spends a use.
+        """
+        discount = await self.get_by_code(code, user_id)
+        if not discount:
+            raise DiscountValidationError("Invalid discount code")
+        if discount.is_active is False:
+            raise DiscountValidationError("This discount is no longer active")
+        if discount.min_purchase and float(subtotal) < float(discount.min_purchase):
+            raise DiscountValidationError(
+                f"Minimum purchase of {float(discount.min_purchase):.2f} required"
+            )
+        if discount.max_uses is not None and (discount.usage_count or 0) >= discount.max_uses:
+            raise DiscountValidationError("This discount has reached its usage limit")
+        return discount
+
+    async def consume(self, discount_id: int, user_id: str) -> bool:
+        """Atomically increment ``usage_count`` enforcing the cap. No commit.
+
+        Issues a single conditional UPDATE that increments only while the cap is
+        not yet reached, so concurrent sales cannot push ``usage_count`` past
+        ``max_uses`` (the cap is enforced in SQL, not by a read-then-write race).
+        Runs inside the caller's transaction (the sale), so the increment commits
+        with the sale and rolls back if the sale fails. Returns ``True`` when a
+        use was consumed, ``False`` when the cap was already exhausted.
+        """
+        try:
+            result = await self.db.execute(
+                update(Discounts)
+                .where(
+                    Discounts.id == discount_id,
+                    Discounts.user_id == str(user_id),
+                    or_(
+                        Discounts.max_uses.is_(None),
+                        func.coalesce(Discounts.usage_count, 0) < Discounts.max_uses,
+                    ),
+                )
+                .values(usage_count=func.coalesce(Discounts.usage_count, 0) + 1)
+            )
+            return (result.rowcount or 0) > 0
+        except Exception as e:
+            logger.error(f"Error consuming discount {discount_id}: {str(e)}")
             raise
 
     async def get_by_field(self, field_name: str, field_value: Any) -> Optional[Discounts]:

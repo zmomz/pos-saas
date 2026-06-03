@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from dependencies.auth import get_current_user
 from dependencies.features import require_feature
-from dependencies.permissions import require_permission
+from dependencies.permissions import has_permission, require_permission
 from schemas.auth import UserResponse
 from models.clients import Clients
 from models.customers import Customers
@@ -25,6 +25,11 @@ from models.payment_tenders import PaymentTenders
 # (services.branch_stock is only imported lazily inside handlers).
 from models.product_branch_stock import Product_branch_stock  # noqa: F401
 from services import loyalty as loyalty_service
+from services.discounts import (
+    DiscountsService,
+    DiscountValidationError,
+    compute_discount_amount,
+)
 from services.payment_gateway import (
     GatewayNotConfigured,
     PaymentDeclined,
@@ -79,6 +84,13 @@ class CreateTransactionRequest(BaseModel):
     # tax block and routes to clearance once it clears the threshold. Optional —
     # ordinary B2C sales leave it unset.
     customer_vat_number: Optional[str] = None
+    # PRC-01: a discount *code* the server validates and prices authoritatively.
+    # When given, the server recomputes the order discount from the rule
+    # (type/value/min-purchase/usage-cap) — ignoring any client-sent
+    # ``discount_amount`` for the coded portion — and consumes one use atomically
+    # with the sale. A raw ``discount_amount`` with no code is a manual override
+    # gated behind the ``pos.discount`` permission.
+    discount_code: Optional[str] = None
     discount_amount: Optional[float] = 0
     vat_rate: Optional[float] = 15.0  # fallback; the global rate (MA-05) wins when set
     # Optional split-tender breakdown (POS-02). When given, the per-method amounts
@@ -507,7 +519,39 @@ async def create_transaction(
         item_total = item.price * item.quantity - (item.discount or 0)
         subtotal += item_total
 
-    discount_amount = data.discount_amount or 0
+    # ---- Discount (PRC-01): validate server-side; never trust the client amount ----
+    # A coded discount is validated against the order subtotal and priced from the
+    # rule (type/value/min-purchase/usage-cap); one use is then consumed atomically
+    # with the sale, so a rolled-back sale never spends a use and concurrent sales
+    # cannot exceed ``max_uses``. A raw ``discount_amount`` with no code is a manual
+    # override and requires the ``pos.discount`` permission (deny-wins; the account
+    # owner has it by default, a restricted cashier can be denied).
+    discounts_service = DiscountsService(db)
+    discount_code = (data.discount_code or "").strip()
+    if discount_code:
+        try:
+            discount_rule = await discounts_service.validate(
+                discount_code, subtotal, user_id=str(current_user.id)
+            )
+        except DiscountValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        discount_amount = compute_discount_amount(discount_rule, subtotal)
+        if not await discounts_service.consume(
+            discount_rule.id, user_id=str(current_user.id)
+        ):
+            # Lost the cap race between validate and consume — treat as exhausted.
+            raise HTTPException(
+                status_code=400, detail="This discount has reached its usage limit"
+            )
+    else:
+        discount_amount = round(float(data.discount_amount or 0), 2)
+        if discount_amount > 0 and not await has_permission(
+            db, str(current_user.id), "pos.discount"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have the 'pos.discount' permission.",
+            )
 
     # ---- Loyalty redemption (Phase E) ----
     # Redeemed points reduce the order as a discount (before VAT). The point

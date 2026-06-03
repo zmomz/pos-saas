@@ -9,7 +9,11 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
-from services.discounts import DiscountsService
+from services.discounts import (
+    DiscountsService,
+    DiscountValidationError,
+    compute_discount_amount,
+)
 from dependencies.auth import get_admin_user, get_current_user
 from schemas.auth import UserResponse
 
@@ -87,6 +91,21 @@ class DiscountsBatchUpdateRequest(BaseModel):
 class DiscountsBatchDeleteRequest(BaseModel):
     """Batch delete request"""
     ids: List[int]
+
+
+class DiscountValidateRequest(BaseModel):
+    """Validate a discount code against an order subtotal (PRC-01)."""
+    code: str
+    subtotal: float
+
+
+class DiscountValidateResponse(BaseModel):
+    """Server-authoritative discount preview (the amount the POS must trust)."""
+    valid: bool
+    code: str
+    type: str
+    value: float
+    discount_amount: float
 
 
 # ---------- Routes ----------
@@ -215,6 +234,44 @@ async def create_discounts(
     except Exception as e:
         logger.error(f"Error creating discounts: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/validate", response_model=DiscountValidateResponse)
+async def validate_discount(
+    data: DiscountValidateRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Validate a discount code server-side and return the authoritative amount (PRC-01).
+
+    The POS must not trust a client-computed discount — this endpoint is the
+    source of truth for whether a code applies (active / min-purchase / usage cap)
+    and how much it is worth for the given subtotal. It is read-only: it does
+    **not** consume a use (the use is consumed atomically with the sale in
+    ``POST /pos/transaction``). A failing code returns 400 with the reason.
+    """
+    logger.debug(f"Validating discount code against subtotal={data.subtotal}")
+
+    service = DiscountsService(db)
+    try:
+        discount = await service.validate(
+            data.code, data.subtotal, user_id=str(current_user.id)
+        )
+    except DiscountValidationError as e:
+        logger.info(f"Discount validation rejected: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error validating discount: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+    amount = compute_discount_amount(discount, data.subtotal)
+    return DiscountValidateResponse(
+        valid=True,
+        code=discount.code,
+        type=discount.type,
+        value=discount.value,
+        discount_amount=amount,
+    )
 
 
 @router.post("/batch", response_model=List[DiscountsResponse], status_code=201)

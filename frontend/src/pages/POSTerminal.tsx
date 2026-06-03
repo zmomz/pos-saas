@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, getTransactions, getDiscounts, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, type MyPermissions, type TenderInfo } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, type MyPermissions, type TenderInfo } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
@@ -298,24 +298,21 @@ export default function POSTerminal() {
     setApplyingDiscount(true);
     setDiscountError('');
     try {
-      const data = await getDiscounts();
-      const discounts: Discount[] = data?.items || data || [];
-      const matched = discounts.find(
-        (d) => d.code.toLowerCase() === discountCode.trim().toLowerCase() && d.is_active !== false
-      );
-      if (!matched) {
-        setDiscountError('Invalid or expired discount code');
-        setAppliedDiscount(null);
-      } else if (matched.min_purchase && subtotal < matched.min_purchase) {
-        setDiscountError(`Minimum purchase of $${matched.min_purchase.toFixed(2)} required`);
-        setAppliedDiscount(null);
-      } else {
-        setAppliedDiscount(matched);
-        setDiscountError('');
-      }
+      // PRC-01: the server is authoritative for whether a code applies (active /
+      // min-purchase / usage cap) and how much it is worth — never trust a
+      // client-side computation. The use is only consumed when the sale commits.
+      const result = await validateDiscount(discountCode.trim(), subtotal);
+      setAppliedDiscount({
+        id: result.code,
+        code: result.code,
+        type: result.type,
+        value: result.value,
+      });
+      setDiscountError('');
     } catch (err) {
-      console.error('Failed to validate discount:', err);
-      setDiscountError('Failed to validate discount code');
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setDiscountError(detail || 'Invalid or expired discount code');
+      setAppliedDiscount(null);
     } finally {
       setApplyingDiscount(false);
     }
@@ -408,6 +405,10 @@ export default function POSTerminal() {
       const result = await createTransaction({
         items,
         payment_method: paymentMethod,
+        // PRC-01: when a code is applied the server re-prices and consumes it; the
+        // discount_amount is only the cashier-visible preview (manual amounts with
+        // no code are gated behind the pos.discount permission server-side).
+        discount_code: appliedDiscount?.code,
         discount_amount: discountAmount > 0 ? discountAmount : undefined,
         payments: splitMode
           ? splitPayments.filter((p) => (Number(p.amount) || 0) > 0)
