@@ -27,6 +27,35 @@ interface Shift {
   closed_at?: string;
 }
 
+// POS-09 / F-016: the shift endpoints speak snake_case (`start_time`,
+// `total_sales`, `total_transactions`, `cash_difference`) and wrap the current
+// shift under `{status, shift}` / the history under `{shifts, total}`. The UI
+// model above used `opened_at`/`sales_total`/`difference` and read a flat
+// `data.id`, so an open shift never rendered as Active and money columns were
+// blank. Normalise every raw payload (current/history/open/close) into the UI
+// model here, so the render path stays simple and the reads can't drift again.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeShift(raw: any): Shift {
+  return {
+    id: String(raw?.id ?? ''),
+    staff_name: raw?.staff_name ?? undefined,
+    opening_cash: Number(raw?.opening_cash ?? 0),
+    closing_cash: raw?.closing_cash != null ? Number(raw.closing_cash) : undefined,
+    expected_cash: raw?.expected_cash != null ? Number(raw.expected_cash) : undefined,
+    difference:
+      raw?.cash_difference != null
+        ? Number(raw.cash_difference)
+        : raw?.difference != null
+          ? Number(raw.difference)
+          : undefined,
+    sales_total: Number(raw?.total_sales ?? raw?.sales_total ?? 0),
+    transaction_count: Number(raw?.total_transactions ?? raw?.transaction_count ?? 0),
+    status: raw?.status ?? 'open',
+    opened_at: raw?.start_time ?? raw?.opened_at ?? '',
+    closed_at: raw?.end_time ?? raw?.closed_at ?? undefined,
+  };
+}
+
 export default function ShiftManagement() {
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
   const [shiftHistory, setShiftHistory] = useState<Shift[]>([]);
@@ -53,8 +82,13 @@ export default function ShiftManagement() {
         method: 'GET',
         data: {},
       });
-      if (currentRes.data && currentRes.data.id) {
-        setCurrentShift(currentRes.data);
+      // `GET /shifts/current` returns {status, shift:{...}} (shift null when none);
+      // tolerate a legacy flat shape too. An open shift must render as Active.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cur: any = currentRes.data;
+      const rawShift = cur?.shift ?? (cur?.id != null ? cur : null);
+      if (rawShift && rawShift.id != null) {
+        setCurrentShift(normalizeShift(rawShift));
       } else {
         setCurrentShift(null);
       }
@@ -67,8 +101,17 @@ export default function ShiftManagement() {
         method: 'GET',
         data: { limit: 50 },
       });
-      const data = historyRes.data;
-      setShiftHistory(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []);
+      // `GET /shifts/history` returns {shifts:[...], total}; tolerate items/array.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data: any = historyRes.data;
+      const rawList = Array.isArray(data?.shifts)
+        ? data.shifts
+        : Array.isArray(data?.items)
+          ? data.items
+          : Array.isArray(data)
+            ? data
+            : [];
+      setShiftHistory(rawList.map(normalizeShift));
     } catch {
       setShiftHistory([]);
     }
@@ -83,7 +126,7 @@ export default function ShiftManagement() {
         method: 'POST',
         data: { opening_cash: parseFloat(openingCash) || 0 },
       });
-      setCurrentShift(res.data);
+      setCurrentShift(normalizeShift(res.data));
       setOpenShiftDialog(false);
       setOpeningCash('');
       await loadShiftData();
@@ -106,7 +149,7 @@ export default function ShiftManagement() {
       setCloseShiftDialog(false);
       setClosingCash('');
       if (res.data) {
-        setShiftHistory((prev) => [res.data, ...prev]);
+        setShiftHistory((prev) => [normalizeShift(res.data), ...prev]);
       }
       // POS-09/RPT-06: closing a shift emits its Z-report. The close response
       // carries the shift id directly, so this works regardless of how the
