@@ -396,6 +396,9 @@ export default function POSTerminal() {
       const items = cart.map((item) => ({
         product_id: item.product.id,
         name: item.product.name,
+        // Carry the Arabic name so the always-Arabic thermal receipt prints it
+        // (PRN-01 / L10N-06).
+        name_ar: item.product.name_ar,
         quantity: item.quantity,
         price: item.product.price,
         vat_rate: 0.15,

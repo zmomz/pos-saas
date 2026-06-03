@@ -147,7 +147,7 @@ export interface PaymentEntry {
 }
 
 export async function createTransaction(data: {
-  items: { product_id: number; name: string; quantity: number; price: number; vat_rate: number }[];
+  items: { product_id: number; name: string; name_ar?: string; quantity: number; price: number; vat_rate: number }[];
   payment_method: string;
   customer_name?: string;
   customer_phone?: string;

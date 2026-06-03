@@ -240,8 +240,12 @@ def test_build_receipt_emits_drawer_kick_only_when_open_drawer():
     )
     with_kick = build_receipt(open_drawer=True, **kwargs)
     without_kick = build_receipt(open_drawer=False, **kwargs)
-    assert bytes([0x1B, 0x70]) in with_kick
-    assert bytes([0x1B, 0x70]) not in without_kick
+    # The kick pulse (ESC p) is emitted deterministically right after the ESC @
+    # init (bytes 0-1). Check that exact position rather than `in` — the Arabic
+    # raster body (F-021) embeds arbitrary bitmap bytes that could otherwise
+    # contain the 0x1B 0x70 sequence by chance.
+    assert with_kick[2:4] == bytes([0x1B, 0x70])
+    assert without_kick[2:4] != bytes([0x1B, 0x70])
 
 
 async def test_cash_sale_escpos_contains_drawer_kick_bytes(client):
@@ -266,7 +270,9 @@ async def test_cash_sale_escpos_contains_drawer_kick_bytes(client):
     resp = await client.get(f"/api/v1/pos/transactions/{txn_id}/escpos", headers=headers)
     assert resp.status_code == 200, resp.text
     raw = base64.b64decode(resp.json()["data"])
-    assert bytes([0x1B, 0x70]) in raw, "cash sale must pulse the cash-drawer kick (HW-04)"
+    # The kick pulse is emitted right after the ESC @ init; check that position
+    # (the Arabic raster body, F-021, may contain 0x1B 0x70 as bitmap data).
+    assert raw[2:4] == bytes([0x1B, 0x70]), "cash sale must pulse the cash-drawer kick (HW-04)"
 
 
 async def test_card_sale_escpos_has_no_drawer_kick(client):
@@ -290,4 +296,7 @@ async def test_card_sale_escpos_has_no_drawer_kick(client):
     resp = await client.get(f"/api/v1/pos/transactions/{txn_id}/escpos", headers=headers)
     assert resp.status_code == 200, resp.text
     raw = base64.b64decode(resp.json()["data"])
-    assert bytes([0x1B, 0x70]) not in raw, "a non-cash sale must not kick the drawer"
+    # No kick pulse at the deterministic init position (a card sale must not open
+    # the drawer). Checked by position, not `in`, because the Arabic raster body
+    # (F-021) may embed the 0x1B 0x70 byte pair as bitmap data.
+    assert raw[2:4] != bytes([0x1B, 0x70]), "a non-cash sale must not kick the drawer"

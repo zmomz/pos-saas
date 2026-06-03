@@ -55,6 +55,10 @@ router = APIRouter(prefix="/api/v1/pos", tags=["pos"])
 class CartItem(BaseModel):
     product_id: int
     name: str
+    # Arabic product name carried into items_json so the always-Arabic thermal
+    # receipt prints the Arabic line name (PRN-01 / L10N-06, F-021). Optional —
+    # falls back to ``name`` when absent.
+    name_ar: Optional[str] = None
     price: float
     quantity: int
     discount: Optional[float] = 0
