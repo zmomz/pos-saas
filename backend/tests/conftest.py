@@ -71,8 +71,11 @@ def auth_headers(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def make_client_account(client: AsyncClient, is_active: bool = True):
+async def make_client_account(client: AsyncClient, is_active: bool = True, business_type: str = "retail"):
     """Register a user and attach a tenancy *client* row (+ an owning agent).
+
+    ``business_type`` (retail / restaurant / both, CL-02) controls whether the
+    client can reach the restaurant vertical (RST-*).
 
     Returns (user_dict, token, client_id).
     """
@@ -104,6 +107,7 @@ async def make_client_account(client: AsyncClient, is_active: bool = True):
             business_name="Test Shop",
             email=email,
             is_active=is_active,
+            business_type=business_type,
             invoice_counter=0,
         )
         db.add(merchant)

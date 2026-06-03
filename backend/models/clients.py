@@ -21,6 +21,10 @@ class Clients(Base):
     subscription_status = Column(String, nullable=True, default='active', server_default='active')
     next_billing_date = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
+    # Retail / restaurant / both — picked at provisioning / first-login (CL-02).
+    # Drives POS mode and gates the restaurant vertical (RST-*, F-045). Defaults
+    # to 'retail' so existing clients keep the retail-only experience.
+    business_type = Column(String, nullable=True, default='retail', server_default='retail')
     vat_number = Column(String, nullable=True)
     invoice_counter = Column(Integer, nullable=True, default=0, server_default='0')
     language_preference = Column(String, nullable=True, default='en', server_default='en')

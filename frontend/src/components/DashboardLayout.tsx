@@ -25,6 +25,7 @@ import {
   Tag,
   Sun,
   Moon,
+  UtensilsCrossed,
 } from 'lucide-react';
 
 type UserRole = 'master' | 'agent' | 'client';
@@ -60,6 +61,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
   client: [
     { icon: LayoutDashboard, label: 'dashboard', path: '/client' },
     { icon: Monitor, label: 'pos_terminal', path: '/pos' },
+    { icon: UtensilsCrossed, label: 'floor_map', path: '/floor' },
     { icon: ShoppingBag, label: 'products', path: '/products' },
     { icon: FolderTree, label: 'categories', path: '/categories' },
     { icon: UserCheck, label: 'customers', path: '/customers' },

@@ -944,3 +944,101 @@ export async function syncOfflineTransactions(
   });
   return response.data;
 }
+
+// ---------- Restaurant (RST-01..03, F-045) ----------
+// All endpoints are gated server-side by require_feature('restaurant') AND the
+// client's business_type ∈ {restaurant, both}; a retail client gets 403.
+export interface FloorZone {
+  id: number;
+  name: string;
+  branch_id?: number | null;
+}
+
+export interface RestaurantTable {
+  id: number;
+  name: string;
+  seats?: number | null;
+  zone_id?: number | null;
+  branch_id?: number | null;
+  state?: string | null; // free | occupied | bill_printed
+  current_ticket_id?: number | null;
+}
+
+export interface OrderTicket {
+  id: number;
+  table_id?: number | null;
+  order_type?: string | null; // dine_in | takeaway | delivery
+  status?: string | null; // open | held | fired | settled | void
+  customer_name?: string | null;
+  party_size?: number | null;
+  notes?: string | null;
+}
+
+export async function getFloorZones(): Promise<FloorZone[]> {
+  const res = await client.apiCall.invoke<FloorZone[]>({
+    url: '/api/v1/restaurant/zones',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function createFloorZone(data: { name: string; branch_id?: number }) {
+  const res = await client.apiCall.invoke({
+    url: '/api/v1/restaurant/zones',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function getRestaurantTables(params?: {
+  zone_id?: number;
+  branch_id?: number;
+  state?: string;
+}): Promise<{ items: RestaurantTable[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: RestaurantTable[]; total: number }>({
+    url: '/api/v1/restaurant/tables',
+    method: 'GET',
+    data: params || {},
+  });
+  return res.data;
+}
+
+export async function createRestaurantTable(data: {
+  name: string;
+  seats?: number;
+  zone_id?: number;
+  branch_id?: number;
+}) {
+  const res = await client.apiCall.invoke({
+    url: '/api/v1/restaurant/tables',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function updateRestaurantTable(
+  tableId: number,
+  data: { name?: string; seats?: number; zone_id?: number; state?: string }
+) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/tables/${tableId}`,
+    method: 'PUT',
+    data,
+  });
+  return res.data;
+}
+
+export async function openTableOrder(
+  tableId: number,
+  data: { order_type?: string; customer_name?: string; party_size?: number; notes?: string }
+): Promise<OrderTicket> {
+  const res = await client.apiCall.invoke<OrderTicket>({
+    url: `/api/v1/restaurant/tables/${tableId}/open-order`,
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}

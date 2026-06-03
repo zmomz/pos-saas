@@ -95,6 +95,9 @@ class CreateClientRequest(BaseModel):
     # None ⇒ inherit the agent's default_language (L10N-05). An explicit value is
     # the client overriding that default at creation time.
     language_preference: Optional[str] = None
+    # retail / restaurant / both (CL-02). Defaults to retail; drives POS mode and
+    # gates the restaurant vertical (RST-*, F-045).
+    business_type: Optional[str] = "retail"
     features: Optional[List[str]] = None
 
 
@@ -623,6 +626,15 @@ async def create_client_for_agent(
     # When the agent doesn't pick a language, the client inherits the agent's
     # default language (L10N-05).
     client_language = data.language_preference or agent.default_language or "en"
+    # CL-02: business type drives retail vs restaurant POS mode (RST-*). Reject
+    # an unknown value up-front rather than silently defaulting.
+    business_type = (data.business_type or "retail").strip().lower()
+    if business_type not in ("retail", "restaurant", "both"):
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="business_type must be one of: retail, restaurant, both",
+        )
     new_client = Clients(
         user_id=new_user.id,  # the merchant's own account, NOT the agent's
         agent_id=agent_id,
@@ -632,6 +644,7 @@ async def create_client_for_agent(
         subscription_fee=data.subscription_fee or 0,
         is_active=True,
         language_preference=client_language,
+        business_type=business_type,
         zatca_enabled=False,
         invoice_counter=0,
     )
