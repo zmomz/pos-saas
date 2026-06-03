@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from dependencies.auth import get_current_user
 from schemas.auth import UserResponse
+from models.auth import User
 from models.agents import Agents
 from models.clients import Clients
 from models.products import Products
@@ -38,7 +39,16 @@ async def get_user_role(db: AsyncSession, user_id: str) -> dict:
     if client:
         return {"role": "client", "entity_id": client.id, "agent_id": client.agent_id}
 
-    return {"role": "master", "entity_id": None, "agent_id": None}
+    # Only explicitly-seeded admins act as the platform master. Any other
+    # account without an agent/client record is treated as a least-privilege
+    # client (prevents self-registered users from becoming master). Mirrors
+    # tenant.py::get_user_role — SEC-02 least-privilege.
+    user_result = await db.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if user and user.role == "admin":
+        return {"role": "master", "entity_id": None, "agent_id": None}
+
+    return {"role": "client", "entity_id": None, "agent_id": None}
 
 
 # ============================================================
