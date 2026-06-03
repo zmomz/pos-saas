@@ -7,12 +7,14 @@ failures and fails closed when unconfigured, and that the chain+signature
 integrity endpoint validates the whole chain.
 """
 import base64
+import uuid
 
 from sqlalchemy import select
 
 from conftest import add_product, auth_headers, get_product_quantity, make_client_account
 from core.database import db_manager
 from models.clients import Clients
+from models.transactions import Transactions
 from models.zatca_credentials import ZatcaCredentials
 from models.zatca_documents import ZatcaDocuments
 from services import zatca, zatca_sale
@@ -306,3 +308,129 @@ async def test_reporting_fails_closed_to_pending_when_unconfigured(client):
         status = await zatca_sale.report_document(db, doc, creds)
         await db.commit()
     assert status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# ZA-06 (F-017): B2B clearance vs B2C reporting routing
+# ---------------------------------------------------------------------------
+async def _sign_synthetic(client_id: int, user_id, *, buyer_vat, total: float):
+    """Sign a standalone transaction with a given buyer VAT + total.
+
+    Returns (doc_id, invoice_subtype, signed_xml). Exercises ``sign_transaction``
+    directly so the routing can be driven independently of the (F-018) buyer-VAT
+    capture on the sale path.
+    """
+    async with db_manager.async_session_maker() as db:
+        client_row = (
+            await db.execute(select(Clients).where(Clients.id == client_id))
+        ).scalar_one()
+        sub = round(total / 1.15, 2)
+        txn = Transactions(
+            user_id=str(user_id),
+            client_id=client_id,
+            invoice_number=f"INV-{uuid.uuid4().hex[:10]}",
+            subtotal=sub,
+            vat_amount=round(total - sub, 2),
+            total_amount=total,
+            payment_method="cash",
+            items_json="[]",
+        )
+        db.add(txn)
+        await db.flush()
+        doc, _ = await zatca_sale.sign_transaction(db, client_row, txn, buyer_vat=buyer_vat)
+        result = (doc.id, doc.invoice_subtype, doc.signed_xml)
+        await db.commit()
+        return result
+
+
+async def _report_capturing_clearance(client_id: int, doc_id: int, monkeypatch):
+    """Report a signed doc through a mock *onboarded* gateway.
+
+    Returns (status, clearance_used) where ``clearance_used`` is the clearance flag
+    the routing passed to ``submit_invoice`` (derived from the doc's subtype, since
+    the background path supplies no explicit clearance).
+    """
+    captured: dict = {}
+
+    class _FakeApi:
+        async def submit_invoice(self, **kwargs):
+            captured["clearance"] = kwargs.get("clearance")
+            return {"status": "OK"}
+
+    monkeypatch.setattr(zatca, "resolve_base_url", lambda environment=None: "http://mock-fatoora")
+    monkeypatch.setattr(
+        zatca.ZatcaApiClient, "from_settings",
+        classmethod(lambda cls, environment=None: _FakeApi()),
+    )
+
+    async with db_manager.async_session_maker() as db:
+        creds = (
+            await db.execute(select(ZatcaCredentials).where(ZatcaCredentials.client_id == client_id))
+        ).scalar_one()
+        creds.onboarded = True
+        creds.production_csid = "csid-token"
+        creds.production_secret_enc = zatca.encrypt_secret("prod-secret")
+        doc = (
+            await db.execute(select(ZatcaDocuments).where(ZatcaDocuments.id == doc_id))
+        ).scalar_one()
+        status = await zatca_sale.report_document(db, doc, creds)  # clearance from subtype
+        await db.commit()
+    return status, captured.get("clearance")
+
+
+def test_classify_invoice_subtype_routing():
+    # B2B (buyer VAT) at/above the 1,000-SAR threshold -> standard (clearance).
+    assert zatca_sale.classify_invoice_subtype("310000000000003", 1000.0) == "standard"
+    assert zatca_sale.classify_invoice_subtype("310000000000003", 5000.0) == "standard"
+    # B2B below threshold -> simplified (do not route on buyer type alone, ZA-06).
+    assert zatca_sale.classify_invoice_subtype("310000000000003", 999.99) == "simplified"
+    # B2C (no buyer VAT) at any total -> simplified.
+    assert zatca_sale.classify_invoice_subtype("", 5000.0) == "simplified"
+    assert zatca_sale.classify_invoice_subtype(None, 5000.0) == "simplified"
+
+
+async def test_b2b_invoice_is_classified_standard_and_cleared(client, monkeypatch):
+    user, token, client_id = await make_client_account(client)
+    await _set_vat(client_id)
+
+    doc_id, subtype, xml = await _sign_synthetic(
+        client_id, user["id"], buyer_vat="310000000000003", total=2300.0
+    )
+    # Signed as a standard invoice: UBL subtype marker + buyer VAT in the XML.
+    assert subtype == "standard"
+    assert zatca_sale.INVOICE_TYPE_NAME_STANDARD in xml
+    assert "310000000000003" in xml
+
+    status, clearance_used = await _report_capturing_clearance(client_id, doc_id, monkeypatch)
+    assert clearance_used is True
+    assert status == "cleared"
+
+
+async def test_b2c_invoice_is_classified_simplified_and_reported(client, monkeypatch):
+    user, token, client_id = await make_client_account(client)
+    await _set_vat(client_id)
+
+    doc_id, subtype, xml = await _sign_synthetic(
+        client_id, user["id"], buyer_vat=None, total=2300.0
+    )
+    assert subtype == "simplified"
+    assert zatca_sale.INVOICE_TYPE_NAME_SIMPLIFIED in xml
+
+    status, clearance_used = await _report_capturing_clearance(client_id, doc_id, monkeypatch)
+    assert clearance_used is False
+    assert status == "reported"
+
+
+async def test_b2b_below_threshold_is_reported_not_cleared(client, monkeypatch):
+    user, token, client_id = await make_client_account(client)
+    await _set_vat(client_id)
+
+    # VAT-registered buyer but the supply is under 1,000 SAR -> simplified (ZA-06).
+    doc_id, subtype, _xml = await _sign_synthetic(
+        client_id, user["id"], buyer_vat="310000000000003", total=500.0
+    )
+    assert subtype == "simplified"
+
+    status, clearance_used = await _report_capturing_clearance(client_id, doc_id, monkeypatch)
+    assert clearance_used is False
+    assert status == "reported"

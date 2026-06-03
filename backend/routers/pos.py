@@ -422,7 +422,12 @@ async def create_transaction(
     # transaction. A signing failure raises and rolls the sale back, so a
     # completed sale is never silently left unsigned.
     await db.flush()  # assign transaction.id before signing
-    doc, stamped_qr = await zatca_sale.sign_transaction(db, client, transaction)
+    # ZA-06: a VAT-registered buyer on the transaction routes the invoice to B2B
+    # clearance (the buyer VAT field itself is captured by F-018).
+    doc, stamped_qr = await zatca_sale.sign_transaction(
+        db, client, transaction,
+        buyer_vat=getattr(transaction, "customer_vat_number", None),
+    )
     document_id = doc.id
 
     await db.commit()
@@ -588,7 +593,10 @@ async def process_offline_sale(
     transaction.shift_id = await _apply_sale_to_open_shift(db, user_id, total_amount)
 
     await db.flush()
-    doc, _stamped_qr = await zatca_sale.sign_transaction(db, client, transaction)
+    doc, _stamped_qr = await zatca_sale.sign_transaction(
+        db, client, transaction,
+        buyer_vat=getattr(transaction, "customer_vat_number", None),
+    )
     await db.commit()
     await db.refresh(transaction)
     return {
@@ -767,6 +775,9 @@ async def refund_transaction(
         document_type="credit_note",
         invoice_type_code="381",
         billing_reference=original.invoice_number,
+        # ZA-06: a B2B credit note inherits the original sale's buyer VAT so it is
+        # cleared/reported on the same path as the invoice it reverses.
+        buyer_vat=getattr(original, "customer_vat_number", None),
     )
     document_id = doc.id
 

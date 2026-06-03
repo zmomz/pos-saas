@@ -24,6 +24,11 @@ class ZatcaDocuments(Base):
     invoice_uuid = Column(String, nullable=True)
     # "invoice" (388 tax invoice) or "credit_note" (381 refund). POS-07.
     document_type = Column(String, nullable=False, default="invoice", server_default="invoice")
+    # ZA-06 routing: "standard" (B2B → cleared in real time) or "simplified"
+    # (B2C, and B2B supplies below the clearance threshold → reported within 24h).
+    # Set at signing time from the buyer VAT + total; the reporting job reads it to
+    # decide clearance vs reporting. Defaults to simplified (the B2C common case).
+    invoice_subtype = Column(String, nullable=False, default="simplified", server_default="simplified")
     icv = Column(Integer, nullable=True)            # Invoice Counter Value (chain position)
     invoice_hash = Column(String, nullable=True)    # base64 SHA-256 of the canonical XML
     previous_hash = Column(String, nullable=True)   # PIH at signing time

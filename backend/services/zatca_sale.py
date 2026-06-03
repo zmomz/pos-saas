@@ -40,6 +40,37 @@ def _retention_until() -> datetime:
     return datetime.now(timezone.utc) + timedelta(days=365 * years)
 
 
+# ---------------------------------------------------------------------------
+# ZA-06 — B2B clearance vs B2C reporting routing
+# ---------------------------------------------------------------------------
+# A *standard* (B2B) tax invoice must be **cleared** by Fatoora in real time; a
+# *simplified* (B2C) invoice is **reported** within 24h via the background job.
+# Routing is by invoice *type*, never buyer type alone: a B2B supply below the
+# clearance threshold may still be issued as simplified (ZA-06). We classify as
+# standard only when the buyer carries a VAT number AND the invoice total is at
+# or above the threshold.
+B2B_CLEARANCE_THRESHOLD_SAR = float(
+    getattr(settings, "zatca_clearance_threshold_sar", None) or 1000.0
+)
+# UBL ``cbc:InvoiceTypeCode/@name`` subtype markers (ZATCA Phase 2).
+INVOICE_TYPE_NAME_STANDARD = "0100000"
+INVOICE_TYPE_NAME_SIMPLIFIED = "0200000"
+
+
+def classify_invoice_subtype(buyer_vat: Optional[str], total: float) -> str:
+    """Return ``"standard"`` (B2B → clearance) or ``"simplified"`` (B2C → reporting).
+
+    Per ZA-06 a standard invoice — cleared in real time — requires a VAT-registered
+    buyer **and** a total at or above ``B2B_CLEARANCE_THRESHOLD_SAR`` (1,000 SAR by
+    default). Everything else — B2C sales, and B2B supplies below the threshold —
+    is simplified and reported within 24h. Never routes on buyer type alone.
+    """
+    has_buyer_vat = bool(buyer_vat and str(buyer_vat).strip())
+    if has_buyer_vat and abs(total or 0) >= B2B_CLEARANCE_THRESHOLD_SAR:
+        return "standard"
+    return "simplified"
+
+
 async def get_or_create_signing_creds(db, client: Clients) -> ZatcaCredentials:
     """Return the client's ZATCA credentials, self-provisioning a signing key.
 
@@ -100,6 +131,7 @@ async def sign_transaction(
     document_type: str = "invoice",
     invoice_type_code: str = "388",
     billing_reference: Optional[str] = None,
+    buyer_vat: Optional[str] = None,
 ) -> Tuple[ZatcaDocuments, str]:
     """Sign ``txn`` in-place and archive a ``ZatcaDocuments`` row.
 
@@ -109,6 +141,13 @@ async def sign_transaction(
     Runs inside the caller's transaction (no commit) so it is atomic with the
     sale. For a credit note (POS-07) pass ``invoice_type_code="381"`` and
     ``billing_reference`` set to the original invoice number.
+
+    ``buyer_vat`` drives the ZA-06 clearance/reporting routing: when the buyer is
+    VAT-registered and the total clears the threshold, the document is classified
+    ``standard`` (UBL subtype ``0100000``) and the reporting job clears it in real
+    time; otherwise it is ``simplified`` (``0200000``) and reported within 24h.
+    The buyer VAT itself is captured/rendered into the UBL buyer block by F-018;
+    here it only selects the routing.
     """
     creds = await get_or_create_signing_creds(db, client)
 
@@ -127,11 +166,21 @@ async def sign_transaction(
     vat = abs(txn.vat_amount or 0)
     total = abs(txn.total_amount or 0)
 
+    # ZA-06: route standard (B2B clearance) vs simplified (B2C reporting) by the
+    # buyer VAT + total, and mark the UBL subtype accordingly so the document is
+    # internally consistent with how the reporting job will submit it.
+    invoice_subtype = classify_invoice_subtype(buyer_vat, total)
+    invoice_type_name = (
+        INVOICE_TYPE_NAME_STANDARD
+        if invoice_subtype == "standard"
+        else INVOICE_TYPE_NAME_SIMPLIFIED
+    )
+
     xml = zatca_service.generate_xml_invoice(
         seller_name=seller_name,
         seller_vat=seller_vat,
         buyer_name=txn.customer_name or "نقدي",
-        buyer_vat="",
+        buyer_vat=buyer_vat or "",
         invoice_number=txn.invoice_number,
         issue_date=issued.strftime("%Y-%m-%d"),
         issue_time=issued.strftime("%H:%M:%S"),
@@ -140,6 +189,7 @@ async def sign_transaction(
         total_vat=vat,
         total_including_vat=total,
         invoice_type_code=invoice_type_code,
+        invoice_type_name=invoice_type_name,
         billing_reference_id=billing_reference,
     )
 
@@ -165,6 +215,7 @@ async def sign_transaction(
         transaction_id=txn.id,
         invoice_number=txn.invoice_number,
         document_type=document_type,
+        invoice_subtype=invoice_subtype,
         icv=icv,
         invoice_hash=inv_hash,
         previous_hash=previous_hash,
@@ -191,7 +242,7 @@ async def report_document(
     doc: ZatcaDocuments,
     creds: Optional[ZatcaCredentials],
     *,
-    clearance: bool = False,
+    clearance: Optional[bool] = None,
     max_attempts: int = 3,
 ) -> str:
     """Submit a signed document to Fatoora, with retry on transient 5xx.
@@ -200,7 +251,15 @@ async def report_document(
     stays valid and signed) when the gateway is unconfigured or onboarding is
     incomplete — reporting can be retried once the operator finishes onboarding.
     On a terminal gateway/4xx error the document is marked "failed".
+
+    ZA-06 routing: when ``clearance`` is left ``None`` it is derived from the
+    document's ``invoice_subtype`` — ``standard`` documents are *cleared* in real
+    time, ``simplified`` ones are *reported*. Callers may still pass an explicit
+    ``clearance`` to override (e.g. the manual operator endpoint).
     """
+    if clearance is None:
+        clearance = getattr(doc, "invoice_subtype", None) == "standard"
+
     gateway_ready = (
         creds is not None
         and creds.onboarded
