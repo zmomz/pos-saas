@@ -1046,6 +1046,75 @@ async def pay_client_subscription(
     return await _subscription_payload(db, merchant)
 
 
+@router.get("/client/subscription/payments/{payment_id}/invoice")
+async def get_subscription_invoice_pdf(
+    payment_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: download the PRN-08 subscription invoice for one paid period (CL-09).
+
+    The agent (white-label reseller) is the seller; the client merchant is the
+    buyer. Always-Arabic A4 PDF (non-fiscal: no ZATCA QR/stamp). Owner-scoped —
+    a client can only fetch invoices for their **own** subscription payments
+    (SEC-02); an unknown/foreign payment id is a 404.
+    """
+    from fastapi.responses import Response
+
+    from services.pdf_render import subscription_invoice_pdf_bytes
+
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    payment = (
+        await db.execute(
+            select(Subscription_payments).where(
+                Subscription_payments.id == payment_id,
+                Subscription_payments.client_id == merchant.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Subscription payment not found")
+
+    agent_row = (
+        await db.execute(select(Agents).where(Agents.id == merchant.agent_id))
+    ).scalar_one_or_none()
+    seller_name = (agent_row.company_name if agent_row else None) or "Platform"
+    # Agents carry no VAT number today, so the seller VAT block is omitted per
+    # PRN-08 ("VAT if agent VAT-registered"); future-proofed via getattr.
+    seller_vat = (getattr(agent_row, "vat_number", "") or "") if agent_row else ""
+
+    invoice_number = f"SUB-{merchant.id:04d}-{payment.id:06d}"
+    issue_date = (
+        payment.created_at.strftime("%Y-%m-%d")
+        if payment.created_at
+        else (payment.period_start or "")
+    )
+    try:
+        pdf_bytes = subscription_invoice_pdf_bytes(
+            seller_name=seller_name,
+            buyer_name=merchant.business_name or "Client",
+            invoice_number=invoice_number,
+            issue_date=issue_date,
+            period_start=payment.period_start or "",
+            period_end=payment.period_end or "",
+            billing_cycle=payment.billing_cycle or merchant.billing_cycle or "monthly",
+            fee=payment.amount or 0,
+            seller_vat=seller_vat,
+            buyer_vat=merchant.vat_number or "",
+            vat_amount=0.0,
+            payment_status="paid",
+            payment_method=payment.method or "manual",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=501, detail=str(exc))
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{invoice_number}.pdf"'},
+    )
+
+
 # ---------- Client self-service profile (CL-02 first-login business type) ----------
 # Valid POS modes. ``business_type`` discriminates retail vs restaurant and gates
 # the restaurant vertical (RST-*, see routers/restaurant.py); it is set as a

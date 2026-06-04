@@ -4,11 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, type SubscriptionStatus } from '@/lib/api';
+import { client, getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
-import { DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag, BarChart3, Users } from 'lucide-react';
+import { DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag, BarChart3, Users, Download } from 'lucide-react';
 
 interface DashboardStats {
   total_sales: number;
@@ -208,9 +208,22 @@ export default function ClientDashboard() {
                   <p className={`text-sm mb-2 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('payment_history')}</p>
                   <div className="space-y-1">
                     {subscription.payments.slice(0, 6).map((p) => (
-                      <div key={p.id} className={`flex justify-between text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                      <div key={p.id} className={`flex items-center justify-between text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
                         <span>{p.period_start || (p.created_at ? p.created_at.slice(0, 10) : '')}</span>
-                        <span>{formatMoney(p.amount, language)}</span>
+                        <div className="flex items-center gap-3">
+                          <span>{formatMoney(p.amount, language)}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 gap-1"
+                            onClick={() => downloadSubscriptionInvoice(p.id)}
+                            title={t('download_invoice')}
+                          >
+                            <Download className="h-4 w-4" />
+                            <span className="hidden sm:inline">{t('download_invoice')}</span>
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>

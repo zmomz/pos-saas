@@ -989,6 +989,21 @@ export async function payClientSubscription() {
   return response.data;
 }
 
+// Client: download the PRN-08 subscription invoice for one paid period (CL-09)
+export async function downloadSubscriptionInvoice(paymentId: number) {
+  const blob = await getBlob(
+    `/api/v1/tenant/client/subscription/payments/${paymentId}/invoice`
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `subscription-invoice-${paymentId}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // Agent: set a client's subscription fee / billing cycle (CL-03)
 export async function updateClientSubscription(
   clientId: number,
