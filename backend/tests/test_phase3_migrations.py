@@ -69,3 +69,74 @@ def _skip_alembic_version(obj, name, type_, reflected, compare_to):
     if type_ == "table" and name == "alembic_version":
         return False
     return True
+
+
+# ---- F-049 (OPS-01): migrations own the schema; create_all is conditional ----
+
+
+def test_migrations_on_boot_default_is_on_in_prod_off_in_dev(monkeypatch):
+    """With no explicit flag, migrations default ON in prod, OFF in dev/CI."""
+    from services.migrations import migrations_on_boot_enabled
+
+    monkeypatch.delenv("RUN_MIGRATIONS_ON_BOOT", raising=False)
+
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    assert migrations_on_boot_enabled() is True
+
+    monkeypatch.delenv("ENVIRONMENT", raising=False)  # unset → treated as prod
+    assert migrations_on_boot_enabled() is True
+
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    assert migrations_on_boot_enabled() is False
+
+
+def test_explicit_run_migrations_flag_overrides_environment(monkeypatch):
+    """An explicit RUN_MIGRATIONS_ON_BOOT always wins over the env default."""
+    from services.migrations import migrations_on_boot_enabled
+
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    monkeypatch.setenv("RUN_MIGRATIONS_ON_BOOT", "true")
+    assert migrations_on_boot_enabled() is True
+
+    monkeypatch.setenv("ENVIRONMENT", "prod")
+    monkeypatch.setenv("RUN_MIGRATIONS_ON_BOOT", "false")
+    assert migrations_on_boot_enabled() is False
+
+
+async def test_run_migrations_on_boot_returns_false_when_disabled(monkeypatch):
+    """Disabled → returns False so the caller falls back to create_all (dev/CI)."""
+    from services import migrations as migrations_mod
+
+    monkeypatch.setenv("ENVIRONMENT", "dev")
+    monkeypatch.delenv("RUN_MIGRATIONS_ON_BOOT", raising=False)
+
+    def _boom():  # upgrade must NOT be attempted when disabled
+        raise AssertionError("alembic upgrade should not run when migrations are disabled")
+
+    monkeypatch.setattr(migrations_mod, "run_upgrade_head", _boom)
+    assert await migrations_mod.run_migrations_on_boot() is False
+
+
+async def test_initialize_database_skips_create_all_when_migrated(monkeypatch):
+    """When migrations own the schema, initialize_database must NOT run create_all."""
+    from services import database as database_mod
+
+    calls = {"init_db": 0, "create_tables": 0}
+
+    async def _init_db():
+        calls["init_db"] += 1
+
+    async def _create_tables():
+        calls["create_tables"] += 1
+
+    monkeypatch.setattr(database_mod.db_manager, "init_db", _init_db)
+    monkeypatch.setattr(database_mod.db_manager, "create_tables", _create_tables)
+    monkeypatch.delenv("SKIP_INIT_DB", raising=False)
+
+    # Migrations ran → skip create_all (the runtime bootstrap OPS-01 replaces).
+    await database_mod.initialize_database(skip_create_all=True)
+    assert calls == {"init_db": 1, "create_tables": 0}
+
+    # Dev/CI path (or migrations failed) → create_all still bootstraps the schema.
+    await database_mod.initialize_database(skip_create_all=False)
+    assert calls == {"init_db": 2, "create_tables": 1}

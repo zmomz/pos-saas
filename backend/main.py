@@ -78,12 +78,13 @@ async def lifespan(app: FastAPI):
     logger.info("=== Application startup initiated ===")
 
     # MODULE_STARTUP_START
-    # Run Alembic migrations first when RUN_MIGRATIONS_ON_BOOT is enabled (prod);
-    # otherwise initialize_database()'s create_all bootstraps the schema (dev/CI).
+    # Run Alembic migrations first when enabled (prod default); when they own the
+    # schema, skip create_all so the schema comes purely from the versioned chain
+    # (OPS-01). In dev/CI (or if migrations fail) create_all bootstraps it instead.
     from services.migrations import run_migrations_on_boot
 
-    await run_migrations_on_boot()
-    await initialize_database()
+    migrated = await run_migrations_on_boot()
+    await initialize_database(skip_create_all=migrated)
     await initialize_mock_data()
     await initialize_admin_user()
     # MODULE_STARTUP_END

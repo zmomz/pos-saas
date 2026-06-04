@@ -26,8 +26,15 @@ async def check_database_health() -> bool:
         return False
 
 
-async def initialize_database():
-    """Initialize database and create tables"""
+async def initialize_database(skip_create_all: bool = False):
+    """Initialize the database connection and (unless migrated) create tables.
+
+    ``skip_create_all`` is passed ``True`` by the lifespan when Alembic migrations
+    ran on boot and now own the schema (OPS-01) — in that case we only set up the
+    engine/session and do **not** run ``Base.metadata.create_all`` (the runtime
+    bootstrap the migrations replace). Default ``False`` keeps the dev/CI path
+    (and the seed-master CLI) bootstrapping via ``create_all``.
+    """
     if "SKIP_INIT_DB" in os.environ:
         logger.info("SKIP_INIT_DB set; skipping table creation")
         return
@@ -36,9 +43,12 @@ async def initialize_database():
     try:
         logger.info("🔧 Starting database initialization...")
         await db_manager.init_db()
-        logger.info("🔧 Database connection initialized, now creating tables if tables not exist...")
-        await db_manager.create_tables()
-        logger.info("🔧 Table creation completed")
+        if skip_create_all:
+            logger.info("Schema owned by Alembic migrations; skipping create_all (OPS-01).")
+        else:
+            logger.info("🔧 Database connection initialized, now creating tables if tables not exist...")
+            await db_manager.create_tables()
+            logger.info("🔧 Table creation completed")
         logger.info("Database initialized successfully")
         logger.debug(f"[DB_OP] Database initialization completed in {time.time() - start_time:.4f}s")
     except Exception as e:
