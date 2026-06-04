@@ -9,9 +9,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { getCustomers, createCustomer, updateCustomer, deleteCustomer } from '@/lib/api';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
+import {
+  getCustomers,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
+  exportCustomerData,
+  eraseCustomerData,
+} from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { Users, UserPlus, Search } from 'lucide-react';
+import { Users, UserPlus, Search, Download, ShieldOff } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -23,6 +32,8 @@ interface Customer {
   notes?: string;
   total_purchases?: number;
   visit_count?: number;
+  marketing_consent?: boolean;
+  pii_erased_at?: string | null;
   created_at?: string;
 }
 
@@ -33,6 +44,7 @@ interface CustomerFormData {
   vat_number: string;
   address: string;
   notes: string;
+  marketing_consent: boolean;
 }
 
 const emptyForm: CustomerFormData = {
@@ -42,6 +54,7 @@ const emptyForm: CustomerFormData = {
   vat_number: '',
   address: '',
   notes: '',
+  marketing_consent: false,
 };
 
 export default function CustomerManagement() {
@@ -51,9 +64,11 @@ export default function CustomerManagement() {
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [eraseOpen, setEraseOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [formData, setFormData] = useState<CustomerFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+  const [actionError, setActionError] = useState('');
 
   const { t } = useLanguage();
 
@@ -97,6 +112,7 @@ export default function CustomerManagement() {
         vat_number: formData.vat_number || undefined,
         address: formData.address || undefined,
         notes: formData.notes || undefined,
+        marketing_consent: formData.marketing_consent,
       });
       setAddOpen(false);
       setFormData(emptyForm);
@@ -117,6 +133,7 @@ export default function CustomerManagement() {
       vat_number: customer.vat_number || '',
       address: customer.address || '',
       notes: customer.notes || '',
+      marketing_consent: !!customer.marketing_consent,
     });
     setEditOpen(true);
   }
@@ -132,6 +149,7 @@ export default function CustomerManagement() {
         vat_number: formData.vat_number || undefined,
         address: formData.address || undefined,
         notes: formData.notes || undefined,
+        marketing_consent: formData.marketing_consent,
       });
       setEditOpen(false);
       setSelectedCustomer(null);
@@ -159,6 +177,52 @@ export default function CustomerManagement() {
       await loadCustomers();
     } catch (err) {
       console.error('Failed to delete customer:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // PDPL (SEC-05): download everything held about the customer as JSON.
+  async function handleExportData(customer: Customer) {
+    setActionError('');
+    try {
+      const bundle = await exportCustomerData(customer.id);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+        type: 'application/json',
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `customer-${customer.id}-data-export.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to export customer data:', err);
+      setActionError(t('export_failed'));
+    }
+  }
+
+  function openErase(customer: Customer) {
+    setActionError('');
+    setSelectedCustomer(customer);
+    setEraseOpen(true);
+  }
+
+  // PDPL (SEC-05): tombstone the customer's PII (row retained for fiscal records).
+  async function handleEraseCustomer() {
+    if (!selectedCustomer) return;
+    setSubmitting(true);
+    setActionError('');
+    try {
+      await eraseCustomerData(selectedCustomer.id);
+      setEraseOpen(false);
+      setSelectedCustomer(null);
+      await loadCustomers();
+    } catch (err) {
+      console.error('Failed to erase customer PII:', err);
+      setActionError(t('erase_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -220,6 +284,21 @@ export default function CustomerManagement() {
             placeholder="Additional notes"
             className="bg-slate-700 border-slate-600 text-white"
           />
+        </div>
+        {/* PDPL marketing consent (SEC-05 / CRM-05) */}
+        <div className="flex items-start gap-3 rounded-md border border-slate-600 bg-slate-700/40 p-3">
+          <Checkbox
+            id="marketing-consent"
+            checked={formData.marketing_consent}
+            onCheckedChange={(v) =>
+              setFormData((prev) => ({ ...prev, marketing_consent: v === true }))
+            }
+            className="mt-0.5"
+          />
+          <label htmlFor="marketing-consent" className="cursor-pointer">
+            <span className="text-sm text-white block">{t('marketing_consent')}</span>
+            <span className="text-xs text-slate-400 block">{t('marketing_consent_hint')}</span>
+          </label>
         </div>
         <div className="flex gap-3 pt-2">
           <Button
@@ -313,6 +392,13 @@ export default function CustomerManagement() {
         </Dialog>
       </div>
 
+      {/* Action error (PDPL export/erase) */}
+      {actionError && (
+        <div role="alert" className="rounded-md border border-red-600/50 bg-red-600/10 p-3 text-sm text-red-400">
+          {actionError}
+        </div>
+      )}
+
       {/* Table */}
       <div className="overflow-x-auto rounded-lg border border-slate-700">
         <table className="w-full text-sm">
@@ -322,7 +408,7 @@ export default function CustomerManagement() {
               <th className="p-3 text-start">Phone</th>
               <th className="p-3 text-start">Email</th>
               <th className="p-3 text-start">VAT Number</th>
-              <th className="p-3 text-start">Address</th>
+              <th className="p-3 text-start">{t('consent')}</th>
               <th className="p-3 text-start">Actions</th>
             </tr>
           </thead>
@@ -334,22 +420,57 @@ export default function CustomerManagement() {
                 </td>
               </tr>
             ) : (
-              filteredCustomers.map((customer) => (
+              filteredCustomers.map((customer) => {
+                const erased = !!customer.pii_erased_at;
+                return (
                 <tr key={customer.id} className="border-t border-slate-700 text-slate-300">
-                  <td className="p-3 text-white font-medium">{customer.name}</td>
+                  <td className="p-3 text-white font-medium">
+                    {customer.name}
+                    {erased && (
+                      <Badge variant="outline" className="ms-2 border-slate-500 text-slate-400 text-xs">
+                        {t('pii_erased')}
+                      </Badge>
+                    )}
+                  </td>
                   <td className="p-3">{customer.phone || '—'}</td>
                   <td className="p-3">{customer.email || '—'}</td>
                   <td className="p-3">{customer.vat_number || '—'}</td>
-                  <td className="p-3 max-w-[200px] truncate">{customer.address || '—'}</td>
                   <td className="p-3">
-                    <div className="flex gap-2">
+                    {customer.marketing_consent ? (
+                      <Badge className="bg-green-600/20 text-green-400 text-xs">{t('consent_given')}</Badge>
+                    ) : (
+                      <span className="text-slate-500">{t('consent_none')}</span>
+                    )}
+                  </td>
+                  <td className="p-3">
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => openEdit(customer)}
+                        disabled={erased}
                         className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
                       >
                         Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleExportData(customer)}
+                        className="border-blue-600/50 text-blue-400 hover:bg-blue-600/20 text-xs"
+                      >
+                        <Download className="h-3 w-3 me-1" />
+                        {t('export_data')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openErase(customer)}
+                        disabled={erased}
+                        className="border-amber-600/50 text-amber-400 hover:bg-amber-600/20 text-xs"
+                      >
+                        <ShieldOff className="h-3 w-3 me-1" />
+                        {t('erase_pii')}
                       </Button>
                       <Button
                         size="sm"
@@ -362,7 +483,8 @@ export default function CustomerManagement() {
                     </div>
                   </td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
@@ -402,6 +524,40 @@ export default function CustomerManagement() {
               className="flex-1 bg-red-600 hover:bg-red-700 text-white"
             >
               {submitting ? t('loading') : 'Delete'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* PDPL Erase Dialog (SEC-05) */}
+      <Dialog open={eraseOpen} onOpenChange={setEraseOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">{t('erase_pii')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-slate-300">
+            {t('erase_pii_confirm')} <strong>{selectedCustomer?.name}</strong>
+          </p>
+          <p className="text-xs text-slate-500">{t('erase_pii_retention')}</p>
+          {actionError && (
+            <div role="alert" className="rounded-md border border-red-600/50 bg-red-600/10 p-2 text-sm text-red-400">
+              {actionError}
+            </div>
+          )}
+          <div className="flex gap-3 pt-4">
+            <Button
+              variant="outline"
+              onClick={() => setEraseOpen(false)}
+              className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+            >
+              {t('cancel')}
+            </Button>
+            <Button
+              onClick={handleEraseCustomer}
+              disabled={submitting}
+              className="flex-1 bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {submitting ? t('loading') : t('erase_pii')}
             </Button>
           </div>
         </DialogContent>

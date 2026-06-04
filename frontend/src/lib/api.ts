@@ -1025,6 +1025,7 @@ export async function createCustomer(data: {
   vat_number?: string;
   address?: string;
   notes?: string;
+  marketing_consent?: boolean;
 }) {
   const response = await client.entities.customers.create({ data });
   return response.data;
@@ -1037,6 +1038,39 @@ export async function updateCustomer(id: string, data: Record<string, unknown>) 
 
 export async function deleteCustomer(id: string) {
   await client.entities.customers.delete({ id });
+}
+
+// PDPL data-subject rights (SEC-05 / F-050).
+export interface CustomerDataExport {
+  customer: Record<string, unknown>;
+  transactions: {
+    id: number;
+    invoice_number: string;
+    total_amount?: number;
+    status?: string;
+    created_at?: string;
+  }[];
+  transaction_count: number;
+  retention_notice: string;
+}
+
+// PDPL right-to-access/portability: everything held about one customer.
+export async function exportCustomerData(id: string): Promise<CustomerDataExport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/entities/customers/${id}/data-export`,
+    method: 'GET',
+  });
+  return response.data as CustomerDataExport;
+}
+
+// PDPL right-to-erasure: tombstone the customer's PII (row retained so fiscal
+// records stay intact). Returns the tombstoned customer.
+export async function eraseCustomerData(id: string) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/entities/customers/${id}/erase`,
+    method: 'POST',
+  });
+  return response.data;
 }
 
 // Procurement (Phase 6 / F-034): receive a purchase order. The backend lands

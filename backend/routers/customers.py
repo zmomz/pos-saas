@@ -6,12 +6,15 @@ from datetime import datetime, date
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from services.customers import CustomersService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
+from models.audit_logs import Audit_logs
+from models.transactions import Transactions
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -30,6 +33,7 @@ class CustomersData(BaseModel):
     notes: str = None
     total_purchases: float = None
     visit_count: int = None
+    marketing_consent: Optional[bool] = None  # PDPL opt-in (SEC-05 / CRM-05)
 
 
 class CustomersUpdateData(BaseModel):
@@ -41,6 +45,7 @@ class CustomersUpdateData(BaseModel):
     notes: Optional[str] = None
     total_purchases: Optional[float] = None
     visit_count: Optional[int] = None
+    marketing_consent: Optional[bool] = None  # PDPL opt-in (SEC-05 / CRM-05)
 
 
 class CustomersResponse(BaseModel):
@@ -54,6 +59,9 @@ class CustomersResponse(BaseModel):
     notes: Optional[str] = None
     total_purchases: Optional[float] = None
     visit_count: Optional[int] = None
+    marketing_consent: Optional[bool] = None
+    consent_updated_at: Optional[datetime] = None
+    pii_erased_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -195,6 +203,151 @@ async def get_customers(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+# ---------- PDPL data-subject rights (SEC-05 / F-050) ----------
+class DataSubjectTransaction(BaseModel):
+    """A fiscal record linked to the data subject (read-only, retained)."""
+    id: int
+    invoice_number: str
+    total_amount: Optional[float] = None
+    status: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CustomerDataExportResponse(BaseModel):
+    """PDPL right-to-access / portability bundle for one customer."""
+    customer: CustomersResponse
+    transactions: List[DataSubjectTransaction]
+    transaction_count: int
+    # Why some PII (buyer name/phone/VAT on invoices) is retained even after an
+    # erasure request — ZATCA's 6-year fiscal-retention obligation overrides
+    # erasure for fiscal records (a lawful-basis exemption under PDPL).
+    retention_notice: str
+
+
+def _linked_transactions_filter(customer):
+    """Match the customer's fiscal rows by the PII denormalized onto a sale.
+
+    Sales copy ``customer_name``/``customer_phone`` at ring-up time (there is no
+    customer FK on ``transactions``). Phone is the most reliable identifier; fall
+    back to name. After erasure both are cleared so nothing links back.
+    """
+    conditions = []
+    if customer.phone:
+        conditions.append(Transactions.customer_phone == customer.phone)
+    if customer.name:
+        conditions.append(Transactions.customer_name == customer.name)
+    return conditions
+
+
+@router.get("/{id}/data-export", response_model=CustomerDataExportResponse)
+async def export_customer_data(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """PDPL (SEC-05) data-subject access/portability: export everything held about
+    one customer — their CRM record plus every fiscal transaction linked to them.
+
+    Owner-scoped: the merchant can only export a customer in their own scope
+    (a foreign/unknown id → 404, SEC-02).
+    """
+    logger.debug(f"PDPL data export for customer {id}")
+    service = CustomersService(db)
+    try:
+        customer = await service.get_by_id(id, user_id=scope.owner_user_id)
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customers not found")
+
+        conditions = _linked_transactions_filter(customer)
+        transactions = []
+        if conditions:
+            result = await db.execute(
+                select(Transactions)
+                .where(
+                    Transactions.user_id == scope.owner_user_id,
+                    or_(*conditions),
+                )
+                .order_by(Transactions.id.desc())
+            )
+            transactions = result.scalars().all()
+
+        return {
+            "customer": customer,
+            "transactions": transactions,
+            "transaction_count": len(transactions),
+            "retention_notice": (
+                "Fiscal records (invoices/credit notes) are retained for 6 years "
+                "under ZATCA tax law and are not erased by a data-subject request."
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting customer {id} data: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/{id}/erase", response_model=CustomersResponse)
+async def erase_customer_pii(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """PDPL (SEC-05) right-to-erasure: tombstone a customer's personal data.
+
+    Nulls the PII fields (phone/email/VAT/notes), tombstones the name, withdraws
+    marketing consent and stamps ``pii_erased_at``. The row is retained (not hard
+    deleted) so retained fiscal transactions stay referentially intact; those
+    fiscal records keep their own buyer block under the ZATCA-retention exemption.
+    The action is audited (SEC-07). Owner-scoped (a foreign/unknown id → 404).
+    Idempotent — erasing an already-erased customer is a no-op that still 200s.
+    """
+    logger.debug(f"PDPL erasure for customer {id}")
+    service = CustomersService(db)
+    try:
+        customer = await service.get_by_id(id, user_id=scope.owner_user_id)
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customers not found")
+
+        # ``name`` is NOT NULL — tombstone it rather than null it.
+        customer.name = "[erased]"
+        customer.phone = None
+        customer.email = None
+        customer.vat_number = None
+        customer.notes = None
+        customer.marketing_consent = False
+        now = datetime.now()
+        customer.consent_updated_at = now
+        customer.pii_erased_at = now
+
+        db.add(
+            Audit_logs(
+                user_id=str(current_user.id),
+                action="PDPL_ERASE_CUSTOMER",
+                entity_type="customers",
+                entity_id=str(customer.id),
+                details=f"Erased PII for customer {customer.id} (PDPL right-to-erasure)",
+            )
+        )
+
+        await db.commit()
+        await db.refresh(customer)
+        logger.info(f"Customer {id} PII erased (PDPL)")
+        return customer
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error erasing customer {id} PII: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @router.post("", response_model=CustomersResponse, status_code=201)
 async def create_customers(
     data: CustomersData,
@@ -207,7 +360,12 @@ async def create_customers(
     
     service = CustomersService(db)
     try:
-        result = await service.create(data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
+        create_dict = data.model_dump()
+        # PDPL (SEC-05): stamp when consent was first recorded so the merchant can
+        # evidence the opt-in.
+        if create_dict.get("marketing_consent") is not None:
+            create_dict["consent_updated_at"] = datetime.now()
+        result = await service.create(create_dict, user_id=(scope.owner_user_id or str(current_user.id)))
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create customers")
         
@@ -292,6 +450,10 @@ async def update_customers(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
+        # PDPL (SEC-05): re-stamp whenever the consent flag is changed (given or
+        # withdrawn) so the merchant can evidence the change.
+        if "marketing_consent" in update_dict:
+            update_dict["consent_updated_at"] = datetime.now()
         result = await service.update(id, update_dict, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Customers with id {id} not found for update")
