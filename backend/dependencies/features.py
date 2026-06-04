@@ -24,6 +24,27 @@ from schemas.auth import UserResponse
 
 logger = logging.getLogger(__name__)
 
+# Canonical feature keys (IB §3.2). An agent may toggle any of these per client;
+# a gated route enforces one via ``require_feature``. Keeping the set here makes
+# it the single source of truth shared by the toggle endpoint (which rejects an
+# unknown name instead of silently storing a cosmetic switch) and the routes that
+# actually gate on it. ``zatca`` is compliance-policy (its enforcement decision is
+# tracked separately) and ``omnichannel`` has no routes yet — both are valid keys
+# but not yet gated; the rest (email_receipts/sms_receipts/loyalty/restaurant/
+# inventory/discounts) are enforced.
+FEATURE_KEYS = frozenset(
+    {
+        "email_receipts",
+        "sms_receipts",
+        "loyalty",
+        "restaurant",
+        "inventory",
+        "discounts",
+        "zatca",
+        "omnichannel",
+    }
+)
+
 
 async def is_feature_enabled(db: AsyncSession, client_id: int, feature_name: str) -> bool:
     """Return whether ``feature_name`` is enabled for ``client_id`` (default True)."""

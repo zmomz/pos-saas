@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, db_manager
 from dependencies.auth import get_current_user
+from dependencies.features import require_feature
 from schemas.auth import UserResponse
 from models.auth import User
 from models.agents import Agents
@@ -359,7 +360,11 @@ class InventoryAlertsResponse(BaseModel):
     total: int
 
 
-@router.post("/api/v1/inventory/deduct", deprecated=True)
+@router.post(
+    "/api/v1/inventory/deduct",
+    deprecated=True,
+    dependencies=[Depends(require_feature("inventory"))],
+)
 async def deduct_inventory(
     data: InventoryDeductRequest,
     current_user: UserResponse = Depends(get_current_user),
@@ -400,7 +405,11 @@ async def deduct_inventory(
     return {"success": True, "deducted": deducted}
 
 
-@router.get("/api/v1/inventory/alerts", response_model=InventoryAlertsResponse)
+@router.get(
+    "/api/v1/inventory/alerts",
+    response_model=InventoryAlertsResponse,
+    dependencies=[Depends(require_feature("inventory"))],
+)
 async def get_inventory_alerts(
     threshold: int = Query(10, ge=1),
     current_user: UserResponse = Depends(get_current_user),

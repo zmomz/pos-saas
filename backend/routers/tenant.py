@@ -18,6 +18,7 @@ from core.database import get_db
 from core.email import send_provisioning_email
 from core.security import hash_password
 from dependencies.auth import get_current_user
+from dependencies.features import FEATURE_KEYS
 from schemas.auth import UserResponse
 from models.auth import User
 from models.agents import Agents
@@ -1092,6 +1093,14 @@ async def set_client_feature(
     role_info = await get_user_role(db, str(current_user.id))
     if role_info["role"] != "agent":
         raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    # AG-03: reject an unknown feature name rather than silently storing a cosmetic
+    # switch that gates nothing. Only the enumerated keys (IB §3.2) are togglable.
+    if data.feature_name not in FEATURE_KEYS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"feature_name must be one of: {', '.join(sorted(FEATURE_KEYS))}",
+        )
 
     result = await db.execute(
         select(Clients).where(

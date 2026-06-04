@@ -15,6 +15,7 @@ from services.discounts import (
     compute_discount_amount,
 )
 from dependencies.auth import get_admin_user, get_current_user
+from dependencies.features import require_feature
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -236,7 +237,11 @@ async def create_discounts(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
-@router.post("/validate", response_model=DiscountValidateResponse)
+@router.post(
+    "/validate",
+    response_model=DiscountValidateResponse,
+    dependencies=[Depends(require_feature("discounts"))],
+)
 async def validate_discount(
     data: DiscountValidateRequest,
     current_user: UserResponse = Depends(get_current_user),
