@@ -2,11 +2,11 @@ import json
 import logging
 from typing import List, Optional
 
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import BaseModel
-from sqlalchemy import or_, select
+from pydantic import BaseModel, field_validator
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -34,6 +34,7 @@ class CustomersData(BaseModel):
     total_purchases: float = None
     visit_count: int = None
     marketing_consent: Optional[bool] = None  # PDPL opt-in (SEC-05 / CRM-05)
+    tags: Optional[List[str]] = None  # segmentation labels (CRM-04 / F-039)
 
 
 class CustomersUpdateData(BaseModel):
@@ -46,6 +47,7 @@ class CustomersUpdateData(BaseModel):
     total_purchases: Optional[float] = None
     visit_count: Optional[int] = None
     marketing_consent: Optional[bool] = None  # PDPL opt-in (SEC-05 / CRM-05)
+    tags: Optional[List[str]] = None  # segmentation labels (CRM-04 / F-039)
 
 
 class CustomersResponse(BaseModel):
@@ -62,11 +64,52 @@ class CustomersResponse(BaseModel):
     marketing_consent: Optional[bool] = None
     consent_updated_at: Optional[datetime] = None
     pii_erased_at: Optional[datetime] = None
+    # Segmentation labels (CRM-04 / F-039). Stored as a JSON string on the ORM
+    # row; the validator below parses it back into a list for the API so the
+    # client always sees ``tags`` as a real array (or null when untagged).
+    tags: Optional[List[str]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _parse_tags(cls, v):
+        # The ORM column is a JSON-encoded string; accept that, an already-parsed
+        # list, or null. Anything malformed degrades to null rather than 500ing
+        # a customer read.
+        if v is None or v == "":
+            return None
+        if isinstance(v, list):
+            return [str(t) for t in v]
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+            except (ValueError, TypeError):
+                return None
+            return [str(t) for t in parsed] if isinstance(parsed, list) else None
+        return None
+
+
+def _serialize_tags(payload: dict) -> dict:
+    """Encode an inbound ``tags`` list to the JSON string the column stores.
+
+    Mutates ``payload`` in place (mirrors the ``consent_updated_at`` stamping the
+    handlers already do). Trims blanks/dedupes order-preserving; an empty result
+    clears the column (None). A non-list value is left untouched.
+    """
+    if "tags" in payload and isinstance(payload["tags"], list):
+        seen = set()
+        cleaned = []
+        for tag in payload["tags"]:
+            label = str(tag).strip()
+            if label and label.lower() not in seen:
+                seen.add(label.lower())
+                cleaned.append(label)
+        payload["tags"] = json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+    return payload
 
 
 class CustomersListResponse(BaseModel):
@@ -348,6 +391,140 @@ async def erase_customer_pii(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+# ---------- CRM-04 (F-039) — computed RFM-lite / lifetime-value insights ----------
+# A sale row contributes to revenue; a credit note (status="credit_note") reverses
+# part of it (F-007). A voided/held row is not a settled sale. We exclude both so
+# the lifetime value nets refunds and counts only real visits.
+_NON_SALE_STATUSES = ("credit_note", "voided", "held")
+
+
+class CustomerInsightsResponse(BaseModel):
+    """RFM-lite + lifetime value for one customer, computed from linked sales."""
+    customer_id: int
+    gross_sales: float        # sum of settled sale totals (incl. VAT)
+    refunds: float            # sum of credit-note totals routed back
+    lifetime_value: float     # net = gross_sales - refunds (monetary)
+    visit_count: int          # settled sale count (frequency)
+    average_basket: float     # gross_sales / visit_count (0 when no visits)
+    first_purchase_at: Optional[datetime] = None
+    last_purchase_at: Optional[datetime] = None
+    recency_days: Optional[int] = None  # days since the last settled sale
+    segment: str              # rfm-lite bucket: new / regular / vip / at_risk
+
+
+def _rfm_segment(visit_count: int, recency_days: Optional[int], lifetime_value: float) -> str:
+    """A deterministic RFM-lite bucket (parity with how the KSA leaders label).
+
+    * ``new`` — no settled purchases yet (a record with no sales / just added).
+    * ``at_risk`` — has bought before but not in the last 90 days (lapsing).
+    * ``vip`` — frequent (>=5 visits) or high spend (>= 5000 SAR) and still active.
+    * ``regular`` — everyone else who has bought recently.
+    """
+    if visit_count <= 0 or recency_days is None:
+        return "new"
+    if recency_days > 90:
+        return "at_risk"
+    if visit_count >= 5 or lifetime_value >= 5000:
+        return "vip"
+    return "regular"
+
+
+@router.get("/{id}/insights", response_model=CustomerInsightsResponse)
+async def get_customer_insights(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """CRM-04 (F-039): computed lifetime value + RFM-lite for one customer.
+
+    Aggregates the customer's linked fiscal rows **in SQL** (one row per query —
+    never load-everything, OPS-05): gross settled sales, refunds (credit notes)
+    netted out for the lifetime value, visit count, and first/last purchase dates.
+    Transactions carry no customer FK, so they are matched by the PII denormalized
+    onto the sale (phone, then name) — the same join the PDPL export uses.
+
+    Owner-scoped (SEC-02): a foreign/unknown customer id → 404; an erased customer
+    (PII cleared) has no link key and returns zeroes.
+    """
+    logger.debug(f"Computing CRM insights for customer {id}")
+    service = CustomersService(db)
+    try:
+        customer = await service.get_by_id(id, user_id=scope.owner_user_id)
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customers not found")
+
+        conditions = _linked_transactions_filter(customer)
+        gross_sales = 0.0
+        refunds = 0.0
+        visit_count = 0
+        first_purchase_at = None
+        last_purchase_at = None
+
+        if conditions:
+            link = and_(
+                Transactions.user_id == scope.owner_user_id,
+                or_(*conditions),
+            )
+            status_col = func.coalesce(Transactions.status, "completed")
+
+            # Settled sales — gross revenue, frequency, recency, in one aggregate row.
+            sales_row = (
+                await db.execute(
+                    select(
+                        func.coalesce(func.sum(Transactions.total_amount), 0.0),
+                        func.count(Transactions.id),
+                        func.min(Transactions.created_at),
+                        func.max(Transactions.created_at),
+                    ).where(link, status_col.notin_(_NON_SALE_STATUSES))
+                )
+            ).one()
+            gross_sales = float(sales_row[0] or 0.0)
+            visit_count = int(sales_row[1] or 0)
+            first_purchase_at = sales_row[2]
+            last_purchase_at = sales_row[3]
+
+            # Refunds — credit-note totals routed back (F-007), netted from LTV.
+            refunds = float(
+                (
+                    await db.execute(
+                        select(func.coalesce(func.sum(Transactions.total_amount), 0.0)).where(
+                            link, status_col == "credit_note"
+                        )
+                    )
+                ).scalar()
+                or 0.0
+            )
+
+        lifetime_value = round(gross_sales - refunds, 2)
+        average_basket = round(gross_sales / visit_count, 2) if visit_count else 0.0
+
+        recency_days = None
+        if last_purchase_at is not None:
+            ref = last_purchase_at
+            if ref.tzinfo is None:
+                ref = ref.replace(tzinfo=timezone.utc)
+            recency_days = max((datetime.now(timezone.utc) - ref).days, 0)
+
+        return {
+            "customer_id": customer.id,
+            "gross_sales": round(gross_sales, 2),
+            "refunds": round(refunds, 2),
+            "lifetime_value": lifetime_value,
+            "visit_count": visit_count,
+            "average_basket": average_basket,
+            "first_purchase_at": first_purchase_at,
+            "last_purchase_at": last_purchase_at,
+            "recency_days": recency_days,
+            "segment": _rfm_segment(visit_count, recency_days, lifetime_value),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error computing insights for customer {id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @router.post("", response_model=CustomersResponse, status_code=201)
 async def create_customers(
     data: CustomersData,
@@ -365,6 +542,8 @@ async def create_customers(
         # evidence the opt-in.
         if create_dict.get("marketing_consent") is not None:
             create_dict["consent_updated_at"] = datetime.now()
+        # CRM-04 (F-039): encode the tags list to the JSON string the column holds.
+        _serialize_tags(create_dict)
         result = await service.create(create_dict, user_id=(scope.owner_user_id or str(current_user.id)))
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create customers")
@@ -394,7 +573,7 @@ async def create_customerss_batch(
     
     try:
         for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
+            result = await service.create(_serialize_tags(item_data.model_dump()), user_id=(scope.owner_user_id or str(current_user.id)))
             if result:
                 results.append(result)
         
@@ -423,6 +602,7 @@ async def update_customerss_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
+            _serialize_tags(update_dict)  # CRM-04 (F-039)
             result = await service.update(item.id, update_dict, user_id=scope.owner_user_id)
             if result:
                 results.append(result)
@@ -454,6 +634,9 @@ async def update_customers(
         # withdrawn) so the merchant can evidence the change.
         if "marketing_consent" in update_dict:
             update_dict["consent_updated_at"] = datetime.now()
+        # CRM-04 (F-039): a sent ``tags`` list (incl. an empty one to clear) is
+        # encoded to the stored JSON string.
+        _serialize_tags(update_dict)
         result = await service.update(id, update_dict, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Customers with id {id} not found for update")

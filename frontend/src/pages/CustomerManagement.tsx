@@ -18,9 +18,12 @@ import {
   deleteCustomer,
   exportCustomerData,
   eraseCustomerData,
+  getCustomerInsights,
+  type CustomerInsights,
 } from '@/lib/api';
+import ErrorState from '@/components/states/ErrorState';
 import { useLanguage } from '@/lib/i18n';
-import { Users, UserPlus, Search, Download, ShieldOff } from 'lucide-react';
+import { Users, UserPlus, Search, Download, ShieldOff, BarChart3, Tag } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -33,6 +36,7 @@ interface Customer {
   total_purchases?: number;
   visit_count?: number;
   marketing_consent?: boolean;
+  tags?: string[];
   pii_erased_at?: string | null;
   created_at?: string;
 }
@@ -45,6 +49,8 @@ interface CustomerFormData {
   address: string;
   notes: string;
   marketing_consent: boolean;
+  // Edited as a comma-separated string; split into the tags array on submit.
+  tags: string;
 }
 
 const emptyForm: CustomerFormData = {
@@ -55,7 +61,16 @@ const emptyForm: CustomerFormData = {
   address: '',
   notes: '',
   marketing_consent: false,
+  tags: '',
 };
+
+// Comma-separated input <-> tags array (CRM-04 / F-039).
+function parseTags(value: string): string[] {
+  return value
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
 
 export default function CustomerManagement() {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -69,6 +84,13 @@ export default function CustomerManagement() {
   const [formData, setFormData] = useState<CustomerFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState('');
+  const [tagFilter, setTagFilter] = useState<string>('');
+
+  // CRM-04 (F-039): per-customer computed insights dialog.
+  const [insightsOpen, setInsightsOpen] = useState(false);
+  const [insightsLoading, setInsightsLoading] = useState(false);
+  const [insightsError, setInsightsError] = useState(false);
+  const [insights, setInsights] = useState<CustomerInsights | null>(null);
 
   const { t } = useLanguage();
 
@@ -89,13 +111,19 @@ export default function CustomerManagement() {
     }
   }
 
+  // Every distinct tag in use, for the segment filter chips (CRM-04 / F-039).
+  const allTags = Array.from(
+    new Set(customers.flatMap((c) => (Array.isArray(c.tags) ? c.tags : []))),
+  ).sort((a, b) => a.localeCompare(b));
+
   const filteredCustomers = customers.filter((c) => {
     const term = search.toLowerCase();
-    return (
+    const matchesSearch =
       c.name?.toLowerCase().includes(term) ||
       c.phone?.toLowerCase().includes(term) ||
-      c.email?.toLowerCase().includes(term)
-    );
+      c.email?.toLowerCase().includes(term);
+    const matchesTag = !tagFilter || (Array.isArray(c.tags) && c.tags.includes(tagFilter));
+    return matchesSearch && matchesTag;
   });
 
   function handleFormChange(field: keyof CustomerFormData, value: string) {
@@ -113,6 +141,7 @@ export default function CustomerManagement() {
         address: formData.address || undefined,
         notes: formData.notes || undefined,
         marketing_consent: formData.marketing_consent,
+        tags: parseTags(formData.tags),
       });
       setAddOpen(false);
       setFormData(emptyForm);
@@ -134,6 +163,7 @@ export default function CustomerManagement() {
       address: customer.address || '',
       notes: customer.notes || '',
       marketing_consent: !!customer.marketing_consent,
+      tags: Array.isArray(customer.tags) ? customer.tags.join(', ') : '',
     });
     setEditOpen(true);
   }
@@ -150,6 +180,7 @@ export default function CustomerManagement() {
         address: formData.address || undefined,
         notes: formData.notes || undefined,
         marketing_consent: formData.marketing_consent,
+        tags: parseTags(formData.tags),
       });
       setEditOpen(false);
       setSelectedCustomer(null);
@@ -228,6 +259,56 @@ export default function CustomerManagement() {
     }
   }
 
+  // CRM-04 (F-039): open the computed insights dialog for a customer. Renders
+  // its own loading / error (with retry) / data states.
+  async function openInsights(customer: Customer) {
+    setSelectedCustomer(customer);
+    setInsights(null);
+    setInsightsError(false);
+    setInsightsOpen(true);
+    await loadInsights(customer.id);
+  }
+
+  async function loadInsights(customerId: string) {
+    setInsightsLoading(true);
+    setInsightsError(false);
+    try {
+      const data = await getCustomerInsights(customerId);
+      setInsights(data);
+    } catch (err) {
+      console.error('Failed to load customer insights:', err);
+      setInsightsError(true);
+    } finally {
+      setInsightsLoading(false);
+    }
+  }
+
+  function segmentLabel(segment?: string): string {
+    switch (segment) {
+      case 'vip':
+        return t('seg_vip');
+      case 'at_risk':
+        return t('seg_at_risk');
+      case 'regular':
+        return t('seg_regular');
+      default:
+        return t('seg_new');
+    }
+  }
+
+  function segmentClass(segment?: string): string {
+    switch (segment) {
+      case 'vip':
+        return 'bg-amber-600/20 text-amber-400';
+      case 'at_risk':
+        return 'bg-red-600/20 text-red-400';
+      case 'regular':
+        return 'bg-green-600/20 text-green-400';
+      default:
+        return 'bg-slate-600/30 text-slate-300';
+    }
+  }
+
   function renderForm(onSubmit: () => void, submitLabel: string) {
     return (
       <div className="space-y-4">
@@ -282,6 +363,16 @@ export default function CustomerManagement() {
             value={formData.notes}
             onChange={(e) => handleFormChange('notes', e.target.value)}
             placeholder="Additional notes"
+            className="bg-slate-700 border-slate-600 text-white"
+          />
+        </div>
+        {/* Segmentation tags (CRM-04 / F-039) — comma-separated */}
+        <div>
+          <label className="text-sm text-slate-400 mb-1 block">{t('tags')}</label>
+          <Input
+            value={formData.tags}
+            onChange={(e) => handleFormChange('tags', e.target.value)}
+            placeholder={t('tags_placeholder')}
             className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
@@ -392,6 +483,37 @@ export default function CustomerManagement() {
         </Dialog>
       </div>
 
+      {/* Segment filter (CRM-04 / F-039) — filter the book by tag */}
+      {allTags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1 text-sm text-slate-400">
+            <Tag className="h-4 w-4" />
+            {t('filter_by_tag')}:
+          </span>
+          <button
+            type="button"
+            onClick={() => setTagFilter('')}
+            className={`rounded-full px-3 py-1 text-xs ${
+              tagFilter === '' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'
+            }`}
+          >
+            {t('all_tags')}
+          </button>
+          {allTags.map((tag) => (
+            <button
+              key={tag}
+              type="button"
+              onClick={() => setTagFilter(tag)}
+              className={`rounded-full px-3 py-1 text-xs ${
+                tagFilter === tag ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'
+              }`}
+            >
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Action error (PDPL export/erase) */}
       {actionError && (
         <div role="alert" className="rounded-md border border-red-600/50 bg-red-600/10 p-3 text-sm text-red-400">
@@ -408,6 +530,7 @@ export default function CustomerManagement() {
               <th className="p-3 text-start">Phone</th>
               <th className="p-3 text-start">Email</th>
               <th className="p-3 text-start">VAT Number</th>
+              <th className="p-3 text-start">{t('tags')}</th>
               <th className="p-3 text-start">{t('consent')}</th>
               <th className="p-3 text-start">Actions</th>
             </tr>
@@ -415,7 +538,7 @@ export default function CustomerManagement() {
           <tbody>
             {filteredCustomers.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-6 text-center text-slate-500">
+                <td colSpan={7} className="p-6 text-center text-slate-500">
                   No customers found
                 </td>
               </tr>
@@ -436,6 +559,23 @@ export default function CustomerManagement() {
                   <td className="p-3">{customer.email || '—'}</td>
                   <td className="p-3">{customer.vat_number || '—'}</td>
                   <td className="p-3">
+                    {Array.isArray(customer.tags) && customer.tags.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {customer.tags.map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="outline"
+                            className="border-blue-600/40 text-blue-300 text-xs"
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </td>
+                  <td className="p-3">
                     {customer.marketing_consent ? (
                       <Badge className="bg-green-600/20 text-green-400 text-xs">{t('consent_given')}</Badge>
                     ) : (
@@ -452,6 +592,15 @@ export default function CustomerManagement() {
                         className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
                       >
                         Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openInsights(customer)}
+                        className="border-purple-600/50 text-purple-300 hover:bg-purple-600/20 text-xs"
+                      >
+                        <BarChart3 className="h-3 w-3 me-1" />
+                        {t('view_insights')}
                       </Button>
                       <Button
                         size="sm"
@@ -560,6 +709,67 @@ export default function CustomerManagement() {
               {submitting ? t('loading') : t('erase_pii')}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Customer insights — computed LTV / RFM-lite (CRM-04 / F-039) */}
+      <Dialog open={insightsOpen} onOpenChange={setInsightsOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-purple-400" />
+              {t('customer_insights')}
+              {selectedCustomer && (
+                <span className="text-slate-400 font-normal">— {selectedCustomer.name}</span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          {insightsLoading ? (
+            <div className="py-12 text-center text-slate-400 animate-pulse">{t('loading')}</div>
+          ) : insightsError ? (
+            <ErrorState
+              message={t('insights_error')}
+              onRetry={() => selectedCustomer && loadInsights(selectedCustomer.id)}
+            />
+          ) : insights && insights.visit_count === 0 ? (
+            <div className="py-12 text-center text-slate-500">{t('no_purchases')}</div>
+          ) : insights ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-400">{t('segment')}</span>
+                <Badge className={`${segmentClass(insights.segment)} text-xs`}>
+                  {segmentLabel(insights.segment)}
+                </Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-md border border-slate-700 bg-slate-700/40 p-3">
+                  <p className="text-xs text-slate-400">{t('lifetime_value')}</p>
+                  <p className="text-xl font-bold text-white">
+                    {insights.lifetime_value.toFixed(2)} <span className="text-sm">SAR</span>
+                  </p>
+                </div>
+                <div className="rounded-md border border-slate-700 bg-slate-700/40 p-3">
+                  <p className="text-xs text-slate-400">{t('visits')}</p>
+                  <p className="text-xl font-bold text-white">{insights.visit_count}</p>
+                </div>
+                <div className="rounded-md border border-slate-700 bg-slate-700/40 p-3">
+                  <p className="text-xs text-slate-400">{t('avg_basket')}</p>
+                  <p className="text-lg font-semibold text-white">
+                    {insights.average_basket.toFixed(2)} <span className="text-xs">SAR</span>
+                  </p>
+                </div>
+                <div className="rounded-md border border-slate-700 bg-slate-700/40 p-3">
+                  <p className="text-xs text-slate-400">{t('last_purchase_label')}</p>
+                  <p className="text-lg font-semibold text-white">
+                    {insights.recency_days != null
+                      ? `${insights.recency_days} ${t('days_ago')}`
+                      : '—'}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>

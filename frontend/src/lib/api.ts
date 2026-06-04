@@ -1118,9 +1118,32 @@ export async function createCustomer(data: {
   address?: string;
   notes?: string;
   marketing_consent?: boolean;
+  tags?: string[]; // segmentation labels (CRM-04 / F-039)
 }) {
   const response = await client.entities.customers.create({ data });
   return response.data;
+}
+
+// CRM-04 (F-039): computed lifetime value + RFM-lite for one customer.
+export interface CustomerInsights {
+  customer_id: number;
+  gross_sales: number;
+  refunds: number;
+  lifetime_value: number;
+  visit_count: number;
+  average_basket: number;
+  first_purchase_at?: string | null;
+  last_purchase_at?: string | null;
+  recency_days?: number | null;
+  segment: string; // new | regular | vip | at_risk
+}
+
+export async function getCustomerInsights(id: string): Promise<CustomerInsights> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/entities/customers/${id}/insights`,
+    method: 'GET',
+  });
+  return response.data as CustomerInsights;
 }
 
 export async function updateCustomer(id: string, data: Record<string, unknown>) {

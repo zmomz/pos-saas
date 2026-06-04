@@ -19,6 +19,12 @@ class Customers(Base):
     notes = Column(String, nullable=True)
     total_purchases = Column(Float, nullable=True)
     visit_count = Column(Integer, nullable=True)
+    # Free-form segmentation labels (CRM-04 / F-039), e.g. ["vip", "wholesale"].
+    # Stored as a JSON-encoded list of strings (a single TEXT column keeps this on
+    # the generic triad without a join table); the router serializes the list in
+    # and parses it back out. Null/empty ⇒ untagged. Drives the segment filter in
+    # the customer book and pairs with the computed RFM/LTV insights endpoint.
+    tags = Column(String, nullable=True)
     # PDPL (SEC-05 / F-050) — Saudi Personal Data Protection Law.
     # ``marketing_consent`` is the explicit, evidenced opt-in required before this
     # customer may be targeted by SMS/WhatsApp marketing (CRM-05). Default False:
