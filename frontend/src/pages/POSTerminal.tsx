@@ -10,7 +10,9 @@ import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play } from 'lucide-react';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import ErrorState from '@/components/states/ErrorState';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play, WifiOff } from 'lucide-react';
 
 interface Product {
   id: number;
@@ -71,9 +73,15 @@ type POSMode = 'sale' | 'refund';
 
 export default function POSTerminal() {
   const [products, setProducts] = useState<Product[]>([]);
+  // F-015 (UX-02): distinguish a products-fetch failure from an empty catalog —
+  // a thrown load must render an error state, not the "no products" empty state.
+  const [productsError, setProductsError] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [loading, setLoading] = useState(true);
+  // F-015 (UX-02): a persistent connectivity indicator inside the full-screen POS
+  // chrome (the global DashboardLayout banner can scroll out of the cashier's view).
+  const online = useOnlineStatus();
   const [processing, setProcessing] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [mode, setMode] = useState<POSMode>('sale');
@@ -178,11 +186,17 @@ export default function POSTerminal() {
   }, [barcodeMessage]);
 
   async function loadProducts() {
+    setLoading(true);
+    setProductsError(false);
     try {
       const data = await getProducts();
       setProducts(data?.items || data || []);
     } catch (err) {
+      // F-015 (UX-02): surface a real error state. Previously this swallowed the
+      // throw to console.error and fell through to the empty "no products" view,
+      // so an outage looked identical to an empty catalog.
       console.error('Failed to load products:', err);
+      setProductsError(true);
     } finally {
       setLoading(false);
     }
@@ -1121,7 +1135,19 @@ export default function POSTerminal() {
       {/* Product Grid */}
       <div className="flex-1 p-4">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-white">{t('products')}</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-bold text-white">{t('products')}</h2>
+            {/* F-015 (UX-02): persistent offline indicator inside the POS chrome. */}
+            {!online && (
+              <span
+                role="status"
+                className="inline-flex items-center gap-1 rounded-full border border-amber-700 bg-amber-900/40 px-2 py-0.5 text-xs text-amber-200"
+              >
+                <WifiOff className="h-3 w-3" />
+                {t('offline')}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <Button
               onClick={() => { setShowHeld(true); loadHeld(); }}
@@ -1236,7 +1262,10 @@ export default function POSTerminal() {
           )}
         </div>
 
-        {filteredProducts.length === 0 ? (
+        {productsError ? (
+          // F-015 (UX-02): error state distinct from the empty state, with retry.
+          <ErrorState message={t('products_load_error')} onRetry={loadProducts} />
+        ) : filteredProducts.length === 0 ? (
           <div className="text-center text-slate-500 py-12">{t('no_products')}</div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
