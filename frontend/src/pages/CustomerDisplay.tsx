@@ -1,22 +1,10 @@
 import { useEffect, useState } from 'react';
 import { ShoppingCart, CheckCircle } from 'lucide-react';
+import { CUSTOMER_DISPLAY_KEY, type CustomerDisplayPayload } from '@/lib/customerDisplay';
 
-interface CartItem {
-  id: number;
-  name: string;
-  name_ar?: string;
-  quantity: number;
-  price: number;
-}
-
-interface DisplayState {
-  items: CartItem[];
-  subtotal: number;
-  vat: number;
-  total: number;
-  businessName: string;
-  status: 'active' | 'paid' | 'idle';
-}
+// The display always renders with a resolved business name; the writer omits it
+// when unknown (HW-05), so the reader keeps this platform fallback.
+type DisplayState = CustomerDisplayPayload & { businessName: string };
 
 export default function CustomerDisplay() {
   const [display, setDisplay] = useState<DisplayState>({
@@ -31,7 +19,7 @@ export default function CustomerDisplay() {
   useEffect(() => {
     // Listen for POS updates via localStorage events
     function handleStorageChange(e: StorageEvent) {
-      if (e.key === 'pos-customer-display') {
+      if (e.key === CUSTOMER_DISPLAY_KEY) {
         try {
           const data = JSON.parse(e.newValue || '{}');
           setDisplay((prev) => ({ ...prev, ...data }));
@@ -44,7 +32,7 @@ export default function CustomerDisplay() {
     // Also poll localStorage for initial state and same-tab updates
     function pollDisplay() {
       try {
-        const raw = localStorage.getItem('pos-customer-display');
+        const raw = localStorage.getItem(CUSTOMER_DISPLAY_KEY);
         if (raw) {
           const data = JSON.parse(raw);
           setDisplay((prev) => ({ ...prev, ...data }));

@@ -25,6 +25,11 @@ function mountSideHandlers() {
     ),
     http.get(`${BASE}/entities/customers`, () => HttpResponse.json([])),
     http.get(`${BASE}/entities/branches`, () => HttpResponse.json([])),
+    // HW-05 (F-047): the POS resolves the merchant brand name for the customer
+    // display header on mount.
+    http.get(`${BASE}/tenant/client/branding`, () =>
+      HttpResponse.json({ company_name: 'Test Shop', primary_color: '#000', secondary_color: '#fff', font_family: 'sans', button_radius: '0.5rem' })
+    ),
     http.get(`${BASE}/pos/held`, () => HttpResponse.json({ items: [], total: 0 })),
   ];
 }

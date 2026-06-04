@@ -5,7 +5,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, holdSale, getHeldSales, recallSale, resolveBarcode, type MyPermissions, type TenderInfo, type HeldTicket } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, type MyPermissions, type TenderInfo, type HeldTicket } from '@/lib/api';
+import { CUSTOMER_DISPLAY_KEY, buildCustomerDisplayPayload, paidCustomerDisplayPayload } from '@/lib/customerDisplay';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
@@ -116,6 +117,10 @@ export default function POSTerminal() {
   const [branches, setBranches] = useState<{ id: number; name: string }[]>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('');
 
+  // HW-05 (F-047): the merchant brand name, mirrored to the customer-facing
+  // second screen so it's white-labeled (never the platform brand).
+  const [brandName, setBrandName] = useState<string>('');
+
   // POS-06: live camera barcode scanning via the BarcodeDetector API.
   const [cameraScanning, setCameraScanning] = useState(false);
 
@@ -172,6 +177,11 @@ export default function POSTerminal() {
     getBranches()
       .then((d) => setBranches((d?.items || d || []) as { id: number; name: string }[]))
       .catch(() => setBranches([]));
+    // HW-05: resolve the merchant brand name for the customer display header
+    // (best-effort; falls back to the display's own default when absent).
+    getClientBranding()
+      .then((b) => setBrandName((b as { company_name?: string } | null)?.company_name || ''))
+      .catch(() => setBrandName(''));
     // POS-10: surface the count of parked tickets on the Held badge.
     loadHeld();
   }, []);
@@ -507,26 +517,30 @@ export default function POSTerminal() {
 
   // Customer-facing display sync: mirror the live cart into the localStorage key
   // the CustomerDisplay page polls, so a second screen shows items + totals.
+  // HW-05 (F-047): carry each line's Arabic name (bilingual, RTL) and the
+  // merchant brand name (white-label) — the payload was previously English-only
+  // and unbranded.
   useEffect(() => {
     try {
       localStorage.setItem(
-        'pos-customer-display',
-        JSON.stringify({
-          items: cart.map((item) => ({
-            name: item.product.name,
-            quantity: item.quantity,
-            price: item.product.price,
-          })),
-          subtotal,
-          vat: vatAmount,
-          total,
-          status: cart.length > 0 ? 'active' : 'idle',
-        })
+        CUSTOMER_DISPLAY_KEY,
+        JSON.stringify(
+          buildCustomerDisplayPayload(
+            cart.map((item) => ({
+              name: item.product.name,
+              name_ar: item.product.name_ar,
+              quantity: item.quantity,
+              price: item.product.price,
+            })),
+            { subtotal, vat: vatAmount, total },
+            brandName,
+          ),
+        )
       );
     } catch {
       /* localStorage unavailable — display sync is best-effort */
     }
-  }, [cart, subtotal, vatAmount, total]);
+  }, [cart, subtotal, vatAmount, total, brandName]);
 
   async function handleCheckout() {
     if (cart.length === 0) return;
@@ -591,11 +605,11 @@ export default function POSTerminal() {
         discount_code: appliedDiscount?.code,
         tenders: result.tenders,
       });
-      // Flash the customer-facing display to a "thank you" state.
+      // Flash the customer-facing display to a "thank you" state (still branded).
       try {
         localStorage.setItem(
-          'pos-customer-display',
-          JSON.stringify({ items: [], subtotal: 0, vat: 0, total: 0, status: 'paid' })
+          CUSTOMER_DISPLAY_KEY,
+          JSON.stringify(paidCustomerDisplayPayload(brandName))
         );
       } catch { /* best-effort */ }
       setQueuedOffline(false);
