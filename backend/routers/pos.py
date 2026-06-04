@@ -37,6 +37,7 @@ from services.discounts import (
     DiscountValidationError,
     compute_discount_amount,
 )
+from services.gift_cards import GiftCardError, GiftCardsService
 from services.payment_gateway import (
     GatewayNotConfigured,
     PaymentDeclined,
@@ -96,6 +97,10 @@ class PaymentEntry(BaseModel):
     # to the named (owner-scoped) terminal for a real approval instead of the online
     # gateway; a decline blocks the whole sale.
     terminal_id: Optional[int] = None
+    # Gift card / store credit (CRM-03/PRC-05, F-038). When this leg's tender is a
+    # gift card, the bearer code the cashier scanned/entered; the card's balance is
+    # validated and atomically decremented inside the sale (no gateway round-trip).
+    gift_card_code: Optional[str] = None
 
 
 class CreateTransactionRequest(BaseModel):
@@ -139,6 +144,10 @@ class CreateTransactionRequest(BaseModel):
     # set, the card leg is captured on this owner-scoped terminal; a decline blocks
     # the sale.
     payment_terminal_id: Optional[int] = None
+    # Gift card / store credit (CRM-03/PRC-05, F-038) for a single-tender giftcard
+    # sale (when ``payments`` is not given and ``payment_method`` is "giftcard"): the
+    # bearer code whose balance is validated and atomically decremented in the sale.
+    payment_gift_card_code: Optional[str] = None
 
 
 class TenderInfo(BaseModel):
@@ -345,6 +354,11 @@ async def _capture_tenders(specs: List[dict]) -> List[dict]:
         gateway = spec.get("_gateway") or default_gateway
         ttype = normalize_tender_type(spec.get("tender_type") or spec.get("method"))
         amount = round(float(spec.get("amount") or 0), 2)
+        # Gift-card legs settle against the card balance (a DB side effect), not a
+        # gateway — they are validated + decremented by ``_redeem_gift_cards`` which
+        # has the db session and owner scope. Skip them here to avoid a duplicate row.
+        if ttype == "giftcard":
+            continue
         row = {
             "tender_type": ttype,
             "amount": amount,
@@ -400,6 +414,7 @@ def _build_tender_specs(data: "CreateTransactionRequest", total_amount: float) -
                 "token": p.token,
                 "simulate": p.simulate,
                 "terminal_id": p.terminal_id,
+                "gift_card_code": p.gift_card_code,
             }
             for p in data.payments
         ]
@@ -410,8 +425,67 @@ def _build_tender_specs(data: "CreateTransactionRequest", total_amount: float) -
             "token": data.payment_token,
             "simulate": data.payment_simulate,
             "terminal_id": data.payment_terminal_id,
+            "gift_card_code": data.payment_gift_card_code,
         }
     ]
+
+
+async def _redeem_gift_cards(
+    db: AsyncSession, user_id: str, client_id: int, specs: List[dict]
+) -> List[dict]:
+    """Redeem every gift-card tender leg against its card balance (PRC-05, F-038).
+
+    For each spec whose tender is a gift card, the bearer code is validated
+    (exists in the caller's scope, active, unexpired, enough balance) and the
+    card's balance is **atomically decremented** in the caller's transaction — so a
+    later card decline (or any failure) rolls the decrement back with the sale, and
+    concurrent sales cannot overdraw a card. An invalid/insufficient card raises
+    ``HTTPException(400)`` *before* any card is charged (this runs ahead of the
+    gateway capture), so the sale fails closed with nothing committed.
+
+    Returns the persistable ``giftcard`` tender rows (linked to the sale by the
+    caller). The row carries ``gateway="giftcard"``, a ``giftcard:<id>`` reference
+    (for a future refund-to-card), and the code's last 4 — never the full code.
+    """
+    service = GiftCardsService(db)
+    rows: List[dict] = []
+    for spec in specs:
+        ttype = normalize_tender_type(spec.get("tender_type") or spec.get("method"))
+        if ttype != "giftcard":
+            continue
+        amount = round(float(spec.get("amount") or 0), 2)
+        if amount <= 0:
+            continue
+        code = (spec.get("gift_card_code") or "").strip()
+        if not code:
+            raise HTTPException(
+                status_code=400, detail="A gift card code is required for a gift-card tender"
+            )
+        try:
+            card = await service.validate(code, amount, user_id=user_id)
+        except GiftCardError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        if not await service.redeem(card.id, amount, user_id=user_id):
+            # Lost the balance race between validate and redeem — treat as exhausted.
+            raise HTTPException(
+                status_code=400, detail="This gift card has insufficient balance"
+            )
+        rows.append(
+            {
+                "tender_type": "giftcard",
+                "amount": amount,
+                "gateway": "giftcard",
+                "status": "captured",
+                "network": None,
+                "approval_code": None,
+                "rrn": None,
+                "gateway_ref": f"giftcard:{card.id}",
+                "last4": (card.code or "")[-4:],
+                "token": None,
+                "decline_reason": None,
+            }
+        )
+    return rows
 
 
 async def _attach_terminal_gateways(
@@ -780,8 +854,16 @@ async def create_transaction(
                     f"invoice total {total_amount:.2f}"
                 ),
             )
+        # Redact the gift-card bearer code from the stored breakdown (it is the
+        # secret that lets anyone redeem the remaining balance) — keep only last 4.
+        def _redacted_payment(p: "PaymentEntry") -> dict:
+            d = p.model_dump()
+            if d.get("gift_card_code"):
+                d["gift_card_code"] = "****" + str(d["gift_card_code"])[-4:]
+            return d
+
         payment_breakdown_json = json.dumps(
-            [p.model_dump() for p in data.payments], ensure_ascii=False
+            [_redacted_payment(p) for p in data.payments], ensure_ascii=False
         )
         methods = [p.method for p in data.payments]
         payment_method = "mixed" if len(set(methods)) > 1 else methods[0]
@@ -796,7 +878,15 @@ async def create_transaction(
     # so the customer taps and the approval is captured before any row is written.
     tender_specs = _build_tender_specs(data, total_amount)
     await _attach_terminal_gateways(db, str(current_user.id), tender_specs)
+    # Gift-card legs (PRC-05/F-038) are validated + atomically decremented FIRST,
+    # before any card is charged — so an invalid/insufficient card fails the sale
+    # before money moves, and a later card decline rolls the decrement back with the
+    # uncommitted sale. They settle internally (no gateway round-trip).
+    giftcard_tenders = await _redeem_gift_cards(
+        db, str(current_user.id), client.id, tender_specs
+    )
     captured_tenders = await _capture_tenders(tender_specs)
+    captured_tenders.extend(giftcard_tenders)
 
     # Increment invoice counter
     current_counter = (client.invoice_counter or 0) + 1

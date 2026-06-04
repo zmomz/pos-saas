@@ -51,11 +51,15 @@ SUPPORTED_TENDER_TYPES: tuple[str, ...] = (
     "tamara",
     "transfer",
     "loyalty",
+    # Prepaid store credit (CRM-03/PRC-05, F-038). Settles internally against the
+    # gift card's balance — no gateway round-trip — but has a DB side effect (the
+    # card balance is decremented atomically in the sale), handled on the sale path.
+    "giftcard",
 )
 
 # Tenders that must capture a real gateway approval before the sale can complete.
-# cash is physical, transfer is settled out-of-band, loyalty is an internal
-# ledger move — none of those route to a gateway.
+# cash is physical, transfer is settled out-of-band, loyalty and giftcard are
+# internal ledger moves — none of those route to a gateway.
 CARD_LIKE_TENDERS: frozenset[str] = frozenset(
     {"card", "mada", "applepay", "stcpay", "tabby", "tamara"}
 )
@@ -84,6 +88,10 @@ def normalize_tender_type(method: Optional[str]) -> str:
         "stcpay": "stcpay",
         "credit": "card",
         "debit": "card",
+        # Gift card / store credit (F-038).
+        "gift_card": "giftcard",
+        "giftcard": "giftcard",
+        "store_credit": "giftcard",
     }
     m = aliases.get(m, m)
     return m if m in SUPPORTED_TENDER_TYPES else "card"

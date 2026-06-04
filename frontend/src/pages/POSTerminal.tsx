@@ -141,10 +141,14 @@ export default function POSTerminal() {
   // POS-02: split-tender payment. When enabled the cashier allocates the total
   // across multiple methods; the per-method amounts are sent as payments[].
   const [splitMode, setSplitMode] = useState(false);
-  const [splitPayments, setSplitPayments] = useState<{ method: string; amount: number }[]>([
+  const [splitPayments, setSplitPayments] = useState<
+    { method: string; amount: number; gift_card_code?: string }[]
+  >([
     { method: 'cash', amount: 0 },
     { method: 'card', amount: 0 },
   ]);
+  // CRM-03/PRC-05 (F-038): bearer code for a single-tender gift-card sale.
+  const [giftCardCode, setGiftCardCode] = useState('');
 
   // Discount state
   const [discountCode, setDiscountCode] = useState('');
@@ -536,7 +540,11 @@ export default function POSTerminal() {
   const splitTotal = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const splitBalanced = Math.abs(splitTotal - total) < 0.01;
 
-  function updateSplitPayment(idx: number, field: 'method' | 'amount', value: string) {
+  function updateSplitPayment(
+    idx: number,
+    field: 'method' | 'amount' | 'gift_card_code',
+    value: string
+  ) {
     setSplitPayments((prev) =>
       prev.map((p, i) =>
         i === idx ? { ...p, [field]: field === 'amount' ? Number(value) || 0 : value } : p
@@ -605,6 +613,12 @@ export default function POSTerminal() {
         payments: splitMode
           ? splitPayments.filter((p) => (Number(p.amount) || 0) > 0)
           : undefined,
+        // PRC-05 (F-038): single-tender gift-card sale — the bearer code the
+        // backend validates + decrements atomically with the sale.
+        payment_gift_card_code:
+          !splitMode && paymentMethod === 'giftcard' && giftCardCode.trim()
+            ? giftCardCode.trim()
+            : undefined,
         // Loyalty (Phase 4): accrue/redeem against the selected customer.
         customer_id:
           selectedCustomerId && selectedCustomerId !== 'walkin'
@@ -647,6 +661,7 @@ export default function POSTerminal() {
       setDiscountCode('');
       setSplitMode(false);
       setSplitPayments([{ method: 'cash', amount: 0 }, { method: 'card', amount: 0 }]);
+      setGiftCardCode('');
       setRedeemPoints('');
       setSelectedCustomerId('');
     } catch (err) {
@@ -1574,47 +1589,71 @@ export default function POSTerminal() {
               </button>
             </div>
             {!splitMode ? (
-              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-slate-700 border-slate-600">
-                  <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
-                  <SelectItem value="mada" className="text-white hover:bg-slate-600">{t('tender_mada')}</SelectItem>
-                  <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
-                  <SelectItem value="applepay" className="text-white hover:bg-slate-600">{t('tender_applepay')}</SelectItem>
-                  <SelectItem value="stcpay" className="text-white hover:bg-slate-600">{t('tender_stcpay')}</SelectItem>
-                  <SelectItem value="tabby" className="text-white hover:bg-slate-600">{t('tender_tabby')}</SelectItem>
-                  <SelectItem value="tamara" className="text-white hover:bg-slate-600">{t('tender_tamara')}</SelectItem>
-                  <SelectItem value="bank_transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
-                </SelectContent>
-              </Select>
+              <>
+                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-700 border-slate-600">
+                    <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
+                    <SelectItem value="mada" className="text-white hover:bg-slate-600">{t('tender_mada')}</SelectItem>
+                    <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
+                    <SelectItem value="applepay" className="text-white hover:bg-slate-600">{t('tender_applepay')}</SelectItem>
+                    <SelectItem value="stcpay" className="text-white hover:bg-slate-600">{t('tender_stcpay')}</SelectItem>
+                    <SelectItem value="tabby" className="text-white hover:bg-slate-600">{t('tender_tabby')}</SelectItem>
+                    <SelectItem value="tamara" className="text-white hover:bg-slate-600">{t('tender_tamara')}</SelectItem>
+                    <SelectItem value="giftcard" className="text-white hover:bg-slate-600">{t('tender_gift_card')}</SelectItem>
+                    <SelectItem value="bank_transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                {paymentMethod === 'giftcard' && (
+                  <Input
+                    value={giftCardCode}
+                    onChange={(e) => setGiftCardCode(e.target.value)}
+                    placeholder={t('gift_card_code_placeholder')}
+                    dir="ltr"
+                    className="mt-2 bg-slate-700 border-slate-600 text-white"
+                  />
+                )}
+              </>
             ) : (
               <div className="space-y-2">
                 {splitPayments.map((p, idx) => (
-                  <div key={idx} className="flex gap-2">
-                    <Select value={p.method} onValueChange={(v) => updateSplitPayment(idx, 'method', v)}>
-                      <SelectTrigger className="bg-slate-700 border-slate-600 text-white flex-1">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-slate-700 border-slate-600">
-                        <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
-                        <SelectItem value="mada" className="text-white hover:bg-slate-600">{t('tender_mada')}</SelectItem>
-                        <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
-                        <SelectItem value="applepay" className="text-white hover:bg-slate-600">{t('tender_applepay')}</SelectItem>
-                        <SelectItem value="stcpay" className="text-white hover:bg-slate-600">{t('tender_stcpay')}</SelectItem>
-                        <SelectItem value="tabby" className="text-white hover:bg-slate-600">{t('tender_tabby')}</SelectItem>
-                        <SelectItem value="tamara" className="text-white hover:bg-slate-600">{t('tender_tamara')}</SelectItem>
-                        <SelectItem value="transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Input
-                      type="number"
-                      value={p.amount || ''}
-                      onChange={(e) => updateSplitPayment(idx, 'amount', e.target.value)}
-                      placeholder="0.00"
-                      className="w-24 bg-slate-700 border-slate-600 text-white"
-                    />
+                  <div key={idx} className="space-y-2">
+                    <div className="flex gap-2">
+                      <Select value={p.method} onValueChange={(v) => updateSplitPayment(idx, 'method', v)}>
+                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white flex-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-slate-700 border-slate-600">
+                          <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
+                          <SelectItem value="mada" className="text-white hover:bg-slate-600">{t('tender_mada')}</SelectItem>
+                          <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
+                          <SelectItem value="applepay" className="text-white hover:bg-slate-600">{t('tender_applepay')}</SelectItem>
+                          <SelectItem value="stcpay" className="text-white hover:bg-slate-600">{t('tender_stcpay')}</SelectItem>
+                          <SelectItem value="tabby" className="text-white hover:bg-slate-600">{t('tender_tabby')}</SelectItem>
+                          <SelectItem value="tamara" className="text-white hover:bg-slate-600">{t('tender_tamara')}</SelectItem>
+                          <SelectItem value="giftcard" className="text-white hover:bg-slate-600">{t('tender_gift_card')}</SelectItem>
+                          <SelectItem value="transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        type="number"
+                        value={p.amount || ''}
+                        onChange={(e) => updateSplitPayment(idx, 'amount', e.target.value)}
+                        placeholder="0.00"
+                        className="w-24 bg-slate-700 border-slate-600 text-white"
+                      />
+                    </div>
+                    {p.method === 'giftcard' && (
+                      <Input
+                        value={p.gift_card_code || ''}
+                        onChange={(e) => updateSplitPayment(idx, 'gift_card_code', e.target.value)}
+                        placeholder={t('gift_card_code_placeholder')}
+                        dir="ltr"
+                        className="bg-slate-700 border-slate-600 text-white"
+                      />
+                    )}
                   </div>
                 ))}
                 <div className={`flex justify-between text-xs ${splitBalanced ? 'text-green-400' : 'text-orange-400'}`}>

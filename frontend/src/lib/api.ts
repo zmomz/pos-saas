@@ -199,7 +199,7 @@ export interface TransactionResult {
 }
 
 export interface PaymentEntry {
-  // 'cash' | 'card' | 'mada' | 'applepay' | 'stcpay' | 'tabby' | 'tamara' | 'transfer' | 'loyalty'
+  // 'cash' | 'card' | 'mada' | 'applepay' | 'stcpay' | 'tabby' | 'tamara' | 'transfer' | 'loyalty' | 'giftcard'
   method: string;
   amount: number;
   // Card-like tenders capture a real gateway approval (PAY-01/05). token is the
@@ -211,6 +211,9 @@ export interface PaymentEntry {
   // HW-03/PAY-05: push this card-like leg to a paired in-store SoftPOS terminal
   // for a real approval instead of the online gateway. A decline blocks the sale.
   terminal_id?: number;
+  // CRM-03/PRC-05 (F-038): when this leg is a gift card, the bearer code whose
+  // balance is validated + atomically decremented on the sale path.
+  gift_card_code?: string;
 }
 
 export async function createTransaction(data: {
@@ -242,11 +245,66 @@ export async function createTransaction(data: {
   payment_simulate?: string;
   // HW-03/PAY-05: capture a single card-like tender on a paired SoftPOS terminal.
   payment_terminal_id?: number;
+  // CRM-03/PRC-05 (F-038): single-tender gift-card sale — the bearer code redeemed.
+  payment_gift_card_code?: string;
 }): Promise<TransactionResult> {
   const response = await client.apiCall.invoke<TransactionResult>({
     url: '/api/v1/pos/transaction',
     method: 'POST',
     data,
+  });
+  return response.data;
+}
+
+// ---------------------------------------------------------------------------
+// Gift cards / store credit (CRM-03 / PRC-05, F-038)
+// ---------------------------------------------------------------------------
+export interface GiftCard {
+  id: number;
+  code: string;
+  currency: string;
+  initial_balance: number;
+  balance: number;
+  status: string;
+  expiry_date?: string | null;
+  customer_id?: number | null;
+  created_at?: string;
+}
+
+export interface GiftCardBalance {
+  code: string;
+  balance: number;
+  status: string;
+  expiry_date?: string | null;
+  is_redeemable: boolean;
+}
+
+export async function issueGiftCard(data: {
+  amount: number;
+  currency?: string;
+  expiry_date?: string;
+  customer_id?: number;
+}): Promise<GiftCard> {
+  const response = await client.apiCall.invoke<GiftCard>({
+    url: '/api/v1/gift-cards',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function listGiftCards(): Promise<GiftCard[]> {
+  const response = await client.apiCall.invoke<GiftCard[]>({
+    url: '/api/v1/gift-cards',
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function getGiftCardBalance(code: string): Promise<GiftCardBalance> {
+  const response = await client.apiCall.invoke<GiftCardBalance>({
+    url: `/api/v1/gift-cards/${encodeURIComponent(code)}/balance`,
+    method: 'GET',
   });
   return response.data;
 }
