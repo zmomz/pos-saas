@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getAgentClients, getAgentBranding, getAgentRevenue, createNewClient, toggleClient, setClientFeature, resetClientPassword, type AgentRevenue } from '@/lib/api';
+import { client, getAgentClients, getAgentBranding, getAgentRevenue, createNewClient, toggleClient, setClientFeature, resetClientPassword, runDunning, type AgentRevenue } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -54,6 +54,9 @@ export default function AgentDashboard() {
   const [revenue, setRevenue] = useState<AgentRevenue | null>(null);
   const [revenueLoading, setRevenueLoading] = useState(true);
   const [revenueError, setRevenueError] = useState(false);
+  // Dunning sweep (CL-06)
+  const [dunningBusy, setDunningBusy] = useState(false);
+  const [dunningResult, setDunningResult] = useState<string | null>(null);
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
   const { isDark } = useTheme();
@@ -85,6 +88,23 @@ export default function AgentDashboard() {
       setRevenueError(true);
     } finally {
       setRevenueLoading(false);
+    }
+  }
+
+  async function handleRunDunning() {
+    setDunningBusy(true);
+    setDunningResult(null);
+    try {
+      const result = await runDunning();
+      setDunningResult(
+        `${t('dunning_done')}: ${result.processed} · ${t('recovered')} ${result.recovered} · ${t('suspended')} ${result.suspended}`
+      );
+      await loadData();
+    } catch (err) {
+      console.error('Failed to run dunning:', err);
+      setDunningResult(t('dunning_failed'));
+    } finally {
+      setDunningBusy(false);
     }
   }
 
@@ -320,6 +340,19 @@ export default function AgentDashboard() {
       <section>
         <div className="flex items-center justify-between mb-4">
           <h2 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('clients')} ({clients.length})</h2>
+          <div className="flex items-center gap-2">
+          {dunningResult && (
+            <span role="status" className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>{dunningResult}</span>
+          )}
+          <Button
+            variant="outline"
+            onClick={handleRunDunning}
+            disabled={dunningBusy}
+            title={t('run_billing_hint')}
+            className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
+          >
+            {dunningBusy ? t('loading') : (t('run_billing_cycle') || 'Run billing')}
+          </Button>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button className="bg-blue-600 hover:bg-blue-700 text-white">{t('create_client')}</Button>
@@ -385,6 +418,7 @@ export default function AgentDashboard() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
 
           {/* One-time credentials for a newly provisioned client (C-1/CL-01) */}
           <Dialog open={!!createdCreds} onOpenChange={(open) => !open && setCreatedCreds(null)}>

@@ -973,6 +973,26 @@ export async function suspendOverdueClient(clientId: number) {
   return response.data;
 }
 
+// Agent: run the dunning sweep over their own overdue clients (CL-06). Retries
+// each overdue charge; a failed retry walks active->past_due->dunning->suspended,
+// a successful retry recovers the account.
+export interface DunningRunResult {
+  processed: number;
+  recovered: number;
+  past_due: number;
+  dunning: number;
+  suspended: number;
+}
+
+export async function runDunning() {
+  const response = await client.apiCall.invoke<DunningRunResult>({
+    url: '/api/v1/tenant/agent/billing/run-dunning',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
 // ---------------------------------------------------------------------------
 // Phase 5: subscription (CL-03/CL-04) + white-label logo upload (AG-01)
 // ---------------------------------------------------------------------------
@@ -994,6 +1014,9 @@ export interface SubscriptionStatus {
   subscription_status: string;
   next_billing_date?: string;
   is_active: boolean;
+  // Dunning state (CL-06): drive the client-facing overdue notice.
+  dunning_attempts?: number;
+  grace_deadline?: string;
   payments: SubscriptionPayment[];
 }
 

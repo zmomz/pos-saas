@@ -1013,6 +1013,10 @@ class SubscriptionResponse(BaseModel):
     subscription_status: str
     next_billing_date: Optional[str] = None
     is_active: bool
+    # Dunning state (CL-06): the consecutive failed-charge counter and the grace
+    # deadline drive the client-facing PRN-09 overdue notice.
+    dunning_attempts: int = 0
+    grace_deadline: Optional[str] = None
     payments: List[SubscriptionPaymentItem] = []
 
 
@@ -1052,6 +1056,8 @@ async def _subscription_payload(db: AsyncSession, merchant: Clients) -> Subscrip
         subscription_status=merchant.subscription_status or "active",
         next_billing_date=merchant.next_billing_date,
         is_active=merchant.is_active if merchant.is_active is not None else True,
+        dunning_attempts=int(merchant.dunning_attempts or 0),
+        grace_deadline=merchant.grace_deadline,
         payments=[
             SubscriptionPaymentItem(
                 id=p.id,
@@ -1101,7 +1107,11 @@ async def pay_client_subscription(
     # CL-04: charge through the agent's Stripe Connect gateway when Stripe is
     # configured; otherwise fall open to a manually-settled record. A real card
     # decline aborts the payment (402) and does NOT advance the billing period.
-    from services.subscription_billing import SubscriptionChargeError, charge_subscription
+    from services.subscription_billing import (
+        SubscriptionChargeError,
+        charge_subscription,
+        record_settled_payment,
+    )
 
     agent_stripe_account = None
     agent_row = (
@@ -1123,58 +1133,17 @@ async def pay_client_subscription(
     except SubscriptionChargeError as exc:
         raise HTTPException(status_code=402, detail=f"Subscription payment failed: {exc}")
 
-    payment = Subscription_payments(
-        user_id=str(current_user.id),
-        client_id=merchant.id,
-        amount=fee,
-        billing_cycle=cycle,
+    # Records the payment + a balanced commission row, advances billing, and
+    # clears any dunning state (status -> active). Shared with the dunning sweep.
+    await record_settled_payment(
+        db,
+        merchant=merchant,
+        payer_user_id=str(current_user.id),
+        charge=charge,
+        cycle=cycle,
         period_start=period_start,
         period_end=period_end,
-        method=charge.method,
-        reference=charge.reference,
-    )
-    db.add(payment)
-    # Flush so the payment gets its id; the commission row references it 1:1.
-    await db.flush()
-
-    # RSL-01: decompose the gross fee into the platform master's cut (per-client
-    # amortized package wholesale) and the agent's net margin, and write one
-    # commission-ledger row atomically with the payment. The package is the
-    # agent's slot bundle (Agents.package_type -> Packages); if it can't be
-    # resolved the whole fee falls to the agent (master_cut = 0) — a balanced,
-    # non-blocking degradation.
-    package = None
-    if agent_row is not None and agent_row.package_type is not None:
-        package = (
-            await db.execute(
-                select(Packages).where(Packages.id == agent_row.package_type)
-            )
-        ).scalar_one_or_none()
-    master_cut, agent_net = compute_commission_split(
-        gross=float(fee),
-        wholesale_price=float(getattr(package, "wholesale_price", 0) or 0),
-        client_slots=int(getattr(package, "client_slots", 0) or 0),
-    )
-    db.add(
-        Commission_ledger(
-            user_id=(agent_row.user_id if agent_row is not None else str(current_user.id)),
-            agent_id=merchant.agent_id,
-            client_id=merchant.id,
-            subscription_payment_id=payment.id,
-            package_id=(package.id if package is not None else None),
-            gross=round(float(fee), 2),
-            master_cut=master_cut,
-            agent_net=agent_net,
-            billing_cycle=cycle,
-            period_start=period_start,
-            period_end=period_end,
-        )
-    )
-
-    await db.execute(
-        update(Clients)
-        .where(Clients.id == merchant.id)
-        .values(subscription_status="active", next_billing_date=period_end)
+        agent_row=agent_row,
     )
     await db.commit()
     await db.refresh(merchant)
@@ -1393,6 +1362,41 @@ async def suspend_overdue_client(
     )
     await db.commit()
     return ToggleResponse(success=True, is_active=False)
+
+
+class DunningRunResponse(BaseModel):
+    processed: int
+    recovered: int
+    past_due: int
+    dunning: int
+    suspended: int
+
+
+@router.post("/agent/billing/run-dunning", response_model=DunningRunResponse)
+async def run_dunning_sweep(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: run the dunning sweep across their own overdue merchants (CL-06).
+
+    Retries the subscription charge for every merchant whose billing date has
+    passed (or who is already past_due/dunning). A successful retry recovers the
+    account (status -> active, billing advanced, payment recorded); a failed
+    retry escalates active -> past_due -> dunning -> suspended. Owner-scoped: only
+    the calling agent's own clients are touched (SEC-02). There is no always-on
+    scheduler on the standalone deployment, so this is operator-triggered (the
+    same pattern as the ZATCA reconcile sweep, F-020).
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    from services.dunning import run_agent_dunning
+
+    summary = await run_agent_dunning(
+        db, role_info["entity_id"], actor_user_id=str(current_user.id)
+    )
+    return DunningRunResponse(**summary)
 
 
 # ---------- Stripe billing webhook (CL-05 auto-suspend on non-payment) ----------

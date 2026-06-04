@@ -84,3 +84,91 @@ async def charge_subscription(
         raise SubscriptionChargeError(f"Charge not completed (status={getattr(intent, 'status', '?')})")
 
     return ChargeResult(charged=True, status="paid", method="stripe", reference=intent.id)
+
+
+async def record_settled_payment(
+    db,
+    *,
+    merchant,
+    payer_user_id: str,
+    charge: "ChargeResult",
+    cycle: str,
+    period_start: str,
+    period_end: str,
+    agent_row=None,
+):
+    """Persist a settled subscription payment + a balanced commission row, advance
+    the billing period, and clear any dunning state (status -> active).
+
+    Shared by the interactive pay endpoint (CL-04) and the dunning sweep (CL-06)
+    so a successful retry records the payment exactly like a manual pay. Runs in
+    the caller's transaction (no commit). Returns the persisted payment row.
+    """
+    # Local imports keep this module importable without the full model graph and
+    # avoid a circular import with the tenant router.
+    from sqlalchemy import select, update
+
+    from models.clients import Clients
+    from models.commission_ledger import Commission_ledger
+    from models.packages import Packages
+    from models.subscription_payments import Subscription_payments
+    from services.commission import compute_commission_split
+
+    payment = Subscription_payments(
+        user_id=str(payer_user_id),
+        client_id=merchant.id,
+        amount=merchant.subscription_fee,
+        billing_cycle=cycle,
+        period_start=period_start,
+        period_end=period_end,
+        method=charge.method,
+        reference=charge.reference,
+    )
+    db.add(payment)
+    # Flush so the payment gets its id; the commission row references it 1:1.
+    await db.flush()
+
+    # RSL-01: decompose the gross fee into the platform master's cut (per-client
+    # amortized package wholesale) and the agent's net margin, written atomically
+    # with the payment. An unresolvable package degrades to master_cut=0 (whole
+    # fee to the agent) — still balanced, never blocking.
+    package = None
+    if agent_row is not None and getattr(agent_row, "package_type", None) is not None:
+        package = (
+            await db.execute(select(Packages).where(Packages.id == agent_row.package_type))
+        ).scalar_one_or_none()
+    fee = float(merchant.subscription_fee or 0)
+    master_cut, agent_net = compute_commission_split(
+        gross=fee,
+        wholesale_price=float(getattr(package, "wholesale_price", 0) or 0),
+        client_slots=int(getattr(package, "client_slots", 0) or 0),
+    )
+    db.add(
+        Commission_ledger(
+            user_id=(agent_row.user_id if agent_row is not None else str(payer_user_id)),
+            agent_id=merchant.agent_id,
+            client_id=merchant.id,
+            subscription_payment_id=payment.id,
+            package_id=(package.id if package is not None else None),
+            gross=round(fee, 2),
+            master_cut=master_cut,
+            agent_net=agent_net,
+            billing_cycle=cycle,
+            period_start=period_start,
+            period_end=period_end,
+        )
+    )
+
+    # Recover the subscription: active again, billing advanced, dunning cleared.
+    await db.execute(
+        update(Clients)
+        .where(Clients.id == merchant.id)
+        .values(
+            subscription_status="active",
+            next_billing_date=period_end,
+            dunning_attempts=0,
+            grace_deadline=None,
+            is_active=True,
+        )
+    )
+    return payment

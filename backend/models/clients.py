@@ -20,6 +20,13 @@ class Clients(Base):
     billing_cycle = Column(String, nullable=True, default='monthly', server_default='monthly')
     subscription_status = Column(String, nullable=True, default='active', server_default='active')
     next_billing_date = Column(String, nullable=True)
+    # Dunning state machine (CL-06). A failed retry walks the subscription
+    # active -> past_due -> dunning -> suspended; a successful charge / pay resets
+    # both fields and returns to active. ``dunning_attempts`` counts consecutive
+    # failed charge attempts; ``grace_deadline`` is the ISO date by which the
+    # client must pay before the next retry escalates / suspends (PRN-09 notice).
+    dunning_attempts = Column(Integer, nullable=True, default=0, server_default='0')
+    grace_deadline = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
     # Retail / restaurant / both — picked at provisioning / first-login (CL-02).
     # Drives POS mode and gates the restaurant vertical (RST-*, F-045). Defaults

@@ -8,7 +8,7 @@ import { client, getClientDashboard, getClientBranding, getTransactions, getClie
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
-import { DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag, BarChart3, Users, Download } from 'lucide-react';
+import { DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag, BarChart3, Users, Download, AlertTriangle } from 'lucide-react';
 
 interface DashboardStats {
   total_sales: number;
@@ -179,6 +179,34 @@ export default function ClientDashboard() {
           <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('subscription')}</h2>
           <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
             <CardContent className="p-4 space-y-3">
+              {/* Dunning notice (CL-06 / PRN-09): overdue amount + grace deadline + pay */}
+              {(subscription.subscription_status === 'past_due' ||
+                subscription.subscription_status === 'dunning' ||
+                subscription.subscription_status === 'suspended') && (
+                <div
+                  role="alert"
+                  className={`flex items-start gap-3 rounded-md border p-3 text-sm ${
+                    subscription.subscription_status === 'suspended'
+                      ? 'border-red-500/40 bg-red-500/10 text-red-300'
+                      : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                  }`}
+                >
+                  <AlertTriangle className="h-5 w-5 shrink-0" />
+                  <div>
+                    <p className="font-semibold">
+                      {subscription.subscription_status === 'suspended'
+                        ? t('subscription_suspended_notice')
+                        : t('payment_overdue_notice')}
+                    </p>
+                    <p className="opacity-90">
+                      {t('overdue_amount')}: {formatMoney(subscription.subscription_fee, language)}
+                      {subscription.grace_deadline
+                        ? ` · ${t('pay_before')} ${subscription.grace_deadline}`
+                        : ''}
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('subscription_fee')}</p>
