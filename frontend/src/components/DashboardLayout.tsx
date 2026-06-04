@@ -71,6 +71,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: Receipt, label: 'expenses', path: '/expenses' },
     { icon: Tag, label: 'discounts', path: '/discounts' },
     { icon: BarChart3, label: 'reports', path: '/reports' },
+    { icon: Globe, label: 'online_orders', path: '/channels' },
     { icon: ShieldCheck, label: 'zatca_status', path: '/zatca' },
     { icon: Shield, label: 'audit_log', path: '/audit' },
     { icon: Bell, label: 'notifications', path: '/notifications' },

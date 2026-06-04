@@ -76,6 +76,9 @@ def normalize_tender_type(method: Optional[str]) -> str:
     m = (method or "cash").strip().lower()
     aliases = {
         "bank_transfer": "transfer",
+        # An omnichannel online order (Salla/Zid, F-046) is paid + settled in the
+        # external store, not on our gateway — record it as an out-of-band transfer.
+        "online": "transfer",
         "apple_pay": "applepay",
         "stc_pay": "stcpay",
         "stcpay": "stcpay",

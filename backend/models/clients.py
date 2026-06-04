@@ -33,6 +33,14 @@ class Clients(Base):
     # to 'retail' so existing clients keep the retail-only experience.
     business_type = Column(String, nullable=True, default='retail', server_default='retail')
     vat_number = Column(String, nullable=True)
+    # Omnichannel — Salla connection (OMN-01, F-046). ``salla_store_id`` is the
+    # merchant/store identifier the Salla webhook carries; it routes an incoming
+    # online order to this client. ``salla_webhook_secret`` (optional) verifies the
+    # webhook HMAC signature — when unset, signature verification is skipped
+    # (sandbox / graceful degradation, OPS-08). Both null until the client connects
+    # their Salla store.
+    salla_store_id = Column(String, nullable=True, index=True)
+    salla_webhook_secret = Column(String, nullable=True)
     invoice_counter = Column(Integer, nullable=True, default=0, server_default='0')
     language_preference = Column(String, nullable=True, default='en', server_default='en')
     zatca_enabled = Column(Boolean, nullable=True, default=False, server_default='false')

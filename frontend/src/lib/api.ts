@@ -1591,3 +1591,64 @@ export async function reportPendingZatcaDocuments(): Promise<ZatcaReportPendingR
   });
   return res.data;
 }
+
+// ---------- Omnichannel — Salla connector (OMN-01..03, F-046) ----------
+// Connect the merchant's Salla store, read the connection status, and list the
+// online orders that were imported as POS sales (decrementing the shared stock).
+
+export interface SallaConnection {
+  connected: boolean;
+  store_id?: string | null;
+  webhook_secret_set: boolean;
+}
+
+export interface ChannelOrder {
+  id: number;
+  provider: string;
+  external_order_id: string;
+  external_reference?: string | null;
+  transaction_id?: number | null;
+  status: string;
+  customer_name?: string | null;
+  customer_phone?: string | null;
+  total_amount?: number | null;
+  currency?: string | null;
+  created_at?: string | null;
+}
+
+export interface ChannelOrderList {
+  items: ChannelOrder[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export async function getSallaConnection(): Promise<SallaConnection> {
+  const res = await client.apiCall.invoke<SallaConnection>({
+    url: '/api/v1/omnichannel/salla/connection',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function connectSalla(
+  storeId: string,
+  webhookSecret?: string
+): Promise<SallaConnection> {
+  const res = await client.apiCall.invoke<SallaConnection>({
+    url: '/api/v1/omnichannel/salla/connect',
+    method: 'POST',
+    data: { store_id: storeId, webhook_secret: webhookSecret || undefined },
+  });
+  return res.data;
+}
+
+export async function getChannelOrders(page = 1, pageSize = 20): Promise<ChannelOrderList> {
+  const res = await client.apiCall.invoke<ChannelOrderList>({
+    url: `/api/v1/omnichannel/channel-orders?page=${page}&page_size=${pageSize}`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
