@@ -23,6 +23,9 @@ from schemas.auth import UserResponse
 # Imported at module level so ``Base.metadata.create_all`` registers the table on a
 # fresh DB — the inter-branch transfer endpoint below only references it lazily (F-032).
 from models.stock_transfers import Stock_transfers  # noqa: F401
+# Imported so the stock_adjustments table registers on Base.metadata at startup
+# (INV-06 / F-036 counts & adjustments).
+from models.stock_adjustments import Stock_adjustments  # noqa: F401
 from services.production import (
     AnalyticsService,
     BulkImportService,
@@ -1133,6 +1136,27 @@ class StockTransferRequest(BaseModel):
     quantity: int
 
 
+# INV-06 (F-036): the reasons a stock count/adjustment may carry. ``count`` is a
+# physical recount that sets on-hand to the counted figure; ``wastage``/``damage``
+# record shrink; ``correction`` fixes a data error; ``restock`` a manual add-back;
+# ``other`` is the catch-all. Any other value is rejected (400).
+STOCK_ADJUSTMENT_REASONS = frozenset(
+    {"count", "wastage", "damage", "correction", "restock", "other"}
+)
+
+
+class StockAdjustmentRequest(BaseModel):
+    # Either a product_id (preferred) or a product_name (resolved within the client).
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None
+    # Null ⇒ a client-level adjustment; otherwise the per-branch ledger is adjusted.
+    branch_id: Optional[int] = None
+    reason: str = "count"
+    # The new physical on-hand the count sets the pool to (must be ≥ 0).
+    counted_quantity: int
+    note: Optional[str] = None
+
+
 @router.post("/branches/transfer")
 async def transfer_branch_stock(
     data: StockTransferRequest,
@@ -1238,6 +1262,162 @@ async def transfer_branch_stock(
         "status": record.status,
         "from_branch_quantity": src.quantity,
         "to_branch_quantity": dst.quantity,
+    }
+
+
+@router.post("/stock-adjustments")
+async def create_stock_adjustment(
+    data: StockAdjustmentRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a stock count / adjustment with a reason → variance (INV-06, F-036).
+
+    Snapshots the current on-hand (``system_quantity``), sets the stock pool to the
+    counted figure, and writes one ``stock_adjustments`` row carrying
+    ``variance = counted − system`` and the reason — the variance record every POS
+    leader keeps. When ``branch_id`` is given the per-branch ledger
+    (``product_branch_stock``, the pool the POS deducts from) is adjusted; otherwise
+    the client-level ``products.quantity`` is. Atomic: the stock write and the audit
+    row land together, so a rejected request leaves stock untouched. Owner-scoped:
+    the product and branch must belong to the caller's client (SEC-02).
+    """
+    from models.branches import Branches
+    from models.clients import Clients
+    from models.products import Products
+    from models.stock_adjustments import Stock_adjustments as StockAdjustments
+    from services.branch_stock import get_or_init_row
+
+    logger.debug(
+        "[ADJUST] user=%s product=%s branch=%s reason=%s counted=%s",
+        current_user.id, data.product_id, data.branch_id, data.reason, data.counted_quantity,
+    )
+
+    # POS features are client-scoped — resolve the caller's client row.
+    client = (
+        await db.execute(select(Clients).where(Clients.user_id == str(current_user.id)))
+    ).scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=403, detail="Only clients can adjust stock")
+
+    reason = (data.reason or "count").strip().lower()
+    if reason not in STOCK_ADJUSTMENT_REASONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown reason '{reason}'. Allowed: {sorted(STOCK_ADJUSTMENT_REASONS)}",
+        )
+
+    counted = int(data.counted_quantity)
+    if counted < 0:
+        raise HTTPException(status_code=400, detail="Counted quantity cannot be negative")
+
+    # Resolve the product within the caller's client scope (by id, else exact name).
+    prod_query = select(Products).where(Products.client_id == client.id)
+    if data.product_id is not None:
+        prod_query = prod_query.where(Products.id == int(data.product_id))
+    elif (data.product_name or "").strip():
+        prod_query = prod_query.where(Products.name == data.product_name.strip())
+    else:
+        raise HTTPException(status_code=400, detail="A product_id or product_name is required")
+    product = (await db.execute(prod_query)).scalars().first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # Apply the count to the chosen pool (no commit — we commit once below so the
+    # stock write and the variance row land atomically).
+    if data.branch_id is not None:
+        branch = (
+            await db.execute(
+                select(Branches).where(
+                    Branches.user_id == str(current_user.id),
+                    Branches.id == int(data.branch_id),
+                )
+            )
+        ).scalar_one_or_none()
+        if not branch:
+            raise HTTPException(status_code=404, detail="Branch not found")
+        row = await get_or_init_row(
+            db, str(current_user.id), client.id, int(data.branch_id), product
+        )
+        system_quantity = int(row.quantity or 0)
+        row.quantity = counted
+    else:
+        system_quantity = int(product.quantity or 0)
+        product.quantity = counted
+
+    variance = counted - system_quantity
+    record = StockAdjustments(
+        user_id=str(current_user.id),
+        client_id=client.id,
+        branch_id=int(data.branch_id) if data.branch_id is not None else None,
+        product_id=product.id,
+        product_name=product.name,
+        reason=reason,
+        system_quantity=system_quantity,
+        counted_quantity=counted,
+        variance=variance,
+        note=(data.note or "").strip() or None,
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+
+    return {
+        "id": record.id,
+        "product_id": record.product_id,
+        "product_name": record.product_name,
+        "branch_id": record.branch_id,
+        "reason": record.reason,
+        "system_quantity": record.system_quantity,
+        "counted_quantity": record.counted_quantity,
+        "variance": record.variance,
+        "note": record.note,
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+    }
+
+
+@router.get("/stock-adjustments")
+async def list_stock_adjustments(
+    branch_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    limit: int = 100,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's stock counts/adjustments (the variance history, INV-06).
+
+    Owner-scoped to the caller's login account (SEC-02); optionally filtered by
+    branch or product. Newest first.
+    """
+    from models.stock_adjustments import Stock_adjustments as StockAdjustments
+
+    query = select(StockAdjustments).where(
+        StockAdjustments.user_id == str(current_user.id)
+    )
+    if branch_id is not None:
+        query = query.where(StockAdjustments.branch_id == int(branch_id))
+    if product_id is not None:
+        query = query.where(StockAdjustments.product_id == int(product_id))
+    query = query.order_by(StockAdjustments.id.desc()).limit(max(1, min(int(limit), 500)))
+
+    rows = (await db.execute(query)).scalars().all()
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "product_id": r.product_id,
+                "product_name": r.product_name,
+                "branch_id": r.branch_id,
+                "reason": r.reason,
+                "system_quantity": r.system_quantity,
+                "counted_quantity": r.counted_quantity,
+                "variance": r.variance,
+                "note": r.note,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
     }
 
 

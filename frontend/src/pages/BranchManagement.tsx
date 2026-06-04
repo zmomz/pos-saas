@@ -10,9 +10,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { client } from '@/lib/api';
+import { client, createStockAdjustment, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { Building2, Plus, MapPin, ArrowRightLeft, Package } from 'lucide-react';
+import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList } from 'lucide-react';
+
+const ADJUSTMENT_REASONS: StockAdjustmentReason[] = [
+  'count',
+  'wastage',
+  'damage',
+  'correction',
+  'restock',
+  'other',
+];
 
 interface Branch {
   id: string;
@@ -70,6 +79,10 @@ export default function BranchManagement() {
   const [formData, setFormData] = useState<BranchFormData>(emptyForm);
   const [transferData, setTransferData] = useState<TransferData>({ from_branch_id: '', to_branch_id: '', product_id: '', quantity: 1 });
   const [transferError, setTransferError] = useState<string | null>(null);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustData, setAdjustData] = useState<{ branch_id: string; product_id: string; reason: StockAdjustmentReason; counted_quantity: number; note: string }>({ branch_id: '', product_id: '', reason: 'count', counted_quantity: 0, note: '' });
+  const [adjustError, setAdjustError] = useState<string | null>(null);
+  const [adjustResult, setAdjustResult] = useState<StockAdjustment | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(false);
 
@@ -212,6 +225,31 @@ export default function BranchManagement() {
     }
   }
 
+  async function handleStockAdjust() {
+    setSubmitting(true);
+    setAdjustError(null);
+    setAdjustResult(null);
+    try {
+      const result = await createStockAdjustment({
+        product_id: Number(adjustData.product_id),
+        branch_id: adjustData.branch_id ? Number(adjustData.branch_id) : undefined,
+        reason: adjustData.reason,
+        counted_quantity: adjustData.counted_quantity,
+        note: adjustData.note || undefined,
+      });
+      setAdjustResult(result);
+      // Refresh the open branch's inventory if it's the one we counted.
+      if (selectedBranch && String(selectedBranch.id) === adjustData.branch_id) {
+        await loadBranchInventory(selectedBranch.id);
+      }
+    } catch (err) {
+      console.error('Failed to record stock adjustment:', err);
+      setAdjustError(t('adjustment_failed'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function openEdit(branch: Branch) {
     setSelectedBranch(branch);
     setFormData({
@@ -275,6 +313,9 @@ export default function BranchManagement() {
           <p className="text-slate-400 text-sm mt-1">Manage your business locations and inventory</p>
         </div>
         <div className="flex gap-2">
+          <Button onClick={() => { setAdjustError(null); setAdjustResult(null); setAdjustData({ branch_id: '', product_id: '', reason: 'count', counted_quantity: 0, note: '' }); setAdjustOpen(true); }} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
+            <ClipboardList className="h-4 w-4 mr-2" /> {t('stock_count')}
+          </Button>
           <Button onClick={() => { setTransferError(null); setTransferOpen(true); }} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
             <ArrowRightLeft className="h-4 w-4 mr-2" /> {t('transfer_stock')}
           </Button>
@@ -450,6 +491,85 @@ export default function BranchManagement() {
               className="w-full bg-blue-600 hover:bg-blue-700 text-white"
             >
               {submitting ? t('loading') : t('transfer_stock')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Stock Count / Adjustment Dialog (INV-06) */}
+      <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">{t('stock_count')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-xs text-slate-400">{t('stock_count_hint')}</p>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('product')}</label>
+              <select
+                value={adjustData.product_id}
+                onChange={(e) => setAdjustData((d) => ({ ...d, product_id: e.target.value }))}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              >
+                <option value="">{t('select_product')}</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('branch')}</label>
+              <select
+                value={adjustData.branch_id}
+                onChange={(e) => setAdjustData((d) => ({ ...d, branch_id: e.target.value }))}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              >
+                <option value="">{t('client_level_stock')}</option>
+                {branches.filter((b) => b.is_active).map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('reason')}</label>
+              <select
+                value={adjustData.reason}
+                onChange={(e) => setAdjustData((d) => ({ ...d, reason: e.target.value as StockAdjustmentReason }))}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              >
+                {ADJUSTMENT_REASONS.map((r) => (
+                  <option key={r} value={r}>{t(`reason_${r}`)}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('counted_quantity')}</label>
+              <Input type="number" min={0} value={adjustData.counted_quantity} onChange={(e) => setAdjustData((d) => ({ ...d, counted_quantity: parseInt(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('adjustment_note')}</label>
+              <Input value={adjustData.note} onChange={(e) => setAdjustData((d) => ({ ...d, note: e.target.value }))} className="bg-slate-700 border-slate-600 text-white" />
+            </div>
+            {adjustResult && (
+              <div className="rounded-lg border border-slate-700 bg-slate-700/30 p-3 text-sm">
+                <div className="flex justify-between text-slate-400"><span>{t('system_quantity')}</span><span className="text-white">{adjustResult.system_quantity}</span></div>
+                <div className="flex justify-between text-slate-400"><span>{t('counted_quantity')}</span><span className="text-white">{adjustResult.counted_quantity}</span></div>
+                <div className="flex justify-between"><span className="text-slate-400">{t('variance')}</span>
+                  <Badge className={adjustResult.variance === 0 ? 'bg-slate-500/20 text-slate-300' : adjustResult.variance > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}>
+                    {adjustResult.variance > 0 ? `+${adjustResult.variance}` : adjustResult.variance}
+                  </Badge>
+                </div>
+              </div>
+            )}
+            {adjustError && (
+              <p role="alert" className="text-sm text-red-400">{adjustError}</p>
+            )}
+            <Button
+              onClick={handleStockAdjust}
+              disabled={submitting || !adjustData.product_id}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {submitting ? t('loading') : t('adjust_stock')}
             </Button>
           </div>
         </DialogContent>

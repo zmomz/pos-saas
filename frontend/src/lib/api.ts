@@ -450,6 +450,56 @@ export async function recallSale(heldId: number): Promise<RecalledTicket> {
   return response.data;
 }
 
+// INV-06 (F-036): stock counts & adjustments with reasons → variance record.
+export type StockAdjustmentReason =
+  | 'count'
+  | 'wastage'
+  | 'damage'
+  | 'correction'
+  | 'restock'
+  | 'other';
+
+export interface StockAdjustment {
+  id: number;
+  product_id: number;
+  product_name?: string;
+  branch_id?: number | null;
+  reason: StockAdjustmentReason;
+  system_quantity: number;
+  counted_quantity: number;
+  variance: number;
+  note?: string | null;
+  created_at?: string | null;
+}
+
+export async function createStockAdjustment(data: {
+  product_id?: number;
+  product_name?: string;
+  branch_id?: number;
+  reason: StockAdjustmentReason;
+  counted_quantity: number;
+  note?: string;
+}): Promise<StockAdjustment> {
+  const response = await client.apiCall.invoke<StockAdjustment>({
+    url: '/api/v1/production/stock-adjustments',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function getStockAdjustments(params?: {
+  branch_id?: number;
+  product_id?: number;
+}): Promise<{ items: StockAdjustment[]; total: number }> {
+  const response = await client.apiCall.invoke<{ items: StockAdjustment[]; total: number }>({
+    url: '/api/v1/production/stock-adjustments',
+    method: 'GET',
+    data: params || {},
+  });
+  return response.data;
+}
+
 // Phase 3: the caller's effective permission grants/denies, so the UI can
 // hide/disable actions (e.g. refund) the staff member lacks. Master accounts
 // come back with is_master=true and gate nothing.
