@@ -116,6 +116,13 @@ class BulkExportRequest(BaseModel):
     entity_type: str = Field(description="'products', 'customers', or 'transactions'")
 
 
+# Upper bound on a single offline-sync request (POS-12). The frontend flushes
+# the IndexedDB backlog in bounded chunks (SYNC_CHUNK_SIZE), so a real client
+# never approaches this; the guard is defence-in-depth against one giant payload
+# (a legacy client or a long outage) overwhelming a single request.
+MAX_OFFLINE_SYNC_BATCH = 500
+
+
 class OfflineSyncRequest(BaseModel):
     transactions: List[Dict[str, Any]]
 
@@ -1010,6 +1017,14 @@ async def sync_offline_transactions(
     """Sync offline-queued transactions through the full atomic sale path (POS-05)."""
     if not data.transactions:
         raise HTTPException(status_code=400, detail="No transactions to sync")
+    if len(data.transactions) > MAX_OFFLINE_SYNC_BATCH:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Too many transactions in one sync ({len(data.transactions)}); "
+                f"send at most {MAX_OFFLINE_SYNC_BATCH} per request (POS-12)."
+            ),
+        )
 
     from routers.pos import get_client_for_user
 
