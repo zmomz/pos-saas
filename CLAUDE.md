@@ -11,6 +11,21 @@ The product has a **three-tier tenancy hierarchy**: **master** (platform owner) 
 - `backend/` — FastAPI + SQLAlchemy (async) API
 - `frontend/` — Vite + React + TypeScript + shadcn/ui
 
+## Product vision & North Star (v2.0)
+
+The product is judged against the **Saudi POS category leaders (Foodics, Rewaa, Marn)**, not a minimal checklist. The full vision lives in **`srs.md` v2.0** — intentionally ahead of the code; the gap is the backlog. When unsure what a feature "should" do, the default is **"do what the KSA leaders do, localized for Saudi."** Committed product decisions:
+
+- **Unified vertical:** serves **both retail and restaurant** from one product — retail commerce (catalog/variants/barcode/multi-branch stock) *and* restaurant ops (floor/tables, KDS/KOT, modifiers/combos, courses, aggregators).
+- **Saudi-real payments (hard requirement):** **Mada, Apple Pay, STC Pay, BNPL (Tabby/Tamara), cash, split**, via **integrated terminals** and Saudi gateways (Moyasar/Tap/HyperPay/PayTabs/Geidea/Amazon Payment Services). A tender must capture a real approval — a "Mada" button that only records a label is a façade, not a feature. **No card PANs touch our servers** (PCI scope minimization).
+- **ZATCA Phase-2 for real:** ECDSA stamp, PIH/ICV hash chain, TLV QR, **B2B clearance vs B2C reporting**, 6-year retention. All **fiscal documents render in Arabic regardless of UI language**.
+- **Deep white-label:** brand + **custom domain** + branded email + branded printables; clients never see the platform brand.
+- **Offline-first; reseller-grade billing** (dunning, proration, **commission/revenue-split ledger**, impersonation for support).
+
+Build to this bar and to the **page/printable design specs in `INTENDED_BEHAVIOR.md`** (every screen renders its loading/empty/error/permission/offline states — no dead-ends; RTL + brand tokens, never hardcoded styling).
+
+### The completeness loop (how the vision gets built)
+`prompts.md` defines a three-prompt loop driving the code toward the vision: **Prompt 1** builds `INTENDED_BEHAVIOR.md` (behavior + per-page/printable **design** + market-parity baseline from `srs.md`); **Prompt 2** audits code against it → `COMPLETENESS_REVIEW.md` (gap/parity backlog); **Prompt 3** closes one finding per session (build to the design + a deterministic test). **Vision over code:** when the code and `srs.md` disagree, the SRS wins and the delta is a finding — never downgrade the spec to match the code.
+
 ## Commands
 
 ### Frontend (`frontend/`, package manager is **pnpm**)

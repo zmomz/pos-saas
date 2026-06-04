@@ -57,4 +57,33 @@ describe('Notifications surfaces errors distinct from empty (F-051 / UX-02)', ()
     expect(await screen.findByText('No notifications')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
+
+  // F-052 (UX-08): the backend returns { items, unread_count } but the page read
+  // `data.notifications` — so the feed ALWAYS rendered empty regardless of the
+  // alerts returned. This pins the `items → notifications` mapping: a populated
+  // feed must actually render. Fails before the api.ts fix.
+  it('renders the feed when the backend returns items (not the empty state)', async () => {
+    server.use(
+      http.get(URL, () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: '7',
+              type: 'low_stock',
+              title: 'Low Stock Alert',
+              message: 'Sugar has only 3 units remaining',
+              is_read: false,
+              created_at: '2026-06-03T10:00:00Z',
+            },
+          ],
+          unread_count: 1,
+        })
+      )
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('Sugar has only 3 units remaining')).toBeInTheDocument();
+    expect(screen.queryByText('No notifications')).not.toBeInTheDocument();
+  });
 });

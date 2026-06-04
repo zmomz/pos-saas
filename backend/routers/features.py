@@ -20,6 +20,7 @@ from models.clients import Clients
 from models.products import Products
 from models.transactions import Transactions
 from models.packages import Packages
+from models.notifications import Notifications
 
 logger = logging.getLogger(__name__)
 
@@ -1102,12 +1103,21 @@ async def get_zreport_document(
 
 
 # ============================================================
-# NOTIFICATIONS (in-memory for simplicity)
+# NOTIFICATIONS (persisted — UX-08 / F-052)
 # ============================================================
+# The feed used to be synthesized per-request with a no-op ``mark-read`` (read
+# state was a lie across reloads) and a field mismatch (``items`` vs
+# ``notifications``) that meant the page never rendered anything. It is now backed
+# by the persisted ``notifications`` table: system alerts (IB §UX-08 feed:
+# low-stock / ZATCA-failed / subscription) are *materialized idempotently* by a
+# stable ``dedupe_key`` so re-materialization preserves ``is_read``, and
+# ``mark-read`` flips the stored flag — so an acknowledgment survives a refetch.
+# Every read/write is scoped to ``user_id`` (SEC-02).
+
 
 class NotificationItem(BaseModel):
     id: str
-    type: str  # "low_stock", "transaction", "system"
+    type: str  # "low_stock", "zatca_failed", "subscription", "system"
     title: str
     message: str
     is_read: bool
@@ -1119,70 +1129,223 @@ class NotificationsResponse(BaseModel):
     unread_count: int
 
 
+class MarkReadRequest(BaseModel):
+    # Acknowledge a single notification; omit to mark the caller's whole feed read.
+    notification_id: Optional[str] = None
+
+
+async def _upsert_notification(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    client_id: Optional[int],
+    type: str,
+    title: str,
+    message: str,
+    dedupe_key: str,
+) -> None:
+    """Insert a system alert, or refresh an existing one in place.
+
+    Keyed by ``(user_id, dedupe_key)`` so repeated materialization never
+    duplicates a row and — critically — **preserves the stored ``is_read``** so a
+    "mark as read" survives the next refetch. Only the message/title are refreshed
+    to the current state (e.g. the live low-stock quantity).
+    """
+    existing = (
+        await db.execute(
+            select(Notifications).where(
+                and_(
+                    Notifications.user_id == user_id,
+                    Notifications.dedupe_key == dedupe_key,
+                )
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        existing.title = title
+        existing.message = message
+    else:
+        db.add(Notifications(
+            user_id=user_id,
+            client_id=client_id,
+            type=type,
+            title=title,
+            message=message,
+            dedupe_key=dedupe_key,
+            is_read=False,
+        ))
+
+
+async def _materialize_notifications(db: AsyncSession, user_id: str, client_id: int) -> None:
+    """Idempotently materialize the IB §UX-08 alert feed for a client.
+
+    Sources: low-stock products, stuck ZATCA documents (pending/failed), and an
+    overdue subscription. Each is upserted by ``dedupe_key`` so the persisted
+    read-state is preserved. Best-effort per source (broad except) so one failing
+    source never blanks the whole feed (OPS-08 graceful degradation).
+    """
+    # --- Low stock (INV-08-ish alerting) ---
+    try:
+        low_stock = (
+            await db.execute(
+                select(Products).where(
+                    and_(
+                        Products.client_id == client_id,
+                        Products.quantity < 10,
+                        Products.is_active == True,
+                    )
+                ).limit(20)
+            )
+        ).scalars().all()
+        for p in low_stock:
+            await _upsert_notification(
+                db,
+                user_id=user_id,
+                client_id=client_id,
+                type="low_stock",
+                title="Low Stock Alert",
+                message=f"{p.name} has only {p.quantity or 0} units remaining",
+                dedupe_key=f"low_stock:{p.id}",
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to materialize low-stock notifications: %s", exc)
+
+    # --- ZATCA documents stuck pending/failed (ZA-08 alerting) ---
+    try:
+        from models.zatca_documents import ZatcaDocuments
+
+        stuck = (
+            await db.execute(
+                select(
+                    ZatcaDocuments.status,
+                    func.count().label("cnt"),
+                ).where(
+                    and_(
+                        ZatcaDocuments.client_id == client_id,
+                        ZatcaDocuments.status.in_(("pending", "failed")),
+                    )
+                ).group_by(ZatcaDocuments.status)
+            )
+        ).all()
+        for status, cnt in stuck:
+            if cnt:
+                await _upsert_notification(
+                    db,
+                    user_id=user_id,
+                    client_id=client_id,
+                    type="zatca_failed",
+                    title="ZATCA Documents Need Attention",
+                    message=f"{cnt} invoice(s) are {status} with ZATCA",
+                    dedupe_key=f"zatca:{status}",
+                )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to materialize ZATCA notifications: %s", exc)
+
+    # --- Overdue subscription (CL-06 alerting) ---
+    try:
+        merchant = (
+            await db.execute(select(Clients).where(Clients.id == client_id))
+        ).scalar_one_or_none()
+        if merchant and merchant.subscription_status in ("past_due", "suspended"):
+            await _upsert_notification(
+                db,
+                user_id=user_id,
+                client_id=client_id,
+                type="subscription",
+                title="Subscription Payment Due",
+                message=f"Your subscription is {merchant.subscription_status} — please settle to avoid suspension",
+                dedupe_key="subscription:status",
+            )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to materialize subscription notifications: %s", exc)
+
+
 @router.get("/api/v1/notifications/list", response_model=NotificationsResponse)
 async def get_notifications(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get notifications for current user (generated from low stock and recent transactions)."""
-    role_info = await get_user_role(db, str(current_user.id))
+    """Get the persisted notification feed for the current user (UX-08).
 
-    notifications: List[NotificationItem] = []
-    now = datetime.now(timezone.utc)
+    For a client, refresh the system-alert feed first (idempotent upsert by
+    ``dedupe_key`` — preserves read state), then return every persisted row owned
+    by this user, newest first.
+    """
+    user_id = str(current_user.id)
+    role_info = await get_user_role(db, user_id)
 
     if role_info["role"] == "client":
-        client_id = role_info["entity_id"]
+        await _materialize_notifications(db, user_id, role_info["entity_id"])
+        await db.commit()
 
-        # Low stock alerts
-        result = await db.execute(
-            select(Products).where(
-                and_(
-                    Products.client_id == client_id,
-                    Products.quantity < 10,
-                    Products.is_active == True,
-                )
-            ).limit(5)
+    rows = (
+        await db.execute(
+            select(Notifications)
+            .where(Notifications.user_id == user_id)
+            .order_by(Notifications.is_read.asc(), Notifications.created_at.desc())
         )
-        low_stock_products = result.scalars().all()
+    ).scalars().all()
 
-        for p in low_stock_products:
-            notifications.append(NotificationItem(
-                id=f"low_stock_{p.id}",
-                type="low_stock",
-                title="Low Stock Alert",
-                message=f"{p.name} has only {p.quantity or 0} units remaining",
-                is_read=False,
-                created_at=now.isoformat(),
-            ))
-
-        # Recent transactions (last 5)
-        result = await db.execute(
-            select(Transactions).where(Transactions.client_id == client_id)
-            .order_by(Transactions.created_at.desc())
-            .limit(5)
+    items = [
+        NotificationItem(
+            id=str(n.id),
+            type=n.type,
+            title=n.title or "",
+            message=n.message,
+            is_read=bool(n.is_read),
+            created_at=n.created_at.isoformat() if n.created_at else "",
         )
-        recent_txns = result.scalars().all()
+        for n in rows
+    ]
+    unread_count = sum(1 for n in rows if not n.is_read)
 
-        for t in recent_txns:
-            notifications.append(NotificationItem(
-                id=f"txn_{t.id}",
-                type="transaction",
-                title="Sale Completed",
-                message=f"Invoice {t.invoice_number} - {t.total_amount:.2f} SAR",
-                is_read=True,
-                created_at=t.created_at.isoformat() if t.created_at else now.isoformat(),
-            ))
-
-    unread_count = sum(1 for n in notifications if not n.is_read)
-
-    return NotificationsResponse(items=notifications, unread_count=unread_count)
+    return NotificationsResponse(items=items, unread_count=unread_count)
 
 
 @router.post("/api/v1/notifications/mark-read")
 async def mark_notifications_read(
+    payload: MarkReadRequest = MarkReadRequest(),
     current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Mark all notifications as read (stateless acknowledgment)."""
+    """Persist a read acknowledgment (UX-08).
+
+    With a ``notification_id``, mark that one row read; without one, mark the
+    caller's whole feed read. Scoped to ``user_id`` so a client can only
+    acknowledge their own notifications — acknowledging a row that isn't theirs (or
+    doesn't exist) is a 404 (SEC-02).
+    """
+    user_id = str(current_user.id)
+
+    if payload.notification_id is not None:
+        try:
+            target_id = int(payload.notification_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=404, detail="Notification not found")
+
+        row = (
+            await db.execute(
+                select(Notifications).where(
+                    and_(
+                        Notifications.id == target_id,
+                        Notifications.user_id == user_id,
+                    )
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Notification not found")
+        row.is_read = True
+        await db.commit()
+        return {"success": True, "message": "Notification marked as read"}
+
+    await db.execute(
+        update(Notifications)
+        .where(and_(Notifications.user_id == user_id, Notifications.is_read == False))
+        .values(is_read=True)
+    )
+    await db.commit()
     return {"success": True, "message": "All notifications marked as read"}
 
 

@@ -555,7 +555,11 @@ export async function getNotifications() {
     method: 'GET',
     data: {},
   });
-  return response.data;
+  // The backend returns { items, unread_count }; the page reads `notifications`.
+  // Map it here so the feed actually renders (F-052 — the field mismatch meant
+  // the page always showed empty regardless of the alerts returned).
+  const data = response.data || {};
+  return { ...data, notifications: data.items || [] };
 }
 
 export async function markNotificationRead(notificationId: string) {
