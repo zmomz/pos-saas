@@ -59,16 +59,90 @@ async def send_email(to_email: str, subject: str, body: str) -> bool:
         return False
 
 
-async def send_provisioning_email(
-    to_email: str, business_name: str, temp_password: str, login_url: str | None = None
-) -> bool:
-    """Email a freshly-provisioned account its login + one-time password."""
-    where = login_url or getattr(settings, "frontend_url", None) or "your POS login page"
+class _SafeDict(dict):
+    """``str.format_map`` helper: an unknown ``{placeholder}`` renders empty rather
+    than raising, so a malformed agent template never breaks provisioning."""
+
+    def __missing__(self, key: str) -> str:  # noqa: D401 - dict hook
+        return ""
+
+
+def render_provisioning_email(
+    *,
+    to_email: str,
+    business_name: str,
+    temp_password: str,
+    brand_name: str | None = None,
+    login_url: str | None = None,
+    subject_template: str | None = None,
+    body_template: str | None = None,
+) -> tuple[str, str]:
+    """Build the (subject, body) of a provisioning email — AG-06 branded.
+
+    Pure (no I/O) so it is unit-testable. When the owning agent supplies a custom
+    template (``subject_template`` / ``body_template``) it is rendered with the
+    ``{business_name}``/``{email}``/``{password}``/``{login_url}``/``{brand}``
+    placeholders. Otherwise a **branded default** is produced that carries the
+    agent's brand name and the agent's login URL (the agent's custom domain when
+    set) — never the bare platform identity. A template that fails to render falls
+    back to the branded default so a misconfigured template can't blank the email.
+    """
+    brand = (brand_name or "").strip() or "POS"
+    where = login_url or getattr(settings, "frontend_url", None) or "your login page"
+    fields = _SafeDict(
+        business_name=business_name,
+        email=to_email,
+        password=temp_password,
+        login_url=where,
+        brand=brand,
+    )
+
+    if subject_template or body_template:
+        try:
+            subject = (subject_template or f"Your {brand} account is ready").format_map(fields)
+            body = (
+                body_template
+                or (
+                    "Hello {business_name},\n\n"
+                    "An account has been created for you on {brand}.\n\n"
+                    "  Email:    {email}\n"
+                    "  Password: {password}\n\n"
+                    "Sign in at {login_url} and you will be asked to change this "
+                    "password on first login.\n"
+                )
+            ).format_map(fields)
+            return subject, body
+        except Exception:  # pragma: no cover - malformed template → branded default
+            pass
+
+    subject = f"Your {brand} account is ready"
     body = (
         f"Hello {business_name},\n\n"
-        f"An account has been created for you.\n\n"
+        f"An account has been created for you on {brand}.\n\n"
         f"  Email:    {to_email}\n"
         f"  Password: {temp_password}\n\n"
         f"Sign in at {where} and you will be asked to change this password on first login.\n"
     )
-    return await send_email(to_email, "Your POS account is ready", body)
+    return subject, body
+
+
+async def send_provisioning_email(
+    to_email: str,
+    business_name: str,
+    temp_password: str,
+    login_url: str | None = None,
+    brand_name: str | None = None,
+    subject_template: str | None = None,
+    body_template: str | None = None,
+) -> bool:
+    """Email a freshly-provisioned account its login + one-time password (AG-06)."""
+    subject, body = render_provisioning_email(
+        to_email=to_email,
+        business_name=business_name,
+        temp_password=temp_password,
+        brand_name=brand_name,
+        login_url=login_url,
+        subject_template=subject_template,
+        body_template=body_template,
+    )
+    return await send_email(to_email, subject, body)

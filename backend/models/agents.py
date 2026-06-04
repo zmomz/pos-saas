@@ -24,5 +24,16 @@ class Agents(Base):
     # Stripe Connect: the agent's connected-account id. When set, a client's
     # subscription charge is routed to the agent's gateway (CL-04 production path).
     stripe_account_id = Column(String, nullable=True)
+    # AG-05 deep white-label: the agent's own domain (e.g. "pos.acme.sa"). When set,
+    # a request arriving on this host resolves the agent's branding so the merchant
+    # login + funnel are served under the agent's brand, never the platform's.
+    # Stored normalized (lowercase, no scheme/port/www); unique across agents.
+    custom_domain = Column(String, nullable=True)
+    # AG-06 branded transactional email: the agent's provisioning-email template.
+    # Optional; when set it is rendered with {business_name}/{email}/{password}/
+    # {login_url}/{brand} placeholders. When unset the branded default (carrying the
+    # agent's company name + login URL) is used instead.
+    email_template_subject = Column(String, nullable=True)
+    email_template_body = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

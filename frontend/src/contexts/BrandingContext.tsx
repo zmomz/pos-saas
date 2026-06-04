@@ -7,7 +7,7 @@ import React, {
   ReactNode,
 } from 'react';
 import { useAuth } from './AuthContext';
-import { getAgentBranding, getClientBranding } from '../lib/api';
+import { getAgentBranding, getClientBranding, getBrandingByDomain } from '../lib/api';
 
 export interface Branding {
   logo_url?: string | null;
@@ -17,6 +17,17 @@ export interface Branding {
   button_radius: string;
   // Agent-set default UI language; applied on first client login (L10N-05).
   default_language?: string;
+  // AG-05: the agent's custom domain, when the brand was resolved via one.
+  custom_domain?: string | null;
+}
+
+/** True when the host looks like a real custom domain, not localhost / an IP. */
+function isCustomHost(host: string): boolean {
+  if (!host) return false;
+  if (host === 'localhost' || host.endsWith('.local')) return false;
+  // Bare IPv4 / IPv6 are not white-label domains.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) return false;
+  return host.includes('.');
 }
 
 /**
@@ -144,6 +155,23 @@ export const BrandingProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const refreshBranding = useCallback(async () => {
     if (!user) {
+      // AG-05: before anyone signs in, a request on an agent's custom domain is
+      // served under that agent's brand (login + funnel). Resolve by host; fall
+      // back to the platform default theme when the host isn't claimed.
+      const host = typeof window !== 'undefined' ? window.location.hostname : '';
+      if (isCustomHost(host)) {
+        try {
+          const data = (await getBrandingByDomain(host)) as Branding | null;
+          if (data && data.primary_color) {
+            applyBranding(data);
+            applyDefaultLanguage(data.default_language);
+            setBranding(data);
+            return;
+          }
+        } catch {
+          // best-effort — fall through to default theme
+        }
+      }
       clearBranding();
       setBranding(null);
       return;

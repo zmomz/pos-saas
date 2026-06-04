@@ -458,6 +458,12 @@ class BrandingUpdateRequest(BaseModel):
     button_radius: Optional[str] = None
     # Agent's default UI language propagated to their clients (L10N-05).
     default_language: Optional[str] = None
+    # AG-05: the agent's custom domain ("" / null clears it). Normalized + checked
+    # for uniqueness before persisting.
+    custom_domain: Optional[str] = None
+    # AG-06: the agent's branded provisioning-email template (optional).
+    email_template_subject: Optional[str] = None
+    email_template_body: Optional[str] = None
 
 
 class BrandingUpdateResponse(BaseModel):
@@ -468,6 +474,7 @@ class BrandingUpdateResponse(BaseModel):
     font_family: str
     button_radius: str
     default_language: str = "en"
+    custom_domain: Optional[str] = None
 
 
 @router.put("/api/v1/branding/update", response_model=BrandingUpdateResponse)
@@ -484,6 +491,27 @@ async def update_agent_branding(
     agent_id = role_info["entity_id"]
 
     update_data = data.model_dump(exclude_unset=True)
+
+    # AG-05: a custom domain is normalized (lowercase, no scheme/port/www) and must
+    # be unique across agents — two resellers can't claim the same host. An empty
+    # value clears it. Imported here to avoid a circular import at module load.
+    if "custom_domain" in update_data:
+        from routers.tenant import normalize_domain
+
+        normalized = normalize_domain(update_data["custom_domain"])
+        if normalized:
+            clash = await db.execute(
+                select(Agents.id).where(
+                    func.lower(Agents.custom_domain) == normalized,
+                    Agents.id != agent_id,
+                )
+            )
+            if clash.scalar_one_or_none() is not None:
+                raise HTTPException(
+                    status_code=409, detail="This domain is already in use by another agent"
+                )
+        update_data["custom_domain"] = normalized
+
     if update_data:
         await db.execute(
             update(Agents).where(Agents.id == agent_id).values(**update_data)
@@ -504,6 +532,7 @@ async def update_agent_branding(
         font_family=agent.font_family or "Inter",
         button_radius=agent.button_radius or "8px",
         default_language=agent.default_language or "en",
+        custom_domain=getattr(agent, "custom_domain", None),
     )
 
 

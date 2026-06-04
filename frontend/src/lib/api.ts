@@ -710,6 +710,10 @@ export async function updateBranding(data: {
   font_family?: string;
   button_radius?: string;
   default_language?: string;
+  // AG-05 / AG-06 deep white-label.
+  custom_domain?: string;
+  email_template_subject?: string;
+  email_template_body?: string;
 }) {
   const response = await client.apiCall.invoke({
     url: '/api/v1/branding/update',
@@ -717,6 +721,22 @@ export async function updateBranding(data: {
     data,
   });
   return response.data;
+}
+
+// AG-05: resolve an agent's branding from a custom domain (public, pre-login) so
+// the merchant login/funnel is served under the agent's brand. Returns null when
+// the host isn't claimed (the caller falls back to the platform default theme).
+export async function getBrandingByDomain(domain: string) {
+  try {
+    const response = await client.apiCall.invoke({
+      url: `/api/v1/tenant/branding/by-domain?domain=${encodeURIComponent(domain)}`,
+      method: 'GET',
+      data: {},
+    });
+    return response.data;
+  } catch {
+    return null;
+  }
 }
 
 // Reports & Analytics

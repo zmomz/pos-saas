@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, update, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from core.database import get_db
 from core.email import send_provisioning_email
 from core.security import hash_password
@@ -41,6 +42,42 @@ from services.system_settings import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/tenant", tags=["tenant"])
+
+
+def normalize_domain(raw: Optional[str]) -> Optional[str]:
+    """Canonicalize a custom domain / Host header for AG-05 matching.
+
+    Lowercases, strips an optional scheme, path, port, leading ``www.`` and a
+    trailing dot, so ``https://WWW.Acme.SA:443/login`` and ``acme.sa`` resolve to
+    the same stored key. Returns None for empty input (clears the domain).
+    """
+    if not raw:
+        return None
+    host = raw.strip().lower()
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    host = host.split("/", 1)[0]
+    host = host.split("?", 1)[0]
+    host = host.split(":", 1)[0]  # drop port
+    host = host.rstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    return host or None
+
+
+def agent_login_url(agent: Agents) -> Optional[str]:
+    """The branded login URL for an agent's provisioned merchants (AG-05/AG-06).
+
+    Prefers the agent's custom domain when set, else falls back to the platform
+    FRONTEND_URL. Returns None only when neither is configured.
+    """
+    domain = normalize_domain(getattr(agent, "custom_domain", None))
+    if domain:
+        return f"https://{domain}/login"
+    base = getattr(settings, "frontend_url", None)
+    if base:
+        return f"{base.rstrip('/')}/login"
+    return None
 
 
 # ---------- Pydantic Schemas ----------
@@ -90,6 +127,13 @@ class BrandingResponse(BaseModel):
     # Agent-set default UI language; a client loads this on first login unless it
     # has overridden its own preference (L10N-05).
     default_language: str = "en"
+    # AG-05: the agent's custom domain (when configured). Surfaced so the front-end
+    # can build branded login/funnel URLs. Public-safe (it's the served host).
+    custom_domain: Optional[str] = None
+    # AG-06: the agent's provisioning-email template. Populated only on the agent's
+    # OWN branding read (never leaked to clients / the public by-domain lookup).
+    email_template_subject: Optional[str] = None
+    email_template_body: Optional[str] = None
 
 class CreateClientRequest(BaseModel):
     business_name: str
@@ -762,6 +806,49 @@ async def get_agent_branding(
         button_radius=agent.button_radius or "8px",
         company_name=agent.company_name,
         default_language=agent.default_language or "en",
+        # The agent's own read exposes the white-label settings it manages.
+        custom_domain=getattr(agent, "custom_domain", None),
+        email_template_subject=getattr(agent, "email_template_subject", None),
+        email_template_body=getattr(agent, "email_template_body", None),
+    )
+
+
+@router.get("/branding/by-domain", response_model=BrandingResponse)
+async def get_branding_by_domain(
+    domain: str = Query(..., description="The host the request arrived on (AG-05)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Public: resolve an agent's branding from a custom domain (AG-05).
+
+    Unauthenticated by design — the merchant login + funnel are served on the
+    agent's own domain *before* anyone signs in, so the front-end resolves the
+    brand from ``window.location.host`` here. Returns 404 when no agent claims the
+    domain (the caller falls back to the platform default theme). The agent's email
+    template is never exposed on this public path.
+    """
+    normalized = normalize_domain(domain)
+    if not normalized:
+        raise HTTPException(status_code=404, detail="No branding for this domain")
+
+    result = await db.execute(
+        select(Agents).where(
+            func.lower(Agents.custom_domain) == normalized, Agents.is_active == True  # noqa: E712
+        )
+    )
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="No branding for this domain")
+
+    return BrandingResponse(
+        logo_url=agent.logo_url,
+        primary_color=agent.primary_color or "#3B82F6",
+        secondary_color=agent.secondary_color or "#1E40AF",
+        font_family=agent.font_family or "Inter",
+        button_radius=agent.button_radius or "8px",
+        company_name=agent.company_name,
+        default_language=agent.default_language or "en",
+        custom_domain=getattr(agent, "custom_domain", None),
+        # email_template_* deliberately omitted — not public.
     )
 
 
@@ -934,9 +1021,17 @@ async def create_client_for_agent(
         await db.commit()
 
     # Hand over the credential: email it when SMTP is configured, otherwise the
-    # agent surfaces it from the response (dev/no-SMTP).
+    # agent surfaces it from the response (dev/no-SMTP). AG-06: the email carries
+    # the agent's brand + login URL (their custom domain when set), not the
+    # platform identity.
     email_delivered = await send_provisioning_email(
-        to_email=email, business_name=data.business_name, temp_password=temp_password
+        to_email=email,
+        business_name=data.business_name,
+        temp_password=temp_password,
+        brand_name=agent.company_name,
+        login_url=agent_login_url(agent),
+        subject_template=getattr(agent, "email_template_subject", None),
+        body_template=getattr(agent, "email_template_body", None),
     )
 
     return CreateClientResponse(
@@ -1061,11 +1156,19 @@ async def reset_client_password(
     await db.commit()
 
     # Hand over the credential: email it when SMTP is configured, otherwise the
-    # agent surfaces it from the response (dev/no-SMTP).
+    # agent surfaces it from the response (dev/no-SMTP). AG-06: brand the email
+    # with the owning agent's identity + login URL.
+    agent = (
+        await db.execute(select(Agents).where(Agents.id == role_info["entity_id"]))
+    ).scalar_one_or_none()
     email_delivered = await send_provisioning_email(
         to_email=merchant.email,
         business_name=merchant.business_name,
         temp_password=temp_password,
+        brand_name=getattr(agent, "company_name", None),
+        login_url=agent_login_url(agent) if agent else None,
+        subject_template=getattr(agent, "email_template_subject", None),
+        body_template=getattr(agent, "email_template_body", None),
     )
 
     return ResetClientPasswordResponse(
@@ -1165,6 +1268,8 @@ async def get_client_branding(
         button_radius=agent.button_radius or "8px",
         company_name=agent.company_name,
         default_language=agent.default_language or "en",
+        custom_domain=getattr(agent, "custom_domain", None),
+        # email_template_* deliberately omitted — a client never sees it.
     )
 
 

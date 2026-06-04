@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -43,6 +44,10 @@ export default function BrandingEditor() {
   const [buttonRadius, setButtonRadius] = useState('8px');
   const [companyName, setCompanyName] = useState('My Company');
   const [defaultLanguage, setDefaultLanguage] = useState('en');
+  // AG-05 / AG-06 deep white-label.
+  const [customDomain, setCustomDomain] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [emailBody, setEmailBody] = useState('');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -81,6 +86,9 @@ export default function BrandingEditor() {
         setButtonRadius(data.button_radius || '8px');
         setCompanyName(data.company_name || 'My Company');
         setDefaultLanguage(data.default_language || 'en');
+        setCustomDomain(data.custom_domain || '');
+        setEmailSubject(data.email_template_subject || '');
+        setEmailBody(data.email_template_body || '');
       }
     } catch {
       // Use defaults if branding not found
@@ -99,12 +107,17 @@ export default function BrandingEditor() {
         font_family: fontFamily,
         button_radius: buttonRadius,
         default_language: defaultLanguage,
+        custom_domain: customDomain,
+        email_template_subject: emailSubject,
+        email_template_body: emailBody,
       });
       toast.success(t('save') + ' ✓', {
         description: 'Branding updated successfully',
       });
-    } catch {
-      toast.error('Failed to save branding');
+    } catch (err) {
+      // A 409 means the custom domain is already claimed by another agent (AG-05).
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      toast.error(status === 409 ? t('domain_in_use') : 'Failed to save branding');
     } finally {
       setSaving(false);
     }
@@ -290,6 +303,38 @@ export default function BrandingEditor() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Custom Domain (AG-05) — serves the merchant login/funnel branded */}
+              <div className="space-y-2">
+                <Label className="text-slate-300">{t('custom_domain')}</Label>
+                <Input
+                  value={customDomain}
+                  onChange={(e) => setCustomDomain(e.target.value)}
+                  placeholder="pos.yourbrand.sa"
+                  className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
+                  dir="ltr"
+                />
+                <p className="text-xs text-slate-500">{t('custom_domain_hint')}</p>
+              </div>
+
+              {/* Branded provisioning email (AG-06) */}
+              <div className="space-y-2">
+                <Label className="text-slate-300">{t('branded_email')}</Label>
+                <Input
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  placeholder={t('email_subject')}
+                  className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
+                />
+                <Textarea
+                  value={emailBody}
+                  onChange={(e) => setEmailBody(e.target.value)}
+                  placeholder={t('email_body')}
+                  rows={5}
+                  className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
+                />
+                <p className="text-xs text-slate-500">{t('email_template_hint')}</p>
               </div>
 
               {/* Save Button */}
