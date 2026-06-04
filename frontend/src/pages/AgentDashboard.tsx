@@ -6,11 +6,11 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getAgentClients, getAgentBranding, createNewClient, toggleClient, setClientFeature, resetClientPassword } from '@/lib/api';
+import { client, getAgentClients, getAgentBranding, getAgentRevenue, createNewClient, toggleClient, setClientFeature, resetClientPassword, type AgentRevenue } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Users, DollarSign, CreditCard, Clock, UserPlus, Palette, ShoppingBag, BarChart3 } from 'lucide-react';
+import { Users, DollarSign, CreditCard, Clock, UserPlus, Palette, ShoppingBag, BarChart3, TrendingUp } from 'lucide-react';
 
 interface ClientItem {
   id: number;
@@ -48,12 +48,19 @@ export default function AgentDashboard() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [resettingId, setResettingId] = useState<number | null>(null);
+  // RSL-01 (F-029): real settled-subscription economics from the commission
+  // ledger — collected / owed-to-platform / net margin. Loaded independently so
+  // a failure renders this panel's error state, not a blank page.
+  const [revenue, setRevenue] = useState<AgentRevenue | null>(null);
+  const [revenueLoading, setRevenueLoading] = useState(true);
+  const [revenueError, setRevenueError] = useState(false);
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
   const { isDark } = useTheme();
 
   useEffect(() => {
     loadData();
+    loadRevenue();
   }, []);
 
   async function loadData() {
@@ -65,6 +72,19 @@ export default function AgentDashboard() {
       console.error('Failed to load:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadRevenue() {
+    setRevenueLoading(true);
+    setRevenueError(false);
+    try {
+      setRevenue(await getAgentRevenue());
+    } catch (err) {
+      console.error('Failed to load revenue:', err);
+      setRevenueError(true);
+    } finally {
+      setRevenueLoading(false);
     }
   }
 
@@ -214,6 +234,52 @@ export default function AgentDashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Revenue / commission panel (RSL-01, F-029): real settled-subscription
+          economics from the split ledger — collected, owed to platform, net margin. */}
+      <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+        <CardHeader className="flex flex-row items-center gap-2">
+          <TrendingUp className={`h-5 w-5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
+          <CardTitle className={isDark ? 'text-white' : 'text-slate-900'}>
+            {t('revenue_commission') || 'Revenue & Margin'}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {revenueLoading ? (
+            <div className={`animate-pulse text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+              {t('loading')}
+            </div>
+          ) : revenueError ? (
+            <div role="alert" className="flex flex-col items-start gap-2">
+              <p className={`text-sm ${isDark ? 'text-red-300' : 'text-red-600'}`}>
+                {t('revenue_load_error') || 'Could not load revenue.'}
+              </p>
+              <Button variant="outline" size="sm" onClick={loadRevenue}>
+                {t('retry') || 'Retry'}
+              </Button>
+            </div>
+          ) : !revenue || revenue.payments === 0 ? (
+            <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+              {t('revenue_empty') || 'No settled subscription payments yet.'}
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t('revenue_collected') || 'Collected'}</p>
+                <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(revenue.collected, language)}</p>
+              </div>
+              <div>
+                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t('revenue_platform_owed') || 'Owed to platform'}</p>
+                <p className={`text-xl font-bold ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>{formatMoney(revenue.master_owed, language)}</p>
+              </div>
+              <div>
+                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t('revenue_net_margin') || 'Net margin'}</p>
+                <p className={`text-xl font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatMoney(revenue.net, language)}</p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Quick Actions */}
       <div data-tour="quick-actions" className="flex flex-wrap gap-3">

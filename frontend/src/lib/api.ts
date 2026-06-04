@@ -50,6 +50,34 @@ export async function getAgentBranding() {
   return response.data;
 }
 
+// RSL-01/02 (F-029): the agent's settled-subscription economics from the
+// commission/revenue-split ledger. collected == master_owed + net.
+export interface RevenueByClient {
+  client_id: number;
+  business_name: string;
+  collected: number;
+  master_owed: number;
+  net: number;
+  payments: number;
+}
+
+export interface AgentRevenue {
+  collected: number;
+  master_owed: number;
+  net: number;
+  payments: number;
+  by_client: RevenueByClient[];
+}
+
+export async function getAgentRevenue(): Promise<AgentRevenue> {
+  const response = await client.apiCall.invoke<AgentRevenue>({
+    url: '/api/v1/tenant/agent/revenue',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 export interface CreatedClient {
   id: number;
   business_name: string;

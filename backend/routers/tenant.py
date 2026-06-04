@@ -28,7 +28,9 @@ from models.transactions import Transactions
 from models.agent_features import Agent_features
 from models.client_features import Client_features
 from models.subscription_payments import Subscription_payments
+from models.commission_ledger import Commission_ledger
 from models.audit_logs import Audit_logs
+from services.commission import compute_commission_split
 from services.system_settings import (
     GLOBAL_TAX_RATE_KEY,
     get_global_tax_rate,
@@ -472,6 +474,103 @@ async def list_agent_clients(
         ))
 
     return AgentClientsResponse(items=items, total=total, remaining_slots=remaining_slots)
+
+
+# ---------- Agent revenue / commission (RSL-01/02, F-029) ----------
+class RevenueByClient(BaseModel):
+    client_id: int
+    business_name: str
+    collected: float
+    master_owed: float
+    net: float
+    payments: int
+
+
+class AgentRevenueResponse(BaseModel):
+    """The agent's settled-subscription economics, summed from the commission
+    ledger. ``collected`` is gross fees taken, ``master_owed`` the platform's cut
+    (per-client wholesale), ``net`` the agent's margin; ``collected ==
+    master_owed + net`` by construction."""
+
+    collected: float
+    master_owed: float
+    net: float
+    payments: int
+    by_client: List[RevenueByClient] = []
+
+
+@router.get("/agent/revenue", response_model=AgentRevenueResponse)
+async def get_agent_revenue(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: revenue / commission summary from the split ledger (RSL-01/02).
+
+    Aggregated in SQL (no load-everything, OPS-05) and scoped to the caller's own
+    agent rows — one agent can never see another agent's revenue (SEC-02). A
+    client/master gets 403. The master economics rollup (MA-08/RSL-08) is F-023.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    agent_id = role_info["entity_id"]
+
+    totals = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
+                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
+                func.coalesce(func.sum(Commission_ledger.agent_net), 0.0),
+                func.count(Commission_ledger.id),
+            ).where(Commission_ledger.agent_id == agent_id)
+        )
+    ).one()
+
+    per_client_rows = (
+        await db.execute(
+            select(
+                Commission_ledger.client_id,
+                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
+                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
+                func.coalesce(func.sum(Commission_ledger.agent_net), 0.0),
+                func.count(Commission_ledger.id),
+            )
+            .where(Commission_ledger.agent_id == agent_id)
+            .group_by(Commission_ledger.client_id)
+        )
+    ).all()
+
+    # Resolve business names for the client breakdown (small set — one query).
+    names: dict = {}
+    if per_client_rows:
+        client_ids = [r[0] for r in per_client_rows]
+        for cid, bname in (
+            await db.execute(
+                select(Clients.id, Clients.business_name).where(Clients.id.in_(client_ids))
+            )
+        ).all():
+            names[cid] = bname
+
+    by_client = [
+        RevenueByClient(
+            client_id=cid,
+            business_name=names.get(cid, ""),
+            collected=round(float(collected or 0), 2),
+            master_owed=round(float(master_owed or 0), 2),
+            net=round(float(net or 0), 2),
+            payments=int(cnt or 0),
+        )
+        for cid, collected, master_owed, net, cnt in per_client_rows
+    ]
+
+    return AgentRevenueResponse(
+        collected=round(float(totals[0] or 0), 2),
+        master_owed=round(float(totals[1] or 0), 2),
+        net=round(float(totals[2] or 0), 2),
+        payments=int(totals[3] or 0),
+        by_client=by_client,
+    )
 
 
 @router.get("/agent/branding", response_model=BrandingResponse)
@@ -1024,18 +1123,54 @@ async def pay_client_subscription(
     except SubscriptionChargeError as exc:
         raise HTTPException(status_code=402, detail=f"Subscription payment failed: {exc}")
 
+    payment = Subscription_payments(
+        user_id=str(current_user.id),
+        client_id=merchant.id,
+        amount=fee,
+        billing_cycle=cycle,
+        period_start=period_start,
+        period_end=period_end,
+        method=charge.method,
+        reference=charge.reference,
+    )
+    db.add(payment)
+    # Flush so the payment gets its id; the commission row references it 1:1.
+    await db.flush()
+
+    # RSL-01: decompose the gross fee into the platform master's cut (per-client
+    # amortized package wholesale) and the agent's net margin, and write one
+    # commission-ledger row atomically with the payment. The package is the
+    # agent's slot bundle (Agents.package_type -> Packages); if it can't be
+    # resolved the whole fee falls to the agent (master_cut = 0) — a balanced,
+    # non-blocking degradation.
+    package = None
+    if agent_row is not None and agent_row.package_type is not None:
+        package = (
+            await db.execute(
+                select(Packages).where(Packages.id == agent_row.package_type)
+            )
+        ).scalar_one_or_none()
+    master_cut, agent_net = compute_commission_split(
+        gross=float(fee),
+        wholesale_price=float(getattr(package, "wholesale_price", 0) or 0),
+        client_slots=int(getattr(package, "client_slots", 0) or 0),
+    )
     db.add(
-        Subscription_payments(
-            user_id=str(current_user.id),
+        Commission_ledger(
+            user_id=(agent_row.user_id if agent_row is not None else str(current_user.id)),
+            agent_id=merchant.agent_id,
             client_id=merchant.id,
-            amount=fee,
+            subscription_payment_id=payment.id,
+            package_id=(package.id if package is not None else None),
+            gross=round(float(fee), 2),
+            master_cut=master_cut,
+            agent_net=agent_net,
             billing_cycle=cycle,
             period_start=period_start,
             period_end=period_end,
-            method=charge.method,
-            reference=charge.reference,
         )
     )
+
     await db.execute(
         update(Clients)
         .where(Clients.id == merchant.id)
