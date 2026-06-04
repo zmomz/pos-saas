@@ -27,6 +27,7 @@ import {
   Sun,
   Moon,
   UtensilsCrossed,
+  ShieldCheck,
 } from 'lucide-react';
 
 type UserRole = 'master' | 'agent' | 'client';
@@ -70,6 +71,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: Receipt, label: 'expenses', path: '/expenses' },
     { icon: Tag, label: 'discounts', path: '/discounts' },
     { icon: BarChart3, label: 'reports', path: '/reports' },
+    { icon: ShieldCheck, label: 'zatca_status', path: '/zatca' },
     { icon: Shield, label: 'audit_log', path: '/audit' },
     { icon: Bell, label: 'notifications', path: '/notifications' },
   ],

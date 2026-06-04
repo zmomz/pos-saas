@@ -1368,3 +1368,83 @@ export async function openTableOrder(
   });
   return res.data;
 }
+
+// ---------- ZATCA document status (ZA-08, F-019) ----------
+// Client-scoped fiscal-document visibility: onboarding status, a status-count
+// summary (with a stuck pending/failed alert), the retained document list, and
+// the reconcile sweep that resubmits stuck documents once onboarded.
+
+export interface ZatcaStatus {
+  environment: string;
+  has_csr: boolean;
+  onboarded: boolean;
+  gateway_configured: boolean;
+  pih?: string | null;
+  documents: number;
+}
+
+export interface ZatcaDocumentSummary {
+  total: number;
+  by_status: Record<string, number>;
+  pending: number;
+  failed: number;
+  stuck: number;
+  needs_attention: boolean;
+  onboarded: boolean;
+  gateway_configured: boolean;
+}
+
+export interface ZatcaDocument {
+  id: number;
+  invoice_number: string;
+  icv?: number | null;
+  invoice_hash?: string | null;
+  status: string;
+  submitted_at?: string | null;
+  retention_until?: string | null;
+  created_at?: string | null;
+}
+
+export interface ZatcaReportPendingResult {
+  processed: number;
+  cleared: number;
+  reported: number;
+  pending: number;
+  failed: number;
+}
+
+export async function getZatcaStatus(): Promise<ZatcaStatus> {
+  const res = await client.apiCall.invoke<ZatcaStatus>({
+    url: '/api/v1/zatca/status',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getZatcaDocumentSummary(): Promise<ZatcaDocumentSummary> {
+  const res = await client.apiCall.invoke<ZatcaDocumentSummary>({
+    url: '/api/v1/zatca/documents/summary',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getZatcaDocuments(): Promise<ZatcaDocument[]> {
+  const res = await client.apiCall.invoke<ZatcaDocument[]>({
+    url: '/api/v1/zatca/documents',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function reportPendingZatcaDocuments(): Promise<ZatcaReportPendingResult> {
+  const res = await client.apiCall.invoke<ZatcaReportPendingResult>({
+    url: '/api/v1/zatca/documents/report-pending',
+    method: 'POST',
+    data: {},
+  });
+  return res.data;
+}

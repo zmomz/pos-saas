@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
@@ -102,6 +102,17 @@ class ReportPendingResponse(BaseModel):
     reported: int
     pending: int
     failed: int
+
+
+class DocumentSummaryResponse(BaseModel):
+    total: int
+    by_status: dict
+    pending: int
+    failed: int
+    stuck: int
+    needs_attention: bool
+    onboarded: bool
+    gateway_configured: bool
 
 
 class IntegrityResponse(BaseModel):
@@ -457,6 +468,54 @@ async def report_pending_documents(
     summary = await zatca_sale.report_pending_documents(db, client.id)
     await db.commit()
     return ReportPendingResponse(**summary)
+
+
+# ---------------------------------------------------------------------------
+# Document-status summary (ZA-08 dashboard + stuck-doc alerting)
+# ---------------------------------------------------------------------------
+@router.get("/documents/summary", response_model=DocumentSummaryResponse)
+async def documents_summary(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """ZA-08 — the client's fiscal documents counted by status.
+
+    Aggregated in SQL (one ``GROUP BY``, never the OPS-05 load-everything
+    anti-pattern) so a merchant sees at a glance how many invoices are
+    signed/reported/cleared and — critically — how many are stuck ``pending``
+    or ``failed`` and need a reconcile sweep (``POST /documents/report-pending``).
+    ``needs_attention`` is the alerting signal the persisted notification center
+    also raises (F-052), surfaced here so the status page can flag it inline.
+    """
+    client = await _get_client(db, str(current_user.id))
+    rows = (
+        await db.execute(
+            select(ZatcaDocuments.status, func.count())
+            .where(ZatcaDocuments.client_id == client.id)
+            .group_by(ZatcaDocuments.status)
+        )
+    ).all()
+    by_status = {(status or "unknown"): int(cnt) for status, cnt in rows}
+    pending = by_status.get("pending", 0)
+    failed = by_status.get("failed", 0)
+    stuck = pending + failed
+
+    creds = (
+        await db.execute(
+            select(ZatcaCredentials).where(ZatcaCredentials.client_id == client.id)
+        )
+    ).scalar_one_or_none()
+
+    return DocumentSummaryResponse(
+        total=sum(by_status.values()),
+        by_status=by_status,
+        pending=pending,
+        failed=failed,
+        stuck=stuck,
+        needs_attention=stuck > 0,
+        onboarded=bool(creds and creds.onboarded),
+        gateway_configured=zatca.resolve_base_url() is not None,
+    )
 
 
 # ---------------------------------------------------------------------------

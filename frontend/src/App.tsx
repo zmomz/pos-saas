@@ -36,6 +36,7 @@ import WebhookManagement from './pages/WebhookManagement';
 import UserProfile from './pages/UserProfile';
 import BranchManagement from './pages/BranchManagement';
 import FloorMap from './pages/FloorMap';
+import ZatcaStatus from './pages/ZatcaStatus';
 import CustomerDisplay from './pages/CustomerDisplay';
 import ForceResetPassword from './pages/ForceResetPassword';
 import NotFound from './pages/NotFound';
@@ -123,6 +124,7 @@ const AppRoutes = () => (
       <Route path="/loyalty" element={<LoyaltyProgram />} />
       <Route path="/branches" element={<BranchManagement />} />
       <Route path="/floor" element={<FloorMap />} />
+      <Route path="/zatca" element={<ZatcaStatus />} />
     </Route>
 
     {/* Shared routes (agent + client) */}
