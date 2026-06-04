@@ -63,12 +63,17 @@ class ProductCreateRequest(BaseModel):
     barcode: Optional[str] = None
     price: float
     cost_price: Optional[float] = None
-    quantity: Optional[int] = 0
+    # POS-11 (F-011): Float so weighted products carry fractional on-hand stock.
+    quantity: Optional[float] = 0
     # INV-08 (F-035): per-product reorder point + suggested order amount.
     reorder_point: Optional[int] = 0
     reorder_quantity: Optional[int] = 0
     category: Optional[str] = None
     vat_rate: Optional[float] = 15.0
+    # POS-11 (F-011): weighted / open-price configuration.
+    is_weighted: Optional[bool] = False
+    is_open_price: Optional[bool] = False
+    unit_label: Optional[str] = None
 
 
 class ProductUpdateRequest(BaseModel):
@@ -77,12 +82,16 @@ class ProductUpdateRequest(BaseModel):
     barcode: Optional[str] = None
     price: Optional[float] = None
     cost_price: Optional[float] = None
-    quantity: Optional[int] = None
+    quantity: Optional[float] = None
     reorder_point: Optional[int] = None
     reorder_quantity: Optional[int] = None
     category: Optional[str] = None
     vat_rate: Optional[float] = None
     is_active: Optional[bool] = None
+    # POS-11 (F-011): weighted / open-price configuration.
+    is_weighted: Optional[bool] = None
+    is_open_price: Optional[bool] = None
+    unit_label: Optional[str] = None
 
 
 class ProductResponse(BaseModel):
@@ -93,12 +102,16 @@ class ProductResponse(BaseModel):
     barcode: Optional[str] = None
     price: float
     cost_price: Optional[float] = None
-    quantity: int
+    quantity: float
     reorder_point: int = 0
     reorder_quantity: int = 0
     category: Optional[str] = None
     vat_rate: Optional[float] = None
     is_active: bool
+    # POS-11 (F-011): weighted / open-price configuration.
+    is_weighted: bool = False
+    is_open_price: bool = False
+    unit_label: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -173,6 +186,9 @@ async def list_products(
             category=p.category,
             vat_rate=p.vat_rate,
             is_active=p.is_active if p.is_active is not None else True,
+            is_weighted=bool(p.is_weighted),
+            is_open_price=bool(p.is_open_price),
+            unit_label=p.unit_label,
             created_at=p.created_at,
             updated_at=p.updated_at,
         )
@@ -209,6 +225,10 @@ async def create_product(
         category=data.category,
         vat_rate=data.vat_rate if data.vat_rate is not None else 15.0,
         is_active=True,
+        # POS-11 (F-011): weighted / open-price configuration.
+        is_weighted=bool(data.is_weighted),
+        is_open_price=bool(data.is_open_price),
+        unit_label=data.unit_label,
     )
     db.add(product)
     await db.commit()
@@ -228,6 +248,9 @@ async def create_product(
         category=product.category,
         vat_rate=product.vat_rate,
         is_active=True,
+        is_weighted=bool(product.is_weighted),
+        is_open_price=bool(product.is_open_price),
+        unit_label=product.unit_label,
         created_at=product.created_at,
         updated_at=product.updated_at,
     )
@@ -280,6 +303,9 @@ async def update_product(
         category=product.category,
         vat_rate=product.vat_rate,
         is_active=product.is_active if product.is_active is not None else True,
+        is_weighted=bool(product.is_weighted),
+        is_open_price=bool(product.is_open_price),
+        unit_label=product.unit_label,
         created_at=product.created_at,
         updated_at=product.updated_at,
     )

@@ -23,6 +23,11 @@ interface Product {
   category?: string;
   sku?: string;
   barcode?: string;
+  // POS-11 (F-011): weighted (sold by fractional weight) / open-price (price
+  // entered at sale) configuration; unit_label labels the weighted measure.
+  is_weighted?: boolean;
+  is_open_price?: boolean;
+  unit_label?: string;
 }
 
 interface CartItem {
@@ -32,9 +37,18 @@ interface CartItem {
   product: Product;
   quantity: number;
   variantId?: number;
+  // POS-11 (F-011): sale-time unit price for an open-price line. When undefined the
+  // line is priced at the product's catalog price.
+  unitPrice?: number;
   // Stable de-dup/render key — distinguishes variant siblings that share a
   // parent product id. `p<productId>` for a plain product, `v<variantId>` for a variant.
   key: string;
+}
+
+// POS-11 (F-011): the effective per-unit price for a cart line — the sale-time
+// price on an open-price line, else the product's catalog price.
+function lineUnitPrice(item: CartItem): number {
+  return item.unitPrice ?? item.product.price;
 }
 
 function cartKeyFor(productId: number, variantId?: number): string {
@@ -271,7 +285,7 @@ export default function POSTerminal() {
           product_id: item.product.id,
           name: item.product.name,
           name_ar: item.product.name_ar,
-          price: item.product.price,
+          price: lineUnitPrice(item),
           quantity: item.quantity,
         })),
         label: customer?.name || undefined,
@@ -330,7 +344,10 @@ export default function POSTerminal() {
           item.key === key ? { ...item, quantity: item.quantity + 1 } : item
         );
       }
-      return [...prev, { product, quantity: 1, variantId, key }];
+      // POS-11 (F-011): an open-price line seeds its sale-time price from the
+      // catalog default so the cashier can adjust it inline before checkout.
+      const unitPrice = product.is_open_price ? product.price : undefined;
+      return [...prev, { product, quantity: 1, variantId, unitPrice, key }];
     });
   }
 
@@ -340,6 +357,18 @@ export default function POSTerminal() {
         .map((item) => (item.key === key ? { ...item, quantity: item.quantity + delta } : item))
         .filter((item) => item.quantity > 0)
     );
+  }
+
+  // POS-11 (F-011): set an exact (possibly fractional, weighted) line quantity.
+  function setLineQuantity(key: string, value: string) {
+    const qty = Math.max(0, Number(value) || 0);
+    setCart((prev) => prev.map((item) => (item.key === key ? { ...item, quantity: qty } : item)));
+  }
+
+  // POS-11 (F-011): set the sale-time unit price on an open-price line.
+  function setLineUnitPrice(key: string, value: string) {
+    const price = Math.max(0, Number(value) || 0);
+    setCart((prev) => prev.map((item) => (item.key === key ? { ...item, unitPrice: price } : item)));
   }
 
   function removeFromCart(key: string) {
@@ -478,7 +507,7 @@ export default function POSTerminal() {
     setDiscountError('');
   }
 
-  const subtotal = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+  const subtotal = cart.reduce((sum, item) => sum + lineUnitPrice(item) * item.quantity, 0);
 
   // Calculate discount amount
   const discountAmount = appliedDiscount
@@ -530,7 +559,7 @@ export default function POSTerminal() {
               name: item.product.name,
               name_ar: item.product.name_ar,
               quantity: item.quantity,
-              price: item.product.price,
+              price: lineUnitPrice(item),
             })),
             { subtotal, vat: vatAmount, total },
             brandName,
@@ -560,7 +589,7 @@ export default function POSTerminal() {
         // (PRN-01 / L10N-06).
         name_ar: item.product.name_ar,
         quantity: item.quantity,
-        price: item.product.price,
+        price: lineUnitPrice(item),
         vat_rate: 0.15,
       }));
       // POS-01/POS-02: persist the applied discount and (when split) the per-method
@@ -599,7 +628,7 @@ export default function POSTerminal() {
         items: cart.map((item) => ({
           name: item.product.name,
           quantity: item.quantity,
-          price: item.product.price,
+          price: lineUnitPrice(item),
         })),
         discount_amount: discountAmount > 0 ? discountAmount : undefined,
         discount_code: appliedDiscount?.code,
@@ -626,7 +655,7 @@ export default function POSTerminal() {
       // than losing it. A queued sale gets no fiscal QR until it syncs.
       if (!isOnline()) {
         try {
-          const subtotal = cart.reduce((s, i) => s + i.product.price * i.quantity, 0);
+          const subtotal = cart.reduce((s, i) => s + lineUnitPrice(i) * i.quantity, 0);
           const taxable = Math.max(0, subtotal - discountAmount);
           const vat = Math.round(taxable * 0.15 * 100) / 100;
           const queued = await enqueueTransaction({
@@ -639,7 +668,7 @@ export default function POSTerminal() {
               product_id: item.product.id,
               name: item.product.name,
               quantity: item.quantity,
-              price: item.product.price,
+              price: lineUnitPrice(item),
             })),
           });
           setReceipt({
@@ -652,7 +681,7 @@ export default function POSTerminal() {
             items: cart.map((item) => ({
               name: item.product.name,
               quantity: item.quantity,
-              price: item.product.price,
+              price: lineUnitPrice(item),
             })),
             discount_amount: discountAmount > 0 ? discountAmount : undefined,
             discount_code: appliedDiscount?.code,
@@ -1373,8 +1402,39 @@ export default function POSTerminal() {
                           {t('variant')}
                         </span>
                       )}
+                      {item.product.is_weighted && (
+                        <span className="ms-1 text-[10px] uppercase tracking-wide text-amber-300">
+                          {t('weighted')}
+                        </span>
+                      )}
+                      {item.product.is_open_price && (
+                        <span className="ms-1 text-[10px] uppercase tracking-wide text-emerald-300">
+                          {t('open_price')}
+                        </span>
+                      )}
                     </p>
-                    <p className="text-slate-400 text-xs">${item.product.price?.toFixed(2)} each</p>
+                    {/* POS-11: open-price lines show an editable sale-time unit price */}
+                    {item.product.is_open_price ? (
+                      <div className="flex items-center gap-1 mt-1">
+                        <span className="text-slate-400 text-xs">{t('unit_price')}</span>
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={lineUnitPrice(item)}
+                          onChange={(e) => setLineUnitPrice(item.key, e.target.value)}
+                          dir="ltr"
+                          className="h-6 w-20 bg-slate-800 border-slate-600 text-white text-xs"
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-slate-400 text-xs">
+                        ${lineUnitPrice(item).toFixed(2)}
+                        {item.product.is_weighted && item.product.unit_label
+                          ? ` / ${item.product.unit_label}`
+                          : ` ${t('each')}`}
+                      </p>
+                    )}
                   </div>
                   <Button
                     size="sm"
@@ -1386,25 +1446,45 @@ export default function POSTerminal() {
                   </Button>
                 </div>
                 <div className="flex items-center gap-2 mt-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => updateQuantity(item.key, -1)}
-                    className="h-7 w-7 p-0 border-slate-600 text-white hover:bg-slate-600"
-                  >
-                    -
-                  </Button>
-                  <span className="text-white text-sm w-8 text-center">{item.quantity}</span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => updateQuantity(item.key, 1)}
-                    className="h-7 w-7 p-0 border-slate-600 text-white hover:bg-slate-600"
-                  >
-                    +
-                  </Button>
+                  {item.product.is_weighted ? (
+                    // POS-11: weighted lines capture a fractional quantity (weight).
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={item.quantity}
+                        onChange={(e) => setLineQuantity(item.key, e.target.value)}
+                        dir="ltr"
+                        className="h-7 w-24 bg-slate-800 border-slate-600 text-white text-xs"
+                      />
+                      {item.product.unit_label && (
+                        <span className="text-slate-400 text-xs">{item.product.unit_label}</span>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => updateQuantity(item.key, -1)}
+                        className="h-7 w-7 p-0 border-slate-600 text-white hover:bg-slate-600"
+                      >
+                        -
+                      </Button>
+                      <span className="text-white text-sm w-8 text-center">{item.quantity}</span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => updateQuantity(item.key, 1)}
+                        className="h-7 w-7 p-0 border-slate-600 text-white hover:bg-slate-600"
+                      >
+                        +
+                      </Button>
+                    </>
+                  )}
                   <span className="text-blue-400 font-medium text-sm ms-auto">
-                    ${(item.product.price * item.quantity).toFixed(2)}
+                    ${(lineUnitPrice(item) * item.quantity).toFixed(2)}
                   </span>
                 </div>
               </div>

@@ -65,8 +65,12 @@ class CartItem(BaseModel):
     # receipt prints the Arabic line name (PRN-01 / L10N-06, F-021). Optional —
     # falls back to ``name`` when absent.
     name_ar: Optional[str] = None
+    # POS-11 (F-011): when the product is open-price this is the sale-time unit
+    # price the cashier entered; for a fixed-price product it is the catalog price.
     price: float
-    quantity: int
+    # POS-11 (F-011): a Float so a weighted product can be sold by fractional weight
+    # (e.g. 0.45 kg). Unit-count products still pass whole numbers.
+    quantity: float
     discount: Optional[float] = 0
     # INV-04 (F-033): when the line is a product *variant* (size/colour SKU), this
     # is the variant's id. The sale then decrements *that variant's* stock
@@ -250,7 +254,9 @@ async def _deduct_inventory(
     skipped (e.g. ad-hoc/custom line items), preserving prior behavior.
     """
     # Aggregate requested quantities per product (an item may appear twice).
-    requested: dict[int, int] = {}
+    # Float keys the value so weighted lines (fractional qty, POS-11/F-011) deduct
+    # the real amount sold.
+    requested: dict[int, float] = {}
     for item in items:
         requested[item.product_id] = requested.get(item.product_id, 0) + item.quantity
 
@@ -655,13 +661,15 @@ async def create_transaction(
     # ``product_id`` doesn't map to a catalog product are left to the cashier.
     # Variant lines (INV-04) carry their own price by design, so they are not a
     # price *override* of the parent product — exclude them from this gate.
+    # Open-price products (POS-11/F-011) expect a sale-time price by design, so a
+    # price entered on them is NOT a fraud-sensitive override — exclude them too.
     override_pids = [it.product_id for it in data.items if it.product_id and not it.variant_id]
     if override_pids:
-        catalog_prices = {
-            row.id: float(row.price or 0)
+        catalog = {
+            row.id: (float(row.price or 0), bool(row.is_open_price))
             for row in (
                 await db.execute(
-                    select(Products.id, Products.price).where(
+                    select(Products.id, Products.price, Products.is_open_price).where(
                         Products.id.in_(override_pids),
                         Products.client_id == client.id,
                     )
@@ -670,8 +678,9 @@ async def create_transaction(
         }
         has_override = any(
             not it.variant_id
-            and it.product_id in catalog_prices
-            and abs(float(it.price) - catalog_prices[it.product_id]) > 0.001
+            and it.product_id in catalog
+            and not catalog[it.product_id][1]  # open-price: sale-time price is expected
+            and abs(float(it.price) - catalog[it.product_id][0]) > 0.001
             for it in data.items
         )
         if has_override and not await has_permission(
@@ -1061,7 +1070,8 @@ async def process_offline_sale(
             product_id=int(it.get("product_id")),
             name=str(it.get("name") or "Item"),
             price=float(it.get("price") or 0),
-            quantity=int(it.get("quantity") or 0),
+            # POS-11 (F-011): preserve fractional (weighted) quantities on replay.
+            quantity=float(it.get("quantity") or 0),
             discount=float(it.get("discount") or 0),
         )
         for it in raw_items
@@ -1474,13 +1484,14 @@ async def _restore_inventory(db: AsyncSession, client_id: int, items: List[dict]
     the variant ledger, so they are skipped here and restored by
     :func:`_restore_stock` via ``restore_variant_inventory``.
     """
-    restore: dict[int, int] = {}
+    # Float so a weighted line (POS-11/F-011) restores the fractional amount sold.
+    restore: dict[int, float] = {}
     for item in items:
         if item.get("variant_id"):
             continue
         pid = item.get("product_id")
         if pid:
-            restore[pid] = restore.get(pid, 0) + int(item.get("quantity") or 0)
+            restore[pid] = restore.get(pid, 0) + float(item.get("quantity") or 0)
     for product_id, qty in restore.items():
         await db.execute(
             update(Products)

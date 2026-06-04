@@ -29,10 +29,14 @@ class ProductsData(BaseModel):
     barcode: str = None
     price: float
     cost_price: float = None
-    quantity: int = None
+    quantity: float = None
     category: str = None
     vat_rate: float = None
     is_active: bool = None
+    # POS-11 (F-011): weighted / open-price configuration.
+    is_weighted: bool = None
+    is_open_price: bool = None
+    unit_label: str = None
 
 
 class ProductsUpdateData(BaseModel):
@@ -43,10 +47,14 @@ class ProductsUpdateData(BaseModel):
     barcode: Optional[str] = None
     price: Optional[float] = None
     cost_price: Optional[float] = None
-    quantity: Optional[int] = None
+    quantity: Optional[float] = None
     category: Optional[str] = None
     vat_rate: Optional[float] = None
     is_active: Optional[bool] = None
+    # POS-11 (F-011): weighted / open-price configuration.
+    is_weighted: Optional[bool] = None
+    is_open_price: Optional[bool] = None
+    unit_label: Optional[str] = None
 
 
 class ProductsResponse(BaseModel):
@@ -59,10 +67,14 @@ class ProductsResponse(BaseModel):
     barcode: Optional[str] = None
     price: float
     cost_price: Optional[float] = None
-    quantity: Optional[int] = None
+    quantity: Optional[float] = None
     category: Optional[str] = None
     vat_rate: Optional[float] = None
     is_active: Optional[bool] = None
+    # POS-11 (F-011): weighted / open-price configuration.
+    is_weighted: Optional[bool] = None
+    is_open_price: Optional[bool] = None
+    unit_label: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

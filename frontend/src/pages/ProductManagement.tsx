@@ -51,6 +51,10 @@ interface Product {
   category?: string;
   vat_rate: number;
   is_active?: boolean;
+  // POS-11 (F-011): weighted / open-price configuration.
+  is_weighted?: boolean;
+  is_open_price?: boolean;
+  unit_label?: string;
 }
 
 // INV-08 (F-035): a product is low when on-hand <= its reorder point (when set),
@@ -89,6 +93,10 @@ interface ProductFormData {
   reorder_quantity: string;
   category: string;
   vat_rate: string;
+  // POS-11 (F-011): weighted / open-price configuration.
+  is_weighted: boolean;
+  is_open_price: boolean;
+  unit_label: string;
 }
 
 const CATEGORIES = ['Food', 'Beverages', 'Electronics', 'Clothing', 'Other'];
@@ -104,6 +112,9 @@ const emptyForm: ProductFormData = {
   reorder_quantity: '',
   category: 'Food',
   vat_rate: '15',
+  is_weighted: false,
+  is_open_price: false,
+  unit_label: '',
 };
 
 export default function ProductManagement() {
@@ -189,6 +200,11 @@ export default function ProductManagement() {
     setFormData((prev) => ({ ...prev, [field]: value }));
   }
 
+  // POS-11 (F-011): toggle a boolean configuration flag (weighted / open-price).
+  function handleFormToggle(field: 'is_weighted' | 'is_open_price', checked: boolean) {
+    setFormData((prev) => ({ ...prev, [field]: checked }));
+  }
+
   async function handleAddProduct() {
     setSubmitting(true);
     try {
@@ -198,13 +214,16 @@ export default function ProductManagement() {
         barcode: formData.barcode || undefined,
         price: parseFloat(formData.price),
         cost_price: formData.cost_price ? parseFloat(formData.cost_price) : undefined,
-        quantity: parseInt(formData.quantity, 10),
+        quantity: parseFloat(formData.quantity),
         reorder_point: formData.reorder_point ? parseInt(formData.reorder_point, 10) : undefined,
         reorder_quantity: formData.reorder_quantity
           ? parseInt(formData.reorder_quantity, 10)
           : undefined,
         category: formData.category || undefined,
         vat_rate: parseFloat(formData.vat_rate),
+        is_weighted: formData.is_weighted,
+        is_open_price: formData.is_open_price,
+        unit_label: formData.unit_label || undefined,
       });
       setAddOpen(false);
       setFormData(emptyForm);
@@ -230,6 +249,9 @@ export default function ProductManagement() {
       reorder_quantity: product.reorder_quantity ? String(product.reorder_quantity) : '',
       category: product.category || 'Other',
       vat_rate: String(product.vat_rate),
+      is_weighted: !!product.is_weighted,
+      is_open_price: !!product.is_open_price,
+      unit_label: product.unit_label || '',
     });
     setEditOpen(true);
   }
@@ -244,11 +266,14 @@ export default function ProductManagement() {
         barcode: formData.barcode || undefined,
         price: parseFloat(formData.price),
         cost_price: formData.cost_price ? parseFloat(formData.cost_price) : undefined,
-        quantity: parseInt(formData.quantity, 10),
+        quantity: parseFloat(formData.quantity),
         reorder_point: formData.reorder_point ? parseInt(formData.reorder_point, 10) : 0,
         reorder_quantity: formData.reorder_quantity ? parseInt(formData.reorder_quantity, 10) : 0,
         category: formData.category || undefined,
         vat_rate: parseFloat(formData.vat_rate),
+        is_weighted: formData.is_weighted,
+        is_open_price: formData.is_open_price,
+        unit_label: formData.unit_label || undefined,
       });
       setEditOpen(false);
       setSelectedProduct(null);
@@ -464,6 +489,39 @@ export default function ProductManagement() {
           </div>
         </div>
         <p className="text-xs text-slate-500 -mt-2">{t('reorder_point_hint')}</p>
+        {/* POS-11 (F-011): weighted & open-price configuration */}
+        <div className="space-y-2 border border-slate-700 rounded-md p-3">
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input
+              type="checkbox"
+              checked={formData.is_weighted}
+              onChange={(e) => handleFormToggle('is_weighted', e.target.checked)}
+              className="h-4 w-4 accent-blue-600"
+            />
+            {t('weighted_item')}
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-200">
+            <input
+              type="checkbox"
+              checked={formData.is_open_price}
+              onChange={(e) => handleFormToggle('is_open_price', e.target.checked)}
+              className="h-4 w-4 accent-blue-600"
+            />
+            {t('open_price_item')}
+          </label>
+          {formData.is_weighted && (
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('unit_label')}</label>
+              <Input
+                value={formData.unit_label}
+                onChange={(e) => handleFormChange('unit_label', e.target.value)}
+                placeholder={t('unit_label_placeholder')}
+                className="bg-slate-700 border-slate-600 text-white"
+              />
+            </div>
+          )}
+          <p className="text-xs text-slate-500">{t('weighted_open_price_hint')}</p>
+        </div>
         <div>
           <label className="text-sm text-slate-400 mb-1 block">Category</label>
           <Select value={formData.category} onValueChange={(v) => handleFormChange('category', v)}>

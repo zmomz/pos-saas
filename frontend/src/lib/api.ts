@@ -577,6 +577,10 @@ export async function createProduct(data: {
   reorder_quantity?: number;
   category?: string;
   vat_rate?: number;
+  // POS-11 (F-011): weighted / open-price configuration.
+  is_weighted?: boolean;
+  is_open_price?: boolean;
+  unit_label?: string;
 }) {
   const response = await client.apiCall.invoke({
     url: '/api/v1/products/create',

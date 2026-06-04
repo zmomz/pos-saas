@@ -15,7 +15,10 @@ class Products(Base):
     barcode = Column(String, nullable=True)
     price = Column(Float, nullable=False)
     cost_price = Column(Float, nullable=True)
-    quantity = Column(Integer, nullable=True, default=0, server_default='0')
+    # POS-11 (F-011): on-hand stock is a Float so weighted products (sold by
+    # fractional weight, e.g. 0.45 kg) track real fractional quantities. Existing
+    # integer values remain valid; comparisons/arithmetic are unaffected.
+    quantity = Column(Float, nullable=True, default=0, server_default='0')
     # INV-08 (F-035): per-product reorder point. When on-hand <= reorder_point
     # (and reorder_point > 0) the product is flagged low / suggested for a PO.
     # reorder_quantity is the order amount the auto-PO suggestion proposes.
@@ -24,5 +27,15 @@ class Products(Base):
     category = Column(String, nullable=True)
     vat_rate = Column(Float, nullable=True, default=15.0, server_default='15.0')
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
+    # POS-11 (F-011): weighted & open-price configuration.
+    # ``is_weighted`` — the product is sold by weight; the POS captures a fractional
+    #   quantity at sale time (manual entry or scale) instead of a unit count, and
+    #   ``unit_label`` (e.g. "kg", "g") labels the measure on screen/receipt.
+    # ``is_open_price`` — the price is entered at sale time (the catalog ``price`` is
+    #   a default/zero), so a sale-time price is expected and is NOT treated as a
+    #   fraud-sensitive ``pos.price_override`` (POS-08) of a fixed-price product.
+    is_weighted = Column(Boolean, nullable=True, default=False, server_default='false')
+    is_open_price = Column(Boolean, nullable=True, default=False, server_default='false')
+    unit_label = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

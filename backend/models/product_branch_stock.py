@@ -1,6 +1,6 @@
 from core.database import Base
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, Float, Integer, String, UniqueConstraint
 
 
 class Product_branch_stock(Base):
@@ -25,6 +25,8 @@ class Product_branch_stock(Base):
     client_id = Column(Integer, nullable=False)
     branch_id = Column(Integer, nullable=False)
     product_id = Column(Integer, nullable=False)
-    quantity = Column(Integer, nullable=False, default=0, server_default="0")
+    # POS-11 (F-011): Float so a weighted product's per-branch on-hand stock tracks
+    # fractional quantities, mirroring ``products.quantity``.
+    quantity = Column(Float, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
