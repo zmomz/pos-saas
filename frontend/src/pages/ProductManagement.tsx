@@ -27,7 +27,9 @@ import {
   createProductVariant,
   updateProductVariant,
   deleteProductVariant,
+  getReorderSuggestions,
   type ProductVariant,
+  type ReorderSuggestion,
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import { DataPagination } from '@/components/DataPagination';
@@ -44,9 +46,18 @@ interface Product {
   price: number;
   cost_price?: number;
   quantity: number;
+  reorder_point?: number;
+  reorder_quantity?: number;
   category?: string;
   vat_rate: number;
   is_active?: boolean;
+}
+
+// INV-08 (F-035): a product is low when on-hand <= its reorder point (when set),
+// else below the legacy fixed threshold of 10. Mirrors the backend predicate.
+function isLowStock(p: Product): boolean {
+  const rp = p.reorder_point || 0;
+  return rp > 0 ? p.quantity <= rp : p.quantity < 10;
 }
 
 interface VariantFormData {
@@ -74,6 +85,8 @@ interface ProductFormData {
   price: string;
   cost_price: string;
   quantity: string;
+  reorder_point: string;
+  reorder_quantity: string;
   category: string;
   vat_rate: string;
 }
@@ -87,6 +100,8 @@ const emptyForm: ProductFormData = {
   price: '',
   cost_price: '',
   quantity: '',
+  reorder_point: '',
+  reorder_quantity: '',
   category: 'Food',
   vat_rate: '15',
 };
@@ -114,12 +129,32 @@ export default function ProductManagement() {
   const [editingVariantId, setEditingVariantId] = useState<number | null>(null);
   const [variantSubmitting, setVariantSubmitting] = useState(false);
 
+  // INV-08 (F-035): auto-PO suggestions for products at/below their reorder point.
+  const [suggestions, setSuggestions] = useState<ReorderSuggestion[]>([]);
+  const [suggestionsLoading, setSuggestionsLoading] = useState(true);
+  const [suggestionsError, setSuggestionsError] = useState(false);
+
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
 
   useEffect(() => {
     loadProducts();
+    loadSuggestions();
   }, []);
+
+  async function loadSuggestions() {
+    setSuggestionsLoading(true);
+    setSuggestionsError(false);
+    try {
+      const data = await getReorderSuggestions();
+      setSuggestions(data?.items || []);
+    } catch (err) {
+      console.error('Failed to load reorder suggestions:', err);
+      setSuggestionsError(true);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }
 
   async function loadProducts() {
     setLoading(true);
@@ -147,7 +182,7 @@ export default function ProductManagement() {
   const pagedProducts = products.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const totalProducts = products.length;
-  const lowStockCount = products.filter((p) => p.quantity < 10).length;
+  const lowStockCount = products.filter(isLowStock).length;
   const activeProducts = products.filter((p) => p.is_active !== false).length;
 
   function handleFormChange(field: keyof ProductFormData, value: string) {
@@ -164,12 +199,17 @@ export default function ProductManagement() {
         price: parseFloat(formData.price),
         cost_price: formData.cost_price ? parseFloat(formData.cost_price) : undefined,
         quantity: parseInt(formData.quantity, 10),
+        reorder_point: formData.reorder_point ? parseInt(formData.reorder_point, 10) : undefined,
+        reorder_quantity: formData.reorder_quantity
+          ? parseInt(formData.reorder_quantity, 10)
+          : undefined,
         category: formData.category || undefined,
         vat_rate: parseFloat(formData.vat_rate),
       });
       setAddOpen(false);
       setFormData(emptyForm);
       await loadProducts();
+      await loadSuggestions();
     } catch (err) {
       console.error('Failed to create product:', err);
     } finally {
@@ -186,6 +226,8 @@ export default function ProductManagement() {
       price: String(product.price),
       cost_price: product.cost_price ? String(product.cost_price) : '',
       quantity: String(product.quantity),
+      reorder_point: product.reorder_point ? String(product.reorder_point) : '',
+      reorder_quantity: product.reorder_quantity ? String(product.reorder_quantity) : '',
       category: product.category || 'Other',
       vat_rate: String(product.vat_rate),
     });
@@ -203,6 +245,8 @@ export default function ProductManagement() {
         price: parseFloat(formData.price),
         cost_price: formData.cost_price ? parseFloat(formData.cost_price) : undefined,
         quantity: parseInt(formData.quantity, 10),
+        reorder_point: formData.reorder_point ? parseInt(formData.reorder_point, 10) : 0,
+        reorder_quantity: formData.reorder_quantity ? parseInt(formData.reorder_quantity, 10) : 0,
         category: formData.category || undefined,
         vat_rate: parseFloat(formData.vat_rate),
       });
@@ -210,6 +254,7 @@ export default function ProductManagement() {
       setSelectedProduct(null);
       setFormData(emptyForm);
       await loadProducts();
+      await loadSuggestions();
     } catch (err) {
       console.error('Failed to update product:', err);
     } finally {
@@ -230,6 +275,7 @@ export default function ProductManagement() {
       setDeleteOpen(false);
       setSelectedProduct(null);
       await loadProducts();
+      await loadSuggestions();
     } catch (err) {
       console.error('Failed to delete product:', err);
     } finally {
@@ -395,6 +441,29 @@ export default function ProductManagement() {
             />
           </div>
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm text-slate-400 mb-1 block">{t('reorder_point')}</label>
+            <Input
+              type="number"
+              value={formData.reorder_point}
+              onChange={(e) => handleFormChange('reorder_point', e.target.value)}
+              placeholder="0"
+              className="bg-slate-700 border-slate-600 text-white"
+            />
+          </div>
+          <div>
+            <label className="text-sm text-slate-400 mb-1 block">{t('reorder_quantity')}</label>
+            <Input
+              type="number"
+              value={formData.reorder_quantity}
+              onChange={(e) => handleFormChange('reorder_quantity', e.target.value)}
+              placeholder="0"
+              className="bg-slate-700 border-slate-600 text-white"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-slate-500 -mt-2">{t('reorder_point_hint')}</p>
         <div>
           <label className="text-sm text-slate-400 mb-1 block">Category</label>
           <Select value={formData.category} onValueChange={(v) => handleFormChange('category', v)}>
@@ -484,6 +553,66 @@ export default function ProductManagement() {
           </Card>
         </div>
 
+        {/* Reorder suggestions (INV-08, F-035): loading / error / empty / list */}
+        <Card className="bg-slate-800 border-slate-700">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-white font-semibold">{t('reorder_suggestions')}</h2>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={loadSuggestions}
+                className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+              >
+                {t('refresh')}
+              </Button>
+            </div>
+            {suggestionsLoading ? (
+              <div className="py-6 text-center text-slate-400 animate-pulse">{t('loading')}</div>
+            ) : suggestionsError ? (
+              <ErrorState message={t('reorder_load_error')} onRetry={loadSuggestions} />
+            ) : suggestions.length === 0 ? (
+              <div className="py-6 text-center text-slate-500">{t('no_reorder_suggestions')}</div>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-slate-700">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-900/40">
+                    <tr className="text-slate-400">
+                      <th className="p-2 text-start">Name</th>
+                      <th className="p-2 text-start">{t('on_hand')}</th>
+                      <th className="p-2 text-start">{t('reorder_point')}</th>
+                      <th className="p-2 text-start">{t('suggested_order')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {suggestions.map((s) => (
+                      <tr key={s.product_id} className="border-t border-slate-700 text-slate-300">
+                        <td className="p-2">
+                          <span className="text-white">{s.name}</span>
+                          {s.name_ar && (
+                            <span className="block text-xs text-slate-500" dir="rtl">
+                              {s.name_ar}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-2">
+                          <Badge className="bg-red-600/20 text-red-400 border border-red-600/40">
+                            {s.on_hand}
+                          </Badge>
+                        </td>
+                        <td className="p-2">{s.reorder_point}</td>
+                        <td className="p-2 font-semibold text-blue-300">
+                          {s.suggested_order_quantity}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Search, Filter, Add */}
         <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
           <Input
@@ -568,9 +697,14 @@ export default function ProductManagement() {
                     </td>
                     <td className="p-3">${product.price.toFixed(2)}</td>
                     <td className="p-3">
-                      {product.quantity < 10 ? (
+                      {isLowStock(product) ? (
                         <Badge className="bg-red-600/20 text-red-400 border border-red-600/40">
                           {product.quantity}
+                          {(product.reorder_point || 0) > 0 && (
+                            <span className="ms-1 text-[10px] opacity-70">
+                              / {product.reorder_point}
+                            </span>
+                          )}
                         </Badge>
                       ) : (
                         <span>{product.quantity}</span>

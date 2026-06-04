@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func, update, and_
+from sqlalchemy import select, func, update, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, db_manager
@@ -64,6 +64,9 @@ class ProductCreateRequest(BaseModel):
     price: float
     cost_price: Optional[float] = None
     quantity: Optional[int] = 0
+    # INV-08 (F-035): per-product reorder point + suggested order amount.
+    reorder_point: Optional[int] = 0
+    reorder_quantity: Optional[int] = 0
     category: Optional[str] = None
     vat_rate: Optional[float] = 15.0
 
@@ -75,6 +78,8 @@ class ProductUpdateRequest(BaseModel):
     price: Optional[float] = None
     cost_price: Optional[float] = None
     quantity: Optional[int] = None
+    reorder_point: Optional[int] = None
+    reorder_quantity: Optional[int] = None
     category: Optional[str] = None
     vat_rate: Optional[float] = None
     is_active: Optional[bool] = None
@@ -89,11 +94,26 @@ class ProductResponse(BaseModel):
     price: float
     cost_price: Optional[float] = None
     quantity: int
+    reorder_point: int = 0
+    reorder_quantity: int = 0
     category: Optional[str] = None
     vat_rate: Optional[float] = None
     is_active: bool
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+def _low_stock_clause(default_threshold: int):
+    """INV-08 (F-035): a product is low-stock when on-hand <= its configured
+    ``reorder_point`` (when set > 0); otherwise it falls back to the fixed
+    ``default_threshold`` (legacy behaviour for products with no reorder point).
+    """
+    qty = func.coalesce(Products.quantity, 0)
+    rp = func.coalesce(Products.reorder_point, 0)
+    return or_(
+        and_(rp > 0, qty <= rp),
+        and_(rp <= 0, qty < default_threshold),
+    )
 
 
 class ProductListResponse(BaseModel):
@@ -148,6 +168,8 @@ async def list_products(
             price=p.price,
             cost_price=p.cost_price,
             quantity=p.quantity or 0,
+            reorder_point=p.reorder_point or 0,
+            reorder_quantity=p.reorder_quantity or 0,
             category=p.category,
             vat_rate=p.vat_rate,
             is_active=p.is_active if p.is_active is not None else True,
@@ -182,6 +204,8 @@ async def create_product(
         price=data.price,
         cost_price=data.cost_price,
         quantity=data.quantity or 0,
+        reorder_point=data.reorder_point or 0,
+        reorder_quantity=data.reorder_quantity or 0,
         category=data.category,
         vat_rate=data.vat_rate if data.vat_rate is not None else 15.0,
         is_active=True,
@@ -199,6 +223,8 @@ async def create_product(
         price=product.price,
         cost_price=product.cost_price,
         quantity=product.quantity or 0,
+        reorder_point=product.reorder_point or 0,
+        reorder_quantity=product.reorder_quantity or 0,
         category=product.category,
         vat_rate=product.vat_rate,
         is_active=True,
@@ -249,6 +275,8 @@ async def update_product(
         price=product.price,
         cost_price=product.cost_price,
         quantity=product.quantity or 0,
+        reorder_point=product.reorder_point or 0,
+        reorder_quantity=product.reorder_quantity or 0,
         category=product.category,
         vat_rate=product.vat_rate,
         is_active=product.is_active if product.is_active is not None else True,
@@ -295,7 +323,12 @@ async def get_low_stock_products(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get products with quantity below threshold."""
+    """Get low-stock products.
+
+    INV-08 (F-035): a product is low when on-hand <= its per-product
+    ``reorder_point`` (when configured); products without a reorder point fall
+    back to the fixed ``threshold`` query param (legacy behaviour).
+    """
     role_info = await get_user_role(db, str(current_user.id))
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access products")
@@ -306,7 +339,7 @@ async def get_low_stock_products(
         select(Products).where(
             and_(
                 Products.client_id == client_id,
-                Products.quantity < threshold,
+                _low_stock_clause(threshold),
                 Products.is_active == True,
             )
         ).order_by(Products.quantity.asc())
@@ -323,6 +356,8 @@ async def get_low_stock_products(
             price=p.price,
             cost_price=p.cost_price,
             quantity=p.quantity or 0,
+            reorder_point=p.reorder_point or 0,
+            reorder_quantity=p.reorder_quantity or 0,
             category=p.category,
             vat_rate=p.vat_rate,
             is_active=True,
@@ -333,6 +368,78 @@ async def get_low_stock_products(
     ]
 
     return ProductListResponse(items=items, total=len(items))
+
+
+class ReorderSuggestion(BaseModel):
+    product_id: int
+    name: str
+    name_ar: Optional[str] = None
+    category: Optional[str] = None
+    on_hand: int
+    reorder_point: int
+    reorder_quantity: int
+    suggested_order_quantity: int
+
+
+class ReorderSuggestionsResponse(BaseModel):
+    items: List[ReorderSuggestion]
+    total: int
+
+
+@router.get("/api/v1/products/reorder-suggestions", response_model=ReorderSuggestionsResponse)
+async def get_reorder_suggestions(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """INV-08 (F-035): auto-PO suggestions for products at/below their reorder point.
+
+    Only products with an explicit ``reorder_point`` (> 0) whose on-hand has
+    fallen to or below it are returned — the auto-PO surface is opt-in per
+    product. The suggested order quantity is the product's ``reorder_quantity``
+    when set, otherwise enough to bring stock back above the reorder point.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access products")
+
+    client_id = role_info["entity_id"]
+
+    qty = func.coalesce(Products.quantity, 0)
+    rp = func.coalesce(Products.reorder_point, 0)
+    result = await db.execute(
+        select(Products).where(
+            and_(
+                Products.client_id == client_id,
+                Products.is_active == True,
+                rp > 0,
+                qty <= rp,
+            )
+        ).order_by(Products.quantity.asc())
+    )
+    products = result.scalars().all()
+
+    items = []
+    for p in products:
+        on_hand = p.quantity or 0
+        point = p.reorder_point or 0
+        order_qty = p.reorder_quantity or 0
+        # Without an explicit reorder quantity, suggest enough to climb back
+        # above the reorder point (at least one unit when triggered).
+        suggested = order_qty if order_qty > 0 else max(point - on_hand + 1, 1)
+        items.append(
+            ReorderSuggestion(
+                product_id=p.id,
+                name=p.name,
+                name_ar=p.name_ar,
+                category=p.category,
+                on_hand=on_hand,
+                reorder_point=point,
+                reorder_quantity=order_qty,
+                suggested_order_quantity=suggested,
+            )
+        )
+
+    return ReorderSuggestionsResponse(items=items, total=len(items))
 
 
 # ============================================================
@@ -415,7 +522,7 @@ async def get_inventory_alerts(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get low stock alerts (products below threshold)."""
+    """Get low stock alerts (reorder-point aware; falls back to threshold)."""
     role_info = await get_user_role(db, str(current_user.id))
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access inventory alerts")
@@ -426,7 +533,7 @@ async def get_inventory_alerts(
         select(Products).where(
             and_(
                 Products.client_id == client_id,
-                Products.quantity < threshold,
+                _low_stock_clause(threshold),
                 Products.is_active == True,
             )
         ).order_by(Products.quantity.asc())
@@ -438,6 +545,8 @@ async def get_inventory_alerts(
             id=p.id,
             name=p.name,
             quantity=p.quantity or 0,
+            reorder_point=p.reorder_point or 0,
+            reorder_quantity=p.reorder_quantity or 0,
             category=p.category,
         )
         for p in products
@@ -1243,7 +1352,7 @@ async def _materialize_notifications(db: AsyncSession, user_id: str, client_id: 
                 select(Products).where(
                     and_(
                         Products.client_id == client_id,
-                        Products.quantity < 10,
+                        _low_stock_clause(10),
                         Products.is_active == True,
                     )
                 ).limit(20)

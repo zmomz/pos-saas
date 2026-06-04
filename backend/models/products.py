@@ -16,6 +16,11 @@ class Products(Base):
     price = Column(Float, nullable=False)
     cost_price = Column(Float, nullable=True)
     quantity = Column(Integer, nullable=True, default=0, server_default='0')
+    # INV-08 (F-035): per-product reorder point. When on-hand <= reorder_point
+    # (and reorder_point > 0) the product is flagged low / suggested for a PO.
+    # reorder_quantity is the order amount the auto-PO suggestion proposes.
+    reorder_point = Column(Integer, nullable=True, default=0, server_default='0')
+    reorder_quantity = Column(Integer, nullable=True, default=0, server_default='0')
     category = Column(String, nullable=True)
     vat_rate = Column(Float, nullable=True, default=15.0, server_default='15.0')
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')

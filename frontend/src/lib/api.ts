@@ -573,6 +573,8 @@ export async function createProduct(data: {
   price: number;
   cost_price?: number;
   quantity: number;
+  reorder_point?: number;
+  reorder_quantity?: number;
   category?: string;
   vat_rate?: number;
 }) {
@@ -605,6 +607,30 @@ export async function deleteProduct(productId: number) {
 export async function getLowStockProducts() {
   const response = await client.apiCall.invoke({
     url: '/api/v1/products/low-stock',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// ---- Reorder points / auto-PO suggestions (INV-08, F-035) ----
+export interface ReorderSuggestion {
+  product_id: number;
+  name: string;
+  name_ar?: string;
+  category?: string;
+  on_hand: number;
+  reorder_point: number;
+  reorder_quantity: number;
+  suggested_order_quantity: number;
+}
+
+export async function getReorderSuggestions(): Promise<{
+  items: ReorderSuggestion[];
+  total: number;
+}> {
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/products/reorder-suggestions',
     method: 'GET',
     data: {},
   });
