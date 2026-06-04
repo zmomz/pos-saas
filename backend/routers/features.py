@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db, db_manager
 from dependencies.auth import get_current_user
 from dependencies.features import require_feature
+from services.packages import normalize_feature_tier, parse_feature_tier
 from schemas.auth import UserResponse
 from models.auth import User
 from models.agents import Agents
@@ -1545,6 +1546,9 @@ class PackageCreateRequest(BaseModel):
     wholesale_price: float
     suggested_retail_price: Optional[float] = None
     is_active: Optional[bool] = True
+    # MA-07: the feature-entitlement tier — the list of feature keys this package
+    # unlocks. None ⇒ no tier (package does not restrict features).
+    features: Optional[List[str]] = None
 
 
 class PackageUpdateRequest(BaseModel):
@@ -1553,6 +1557,7 @@ class PackageUpdateRequest(BaseModel):
     wholesale_price: Optional[float] = None
     suggested_retail_price: Optional[float] = None
     is_active: Optional[bool] = None
+    features: Optional[List[str]] = None
 
 
 class PackageResponse(BaseModel):
@@ -1562,6 +1567,8 @@ class PackageResponse(BaseModel):
     wholesale_price: float
     suggested_retail_price: Optional[float] = None
     is_active: bool
+    # MA-07 feature tier (the enabled keys), parsed from storage. None ⇒ no tier.
+    features: Optional[List[str]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -1594,6 +1601,7 @@ async def list_packages(
             wholesale_price=p.wholesale_price,
             suggested_retail_price=p.suggested_retail_price,
             is_active=p.is_active if p.is_active is not None else True,
+            features=parse_feature_tier(p.features),
             created_at=p.created_at,
             updated_at=p.updated_at,
         )
@@ -1614,12 +1622,18 @@ async def create_package(
     if role_info["role"] != "master":
         raise HTTPException(status_code=403, detail="Only master admin can manage packages")
 
+    try:
+        features_json = normalize_feature_tier(data.features)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     package = Packages(
         name=data.name,
         client_slots=data.client_slots,
         wholesale_price=data.wholesale_price,
         suggested_retail_price=data.suggested_retail_price,
         is_active=data.is_active if data.is_active is not None else True,
+        features=features_json,
     )
     db.add(package)
     await db.commit()
@@ -1632,6 +1646,7 @@ async def create_package(
         wholesale_price=package.wholesale_price,
         suggested_retail_price=package.suggested_retail_price,
         is_active=package.is_active if package.is_active is not None else True,
+        features=parse_feature_tier(package.features),
         created_at=package.created_at,
         updated_at=package.updated_at,
     )
@@ -1655,6 +1670,12 @@ async def update_package(
         raise HTTPException(status_code=404, detail="Package not found")
 
     update_data = data.model_dump(exclude_unset=True)
+    # MA-07: a supplied feature tier is validated + serialized for storage.
+    if "features" in update_data:
+        try:
+            update_data["features"] = normalize_feature_tier(update_data["features"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if update_data:
         await db.execute(
             update(Packages).where(Packages.id == package_id).values(**update_data)
@@ -1669,6 +1690,7 @@ async def update_package(
         wholesale_price=package.wholesale_price,
         suggested_retail_price=package.suggested_retail_price,
         is_active=package.is_active if package.is_active is not None else True,
+        features=parse_feature_tier(package.features),
         created_at=package.created_at,
         updated_at=package.updated_at,
     )

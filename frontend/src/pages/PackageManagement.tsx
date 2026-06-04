@@ -13,8 +13,23 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import ErrorState from '@/components/states/ErrorState';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { getPackagesList, createPackage, updatePackage, deletePackage } from '@/lib/api';
+
+// MA-07: the canonical feature keys an agent may gate per client (mirrors the
+// backend FEATURE_KEYS). A package's tier is the subset it unlocks.
+const FEATURE_KEYS = [
+  'email_receipts',
+  'sms_receipts',
+  'loyalty',
+  'restaurant',
+  'inventory',
+  'discounts',
+  'zatca',
+  'omnichannel',
+] as const;
 
 interface PackageItem {
   id: number;
@@ -23,6 +38,7 @@ interface PackageItem {
   wholesale_price: number;
   suggested_retail_price: number;
   is_active: boolean;
+  features?: string[] | null;
 }
 
 interface PackageFormData {
@@ -30,6 +46,7 @@ interface PackageFormData {
   client_slots: number;
   wholesale_price: number;
   suggested_retail_price: number;
+  features: string[];
 }
 
 const emptyForm: PackageFormData = {
@@ -37,6 +54,7 @@ const emptyForm: PackageFormData = {
   client_slots: 0,
   wholesale_price: 0,
   suggested_retail_price: 0,
+  features: [],
 };
 
 export default function PackageManagement() {
@@ -44,6 +62,7 @@ export default function PackageManagement() {
   const { language, setLanguage, t, isRTL } = useLanguage();
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingPackage, setEditingPackage] = useState<PackageItem | null>(null);
   const [form, setForm] = useState<PackageFormData>(emptyForm);
@@ -57,9 +76,13 @@ export default function PackageManagement() {
   async function fetchPackages() {
     try {
       setLoading(true);
+      setLoadError(false);
       const data = await getPackagesList();
-      setPackages(data?.packages || []);
+      // The endpoint returns { items, total }; keep a legacy `packages` fallback.
+      setPackages(data?.items || data?.packages || []);
     } catch {
+      // A failed fetch is an error, not an empty catalog — surface it distinctly.
+      setLoadError(true);
       setPackages([]);
     } finally {
       setLoading(false);
@@ -79,18 +102,30 @@ export default function PackageManagement() {
       client_slots: pkg.client_slots,
       wholesale_price: pkg.wholesale_price,
       suggested_retail_price: pkg.suggested_retail_price,
+      features: pkg.features || [],
     });
     setDialogOpen(true);
+  }
+
+  function toggleFeature(key: string) {
+    setForm((prev) => ({
+      ...prev,
+      features: prev.features.includes(key)
+        ? prev.features.filter((f) => f !== key)
+        : [...prev.features, key],
+    }));
   }
 
   async function handleSubmit() {
     if (!form.name.trim()) return;
     try {
       setSaving(true);
+      // Empty selection ⇒ no tier (null), not "a tier that unlocks nothing".
+      const tier = form.features.length > 0 ? form.features : null;
       if (editingPackage) {
-        await updatePackage(editingPackage.id, form);
+        await updatePackage(editingPackage.id, { ...form, features: tier });
       } else {
-        await createPackage(form);
+        await createPackage({ ...form, features: tier ?? undefined });
       }
       setDialogOpen(false);
       setForm(emptyForm);
@@ -210,6 +245,25 @@ export default function PackageManagement() {
                       step={0.01}
                     />
                   </div>
+                  {/* MA-07: feature-entitlement tier */}
+                  <div>
+                    <label className="mb-1 block text-sm text-slate-300">{t('feature_tier')}</label>
+                    <p className="mb-2 text-xs text-slate-400">{t('feature_tier_hint')}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {FEATURE_KEYS.map((key) => (
+                        <label
+                          key={key}
+                          className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-600 bg-slate-700/50 px-2 py-1.5 text-sm text-slate-200"
+                        >
+                          <Checkbox
+                            checked={form.features.includes(key)}
+                            onCheckedChange={() => toggleFeature(key)}
+                          />
+                          <span>{t(`feat_${key}`)}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                   <div className="flex justify-end gap-3 pt-2">
                     <Button
                       variant="outline"
@@ -243,8 +297,13 @@ export default function PackageManagement() {
           </div>
         )}
 
+        {/* Error state — distinct from empty (UX-02) */}
+        {!loading && loadError && (
+          <ErrorState onRetry={fetchPackages} />
+        )}
+
         {/* Empty state */}
-        {!loading && packages.length === 0 && (
+        {!loading && !loadError && packages.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-slate-400">
             <Package className="mb-4 h-16 w-16 opacity-30" />
             <p className="text-lg">{labels.noPackages}</p>
@@ -274,6 +333,21 @@ export default function PackageManagement() {
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-400">{labels.retailPrice}</span>
                     <span className="font-medium text-white">SAR {pkg.suggested_retail_price}</span>
+                  </div>
+                  {/* MA-07: the package's feature tier */}
+                  <div>
+                    <span className="mb-1 block text-xs text-slate-400">{t('feature_tier')}</span>
+                    {pkg.features && pkg.features.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {pkg.features.map((f) => (
+                          <Badge key={f} className="bg-blue-900/40 text-blue-200">
+                            {t(`feat_${f}`)}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-slate-500">{t('feature_tier_none')}</span>
+                    )}
                   </div>
                   <div className="flex gap-2 pt-2">
                     <Button

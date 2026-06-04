@@ -1,12 +1,52 @@
+import json
 import logging
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dependencies.features import FEATURE_KEYS
 from models.packages import Packages
 
 logger = logging.getLogger(__name__)
+
+
+# ------------------ MA-07 feature-entitlement tier helpers ------------------
+def normalize_feature_tier(value: Any) -> Optional[str]:
+    """Validate + JSON-serialize a package feature tier for storage.
+
+    ``value`` is the list of ENABLED feature keys the package unlocks, or ``None``
+    for "no tier" (the package does not restrict features). Returns a canonical
+    JSON string (deduped, sorted) or ``None``. Raises ``ValueError`` on a key
+    outside ``FEATURE_KEYS`` so an invalid tier is rejected at the boundary rather
+    than silently stored.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):  # already serialized (defensive)
+        return value
+    unknown = sorted({f for f in value if f not in FEATURE_KEYS})
+    if unknown:
+        raise ValueError(f"Unknown feature keys: {', '.join(unknown)}")
+    chosen = set(value)
+    return json.dumps([k for k in sorted(FEATURE_KEYS) if k in chosen])
+
+
+def parse_feature_tier(raw: Any) -> Optional[List[str]]:
+    """Parse a package's stored feature tier into a list of enabled keys, or None.
+
+    ``None`` means the package defines no tier (do not restrict). A malformed
+    stored value degrades to ``None`` rather than raising.
+    """
+    if not raw:
+        return None
+    if isinstance(raw, list):
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, list) else None
 
 
 # ------------------ Service Layer ------------------

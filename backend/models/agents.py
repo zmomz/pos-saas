@@ -13,6 +13,11 @@ class Agents(Base):
     email = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     package_type = Column(Integer, nullable=False)
+    # MA-07: the package this agent was provisioned from. ``package_type`` already
+    # carries the slot count; ``package_id`` retains the link so client provisioning
+    # can derive the package's feature-entitlement tier (Packages.features). NULL
+    # when the agent was created with an explicit slot count (no package, no tier).
+    package_id = Column(Integer, nullable=True)
     used_slots = Column(Integer, nullable=True, default=0, server_default='0')
     logo_url = Column(String, nullable=True)
     primary_color = Column(String, nullable=True, default='#3B82F6', server_default='#3B82F6')

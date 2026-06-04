@@ -982,6 +982,9 @@ export async function createPackage(data: {
   client_slots: number;
   wholesale_price: number;
   suggested_retail_price: number;
+  // MA-07: the feature-entitlement tier (enabled feature keys). Omit/empty for
+  // no restriction.
+  features?: string[];
 }) {
   const response = await client.apiCall.invoke({
     url: '/api/v1/packages/create',

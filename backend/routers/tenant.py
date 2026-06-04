@@ -25,6 +25,7 @@ from models.auth import User
 from models.agents import Agents
 from models.clients import Clients
 from models.packages import Packages
+from services.packages import parse_feature_tier
 from models.products import Products
 from models.transactions import Transactions
 from models.agent_features import Agent_features
@@ -354,14 +355,16 @@ async def create_agent(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail="A user with this email already exists")
 
-    # Resolve the agent's client-slot allowance.
+    # Resolve the agent's client-slot allowance and (MA-07) feature tier.
     slots = data.slots or 0
+    feature_tier = None  # the package's enabled-feature set, when provisioned from one
     if data.package_id is not None:
         pkg_result = await db.execute(select(Packages).where(Packages.id == data.package_id))
         package = pkg_result.scalar_one_or_none()
         if not package:
             raise HTTPException(status_code=404, detail="Package not found")
         slots = package.client_slots
+        feature_tier = parse_feature_tier(package.features)
     if slots <= 0:
         slots = 1  # never provision an agent with zero capacity
 
@@ -383,12 +386,29 @@ async def create_agent(
         email=email,
         phone=data.phone,
         package_type=slots,
+        package_id=data.package_id,  # MA-07: retain the package link for tier derivation
         used_slots=0,
         is_active=True,
     )
     db.add(new_agent)
     await db.commit()
     await db.refresh(new_agent)
+
+    # MA-07: seed the agent's feature entitlements from the package tier. A feature
+    # is enabled-by-default, so the tier is applied by explicitly DISABLING every
+    # canonical key the package does not unlock; keys in the tier stay enabled.
+    if feature_tier is not None:
+        enabled = set(feature_tier)
+        for key in sorted(FEATURE_KEYS):
+            db.add(
+                Agent_features(
+                    user_id=new_user.id,
+                    agent_id=new_agent.id,
+                    feature_name=key,
+                    is_enabled_default=(key in enabled),
+                )
+            )
+        await db.commit()
 
     return CreateAgentResponse(
         id=new_agent.id,
@@ -1008,7 +1028,11 @@ async def create_client_for_agent(
     await db.commit()
     await db.refresh(new_client)
 
-    # Create default features for client
+    # Create default features for client. An explicit feature list from the agent
+    # wins (legacy behaviour); otherwise (MA-07) the client inherits the agent's
+    # package feature tier — every canonical key outside the tier is explicitly
+    # disabled (features are enabled-by-default, so only an is_enabled=False row
+    # gates them), so the package actually unlocks the capabilities it advertises.
     if data.features:
         for feature in data.features:
             cf = Client_features(
@@ -1019,6 +1043,26 @@ async def create_client_for_agent(
             )
             db.add(cf)
         await db.commit()
+    else:
+        tier = None
+        if getattr(agent, "package_id", None):
+            pkg_result = await db.execute(
+                select(Packages).where(Packages.id == agent.package_id)
+            )
+            pkg = pkg_result.scalar_one_or_none()
+            tier = parse_feature_tier(pkg.features) if pkg else None
+        if tier is not None:
+            enabled = set(tier)
+            for key in sorted(FEATURE_KEYS):
+                db.add(
+                    Client_features(
+                        user_id=new_user.id,
+                        client_id=new_client.id,
+                        feature_name=key,
+                        is_enabled=(key in enabled),
+                    )
+                )
+            await db.commit()
 
     # Hand over the credential: email it when SMTP is configured, otherwise the
     # agent surfaces it from the response (dev/no-SMTP). AG-06: the email carries
