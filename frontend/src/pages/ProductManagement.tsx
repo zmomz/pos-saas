@@ -23,7 +23,13 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  getProductVariants,
+  createProductVariant,
+  updateProductVariant,
+  deleteProductVariant,
+  type ProductVariant,
 } from '@/lib/api';
+import ErrorState from '@/components/states/ErrorState';
 import { DataPagination } from '@/components/DataPagination';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 
@@ -31,6 +37,7 @@ const PAGE_SIZE = 10;
 
 interface Product {
   id: number;
+  client_id?: number;
   name: string;
   name_ar?: string;
   barcode?: string;
@@ -41,6 +48,24 @@ interface Product {
   vat_rate: number;
   is_active?: boolean;
 }
+
+interface VariantFormData {
+  name: string;
+  attributes: string;
+  sku: string;
+  barcode: string;
+  price: string;
+  quantity: string;
+}
+
+const emptyVariant: VariantFormData = {
+  name: '',
+  attributes: '',
+  sku: '',
+  barcode: '',
+  price: '',
+  quantity: '',
+};
 
 interface ProductFormData {
   name: string;
@@ -78,6 +103,16 @@ export default function ProductManagement() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState<ProductFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+
+  // INV-04 (F-033): per-product variants (matrix) management.
+  const [variantsOpen, setVariantsOpen] = useState(false);
+  const [variantsProduct, setVariantsProduct] = useState<Product | null>(null);
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const [variantsLoading, setVariantsLoading] = useState(false);
+  const [variantsError, setVariantsError] = useState(false);
+  const [variantForm, setVariantForm] = useState<VariantFormData>(emptyVariant);
+  const [editingVariantId, setEditingVariantId] = useState<number | null>(null);
+  const [variantSubmitting, setVariantSubmitting] = useState(false);
 
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
@@ -199,6 +234,89 @@ export default function ProductManagement() {
       console.error('Failed to delete product:', err);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // ---- INV-04: variant matrix editor ----
+  function openVariants(product: Product) {
+    setVariantsProduct(product);
+    setVariantForm(emptyVariant);
+    setEditingVariantId(null);
+    setVariantsOpen(true);
+    loadVariants(product.id);
+  }
+
+  async function loadVariants(productId: number) {
+    setVariantsLoading(true);
+    setVariantsError(false);
+    try {
+      const data = await getProductVariants(productId);
+      setVariants(data);
+    } catch (err) {
+      console.error('Failed to load variants:', err);
+      setVariantsError(true);
+    } finally {
+      setVariantsLoading(false);
+    }
+  }
+
+  function startEditVariant(v: ProductVariant) {
+    setEditingVariantId(v.id);
+    setVariantForm({
+      name: v.name,
+      attributes: v.attributes || '',
+      sku: v.sku || '',
+      barcode: v.barcode || '',
+      price: v.price != null ? String(v.price) : '',
+      quantity: v.quantity != null ? String(v.quantity) : '',
+    });
+  }
+
+  function resetVariantForm() {
+    setEditingVariantId(null);
+    setVariantForm(emptyVariant);
+  }
+
+  async function handleSaveVariant() {
+    if (!variantsProduct || !variantForm.name) return;
+    setVariantSubmitting(true);
+    try {
+      const payload = {
+        name: variantForm.name,
+        attributes: variantForm.attributes || undefined,
+        sku: variantForm.sku || undefined,
+        barcode: variantForm.barcode || undefined,
+        price: variantForm.price ? parseFloat(variantForm.price) : undefined,
+        quantity: variantForm.quantity ? parseInt(variantForm.quantity, 10) : 0,
+      };
+      if (editingVariantId) {
+        await updateProductVariant(editingVariantId, payload);
+      } else {
+        await createProductVariant({
+          product_id: variantsProduct.id,
+          client_id: variantsProduct.client_id ?? 0,
+          ...payload,
+        });
+      }
+      resetVariantForm();
+      await loadVariants(variantsProduct.id);
+    } catch (err) {
+      console.error('Failed to save variant:', err);
+      setVariantsError(true);
+    } finally {
+      setVariantSubmitting(false);
+    }
+  }
+
+  async function handleDeleteVariant(id: number) {
+    if (!variantsProduct) return;
+    try {
+      await deleteProductVariant(id);
+      if (editingVariantId === id) resetVariantForm();
+      await loadVariants(variantsProduct.id);
+    } catch (err) {
+      console.error('Failed to delete variant:', err);
+      setVariantsError(true);
     }
   }
 
@@ -475,6 +593,14 @@ export default function ProductManagement() {
                         <Button
                           size="sm"
                           variant="outline"
+                          onClick={() => openVariants(product)}
+                          className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                        >
+                          {t('variants')}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
                           onClick={() => openEdit(product)}
                           className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
                         >
@@ -540,6 +666,161 @@ export default function ProductManagement() {
             >
               {submitting ? t('loading') : 'Delete'}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Variants Matrix Editor (INV-04, F-033) */}
+      <Dialog open={variantsOpen} onOpenChange={setVariantsOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-white">
+              {t('variants')} — {variantsProduct?.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Existing variants: loading / error (distinct from empty) / empty / list */}
+          {variantsLoading ? (
+            <div className="py-8 text-center text-slate-400 animate-pulse">{t('loading')}</div>
+          ) : variantsError ? (
+            <ErrorState
+              message={t('variant_load_error')}
+              onRetry={() => variantsProduct && loadVariants(variantsProduct.id)}
+            />
+          ) : variants.length === 0 ? (
+            <div className="py-6 text-center text-slate-500">{t('no_variants')}</div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-slate-700">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-900/40">
+                  <tr className="text-slate-400">
+                    <th className="p-2 text-start">{t('variant_name')}</th>
+                    <th className="p-2 text-start">{t('barcode')}</th>
+                    <th className="p-2 text-start">{t('price')}</th>
+                    <th className="p-2 text-start">{t('stock')}</th>
+                    <th className="p-2 text-start"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {variants.map((v) => (
+                    <tr key={v.id} className="border-t border-slate-700 text-slate-300">
+                      <td className="p-2">
+                        <span className="text-white">{v.name}</span>
+                        {v.attributes && (
+                          <span className="block text-xs text-slate-500">{v.attributes}</span>
+                        )}
+                      </td>
+                      <td className="p-2 font-mono text-xs">{v.barcode || '—'}</td>
+                      <td className="p-2">{v.price != null ? v.price.toFixed(2) : '—'}</td>
+                      <td className="p-2">{v.quantity ?? 0}</td>
+                      <td className="p-2">
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => startEditVariant(v)}
+                            className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                          >
+                            {t('edit')}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDeleteVariant(v.id)}
+                            className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
+                          >
+                            {t('delete')}
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Add / edit a variant */}
+          <div className="mt-2 space-y-3 rounded-lg border border-slate-700 p-3">
+            <p className="text-sm font-medium text-slate-300">
+              {editingVariantId ? t('edit_variant') : t('add_variant')}
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">{t('variant_name')} *</label>
+                <Input
+                  value={variantForm.name}
+                  onChange={(e) => setVariantForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="Red / Large"
+                  className="bg-slate-700 border-slate-600 text-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">{t('variant_attributes')}</label>
+                <Input
+                  value={variantForm.attributes}
+                  onChange={(e) => setVariantForm((p) => ({ ...p, attributes: e.target.value }))}
+                  placeholder='{"size":"L","color":"Red"}'
+                  className="bg-slate-700 border-slate-600 text-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">{t('barcode')}</label>
+                <Input
+                  value={variantForm.barcode}
+                  onChange={(e) => setVariantForm((p) => ({ ...p, barcode: e.target.value }))}
+                  placeholder="e.g. TSHIRT-RED-L"
+                  className="bg-slate-700 border-slate-600 text-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">SKU</label>
+                <Input
+                  value={variantForm.sku}
+                  onChange={(e) => setVariantForm((p) => ({ ...p, sku: e.target.value }))}
+                  placeholder="SKU"
+                  className="bg-slate-700 border-slate-600 text-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">{t('price')}</label>
+                <Input
+                  type="number"
+                  value={variantForm.price}
+                  onChange={(e) => setVariantForm((p) => ({ ...p, price: e.target.value }))}
+                  placeholder="0.00"
+                  className="bg-slate-700 border-slate-600 text-white"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-slate-400 mb-1 block">{t('stock')}</label>
+                <Input
+                  type="number"
+                  value={variantForm.quantity}
+                  onChange={(e) => setVariantForm((p) => ({ ...p, quantity: e.target.value }))}
+                  placeholder="0"
+                  className="bg-slate-700 border-slate-600 text-white"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={handleSaveVariant}
+                disabled={variantSubmitting || !variantForm.name}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {variantSubmitting ? t('loading') : editingVariantId ? t('save') : t('add_variant')}
+              </Button>
+              {editingVariantId && (
+                <Button
+                  variant="outline"
+                  onClick={resetVariantForm}
+                  className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                >
+                  {t('cancel')}
+                </Button>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>

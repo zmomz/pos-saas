@@ -28,6 +28,9 @@ from models.zatca_documents import ZatcaDocuments
 # Imported so the per-branch stock table registers on Base.metadata at startup
 # (services.branch_stock is only imported lazily inside handlers).
 from models.product_branch_stock import Product_branch_stock  # noqa: F401
+# Imported so the variant table registers on Base.metadata at startup
+# (services.product_variants is only imported lazily inside handlers).
+from models.product_variants import Product_variants  # noqa: F401
 from services import loyalty as loyalty_service
 from services.discounts import (
     DiscountsService,
@@ -65,6 +68,10 @@ class CartItem(BaseModel):
     price: float
     quantity: int
     discount: Optional[float] = 0
+    # INV-04 (F-033): when the line is a product *variant* (size/colour SKU), this
+    # is the variant's id. The sale then decrements *that variant's* stock
+    # independently of sibling variants, instead of the parent product's quantity.
+    variant_id: Optional[int] = None
 
 
 class PaymentEntry(BaseModel):
@@ -556,6 +563,72 @@ async def get_client_for_user(db: AsyncSession, user_id: str) -> Clients:
     return client
 
 
+# ---------- Barcode resolution (INV-04 / POS-06): scan → product or variant ----------
+class BarcodeResolution(BaseModel):
+    """The product/variant a scanned barcode resolves to (INV-04, F-033)."""
+
+    kind: str  # "variant" | "product" | "none"
+    product_id: Optional[int] = None
+    variant_id: Optional[int] = None
+    name: str = ""
+    name_ar: Optional[str] = None
+    price: float = 0.0
+    barcode: Optional[str] = None
+    quantity: Optional[int] = None
+    sku: Optional[str] = None
+
+
+@router.get("/resolve-barcode", response_model=BarcodeResolution)
+async def resolve_barcode(
+    barcode: str = Query(..., description="The scanned barcode/SKU"),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve a scanned barcode to one of the caller's variants or products.
+
+    A **variant** barcode wins over a product barcode (it is the more specific
+    sellable SKU, INV-04), and the resolution returns the variant's own price and
+    stock plus the parent product's id/Arabic name so the POS adds it as a variant
+    line. Owner-scoped (SEC-02): only the caller's own catalog is searched.
+    """
+    from services.product_variants import resolve_variant_barcode, resolve_product_barcode
+
+    variant = await resolve_variant_barcode(db, str(current_user.id), barcode)
+    if variant:
+        parent = (
+            await db.execute(
+                select(Products).where(
+                    Products.id == variant.product_id,
+                    Products.user_id == str(current_user.id),
+                )
+            )
+        ).scalar_one_or_none()
+        return BarcodeResolution(
+            kind="variant",
+            product_id=variant.product_id,
+            variant_id=variant.id,
+            name=variant.name,
+            name_ar=(parent.name_ar if parent else None),
+            price=float(variant.price if variant.price is not None else (parent.price if parent else 0)),
+            barcode=variant.barcode,
+            quantity=variant.quantity,
+            sku=variant.sku,
+        )
+
+    product = await resolve_product_barcode(db, str(current_user.id), barcode)
+    if product:
+        return BarcodeResolution(
+            kind="product",
+            product_id=product.id,
+            name=product.name,
+            name_ar=product.name_ar,
+            price=float(product.price or 0),
+            barcode=product.barcode,
+            quantity=product.quantity,
+        )
+    return BarcodeResolution(kind="none")
+
+
 # ---------- Endpoints ----------
 @router.post("/transaction", response_model=TransactionResponse)
 async def create_transaction(
@@ -580,7 +653,9 @@ async def create_transaction(
     # default (deny-wins), but a restricted cashier can be denied, in which case an
     # overridden line is rejected before anything is written. Ad-hoc lines whose
     # ``product_id`` doesn't map to a catalog product are left to the cashier.
-    override_pids = [it.product_id for it in data.items if it.product_id]
+    # Variant lines (INV-04) carry their own price by design, so they are not a
+    # price *override* of the parent product — exclude them from this gate.
+    override_pids = [it.product_id for it in data.items if it.product_id and not it.variant_id]
     if override_pids:
         catalog_prices = {
             row.id: float(row.price or 0)
@@ -594,7 +669,8 @@ async def create_transaction(
             ).all()
         }
         has_override = any(
-            it.product_id in catalog_prices
+            not it.variant_id
+            and it.product_id in catalog_prices
             and abs(float(it.price) - catalog_prices[it.product_id]) > 0.001
             for it in data.items
         )
@@ -783,6 +859,18 @@ async def create_transaction(
     # Multi-branch (Phase 6): when the sale is tagged with a branch_id, deduct
     # from that branch's stock ledger so a sale in branch A never touches branch
     # B's stock. Otherwise fall back to client-level product quantity.
+    #
+    # INV-04 (F-033): variant lines decrement their *own* (client-level) variant
+    # stock independently of sibling variants, so they are routed to the variant
+    # ledger here and excluded from the product/branch deduction below.
+    variant_items = [it for it in data.items if it.variant_id]
+    product_items = [it for it in data.items if not it.variant_id]
+    if variant_items:
+        from services.product_variants import deduct_variant_inventory
+
+        await deduct_variant_inventory(
+            db, client.id, variant_items, bool(data.allow_negative_stock)
+        )
     if data.branch_id:
         from services.branch_stock import deduct_branch_inventory
 
@@ -791,11 +879,11 @@ async def create_transaction(
             str(current_user.id),
             client.id,
             int(data.branch_id),
-            data.items,
+            product_items,
             bool(data.allow_negative_stock),
         )
     else:
-        await _deduct_inventory(db, client.id, data.items, bool(data.allow_negative_stock))
+        await _deduct_inventory(db, client.id, product_items, bool(data.allow_negative_stock))
 
     # ---- Loyalty accrual (Phase E) ----
     # Earn points for the identified customer on the final total, in the same
@@ -1320,10 +1408,21 @@ class RefundLine(BaseModel):
 
     product_id: int
     quantity: float
+    # INV-04 (F-033): the variant to return, when the line was a variant SKU. The
+    # refund then credits that variant's stock, not the parent product's.
+    variant_id: Optional[int] = None
 
 
 class RefundRequest(BaseModel):
     lines: Optional[List[RefundLine]] = None
+
+
+def _refund_key(product_id, variant_id) -> tuple:
+    """Composite stock-key for refund aggregation: a variant line is tracked apart
+    from its parent product so two variants of one product never collapse together
+    (INV-04). Product-only sales key as ``(pid, None)`` — identical to the legacy
+    per-product behavior."""
+    return (int(product_id), int(variant_id) if variant_id else None)
 
 
 class RefundResponse(BaseModel):
@@ -1341,9 +1440,10 @@ class RefundResponse(BaseModel):
 
 
 async def _refunded_quantities(db: AsyncSession, original_id: int) -> dict:
-    """Sum already-refunded quantities per product across prior credit notes that
-    reference ``original_id`` (POS-07). Lets a second partial refund see what the
-    first one already returned so the invoice can never be over-refunded."""
+    """Sum already-refunded quantities per (product, variant) across prior credit
+    notes that reference ``original_id`` (POS-07). Lets a second partial refund see
+    what the first one already returned so the invoice can never be over-refunded.
+    Keyed by the composite :func:`_refund_key` so variants are tracked apart (INV-04)."""
     rows = (
         await db.execute(
             select(Transactions).where(
@@ -1352,7 +1452,7 @@ async def _refunded_quantities(db: AsyncSession, original_id: int) -> dict:
             )
         )
     ).scalars().all()
-    refunded: dict[int, float] = {}
+    refunded: dict[tuple, float] = {}
     for cn in rows:
         try:
             cn_items = json.loads(cn.items_json) if cn.items_json else []
@@ -1362,14 +1462,22 @@ async def _refunded_quantities(db: AsyncSession, original_id: int) -> dict:
             pid = it.get("product_id")
             if pid is None:
                 continue
-            refunded[int(pid)] = refunded.get(int(pid), 0.0) + float(it.get("quantity") or 0)
+            key = _refund_key(pid, it.get("variant_id"))
+            refunded[key] = refunded.get(key, 0.0) + float(it.get("quantity") or 0)
     return refunded
 
 
 async def _restore_inventory(db: AsyncSession, client_id: int, items: List[dict]) -> None:
-    """Add refunded quantities back to stock (inverse of ``_deduct_inventory``)."""
+    """Add refunded quantities back to client-level product stock.
+
+    Inverse of ``_deduct_inventory``. Variant lines (INV-04) carry their stock on
+    the variant ledger, so they are skipped here and restored by
+    :func:`_restore_stock` via ``restore_variant_inventory``.
+    """
     restore: dict[int, int] = {}
     for item in items:
+        if item.get("variant_id"):
+            continue
         pid = item.get("product_id")
         if pid:
             restore[pid] = restore.get(pid, 0) + int(item.get("quantity") or 0)
@@ -1379,6 +1487,34 @@ async def _restore_inventory(db: AsyncSession, client_id: int, items: List[dict]
             .where(Products.id == product_id, Products.client_id == client_id)
             .values(quantity=Products.quantity + qty)
         )
+
+
+async def _restore_stock(
+    db: AsyncSession,
+    user_id: str,
+    client_id: int,
+    branch_id: Optional[int],
+    items: List[dict],
+) -> None:
+    """Restore stock for refunded/voided lines to the pool the sale drew from.
+
+    Routes variant lines (INV-04) back to the variant ledger and product lines to
+    the branch ledger (when the sale was branch-tagged) or client-level stock,
+    mirroring the split on the deduction path so a variant refund/void credits the
+    variant — never the parent product.
+    """
+    variant_items = [it for it in items if it.get("variant_id")]
+    product_items = [it for it in items if not it.get("variant_id")]
+    if variant_items:
+        from services.product_variants import restore_variant_inventory
+
+        await restore_variant_inventory(db, client_id, variant_items)
+    if branch_id:
+        from services.branch_stock import restore_branch_inventory
+
+        await restore_branch_inventory(db, user_id, client_id, int(branch_id), product_items)
+    else:
+        await _restore_inventory(db, client_id, product_items)
 
 
 @router.post(
@@ -1424,17 +1560,20 @@ async def refund_transaction(
     except (ValueError, TypeError):
         items = []
 
-    # Aggregate the original lines by product so duplicate lines and per-line
-    # discounts collapse to one authoritative entry per SKU.
-    orig_by_pid: dict[int, dict] = {}
+    # Aggregate the original lines by (product, variant) so duplicate lines and
+    # per-line discounts collapse to one authoritative entry per SKU. Variants of
+    # one product (INV-04) are tracked apart via the composite ``_refund_key`` so
+    # each is refunded against its own remaining balance and credited to its own
+    # stock ledger.
+    orig_by_key: dict[tuple, dict] = {}
     for it in items:
         pid = it.get("product_id")
         if pid is None:
             continue
-        pid = int(pid)
-        entry = orig_by_pid.setdefault(
-            pid,
-            {"product_id": pid, "name": it.get("name") or "Item",
+        key = _refund_key(pid, it.get("variant_id"))
+        entry = orig_by_key.setdefault(
+            key,
+            {"product_id": int(pid), "variant_id": key[1], "name": it.get("name") or "Item",
              "price": float(it.get("price") or 0), "quantity": 0.0, "discount": 0.0},
         )
         entry["quantity"] += float(it.get("quantity") or 0)
@@ -1444,55 +1583,59 @@ async def refund_transaction(
 
     # Resolve the requested quantities: explicit lines, else the whole remaining
     # balance (legacy whole-invoice refund).
-    requested: dict[int, float] = {}
+    requested: dict[tuple, float] = {}
     if payload and payload.lines:
         for ln in payload.lines:
             q = float(ln.quantity or 0)
             if q <= 0:
                 continue
-            requested[int(ln.product_id)] = requested.get(int(ln.product_id), 0.0) + q
+            key = _refund_key(ln.product_id, ln.variant_id)
+            requested[key] = requested.get(key, 0.0) + q
         if not requested:
             raise HTTPException(status_code=400, detail="No refund quantities specified")
     else:
-        for pid, e in orig_by_pid.items():
-            remaining = e["quantity"] - already.get(pid, 0.0)
+        for key, e in orig_by_key.items():
+            remaining = e["quantity"] - already.get(key, 0.0)
             if remaining > 1e-9:
-                requested[pid] = remaining
+                requested[key] = remaining
         if not requested:
             raise HTTPException(status_code=400, detail="Transaction already refunded")
 
     # Validate every requested line against what is still refundable.
-    for pid, q in requested.items():
-        if pid not in orig_by_pid:
+    for key, q in requested.items():
+        if key not in orig_by_key:
             raise HTTPException(
-                status_code=400, detail=f"Product {pid} is not on the original invoice"
+                status_code=400, detail=f"Product {key[0]} is not on the original invoice"
             )
-        remaining = orig_by_pid[pid]["quantity"] - already.get(pid, 0.0)
+        remaining = orig_by_key[key]["quantity"] - already.get(key, 0.0)
         if q > remaining + 1e-9:
             raise HTTPException(
                 status_code=400,
-                detail=f"Refund quantity {q} exceeds remaining {remaining} for product {pid}",
+                detail=f"Refund quantity {q} exceeds remaining {remaining} for product {key[0]}",
             )
 
     # Build the returned-line list (drives stock restore, the credit-note
     # items_json, and the proportional amounts), prorating per-line discounts.
     refund_items: List[dict] = []
-    for pid, q in requested.items():
-        e = orig_by_pid[pid]
+    for key, q in requested.items():
+        e = orig_by_key[key]
         frac = (q / e["quantity"]) if e["quantity"] else 0.0
-        refund_items.append({
-            "product_id": pid,
+        line = {
+            "product_id": e["product_id"],
             "name": e["name"],
             "price": e["price"],
             "quantity": q,
             "discount": round(e["discount"] * frac, 4),
-        })
+        }
+        if e["variant_id"]:
+            line["variant_id"] = e["variant_id"]
+        refund_items.append(line)
 
     # Prorate the order-level discount/VAT/total by the share of the line subtotal
     # being returned. A full refund (ratio == 1.0) reproduces the original amounts
     # exactly; partial refunds net only their share.
     orig_line_subtotal = sum(
-        e["price"] * e["quantity"] - e["discount"] for e in orig_by_pid.values()
+        e["price"] * e["quantity"] - e["discount"] for e in orig_by_key.values()
     )
     refund_line_subtotal = sum(it["price"] * it["quantity"] - it["discount"] for it in refund_items)
     ratio = (refund_line_subtotal / orig_line_subtotal) if orig_line_subtotal else 0.0
@@ -1502,15 +1645,11 @@ async def refund_transaction(
     refund_total = round((original.total_amount or 0) * ratio, 2)
 
     # Restore only the returned units to the same stock pool the sale deducted
-    # from (branch ledger when the original was branch-tagged, else client-level).
-    if original.branch_id:
-        from services.branch_stock import restore_branch_inventory
-
-        await restore_branch_inventory(
-            db, str(current_user.id), client.id, int(original.branch_id), refund_items
-        )
-    else:
-        await _restore_inventory(db, client.id, refund_items)
+    # from (branch ledger when branch-tagged, variant ledger for variant lines,
+    # else client-level).
+    await _restore_stock(
+        db, str(current_user.id), client.id, original.branch_id, refund_items
+    )
 
     # Allocate the credit note its own sequential invoice number.
     current_counter = (client.invoice_counter or 0) + 1
@@ -1540,8 +1679,8 @@ async def refund_transaction(
     # Decide the original's new state: fully refunded once every line's
     # cumulative refunded quantity reaches its sold quantity, else partial.
     fully_refunded = all(
-        (already.get(pid, 0.0) + requested.get(pid, 0.0)) >= e["quantity"] - 1e-9
-        for pid, e in orig_by_pid.items()
+        (already.get(key, 0.0) + requested.get(key, 0.0)) >= e["quantity"] - 1e-9
+        for key, e in orig_by_key.items()
     )
     original.status = "refunded" if fully_refunded else "partial_refunded"
 
@@ -1693,19 +1832,13 @@ async def void_transaction(
             ),
         )
 
-    # Restore stock to the same pool the sale deducted from (branch-aware).
+    # Restore stock to the same pool the sale deducted from (branch- and
+    # variant-aware): variant lines (INV-04) credit the variant ledger.
     try:
         items = json.loads(txn.items_json) if txn.items_json else []
     except (ValueError, TypeError):
         items = []
-    if txn.branch_id:
-        from services.branch_stock import restore_branch_inventory
-
-        await restore_branch_inventory(
-            db, str(current_user.id), client.id, int(txn.branch_id), items
-        )
-    else:
-        await _restore_inventory(db, client.id, items)
+    await _restore_stock(db, str(current_user.id), client.id, txn.branch_id, items)
 
     txn.status = "voided"
 

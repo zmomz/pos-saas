@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, holdSale, getHeldSales, recallSale, type MyPermissions, type TenderInfo, type HeldTicket } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, holdSale, getHeldSales, recallSale, resolveBarcode, type MyPermissions, type TenderInfo, type HeldTicket } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
@@ -25,8 +25,19 @@ interface Product {
 }
 
 interface CartItem {
+  // For a variant line (INV-04) `product` is a synthesized entry carrying the
+  // variant's price/name; `product.id` stays the parent product id (sent as
+  // product_id) and `variantId` identifies the variant SKU.
   product: Product;
   quantity: number;
+  variantId?: number;
+  // Stable de-dup/render key — distinguishes variant siblings that share a
+  // parent product id. `p<productId>` for a plain product, `v<variantId>` for a variant.
+  key: string;
+}
+
+function cartKeyFor(productId: number, variantId?: number): string {
+  return variantId ? `v${variantId}` : `p${productId}`;
 }
 
 interface Receipt {
@@ -287,7 +298,7 @@ export default function POSTerminal() {
           name_ar: it.name_ar,
           price: it.price,
         };
-        return { product, quantity: it.quantity };
+        return { product, quantity: it.quantity, key: cartKeyFor(it.product_id) };
       });
       setCart(restored);
       if (recalled.branch_id) setSelectedBranchId(String(recalled.branch_id));
@@ -300,44 +311,77 @@ export default function POSTerminal() {
     }
   }
 
-  function addToCart(product: Product) {
+  function addToCart(product: Product, variantId?: number) {
+    const key = cartKeyFor(product.id, variantId);
     setCart((prev) => {
-      const existing = prev.find((item) => item.product.id === product.id);
+      const existing = prev.find((item) => item.key === key);
       if (existing) {
         return prev.map((item) =>
-          item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+          item.key === key ? { ...item, quantity: item.quantity + 1 } : item
         );
       }
-      return [...prev, { product, quantity: 1 }];
+      return [...prev, { product, quantity: 1, variantId, key }];
     });
   }
 
-  function updateQuantity(productId: number, delta: number) {
+  function updateQuantity(key: string, delta: number) {
     setCart((prev) =>
       prev
-        .map((item) =>
-          item.product.id === productId ? { ...item, quantity: item.quantity + delta } : item
-        )
+        .map((item) => (item.key === key ? { ...item, quantity: item.quantity + delta } : item))
         .filter((item) => item.quantity > 0)
     );
   }
 
-  function removeFromCart(productId: number) {
-    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+  function removeFromCart(key: string) {
+    setCart((prev) => prev.filter((item) => item.key !== key));
   }
 
-  // Resolve a scanned/typed code to a product and add it to the cart. Shared by
-  // the keyboard scanner and the live camera scanner (POS-06).
-  function lookupAndAdd(code: string): boolean {
+  // Resolve a scanned/typed code to a product OR a variant SKU and add it to the
+  // cart. Shared by the keyboard scanner and the live camera scanner (POS-06).
+  // Local product barcodes resolve client-side; anything else (notably variant
+  // barcodes, INV-04) is resolved against the server so a scanned variant adds
+  // the variant line with its own price/stock.
+  async function lookupAndAdd(code: string): Promise<boolean> {
     const barcode = code.trim();
     if (!barcode) return false;
-    const matchedProduct = products.find(
-      (p) => p.barcode === barcode || p.sku === barcode
-    );
+    const matchedProduct = products.find((p) => p.barcode === barcode || p.sku === barcode);
     if (matchedProduct) {
       addToCart(matchedProduct);
       setBarcodeMessage({ text: `✓ ${matchedProduct.name} added`, type: 'success' });
       return true;
+    }
+    try {
+      const res = await resolveBarcode(barcode);
+      if (res.kind === 'variant' && res.product_id) {
+        addToCart(
+          {
+            id: res.product_id,
+            name: res.name,
+            name_ar: res.name_ar,
+            price: res.price,
+            barcode: res.barcode,
+          },
+          res.variant_id,
+        );
+        setBarcodeMessage({ text: `✓ ${res.name} added`, type: 'success' });
+        return true;
+      }
+      if (res.kind === 'product' && res.product_id) {
+        const local = products.find((p) => p.id === res.product_id);
+        addToCart(
+          local || {
+            id: res.product_id,
+            name: res.name,
+            name_ar: res.name_ar,
+            price: res.price,
+            barcode: res.barcode,
+          },
+        );
+        setBarcodeMessage({ text: `✓ ${res.name} added`, type: 'success' });
+        return true;
+      }
+    } catch (err) {
+      console.error('Barcode resolution failed:', err);
     }
     setBarcodeMessage({ text: `✕ No product found for "${barcode}"`, type: 'error' });
     return false;
@@ -368,7 +412,7 @@ export default function POSTerminal() {
         try {
           const codes = await detector.detect(video);
           if (codes.length > 0) {
-            const found = lookupAndAdd(codes[0].rawValue);
+            const found = await lookupAndAdd(codes[0].rawValue);
             if (found) { stop(); setCameraScanning(false); return; }
           }
         } catch { /* transient frame error */ }
@@ -387,7 +431,7 @@ export default function POSTerminal() {
   // Barcode scan handler
   function handleBarcodeScan(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter' && barcodeInput.trim()) {
-      lookupAndAdd(barcodeInput.trim());
+      void lookupAndAdd(barcodeInput.trim());
       setBarcodeInput('');
     }
   }
@@ -495,6 +539,8 @@ export default function POSTerminal() {
     try {
       const items = cart.map((item) => ({
         product_id: item.product.id,
+        // INV-04: a variant line decrements the variant's own stock server-side.
+        variant_id: item.variantId,
         name: item.product.name,
         // Carry the Arabic name so the always-Arabic thermal receipt prints it
         // (PRN-01 / L10N-06).
@@ -1303,16 +1349,23 @@ export default function POSTerminal() {
             <p className="text-slate-500 text-center py-8">{t('empty_cart')}</p>
           ) : (
             cart.map((item) => (
-              <div key={item.product.id} className="bg-slate-700 rounded-lg p-3">
+              <div key={item.key} className="bg-slate-700 rounded-lg p-3">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <p className="text-white text-sm font-medium">{item.product.name}</p>
+                    <p className="text-white text-sm font-medium">
+                      {item.product.name}
+                      {item.variantId && (
+                        <span className="ms-1 text-[10px] uppercase tracking-wide text-blue-300">
+                          {t('variant')}
+                        </span>
+                      )}
+                    </p>
                     <p className="text-slate-400 text-xs">${item.product.price?.toFixed(2)} each</p>
                   </div>
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => removeFromCart(item.product.id)}
+                    onClick={() => removeFromCart(item.key)}
                     className="text-red-400 hover:text-red-300 hover:bg-slate-600 h-6 w-6 p-0"
                   >
                     ✕
@@ -1322,7 +1375,7 @@ export default function POSTerminal() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => updateQuantity(item.product.id, -1)}
+                    onClick={() => updateQuantity(item.key, -1)}
                     className="h-7 w-7 p-0 border-slate-600 text-white hover:bg-slate-600"
                   >
                     -
@@ -1331,7 +1384,7 @@ export default function POSTerminal() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => updateQuantity(item.product.id, 1)}
+                    onClick={() => updateQuantity(item.key, 1)}
                     className="h-7 w-7 p-0 border-slate-600 text-white hover:bg-slate-600"
                   >
                     +

@@ -214,7 +214,9 @@ export interface PaymentEntry {
 }
 
 export async function createTransaction(data: {
-  items: { product_id: number; name: string; name_ar?: string; quantity: number; price: number; vat_rate: number }[];
+  // variant_id (INV-04): when the line is a product variant SKU, the sale
+  // decrements that variant's own stock instead of the parent product's.
+  items: { product_id: number; variant_id?: number; name: string; name_ar?: string; quantity: number; price: number; vat_rate: number }[];
   payment_method: string;
   customer_name?: string;
   customer_phone?: string;
@@ -266,6 +268,8 @@ export interface RefundResult {
 export interface RefundLine {
   product_id: number;
   quantity: number;
+  // INV-04: the variant being returned, when the line was a variant SKU.
+  variant_id?: number;
 }
 
 // POS-07: refund a sale by issuing a ZATCA credit note (type 381). Restores
@@ -551,6 +555,86 @@ export async function deleteProduct(productId: number) {
 export async function getLowStockProducts() {
   const response = await client.apiCall.invoke({
     url: '/api/v1/products/low-stock',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// ---- Product variants / matrix (INV-04, F-033) ----
+// Each variant is a sellable SKU of a parent product with its own barcode, price
+// and stock. Managed via the generic entity triad at /api/v1/entities/product_variants.
+export interface ProductVariant {
+  id: number;
+  product_id: number;
+  client_id?: number;
+  name: string;
+  attributes?: string;
+  sku?: string;
+  barcode?: string;
+  price?: number;
+  cost_price?: number;
+  quantity?: number;
+  is_active?: boolean;
+}
+
+export async function getProductVariants(productId: number): Promise<ProductVariant[]> {
+  const response = await client.entities.product_variants.query<{ items: ProductVariant[] }>({
+    query: { product_id: productId },
+    limit: 200,
+    sort: 'id',
+  });
+  return response.data?.items || [];
+}
+
+export async function createProductVariant(data: {
+  product_id: number;
+  client_id: number;
+  name: string;
+  attributes?: string;
+  sku?: string;
+  barcode?: string;
+  price?: number;
+  cost_price?: number;
+  quantity?: number;
+  is_active?: boolean;
+}): Promise<ProductVariant> {
+  const response = await client.entities.product_variants.create<ProductVariant>({ data });
+  return response.data;
+}
+
+export async function updateProductVariant(
+  variantId: number,
+  data: Record<string, unknown>,
+): Promise<ProductVariant> {
+  const response = await client.entities.product_variants.update<ProductVariant>({
+    id: variantId,
+    data,
+  });
+  return response.data;
+}
+
+export async function deleteProductVariant(variantId: number) {
+  const response = await client.entities.product_variants.delete({ id: variantId });
+  return response.data;
+}
+
+// POS-06 / INV-04: resolve a scanned barcode to a product or a variant SKU.
+export interface BarcodeResolution {
+  kind: 'variant' | 'product' | 'none';
+  product_id?: number;
+  variant_id?: number;
+  name: string;
+  name_ar?: string;
+  price: number;
+  barcode?: string;
+  quantity?: number;
+  sku?: string;
+}
+
+export async function resolveBarcode(barcode: string): Promise<BarcodeResolution> {
+  const response = await client.apiCall.invoke<BarcodeResolution>({
+    url: `/api/v1/pos/resolve-barcode?barcode=${encodeURIComponent(barcode)}`,
     method: 'GET',
     data: {},
   });
