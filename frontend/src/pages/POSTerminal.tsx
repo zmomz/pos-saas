@@ -5,12 +5,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, type MyPermissions, type TenderInfo } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, holdSale, getHeldSales, recallSale, type MyPermissions, type TenderInfo, type HeldTicket } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera } from 'lucide-react';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play } from 'lucide-react';
 
 interface Product {
   id: number;
@@ -127,6 +127,13 @@ export default function POSTerminal() {
   // Offline POS (Phase E) state.
   const [queuedOffline, setQueuedOffline] = useState(false);
 
+  // POS-10: park/hold & recall. Held tickets are saved carts the cashier can
+  // resume; multiple may be open at once.
+  const [heldTickets, setHeldTickets] = useState<HeldTicket[]>([]);
+  const [showHeld, setShowHeld] = useState(false);
+  const [holding, setHolding] = useState(false);
+  const [heldError, setHeldError] = useState('');
+
   // Phase 3: permission-aware UI — gate the refund flow on `pos.refund`.
   const [permissions, setPermissions] = useState<MyPermissions | null>(null);
   const canRefund = canUse(permissions, 'pos.refund');
@@ -141,6 +148,8 @@ export default function POSTerminal() {
     getBranches()
       .then((d) => setBranches((d?.items || d || []) as { id: number; name: string }[]))
       .catch(() => setBranches([]));
+    // POS-10: surface the count of parked tickets on the Held badge.
+    loadHeld();
   }, []);
 
   // Offline POS (Phase E): replay any queued sales when connectivity returns.
@@ -197,6 +206,78 @@ export default function POSTerminal() {
       console.error('Failed to load transactions:', err);
     } finally {
       setLoadingTransactions(false);
+    }
+  }
+
+  // ---- POS-10: park/hold & recall ----
+  async function loadHeld() {
+    try {
+      const data = await getHeldSales();
+      setHeldTickets(data?.items || []);
+      setHeldError('');
+    } catch (err) {
+      console.error('Failed to load held tickets:', err);
+      setHeldError(t('held_load_error'));
+    }
+  }
+
+  async function handleHold() {
+    if (cart.length === 0) return;
+    setHolding(true);
+    try {
+      const customer = customers.find((c) => String(c.id) === selectedCustomerId);
+      await holdSale({
+        items: cart.map((item) => ({
+          product_id: item.product.id,
+          name: item.product.name,
+          name_ar: item.product.name_ar,
+          price: item.product.price,
+          quantity: item.quantity,
+        })),
+        label: customer?.name || undefined,
+        customer_name: customer?.name,
+        branch_id:
+          selectedBranchId && selectedBranchId !== 'all' ? Number(selectedBranchId) : undefined,
+      });
+      // Clear the cart so the cashier can serve the next customer; the ticket is
+      // parked server-side and recallable.
+      setCart([]);
+      setAppliedDiscount(null);
+      setDiscountCode('');
+      setRedeemPoints('');
+      setBarcodeMessage({ text: `✓ ${t('sale_held')}`, type: 'success' });
+      await loadHeld();
+    } catch (err) {
+      console.error('Failed to hold sale:', err);
+      setBarcodeMessage({ text: `✕ ${t('held_save_error')}`, type: 'error' });
+    } finally {
+      setHolding(false);
+    }
+  }
+
+  async function handleRecall(heldId: number) {
+    try {
+      const recalled = await recallSale(heldId);
+      // Rebuild cart items, preferring the live product (full sku/category/barcode)
+      // and falling back to the snapshot stored on the held ticket.
+      const restored: CartItem[] = recalled.items.map((it) => {
+        const live = products.find((p) => p.id === it.product_id);
+        const product: Product = live || {
+          id: it.product_id,
+          name: it.name,
+          name_ar: it.name_ar,
+          price: it.price,
+        };
+        return { product, quantity: it.quantity };
+      });
+      setCart(restored);
+      if (recalled.branch_id) setSelectedBranchId(String(recalled.branch_id));
+      setShowHeld(false);
+      setBarcodeMessage({ text: `✓ ${t('sale_recalled')}`, type: 'success' });
+      await loadHeld();
+    } catch (err) {
+      console.error('Failed to recall sale:', err);
+      setBarcodeMessage({ text: `✕ ${t('held_recall_error')}`, type: 'error' });
     }
   }
 
@@ -988,6 +1069,19 @@ export default function POSTerminal() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-white">{t('products')}</h2>
           <div className="flex items-center gap-2">
+            <Button
+              onClick={() => { setShowHeld(true); loadHeld(); }}
+              variant="outline"
+              className="relative border-slate-600 text-slate-300 hover:bg-slate-700"
+            >
+              <Pause className="w-4 h-4 me-2" />
+              {t('held_tickets')}
+              {heldTickets.length > 0 && (
+                <span className="ms-2 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-blue-600 text-white text-xs">
+                  {heldTickets.length}
+                </span>
+              )}
+            </Button>
             {canRefund && (
               <Button
                 onClick={() => setMode('refund')}
@@ -1301,15 +1395,95 @@ export default function POSTerminal() {
             )}
           </div>
 
-          <Button
-            onClick={handleCheckout}
-            disabled={cart.length === 0 || processing}
-            className="w-full bg-green-600 hover:bg-green-700 text-white py-6 text-lg disabled:opacity-50"
-          >
-            {processing ? t('loading') : t('checkout')}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={handleHold}
+              disabled={cart.length === 0 || holding || processing}
+              variant="outline"
+              className="flex-1 border-slate-600 text-slate-200 hover:bg-slate-700 py-6 text-base disabled:opacity-50"
+            >
+              <Pause className="w-4 h-4 me-2" />
+              {holding ? t('loading') : t('hold_sale')}
+            </Button>
+            <Button
+              onClick={handleCheckout}
+              disabled={cart.length === 0 || processing}
+              className="flex-[2] bg-green-600 hover:bg-green-700 text-white py-6 text-lg disabled:opacity-50"
+            >
+              {processing ? t('loading') : t('checkout')}
+            </Button>
+          </div>
         </div>
       </div>
+
+      {/* POS-10: Held tickets panel — recall a parked sale */}
+      {showHeld && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+          onClick={() => setShowHeld(false)}
+        >
+          <div
+            className="bg-slate-800 border border-slate-700 rounded-lg w-full max-w-lg max-h-[80vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <Pause className="w-5 h-5" />
+                {t('held_tickets')}
+              </h3>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowHeld(false)}
+                className="text-slate-400 hover:text-white h-7 w-7 p-0"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {heldError ? (
+                <div role="alert" className="text-center py-8 text-red-400">
+                  <p>{heldError}</p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={loadHeld}
+                    className="mt-3 border-slate-600 text-slate-200 hover:bg-slate-700"
+                  >
+                    {t('retry')}
+                  </Button>
+                </div>
+              ) : heldTickets.length === 0 ? (
+                <p className="text-slate-500 text-center py-8">{t('no_held_tickets')}</p>
+              ) : (
+                heldTickets.map((ticket) => (
+                  <div
+                    key={ticket.id}
+                    className="bg-slate-700 rounded-lg p-3 flex items-center justify-between gap-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-white text-sm font-medium truncate">
+                        {ticket.label || ticket.customer_name || `#${ticket.id}`}
+                      </p>
+                      <p className="text-slate-400 text-xs">
+                        {ticket.item_count} {t('items')} · {ticket.total_amount?.toFixed(2)}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => handleRecall(ticket.id)}
+                      className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
+                    >
+                      <Play className="w-4 h-4 me-1" />
+                      {t('recall')}
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

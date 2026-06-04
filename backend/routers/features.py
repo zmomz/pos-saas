@@ -575,6 +575,9 @@ async def get_sales_summary(
             and_(
                 Transactions.client_id == client_id,
                 Transactions.created_at >= start_date,
+                # POS-10: parked (held) tickets are not sales — exclude them so a
+                # held cart never inflates reported revenue.
+                Transactions.status.is_distinct_from("held"),
             )
         ).group_by(bucket).order_by(bucket)
     )
@@ -631,6 +634,8 @@ async def get_top_products(
             and_(
                 Transactions.client_id == client_id,
                 Transactions.created_at >= start_date,
+                # POS-10: exclude parked (held) tickets from top-products.
+                Transactions.status.is_distinct_from("held"),
             )
         )
     )
@@ -698,6 +703,8 @@ async def export_transactions_csv(
             and_(
                 Transactions.client_id == client_id,
                 Transactions.created_at >= start_date,
+                # POS-10: exclude parked (held) tickets from the CSV export.
+                Transactions.status.is_distinct_from("held"),
             )
         ).order_by(Transactions.created_at.desc())
     )

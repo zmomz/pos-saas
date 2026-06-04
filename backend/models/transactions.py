@@ -44,5 +44,12 @@ class Transactions(Base):
     # multiple partial refunds and decide refunded vs partial_refunded. Null on a
     # sale row.
     original_transaction_id = Column(Integer, nullable=True)
+    # Cashier-facing label for a parked (status="held") ticket (POS-10 park/hold &
+    # recall). Lets a cashier run multiple concurrent open tickets and tell them
+    # apart on recall (e.g. "Table 5", a customer name). Null on a completed sale /
+    # credit note. A held row is NOT a fiscal document — it consumes no invoice
+    # counter, gets no ZATCA stamp, and is excluded from sales reporting until it
+    # is recalled and rung up as a real sale.
+    hold_label = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

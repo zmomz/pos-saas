@@ -319,6 +319,71 @@ export async function getTransactions(page = 1, pageSize = 20) {
   return response.data;
 }
 
+// POS-10: park/hold & recall. A held ticket is a saved cart with no fiscal side
+// effect (no invoice, no ZATCA, no stock deduction) — it is rung up as a real
+// sale only when recalled and sent through createTransaction.
+export interface HeldItem {
+  product_id: number;
+  name: string;
+  name_ar?: string;
+  price: number;
+  quantity: number;
+  discount?: number;
+}
+
+export interface HeldTicket {
+  id: number;
+  label?: string;
+  item_count: number;
+  subtotal: number;
+  total_amount: number;
+  customer_name?: string;
+  customer_phone?: string;
+  branch_id?: number;
+  items_json?: string;
+  created_at?: string;
+}
+
+export interface RecalledTicket {
+  id: number;
+  label?: string;
+  items: HeldItem[];
+  customer_name?: string;
+  customer_phone?: string;
+  branch_id?: number;
+}
+
+export async function holdSale(data: {
+  items: { product_id: number; name: string; name_ar?: string; price: number; quantity: number }[];
+  label?: string;
+  customer_name?: string;
+  customer_phone?: string;
+  branch_id?: number;
+}): Promise<HeldTicket> {
+  const response = await client.apiCall.invoke<HeldTicket>({
+    url: '/api/v1/pos/hold',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function getHeldSales(): Promise<{ items: HeldTicket[]; total: number }> {
+  const response = await client.apiCall.invoke<{ items: HeldTicket[]; total: number }>({
+    url: '/api/v1/pos/held',
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function recallSale(heldId: number): Promise<RecalledTicket> {
+  const response = await client.apiCall.invoke<RecalledTicket>({
+    url: `/api/v1/pos/recall/${heldId}`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
 // Phase 3: the caller's effective permission grants/denies, so the UI can
 // hide/disable actions (e.g. refund) the staff member lacks. Master accounts
 // come back with is_master=true and gate nothing.

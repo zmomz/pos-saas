@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -1030,7 +1031,13 @@ async def list_transactions(
 
     offset = (page - 1) * page_size
 
-    filters = [Transactions.client_id == client.id]
+    # POS-10: parked (held) tickets are not completed sales — keep them out of the
+    # transaction history / refund picker. ``is_distinct_from`` excludes "held"
+    # while still keeping rows whose status is NULL (legacy completed sales).
+    filters = [
+        Transactions.client_id == client.id,
+        Transactions.status.is_distinct_from("held"),
+    ]
     if branch_id is not None:
         filters.append(Transactions.branch_id == branch_id)
 
@@ -1077,6 +1084,194 @@ async def list_transactions(
         page=page,
         page_size=page_size,
     )
+
+
+# ---------- Hold / Recall (park a sale) — POS-10 ----------
+class HoldRequest(BaseModel):
+    """Park the current cart as a held ticket so the sale can be resumed later.
+
+    A held ticket runs NONE of the atomic-sale side effects: no invoice counter is
+    consumed, no ZATCA stamp is issued, inventory is not deducted, no shift/loyalty
+    movement. It is purely a saved cart the cashier can recall. Multiple concurrent
+    held tickets are allowed; ``label`` (e.g. "Table 5", a customer name) tells them
+    apart on recall.
+    """
+
+    items: List[CartItem]
+    label: Optional[str] = None
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    branch_id: Optional[int] = None
+
+
+class HeldTicketResponse(BaseModel):
+    id: int
+    label: Optional[str] = None
+    item_count: int
+    subtotal: float
+    total_amount: float
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    branch_id: Optional[int] = None
+    items_json: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class HeldListResponse(BaseModel):
+    items: List[HeldTicketResponse]
+    total: int
+
+
+class RecallResponse(BaseModel):
+    """The recalled cart contents, so the POS can repopulate and ring it up."""
+
+    id: int
+    label: Optional[str] = None
+    items: List[CartItem]
+    customer_name: Optional[str] = None
+    customer_phone: Optional[str] = None
+    branch_id: Optional[int] = None
+
+
+def _held_summary(t: Transactions) -> HeldTicketResponse:
+    try:
+        items = json.loads(t.items_json) if t.items_json else []
+    except (json.JSONDecodeError, TypeError):
+        items = []
+    return HeldTicketResponse(
+        id=t.id,
+        label=t.hold_label,
+        item_count=sum(int(i.get("quantity", 0) or 0) for i in items),
+        subtotal=t.subtotal or 0,
+        total_amount=t.total_amount or 0,
+        customer_name=t.customer_name,
+        customer_phone=t.customer_phone,
+        branch_id=t.branch_id,
+        items_json=t.items_json,
+        created_at=t.created_at,
+    )
+
+
+@router.post("/hold", response_model=HeldTicketResponse)
+async def hold_sale(
+    data: HoldRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Park the current cart as a ``held`` ticket (POS-10).
+
+    Persists the cart so the cashier can serve another customer and resume this
+    one later. No fiscal side effects: the invoice counter is untouched, no ZATCA
+    stamp is issued, and stock is not deducted (that all happens when the recalled
+    ticket is rung up through ``POST /pos/transaction``).
+    """
+    logger.info("hold_sale: user=%s items=%d", current_user.id, len(data.items))
+    client = await get_client_for_user(db, str(current_user.id))
+
+    if not data.items:
+        raise HTTPException(status_code=400, detail="Cannot hold an empty cart")
+
+    # Compute a display subtotal/total for the held-ticket list. The amounts are
+    # informational only — the authoritative totals are recomputed on checkout.
+    subtotal = 0.0
+    for item in data.items:
+        subtotal += item.price * item.quantity - (item.discount or 0)
+    subtotal = round(subtotal, 2)
+    vat_rate = await get_effective_tax_rate(db, 15.0)
+    vat_amount = round(subtotal * (vat_rate / 100), 2)
+    total_amount = round(subtotal + vat_amount, 2)
+
+    # A held ticket consumes NO invoice counter — give it a clearly non-fiscal
+    # placeholder number so it never collides with a real INV-/CRN- sequence.
+    held_number = f"HELD-{client.id:04d}-{uuid.uuid4().hex[:8]}"
+
+    held = Transactions(
+        user_id=str(current_user.id),
+        client_id=client.id,
+        invoice_number=held_number,
+        subtotal=subtotal,
+        vat_amount=vat_amount,
+        discount_amount=0,
+        total_amount=total_amount,
+        payment_method="held",
+        status="held",
+        hold_label=(data.label or "").strip() or None,
+        items_json=json.dumps([i.model_dump() for i in data.items], ensure_ascii=False),
+        customer_name=data.customer_name,
+        customer_phone=data.customer_phone,
+        branch_id=data.branch_id,
+    )
+    db.add(held)
+    await db.commit()
+    await db.refresh(held)
+    return _held_summary(held)
+
+
+@router.get("/held", response_model=HeldListResponse)
+async def list_held_sales(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the current client's parked (held) tickets, newest first (POS-10)."""
+    client = await get_client_for_user(db, str(current_user.id))
+    result = await db.execute(
+        select(Transactions)
+        .where(
+            Transactions.client_id == client.id,
+            Transactions.user_id == str(current_user.id),
+            Transactions.status == "held",
+        )
+        .order_by(Transactions.created_at.desc())
+    )
+    held = result.scalars().all()
+    return HeldListResponse(items=[_held_summary(t) for t in held], total=len(held))
+
+
+@router.post("/recall/{held_id}", response_model=RecallResponse)
+async def recall_sale(
+    held_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Recall a held ticket: return its cart and remove it from the held list.
+
+    The cashier resumes the cart in the POS and rings it up as a fresh sale, so the
+    held row is deleted here (not flipped to a sale) — the sale is created normally
+    via ``POST /pos/transaction`` with all its fiscal side effects. Owner-scoped: a
+    client can only recall its own held tickets (SEC-02).
+    """
+    client = await get_client_for_user(db, str(current_user.id))
+    result = await db.execute(
+        select(Transactions).where(
+            Transactions.id == held_id,
+            Transactions.client_id == client.id,
+            Transactions.user_id == str(current_user.id),
+            Transactions.status == "held",
+        )
+    )
+    held = result.scalar_one_or_none()
+    if not held:
+        raise HTTPException(status_code=404, detail="Held ticket not found")
+
+    try:
+        raw_items = json.loads(held.items_json) if held.items_json else []
+    except (json.JSONDecodeError, TypeError):
+        raw_items = []
+    items = [CartItem(**i) for i in raw_items]
+
+    response = RecallResponse(
+        id=held.id,
+        label=held.hold_label,
+        items=items,
+        customer_name=held.customer_name,
+        customer_phone=held.customer_phone,
+        branch_id=held.branch_id,
+    )
+
+    # Remove the parked ticket — it has been pulled back into the cart.
+    await db.delete(held)
+    await db.commit()
+    return response
 
 
 # ---------- Refund / ZATCA credit note (POS-07) ----------
