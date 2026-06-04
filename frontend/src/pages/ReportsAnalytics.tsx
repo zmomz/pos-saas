@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
-import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown } from '@/lib/api';
+import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, type JournalExport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -80,6 +80,17 @@ const reportTranslations: Record<string, Record<string, string>> = {
     tender_tamara: 'Tamara',
     tender_transfer: 'Bank Transfer',
     tender_loyalty: 'Loyalty',
+    journal_export: 'Accounting Journal (GL)',
+    journal_hint: 'Double-entry journal for the last 30 days — import into Zoho / QuickBooks / Odoo.',
+    download_journal: 'Download Journal CSV',
+    account_code: 'Code',
+    gl_account: 'Account',
+    description: 'Description',
+    debit: 'Debit',
+    credit: 'Credit',
+    journal_balanced: 'Balanced',
+    journal_unbalanced: 'Out of balance',
+    retry: 'Retry',
   },
   ar: {
     reports_analytics: 'التقارير والتحليلات',
@@ -118,6 +129,17 @@ const reportTranslations: Record<string, Record<string, string>> = {
     tender_tamara: 'تمارا',
     tender_transfer: 'تحويل بنكي',
     tender_loyalty: 'نقاط الولاء',
+    journal_export: 'قيد اليومية المحاسبي (الأستاذ العام)',
+    journal_hint: 'قيد مزدوج لآخر 30 يومًا — للاستيراد إلى زوهو / كويك بوكس / أودو.',
+    download_journal: 'تنزيل ملف القيود CSV',
+    account_code: 'الرمز',
+    gl_account: 'الحساب',
+    description: 'البيان',
+    debit: 'مدين',
+    credit: 'دائن',
+    journal_balanced: 'متوازن',
+    journal_unbalanced: 'غير متوازن',
+    retry: 'إعادة المحاولة',
   },
   hi: {
     reports_analytics: 'रिपोर्ट और विश्लेषण',
@@ -156,6 +178,17 @@ const reportTranslations: Record<string, Record<string, string>> = {
     tender_tamara: 'तमारा',
     tender_transfer: 'बैंक ट्रांसफर',
     tender_loyalty: 'लॉयल्टी',
+    journal_export: 'लेखा जर्नल (GL)',
+    journal_hint: 'पिछले 30 दिनों की डबल-एंट्री जर्नल — Zoho / QuickBooks / Odoo में आयात करें।',
+    download_journal: 'जर्नल CSV डाउनलोड करें',
+    account_code: 'कोड',
+    gl_account: 'खाता',
+    description: 'विवरण',
+    debit: 'डेबिट',
+    credit: 'क्रेडिट',
+    journal_balanced: 'संतुलित',
+    journal_unbalanced: 'असंतुलित',
+    retry: 'पुनः प्रयास',
   },
   ur: {
     reports_analytics: 'رپورٹس اور تجزیات',
@@ -194,6 +227,17 @@ const reportTranslations: Record<string, Record<string, string>> = {
     tender_tamara: 'تمارا',
     tender_transfer: 'بینک منتقلی',
     tender_loyalty: 'وفاداری',
+    journal_export: 'اکاؤنٹنگ جرنل (GL)',
+    journal_hint: 'پچھلے 30 دن کی ڈبل اینٹری جرنل — Zoho / QuickBooks / Odoo میں درآمد کریں۔',
+    download_journal: 'جرنل CSV ڈاؤن لوڈ کریں',
+    account_code: 'کوڈ',
+    gl_account: 'اکاؤنٹ',
+    description: 'تفصیل',
+    debit: 'ڈیبٹ',
+    credit: 'کریڈٹ',
+    journal_balanced: 'متوازن',
+    journal_unbalanced: 'غیر متوازن',
+    retry: 'دوبارہ کوشش',
   },
 };
 
@@ -204,15 +248,19 @@ export default function ReportsAnalytics() {
   const [salesData, setSalesData] = useState<SalesDataPoint[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [paymentTenders, setPaymentTenders] = useState<PaymentTender[]>([]);
+  const [journal, setJournal] = useState<JournalExport | null>(null);
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
+  const [loadingJournal, setLoadingJournal] = useState(true);
   // UX-02 (F-051): a failed fetch on any panel must surface a real error state
   // distinct from "no data" — generalizing the RPT-03 payment-panel pattern.
   const [salesError, setSalesError] = useState(false);
   const [productsError, setProductsError] = useState(false);
   const [paymentError, setPaymentError] = useState(false);
+  const [journalError, setJournalError] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportingJournal, setExportingJournal] = useState(false);
 
   const tr = useCallback(
     (key: string): string => {
@@ -228,6 +276,7 @@ export default function ReportsAnalytics() {
   useEffect(() => {
     fetchTopProducts();
     fetchPaymentBreakdown();
+    fetchJournal();
   }, []);
 
   async function fetchSalesData() {
@@ -274,6 +323,40 @@ export default function ReportsAnalytics() {
       setPaymentTenders([]);
     } finally {
       setLoadingPayments(false);
+    }
+  }
+
+  async function fetchJournal() {
+    setLoadingJournal(true);
+    setJournalError(false);
+    try {
+      const result = await getJournalExport(30);
+      setJournal(result || null);
+    } catch {
+      // FIN-02: a failed fetch must surface a real error distinct from an empty
+      // period — never silently render an empty journal (UX-02).
+      setJournalError(true);
+      setJournal(null);
+    } finally {
+      setLoadingJournal(false);
+    }
+  }
+
+  async function handleExportJournal() {
+    if (!journal?.csv_content) return;
+    setExportingJournal(true);
+    try {
+      const blob = new Blob([journal.csv_content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `journal_${journal.from_date}_${journal.to_date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingJournal(false);
     }
   }
 
@@ -555,6 +638,108 @@ export default function ReportsAnalytics() {
                 </TableRow>
               </TableBody>
             </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Accounting Journal / GL export (FIN-02) */}
+      <Card className="bg-slate-800 border-slate-700 mb-8">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-white">{tr('journal_export')}</CardTitle>
+            <p className="text-xs text-slate-400 mt-1">{tr('journal_hint')}</p>
+          </div>
+          <Button
+            onClick={handleExportJournal}
+            disabled={exportingJournal || !journal || journal.lines.length === 0}
+            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+          >
+            {exportingJournal ? '...' : tr('download_journal')}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loadingJournal ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : journalError ? (
+            <div className="text-center py-8" role="alert">
+              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
+              <Button
+                variant="outline"
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                onClick={fetchJournal}
+              >
+                {tr('retry')}
+              </Button>
+            </div>
+          ) : !journal || journal.lines.length === 0 ? (
+            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs text-slate-500">
+                  {journal.from_date} → {journal.to_date}
+                </span>
+                <Badge
+                  className={
+                    journal.balanced
+                      ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                      : 'bg-red-600 text-white hover:bg-red-500'
+                  }
+                >
+                  {journal.balanced ? tr('journal_balanced') : tr('journal_unbalanced')}
+                </Badge>
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-700 hover:bg-slate-800">
+                    <TableHead className="text-slate-400">{tr('account_code')}</TableHead>
+                    <TableHead className="text-slate-400">{tr('gl_account')}</TableHead>
+                    <TableHead className="text-slate-400">{tr('description')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('debit')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('credit')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {journal.lines.map((line, idx) => (
+                    <TableRow
+                      key={`${line.account_code}-${idx}`}
+                      className="border-slate-700 hover:bg-slate-750"
+                    >
+                      <TableCell className="text-slate-400 font-mono text-xs">
+                        {line.account_code}
+                      </TableCell>
+                      <TableCell className="text-white font-medium">{line.account}</TableCell>
+                      <TableCell className="text-slate-400 text-xs">{line.description}</TableCell>
+                      <TableCell className="text-slate-300 text-end">
+                        {line.debit > 0
+                          ? `${tr('sar')} ${line.debit.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                          : '—'}
+                      </TableCell>
+                      <TableCell className="text-slate-300 text-end">
+                        {line.credit > 0
+                          ? `${tr('sar')} ${line.credit.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
+                          : '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow className="border-slate-700 bg-slate-850 font-semibold">
+                    <TableCell className="text-white" colSpan={3}>
+                      {tr('total')}
+                    </TableCell>
+                    <TableCell className="text-white text-end">
+                      {tr('sar')} {journal.total_debit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-white text-end">
+                      {tr('sar')} {journal.total_credit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </>
           )}
         </CardContent>
       </Card>

@@ -1013,6 +1013,258 @@ async def get_payment_breakdown(
 
 
 # ============================================================
+# ACCOUNTING JOURNAL / GENERAL-LEDGER EXPORT (FIN-02, P1)
+# ============================================================
+# The accountant hand-off (IB §4.11): a standard double-entry journal for a
+# period — sales revenue, VAT payable, COGS, inventory, and the cash/bank legs
+# by tender — that a bookkeeper imports into Zoho/QuickBooks/Odoo by hand until
+# the direct-push integrations (FIN-03) land. It is a *period-summary* journal
+# (one balanced set of GL lines for the window), built so that
+# **Σ debits == Σ credits by construction**:
+#
+#   Cash & bank (by tender) ......... Dr  net money in (sales − refunds)
+#   Sales Revenue ................... Cr  total − VAT
+#   VAT Payable ..................... Cr  VAT collected − reversed
+#   Cost of Goods Sold .............. Dr  COGS of sold − returned units
+#   Inventory ....................... Cr  same COGS amount
+#
+# Because the revenue line is derived as ``total − VAT`` (not from the raw
+# subtotal), the cash side and the revenue+VAT side reconcile to the exact same
+# figure regardless of per-line rounding; and COGS Dr always equals Inventory
+# Cr. Credit notes (refunds) carry negative signed amounts (F-007), so they net
+# down each account on the same lines. Aggregated server-side — the cash/VAT/
+# revenue legs in SQL, COGS by streaming each transaction's ``items_json`` once
+# against a bounded product-cost map (OPS-05, never load-everything).
+
+# Standard chart-of-accounts codes used by the journal. Kept stable so a repeat
+# export maps to the same GL accounts the bookkeeper already created.
+_GL_SALES_REVENUE = ("4000", "Sales Revenue")
+_GL_VAT_PAYABLE = ("2100", "VAT Payable")
+_GL_COGS = ("5000", "Cost of Goods Sold")
+_GL_INVENTORY = ("1300", "Inventory")
+_GL_CASH_ON_HAND = ("1010", "Cash on Hand")
+
+# Maps a captured tender type to the GL cash/bank account it settles into. Cash
+# hits the till; everything card-like/wallet/BNPL settles through a bank/clearing
+# account; transfers and internal tenders get their own lines.
+_TENDER_GL_ACCOUNTS = {
+    "cash": ("1010", "Cash on Hand"),
+    "mada": ("1020", "Card/Wallet Clearing"),
+    "card": ("1020", "Card/Wallet Clearing"),
+    "applepay": ("1020", "Card/Wallet Clearing"),
+    "stcpay": ("1020", "Card/Wallet Clearing"),
+    "tabby": ("1025", "BNPL Receivable"),
+    "tamara": ("1025", "BNPL Receivable"),
+    "transfer": ("1030", "Bank Transfer"),
+    "loyalty": ("4050", "Loyalty/Other Settlement"),
+}
+
+
+def _tender_gl_account(tender_type: Optional[str]):
+    return _TENDER_GL_ACCOUNTS.get((tender_type or "").lower(), _GL_CASH_ON_HAND)
+
+
+class JournalLine(BaseModel):
+    account_code: str
+    account: str
+    description: str
+    debit: float
+    credit: float
+
+
+class JournalExportResponse(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    lines: List[JournalLine]
+    total_debit: float
+    total_credit: float
+    balanced: bool
+    csv_content: str
+
+
+@router.get("/api/v1/reports/journal-export", response_model=JournalExportResponse)
+async def export_accounting_journal(
+    days: int = Query(30, ge=1, le=365),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Accounting journal / general-ledger export for the period (FIN-02).
+
+    A balanced double-entry journal (sales / VAT / COGS / inventory / payments-by
+    -tender) for the trailing ``days`` window. ``Σ debit == Σ credit`` by
+    construction; voided and held rows are excluded (neither is realized
+    revenue), credit notes net the accounts down via their negative amounts.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can export the accounting journal")
+
+    client_id = role_info["entity_id"]
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    # ---- Revenue + VAT (signed sums over the window) ----
+    # POS-10/POS-08: parked (held) tickets and voided sales are not realized
+    # revenue. ``is_distinct_from`` keeps NULL-status (legacy completed) rows.
+    not_excluded = and_(
+        Transactions.status.is_distinct_from("held"),
+        Transactions.status.is_distinct_from("voided"),
+    )
+    totals = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Transactions.total_amount), 0.0),
+                func.coalesce(func.sum(Transactions.vat_amount), 0.0),
+            ).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    not_excluded,
+                )
+            )
+        )
+    ).one()
+    gross_total = round(float(totals[0] or 0.0), 2)
+    vat_total = round(float(totals[1] or 0.0), 2)
+    # Revenue is derived as (total − VAT) so the cash side and the revenue+VAT
+    # side reconcile to the exact same figure regardless of per-line rounding.
+    revenue_total = round(gross_total - vat_total, 2)
+
+    # ---- Payments by tender (the cash/bank debit legs) ----
+    # Net per method from the real captured ``payment_tenders`` rows (F-001):
+    # captured legs add, refunded legs (F-004) subtract. Aggregated in SQL.
+    from models.payment_tenders import PaymentTenders
+
+    tender_rows = (
+        await db.execute(
+            select(
+                PaymentTenders.tender_type,
+                PaymentTenders.status,
+                func.coalesce(func.sum(PaymentTenders.amount), 0.0),
+            ).where(
+                and_(
+                    PaymentTenders.client_id == client_id,
+                    PaymentTenders.created_at >= start_date,
+                    PaymentTenders.status != "declined",
+                )
+            ).group_by(PaymentTenders.tender_type, PaymentTenders.status)
+        )
+    ).all()
+
+    tender_net: dict = {}
+    for tender_type, status, amount, in tender_rows:
+        amount = float(amount or 0.0)
+        signed = -amount if status == "refunded" else amount
+        tender_net[tender_type or "cash"] = tender_net.get(tender_type or "cash", 0.0) + signed
+
+    tenders_total = round(sum(tender_net.values()), 2)
+    # Sales without a captured tender row (legacy / cash-only installs) leave a
+    # remainder between the money the sales say was taken (``gross_total``) and
+    # what the tender ledger accounts for; book it to Cash on Hand so the cash
+    # side always reconciles to the revenue+VAT side exactly.
+    cash_remainder = round(gross_total - tenders_total, 2)
+
+    # ---- COGS (stream items_json once against a bounded cost map) ----
+    cost_rows = (
+        await db.execute(
+            select(Products.id, Products.cost_price).where(Products.client_id == client_id)
+        )
+    ).all()
+    cost_map = {pid: float(cost or 0.0) for pid, cost in cost_rows}
+
+    cogs_total = 0.0
+    stream = await db.stream(
+        select(Transactions.items_json, Transactions.status).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                not_excluded,
+            )
+        )
+    )
+    async for items_json, status in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        # A credit note's returned lines carry positive quantities (F-007) but
+        # reverse COGS, so flip the sign for refunds.
+        sign = -1.0 if status == "credit_note" else 1.0
+        for item in items:
+            cost = cost_map.get(item.get("product_id", 0), 0.0)
+            cogs_total += sign * cost * float(item.get("quantity", 0) or 0)
+    cogs_total = round(cogs_total, 2)
+
+    # ---- Assemble the balanced journal ----
+    lines: List[JournalLine] = []
+
+    def _add(account, description, amount):
+        """Add a signed amount to its natural side (Dr if >= 0, else Cr)."""
+        code, name = account
+        amount = round(float(amount), 2)
+        if amount == 0:
+            return
+        lines.append(
+            JournalLine(
+                account_code=code,
+                account=name,
+                description=description,
+                debit=amount if amount > 0 else 0.0,
+                credit=-amount if amount < 0 else 0.0,
+            )
+        )
+
+    # Cash/bank legs by tender (natural debit), then the legacy remainder.
+    for tender_type in sorted(tender_net):
+        _add(
+            _tender_gl_account(tender_type),
+            f"Payments received — {tender_type}",
+            tender_net[tender_type],
+        )
+    _add(_GL_CASH_ON_HAND, "Cash sales (untendered remainder)", cash_remainder)
+    # Revenue + VAT (natural credit → negative signed amounts).
+    _add(_GL_SALES_REVENUE, "Net sales revenue (ex-VAT)", -revenue_total)
+    _add(_GL_VAT_PAYABLE, "Output VAT collected", -vat_total)
+    # COGS / inventory (Dr COGS, Cr inventory of the same amount).
+    _add(_GL_COGS, "Cost of goods sold", cogs_total)
+    _add(_GL_INVENTORY, "Inventory consumed", -cogs_total)
+
+    total_debit = round(sum(line.debit for line in lines), 2)
+    total_credit = round(sum(line.credit for line in lines), 2)
+    balanced = abs(total_debit - total_credit) < 0.01
+
+    # CSV in the same shape ExpenseTracking/Reports already download.
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Date", "Account Code", "Account", "Description", "Debit", "Credit"])
+    period_label = f"{start_date.date().isoformat()}..{now.date().isoformat()}"
+    for line in lines:
+        writer.writerow([
+            period_label,
+            line.account_code,
+            line.account,
+            line.description,
+            f"{line.debit:.2f}",
+            f"{line.credit:.2f}",
+        ])
+    writer.writerow([period_label, "", "TOTAL", "", f"{total_debit:.2f}", f"{total_credit:.2f}"])
+
+    return JournalExportResponse(
+        days=days,
+        from_date=start_date.date().isoformat(),
+        to_date=now.date().isoformat(),
+        lines=lines,
+        total_debit=total_debit,
+        total_credit=total_credit,
+        balanced=balanced,
+        csv_content=output.getvalue(),
+    )
+
+
+# ============================================================
 # Z-REPORT / X-REPORT (RPT-06, PRN-05) — fiscal day-close
 # ============================================================
 # A Z-report reconciles a single shift: sales grouped by tender (the real

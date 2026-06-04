@@ -916,6 +916,37 @@ export async function getPaymentBreakdown(days = 30) {
   return response.data;
 }
 
+// FIN-02: accounting journal / general-ledger export for the period. A balanced
+// double-entry journal (sales / VAT / COGS / inventory / payments-by-tender) the
+// bookkeeper imports into Zoho/QuickBooks/Odoo. Returns structured lines + a CSV.
+export interface JournalLine {
+  account_code: string;
+  account: string;
+  description: string;
+  debit: number;
+  credit: number;
+}
+
+export interface JournalExport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  lines: JournalLine[];
+  total_debit: number;
+  total_credit: number;
+  balanced: boolean;
+  csv_content: string;
+}
+
+export async function getJournalExport(days = 30): Promise<JournalExport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/journal-export?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.
