@@ -31,6 +31,45 @@ export async function toggleAgent(agentId: number) {
   return response.data;
 }
 
+// MA-08 / RSL-08 / RPT-09 (F-023): platform-wide economics for the master operator
+// console — MRR (yearly plans normalized to fee/12), churn (suspended share),
+// active merchants, and a revenue-by-agent leaderboard from the commission ledger.
+export interface AgentEconomics {
+  agent_id: number;
+  company_name: string;
+  is_active: boolean;
+  total_clients: number;
+  active_clients: number;
+  mrr: number;
+  collected: number;
+  master_owed: number;
+  net: number;
+  payments: number;
+}
+
+export interface MasterEconomics {
+  total_agents: number;
+  active_agents: number;
+  total_clients: number;
+  active_clients: number;
+  churned_clients: number;
+  mrr: number;
+  arr: number;
+  churn_rate: number;
+  collected: number;
+  platform_revenue: number;
+  by_agent: AgentEconomics[];
+}
+
+export async function getMasterEconomics(): Promise<MasterEconomics> {
+  const response = await client.apiCall.invoke<MasterEconomics>({
+    url: '/api/v1/tenant/master/economics',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // Agent endpoints
 export async function getAgentClients(skip = 0, limit = 50) {
   const response = await client.apiCall.invoke({

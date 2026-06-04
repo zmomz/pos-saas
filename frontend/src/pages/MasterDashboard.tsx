@@ -6,11 +6,12 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate } from '@/lib/api';
+import { client, getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, type MasterEconomics } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
-import { Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Settings, Shield } from 'lucide-react';
+import ErrorState from '@/components/states/ErrorState';
+import { Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Settings, Shield, TrendingUp, TrendingDown, Store } from 'lucide-react';
 
 interface Agent {
   id: number;
@@ -36,6 +37,11 @@ export default function MasterDashboard() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [packages, setPackages] = useState<Package[]>([]);
   const [loading, setLoading] = useState(true);
+  // MA-08 platform economics — loaded independently of the agent list so an
+  // economics failure renders its own error state instead of blanking the page.
+  const [economics, setEconomics] = useState<MasterEconomics | null>(null);
+  const [ecoLoading, setEcoLoading] = useState(true);
+  const [ecoError, setEcoError] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newAgentForm, setNewAgentForm] = useState({
     company_name: '',
@@ -61,6 +67,7 @@ export default function MasterDashboard() {
 
   useEffect(() => {
     loadData();
+    loadEconomics();
   }, []);
 
   async function loadData() {
@@ -72,6 +79,19 @@ export default function MasterDashboard() {
       console.error('Failed to load data:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadEconomics() {
+    setEcoLoading(true);
+    setEcoError(false);
+    try {
+      setEconomics(await getMasterEconomics());
+    } catch (err) {
+      console.error('Failed to load economics:', err);
+      setEcoError(true);
+    } finally {
+      setEcoLoading(false);
     }
   }
 
@@ -156,7 +176,6 @@ export default function MasterDashboard() {
 
   const totalAgents = agents.length;
   const activeAgents = agents.filter((a) => a.is_active).length;
-  const totalRevenue = agents.reduce((sum, a) => sum + (a.used_slots * 50), 0);
 
   if (loading) {
     return (
@@ -188,8 +207,8 @@ export default function MasterDashboard() {
               <DollarSign className={`h-6 w-6 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
             </div>
             <div>
-              <p className={`text-sm ${isDark ? 'text-green-300' : 'text-green-600'}`}>{t('total_revenue') || 'Total Revenue'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(totalRevenue, language)}</p>
+              <p className={`text-sm ${isDark ? 'text-green-300' : 'text-green-600'}`}>{t('mrr')}</p>
+              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics?.mrr ?? 0, language)}</p>
             </div>
           </CardContent>
         </Card>
@@ -261,6 +280,110 @@ export default function MasterDashboard() {
           {t('tax_rate') || 'Tax Rate'}
         </Button>
       </div>
+
+      {/* MA-08 / RSL-08: platform economics — MRR, ARR, active merchants, churn,
+          platform revenue, and the revenue-by-agent leaderboard. */}
+      <section>
+        <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('platform_economics')}</h2>
+        {ecoLoading ? (
+          <div className={`animate-pulse py-8 text-center ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('loading')}</div>
+        ) : ecoError ? (
+          <ErrorState onRetry={loadEconomics} />
+        ) : economics && economics.total_clients === 0 && economics.collected === 0 ? (
+          <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+            <CardContent className={`py-10 text-center text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+              {t('economics_empty')}
+            </CardContent>
+          </Card>
+        ) : economics ? (
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-4">
+              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <TrendingUp className={`h-4 w-4 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
+                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('mrr')}</p>
+                  </div>
+                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics.mrr, language)}</p>
+                </CardContent>
+              </Card>
+              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <DollarSign className={`h-4 w-4 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
+                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('arr')}</p>
+                  </div>
+                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics.arr, language)}</p>
+                </CardContent>
+              </Card>
+              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Store className={`h-4 w-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
+                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('active_merchants')}</p>
+                  </div>
+                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{economics.active_clients}/{economics.total_clients}</p>
+                </CardContent>
+              </Card>
+              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <TrendingDown className={`h-4 w-4 ${isDark ? 'text-red-400' : 'text-red-600'}`} />
+                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('churn_rate')}</p>
+                  </div>
+                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{(economics.churn_rate * 100).toFixed(1)}%</p>
+                </CardContent>
+              </Card>
+              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <DollarSign className={`h-4 w-4 ${isDark ? 'text-purple-400' : 'text-purple-600'}`} />
+                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('platform_revenue')}</p>
+                  </div>
+                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics.platform_revenue, language)}</p>
+                </CardContent>
+              </Card>
+              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-2 mb-1">
+                    <DollarSign className={`h-4 w-4 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
+                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('collected')}</p>
+                  </div>
+                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics.collected, language)}</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* RSL-08: revenue-by-agent leaderboard */}
+            <div className={`overflow-x-auto rounded-lg border ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+              <table className="w-full text-sm">
+                <thead className={isDark ? 'bg-slate-800' : 'bg-gray-50'}>
+                  <tr className={isDark ? 'text-slate-400' : 'text-gray-500'}>
+                    <th className="p-3 text-start">{t('company_name')}</th>
+                    <th className="p-3 text-start">{t('active_merchants')}</th>
+                    <th className="p-3 text-start">{t('mrr')}</th>
+                    <th className="p-3 text-start">{t('collected')}</th>
+                    <th className="p-3 text-start">{t('platform_revenue')}</th>
+                    <th className="p-3 text-start">{t('revenue_net_margin')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {economics.by_agent.map((a) => (
+                    <tr key={a.agent_id} className={`border-t ${isDark ? 'border-slate-700 text-slate-300' : 'border-gray-200 text-gray-700'}`}>
+                      <td className="p-3">{a.company_name}</td>
+                      <td className="p-3">{a.active_clients}/{a.total_clients}</td>
+                      <td className="p-3">{formatMoney(a.mrr, language)}</td>
+                      <td className="p-3">{formatMoney(a.collected, language)}</td>
+                      <td className="p-3">{formatMoney(a.master_owed, language)}</td>
+                      <td className="p-3">{formatMoney(a.net, language)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
+      </section>
 
       {/* Package Overview */}
       <section>

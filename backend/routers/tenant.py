@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select, func, update
+from sqlalchemy import select, func, update, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -570,6 +570,171 @@ async def get_agent_revenue(
         net=round(float(totals[2] or 0), 2),
         payments=int(totals[3] or 0),
         by_client=by_client,
+    )
+
+
+# ---------- Master platform economics (MA-08 / RSL-08 / RPT-09, F-023) ----------
+class AgentEconomics(BaseModel):
+    """One agent's contribution to the platform economics rollup (the master's
+    revenue-by-agent leaderboard). ``collected`` is gross subscription fees the
+    agent took from its merchants, ``master_owed`` the platform's share (the sum
+    of the commission ledger's ``master_cut``), ``net`` the agent's margin; ``mrr``
+    is the agent's normalized monthly recurring revenue across its active clients."""
+
+    agent_id: int
+    company_name: str
+    is_active: bool
+    total_clients: int
+    active_clients: int
+    mrr: float
+    collected: float
+    master_owed: float
+    net: float
+    payments: int
+
+
+class MasterEconomicsResponse(BaseModel):
+    """Platform-wide economics for the master operator console (MA-08).
+
+    ``mrr`` is the normalized **monthly** recurring revenue across all non-suspended
+    active client subscriptions (a yearly plan contributes ``fee/12``); ``arr`` is
+    ``mrr * 12``. ``churn_rate`` is the share of client subscriptions currently
+    suspended (``churned_clients / total_clients``) — the only churn signal
+    derivable without a cancellation-timestamp history. ``collected`` is gross fees
+    settled platform-wide and ``platform_revenue`` the master's owed cut (sum of the
+    commission ledger's ``master_cut``). ``by_agent`` is the revenue-by-agent
+    leaderboard (RSL-08)."""
+
+    total_agents: int
+    active_agents: int
+    total_clients: int
+    active_clients: int
+    churned_clients: int
+    mrr: float
+    arr: float
+    churn_rate: float
+    collected: float
+    platform_revenue: float
+    by_agent: List[AgentEconomics] = []
+
+
+@router.get("/master/economics", response_model=MasterEconomicsResponse)
+async def get_master_economics(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Master: platform-wide economics — MRR, churn, active merchants, and the
+    revenue-by-agent leaderboard (MA-08 / RSL-08 / RPT-09).
+
+    Everything is aggregated in SQL (no load-everything, OPS-05). Restricted to the
+    platform master; an agent/client gets 403 (SEC-02 — only the operator sees
+    cross-tenant economics). MRR normalizes a yearly plan to ``fee/12`` and counts
+    only non-suspended active subscriptions; churn is the suspended share.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "master":
+        raise HTTPException(status_code=403, detail="Only master can access this endpoint")
+
+    # A client subscription is "live" (counts toward MRR) when its row is active and
+    # not suspended; a NULL status is treated as the default 'active'. A yearly plan
+    # contributes 1/12 of its fee to the monthly figure.
+    status_expr = func.coalesce(Clients.subscription_status, "active")
+    active_pred = and_(Clients.is_active.isnot(False), status_expr != "suspended")
+    suspended_pred = status_expr == "suspended"
+    monthly_fee = case(
+        (Clients.billing_cycle == "yearly", func.coalesce(Clients.subscription_fee, 0.0) / 12.0),
+        else_=func.coalesce(Clients.subscription_fee, 0.0),
+    )
+
+    # Platform totals — authoritative (counts even orphan-agent clients).
+    plat = (
+        await db.execute(
+            select(
+                func.count(Clients.id),
+                func.coalesce(func.sum(case((active_pred, 1), else_=0)), 0),
+                func.coalesce(func.sum(case((suspended_pred, 1), else_=0)), 0),
+                func.coalesce(func.sum(case((active_pred, monthly_fee), else_=0.0)), 0.0),
+            )
+        )
+    ).one()
+    total_clients = int(plat[0] or 0)
+    active_clients = int(plat[1] or 0)
+    churned_clients = int(plat[2] or 0)
+    mrr = round(float(plat[3] or 0.0), 2)
+
+    plat_ledger = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
+                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
+            )
+        )
+    ).one()
+    collected = round(float(plat_ledger[0] or 0.0), 2)
+    platform_revenue = round(float(plat_ledger[1] or 0.0), 2)
+
+    churn_rate = round(churned_clients / total_clients, 4) if total_clients else 0.0
+
+    # Per-agent breakdown (leaderboard): client counts/MRR by agent + ledger by agent.
+    client_rows = (
+        await db.execute(
+            select(
+                Clients.agent_id,
+                func.count(Clients.id),
+                func.coalesce(func.sum(case((active_pred, 1), else_=0)), 0),
+                func.coalesce(func.sum(case((active_pred, monthly_fee), else_=0.0)), 0.0),
+            ).group_by(Clients.agent_id)
+        )
+    ).all()
+    clients_by_agent = {r[0]: r for r in client_rows}
+
+    ledger_rows = (
+        await db.execute(
+            select(
+                Commission_ledger.agent_id,
+                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
+                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
+                func.coalesce(func.sum(Commission_ledger.agent_net), 0.0),
+                func.count(Commission_ledger.id),
+            ).group_by(Commission_ledger.agent_id)
+        )
+    ).all()
+    ledger_by_agent = {r[0]: r for r in ledger_rows}
+
+    agents = (await db.execute(select(Agents).order_by(Agents.created_at.desc()))).scalars().all()
+    active_agents = sum(1 for a in agents if a.is_active is not False)
+
+    by_agent: List[AgentEconomics] = []
+    for ag in agents:
+        c = clients_by_agent.get(ag.id)
+        l = ledger_by_agent.get(ag.id)
+        by_agent.append(
+            AgentEconomics(
+                agent_id=ag.id,
+                company_name=ag.company_name,
+                is_active=ag.is_active if ag.is_active is not None else True,
+                total_clients=int(c[1]) if c else 0,
+                active_clients=int(c[2]) if c else 0,
+                mrr=round(float(c[3]) if c else 0.0, 2),
+                collected=round(float(l[1]) if l else 0.0, 2),
+                master_owed=round(float(l[2]) if l else 0.0, 2),
+                net=round(float(l[3]) if l else 0.0, 2),
+                payments=int(l[4]) if l else 0,
+            )
+        )
+
+    return MasterEconomicsResponse(
+        total_agents=len(agents),
+        active_agents=active_agents,
+        total_clients=total_clients,
+        active_clients=active_clients,
+        churned_clients=churned_clients,
+        mrr=mrr,
+        arr=round(mrr * 12, 2),
+        churn_rate=churn_rate,
+        collected=collected,
+        platform_revenue=platform_revenue,
+        by_agent=by_agent,
     )
 
 
