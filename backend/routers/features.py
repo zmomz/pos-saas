@@ -575,9 +575,11 @@ async def get_sales_summary(
             and_(
                 Transactions.client_id == client_id,
                 Transactions.created_at >= start_date,
-                # POS-10: parked (held) tickets are not sales — exclude them so a
-                # held cart never inflates reported revenue.
+                # POS-10/POS-08: parked (held) tickets and voided sales are not
+                # revenue — exclude them so neither inflates reported sales.
+                # ``is_distinct_from`` keeps NULL-status (legacy completed) rows.
                 Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
             )
         ).group_by(bucket).order_by(bucket)
     )
@@ -634,8 +636,10 @@ async def get_top_products(
             and_(
                 Transactions.client_id == client_id,
                 Transactions.created_at >= start_date,
-                # POS-10: exclude parked (held) tickets from top-products.
+                # POS-10/POS-08: exclude parked (held) tickets and voided sales
+                # from top-products (NULL-status legacy rows are kept).
                 Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
             )
         )
     )
@@ -703,8 +707,10 @@ async def export_transactions_csv(
             and_(
                 Transactions.client_id == client_id,
                 Transactions.created_at >= start_date,
-                # POS-10: exclude parked (held) tickets from the CSV export.
+                # POS-10/POS-08: exclude parked (held) tickets and voided sales
+                # from the sales CSV export (the void itself is in audit_logs).
                 Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
             )
         ).order_by(Transactions.created_at.desc())
     )

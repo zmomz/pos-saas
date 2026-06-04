@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, holdSale, getHeldSales, recallSale, type MyPermissions, type TenderInfo, type HeldTicket } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, holdSale, getHeldSales, recallSale, type MyPermissions, type TenderInfo, type HeldTicket } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
@@ -119,6 +119,9 @@ export default function POSTerminal() {
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [refundProcessing, setRefundProcessing] = useState(false);
+  // POS-08: void (audited cancellation) of the selected sale.
+  const [voidProcessing, setVoidProcessing] = useState(false);
+  const [voidError, setVoidError] = useState('');
   // POS-07: per-line quantity to return, keyed by the line's index in the
   // selected transaction. Defaults to the full sold quantity (whole-invoice
   // refund); the cashier can dial any line down for a partial/line-level refund.
@@ -134,9 +137,11 @@ export default function POSTerminal() {
   const [holding, setHolding] = useState(false);
   const [heldError, setHeldError] = useState('');
 
-  // Phase 3: permission-aware UI — gate the refund flow on `pos.refund`.
+  // Phase 3: permission-aware UI — gate the refund flow on `pos.refund` and the
+  // audited void (POS-08) on `pos.void`.
   const [permissions, setPermissions] = useState<MyPermissions | null>(null);
   const canRefund = canUse(permissions, 'pos.refund');
+  const canVoid = canUse(permissions, 'pos.void');
 
   useEffect(() => {
     loadProducts();
@@ -678,12 +683,34 @@ export default function POSTerminal() {
     }
   }
 
+  // POS-08: void the selected sale. Unlike a refund this issues no credit note
+  // — the backend marks it `voided`, restores stock, and writes an audit row
+  // (gated by `pos.void`). A 409 means the invoice was already reported to ZATCA
+  // and must be refunded instead; we surface that as an in-panel error.
+  async function handleVoid() {
+    if (!selectedTransaction?.id || voidProcessing) return;
+    setVoidError('');
+    setVoidProcessing(true);
+    try {
+      await voidTransaction(selectedTransaction.id);
+      setSelectedTransaction(null);
+      setRefundQty({});
+      await loadRecentTransactions();
+    } catch (err) {
+      console.error('Void failed:', err);
+      setVoidError(t('void_failed'));
+    } finally {
+      setVoidProcessing(false);
+    }
+  }
+
   function handleNewSale() {
     setReceipt(null);
     setCart([]);
     setMode('sale');
     setSelectedTransaction(null);
     setRefundQty({});
+    setVoidError('');
     setAppliedDiscount(null);
     setDiscountCode('');
   }
@@ -1049,6 +1076,33 @@ export default function POSTerminal() {
                     {t('refund_no_permission')}
                   </p>
                 )}
+
+                {/* POS-08: audited void of a sale rung in error (gated by
+                    `pos.void`). Only offered on a live sale — a credit note,
+                    voided, or already-refunded transaction cannot be voided. */}
+                {canVoid &&
+                  ['completed', '', null, undefined].includes(
+                    selectedTransaction.status as string,
+                  ) && (
+                    <div className="border-t border-slate-600 pt-3 mt-3">
+                      <Button
+                        onClick={handleVoid}
+                        disabled={voidProcessing}
+                        variant="outline"
+                        className="w-full border-red-600 text-red-400 hover:bg-red-600/10 disabled:opacity-50"
+                      >
+                        {voidProcessing ? t('loading') : `✕ ${t('void_sale')}`}
+                      </Button>
+                      <p className="text-center text-xs text-slate-500 mt-2">
+                        {t('void_sale_hint')}
+                      </p>
+                      {voidError && (
+                        <p role="alert" className="text-center text-sm text-red-400 mt-2">
+                          {voidError}
+                        </p>
+                      )}
+                    </div>
+                  )}
               </div>
             ) : (
               <div className="flex items-center justify-center h-full text-slate-500">

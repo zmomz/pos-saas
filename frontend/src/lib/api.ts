@@ -245,6 +245,29 @@ export async function refundTransaction(
   return response.data;
 }
 
+// POS-08: void (audited cancellation) of a whole sale, gated by `pos.void`.
+export interface VoidResult {
+  transaction_id: number;
+  invoice_number: string;
+  status: string;
+}
+
+// POS-08: void a sale rung in error. Marks it `voided`, restores stock, and
+// writes an audit row server-side (gated by the `pos.void` permission). Unlike
+// a refund this issues no credit note; the server returns 409 if the invoice
+// has already been reported to ZATCA (refund it instead).
+export async function voidTransaction(
+  transactionId: number,
+  reason?: string,
+): Promise<VoidResult> {
+  const response = await client.apiCall.invoke<VoidResult>({
+    url: `/api/v1/pos/transactions/${transactionId}/void`,
+    method: 'POST',
+    data: reason ? { reason } : {},
+  });
+  return response.data;
+}
+
 // HW-03/PAY-05: integrated in-store SoftPOS terminals (F-005).
 export interface Terminal {
   id: number;

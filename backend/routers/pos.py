@@ -17,12 +17,14 @@ from dependencies.auth import get_current_user
 from dependencies.features import require_feature
 from dependencies.permissions import has_permission, require_permission
 from schemas.auth import UserResponse
+from models.audit_logs import Audit_logs
 from models.clients import Clients
 from models.customers import Customers
 from models.products import Products
 from models.transactions import Transactions
 from models.payment_tenders import PaymentTenders
 from models.terminals import Terminals
+from models.zatca_documents import ZatcaDocuments
 # Imported so the per-branch stock table registers on Base.metadata at startup
 # (services.branch_stock is only imported lazily inside handlers).
 from models.product_branch_stock import Product_branch_stock  # noqa: F401
@@ -570,6 +572,39 @@ async def create_transaction(
     for item in data.items:
         item_total = item.price * item.quantity - (item.discount or 0)
         subtotal += item_total
+
+    # ---- Price override (POS-08): gate manual unit-price changes (SEC-07) ----
+    # A cart line whose unit price differs from the product's catalog price is a
+    # manual price override — a fraud-sensitive action. Like the manual discount
+    # below it is permissioned: the account owner holds ``pos.price_override`` by
+    # default (deny-wins), but a restricted cashier can be denied, in which case an
+    # overridden line is rejected before anything is written. Ad-hoc lines whose
+    # ``product_id`` doesn't map to a catalog product are left to the cashier.
+    override_pids = [it.product_id for it in data.items if it.product_id]
+    if override_pids:
+        catalog_prices = {
+            row.id: float(row.price or 0)
+            for row in (
+                await db.execute(
+                    select(Products.id, Products.price).where(
+                        Products.id.in_(override_pids),
+                        Products.client_id == client.id,
+                    )
+                )
+            ).all()
+        }
+        has_override = any(
+            it.product_id in catalog_prices
+            and abs(float(it.price) - catalog_prices[it.product_id]) > 0.001
+            for it in data.items
+        )
+        if has_override and not await has_permission(
+            db, str(current_user.id), "pos.price_override"
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have the 'pos.price_override' permission.",
+            )
 
     # ---- Discount (PRC-01): validate server-side; never trust the client amount ----
     # A coded discount is validated against the order subtotal and priced from the
@@ -1381,6 +1416,8 @@ async def refund_transaction(
         raise HTTPException(status_code=400, detail="Cannot refund a credit note")
     if (original.status or "") == "refunded":
         raise HTTPException(status_code=400, detail="Transaction already refunded")
+    if (original.status or "") == "voided":
+        raise HTTPException(status_code=400, detail="Cannot refund a voided sale")
 
     try:
         items = json.loads(original.items_json) if original.items_json else []
@@ -1573,6 +1610,128 @@ class EmailReceiptRequest(BaseModel):
 
 class SmsReceiptRequest(BaseModel):
     to_number: str
+
+
+# ---------- Void a sale (audited, permissioned) — POS-08 ----------
+class VoidRequest(BaseModel):
+    """Optional reason for the audit trail when voiding a sale."""
+
+    reason: Optional[str] = None
+
+
+class VoidResponse(BaseModel):
+    transaction_id: int
+    invoice_number: str
+    status: str
+
+
+@router.post(
+    "/transactions/{txn_id}/void",
+    response_model=VoidResponse,
+    dependencies=[Depends(require_permission("pos.void"))],
+)
+async def void_transaction(
+    txn_id: int,
+    payload: Optional[VoidRequest] = None,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Void a sale (POS-08) — an **audited** cancellation gated by ``pos.void``.
+
+    A void cancels a whole sale that was rung in error: the sale is marked
+    ``voided``, every deducted unit is restored to the same stock pool the sale
+    drew from (the branch ledger when branch-tagged, else client-level), and an
+    ``audit_logs`` row records who voided what and why (fraud control / SEC-07).
+    A voided sale is excluded from sales/Z-report revenue and from the drawer
+    reconciliation (it never happened — see ``features.py`` / F-008/F-009 which
+    already skip the ``voided`` status), so the shift counters need no rewrite.
+
+    Distinct from a **refund**, which issues a ZATCA **credit note** (F-007).
+    For ZATCA compliance a void is therefore only allowed while the sale's
+    fiscal document has **not** yet been accepted by the authority — once the
+    invoice is ``cleared``/``reported`` the compliant reversal is a credit note,
+    so this returns 409 and the cashier must refund instead.
+
+    Owner-scoped (SEC-02): ``_get_owned_transaction`` filters on the caller's
+    client, so one client can never void another client's sale (foreign id →
+    404).
+    """
+    client = await get_client_for_user(db, str(current_user.id))
+    txn = await _get_owned_transaction(db, client, txn_id)
+
+    status_now = txn.status or "completed"
+    if (txn.total_amount or 0) < 0 or (txn.payment_method or "") == "refund" or status_now == "credit_note":
+        raise HTTPException(status_code=400, detail="Cannot void a credit note")
+    if status_now == "voided":
+        raise HTTPException(status_code=400, detail="Transaction already voided")
+    if status_now in ("refunded", "partial_refunded"):
+        raise HTTPException(
+            status_code=400,
+            detail="A refunded sale cannot be voided — it already has a credit note",
+        )
+    if status_now == "held":
+        raise HTTPException(
+            status_code=400, detail="A held ticket is not a sale; discard it instead of voiding"
+        )
+
+    # ZATCA compliance: a fiscally-accepted invoice (cleared/reported) must be
+    # reversed by a credit note, not voided.
+    accepted = (
+        await db.execute(
+            select(ZatcaDocuments.id).where(
+                ZatcaDocuments.transaction_id == txn.id,
+                ZatcaDocuments.status.in_(("cleared", "reported")),
+            )
+        )
+    ).first()
+    if accepted:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This invoice has been reported to ZATCA; issue a credit-note "
+                "refund instead of voiding it."
+            ),
+        )
+
+    # Restore stock to the same pool the sale deducted from (branch-aware).
+    try:
+        items = json.loads(txn.items_json) if txn.items_json else []
+    except (ValueError, TypeError):
+        items = []
+    if txn.branch_id:
+        from services.branch_stock import restore_branch_inventory
+
+        await restore_branch_inventory(
+            db, str(current_user.id), client.id, int(txn.branch_id), items
+        )
+    else:
+        await _restore_inventory(db, client.id, items)
+
+    txn.status = "voided"
+
+    # Audit trail (SEC-07 / POS-08): who voided which sale, and why.
+    reason = (payload.reason or "").strip() if payload else ""
+    db.add(
+        Audit_logs(
+            user_id=str(current_user.id),
+            action="POS_VOID_SALE",
+            entity_type="transactions",
+            entity_id=str(txn.id),
+            details=(
+                f"Voided sale {txn.invoice_number} (total {txn.total_amount})"
+                + (f" — reason: {reason}" if reason else "")
+            ),
+        )
+    )
+
+    await db.commit()
+    await db.refresh(txn)
+
+    return VoidResponse(
+        transaction_id=txn.id,
+        invoice_number=txn.invoice_number,
+        status=txn.status,
+    )
 
 
 async def _get_owned_transaction(db: AsyncSession, client: Clients, txn_id: int) -> Transactions:
