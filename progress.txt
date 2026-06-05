@@ -57,4 +57,4 @@
   Tests: test_phase5_rst_order_types.py (6 incl. named
   test_takeaway_order_needs_no_table / test_order_type_drives_print_routing).
   Full backend suite 362 passed; frontend lint+tsc+build green.
-  Commit: <pending>
+  Commit: 3c4256a
