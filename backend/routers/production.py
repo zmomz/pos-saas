@@ -1251,7 +1251,9 @@ async def get_branch_inventory(
             "city": branch.city,
             "is_main": branch.is_main,
             "total_products": len(products),
-            "total_stock_value": sum((p.price or 0) * _qty(p) for p in products),
+            # INV-09 (F-070): inventory is valued at COST (money tied up in stock),
+            # never sale price — a stock-on-hand valuation, not a retail markup.
+            "total_stock_value": sum((p.cost_price or 0) * _qty(p) for p in products),
             "low_stock_count": sum(1 for p in products if _qty(p) <= 10),
             "out_of_stock_count": sum(1 for p in products if _qty(p) <= 0),
         }

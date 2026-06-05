@@ -39,6 +39,6 @@ on conflict). Parity bar: Foodics / Rewaa / Marn, localized for Saudi. Parent PR
 
 - [x] **01 · F-068 — Profit / COGS / margin report + dead-stock** (`/reports/profit-margin`; snapshot cost_price onto the sale line) → `.scratch/reporting/01-F068-profit-margin-report.md` · Blocked by: none
 - [x] **02 · F-069 — VAT summary by rate** (`/reports/vat-summary`; standard/zero/exempt, credit notes netted) → `.scratch/reporting/02-F069-vat-summary-report.md` · Blocked by: none
-- [ ] **03 · F-070 — Inventory report at cost + movements** (`/reports/inventory`; fix dashboard sale-price valuation) → `.scratch/reporting/03-F070-inventory-report.md` · Blocked by: none
+- [x] **03 · F-070 — Inventory report at cost + movements** (`/reports/inventory`; fix dashboard sale-price valuation) → `.scratch/reporting/03-F070-inventory-report.md` · Blocked by: none
 - [ ] **04 · F-071 — Refund/void + discount reports** (`/reports/refunds-voids`, `/reports/discounts`; actor/reason/amount) → `.scratch/reporting/04-F071-refund-void-discount-reports.md` · Blocked by: none
 - [ ] **05 · F-072 — PDF export for every report** (generic fpdf2 RTL renderer + `?format=pdf` on all `/reports/*`) → `.scratch/reporting/05-F072-report-pdf-export.md` · Blocked by: 01, 02, 03, 04

@@ -263,3 +263,33 @@
   net 9 — plus CSV export and owner-scope/agent-403). Full backend suite 411
   passed; frontend lint+tsc+build green.
   Commit: f9b2061
+2026-06-05 · 03 / F-070 — Inventory report at cost + movements (RPT-07 / INV-09).
+  A merchant can finally pull a stock valuation at COST and a movement ledger,
+  not just a dashboard stat valued at sale price. Backend: new
+  GET /api/v1/reports/inventory (client-owner-scoped, SEC-02; trailing `days`
+  window) returns on-hand valuation at cost_price — per product (the
+  authoritative client-level on-hand, bounded catalog) and per branch (SUM(qty ×
+  cost) GROUP BY branch over the product_branch_stock ledger, in SQL — OPS-05) —
+  with a grand total, plus a movement feed composed from three existing primitives:
+  PO receipts (INV-07, received/partially_received POs in-window, one receipt row
+  per received line), inter-branch transfers (INV-05, stock_transfers w/ branch
+  names resolved) and counts/adjustments (INV-06, the signed variance is the
+  movement). Newest-first ledger + a CSV export (valuation + per-branch + movement
+  sections). Movement tables are naturally small and windowed (no
+  load-everything items_json stream needed). FIXED the latent dashboard bug at
+  production.py get_branch_inventory: total_stock_value valued stock at p.price
+  (sale price) — now p.cost_price (money tied up in inventory). Frontend:
+  ReportsAnalytics gained an Inventory (at Cost) card — a total-on-hand/total-
+  valuation strip, a by-product valuation table, a by-branch table and a movement
+  ledger table, with loading/error+retry/empty + no-movements states, brand
+  tokens, RTL; getInventoryReport typed api.ts wrapper +
+  InventoryValuationRow/BranchValuationRow/InventoryMovementRow/InventoryReport
+  types; i18n ×4 (ar/en/hi/ur) for the inventory + movement keys. Tests:
+  test_phase7_rpt_inventory.py (5 incl. the named
+  test_inventory_valuation_uses_cost_price — 10 units cost 6 / price 10 → stock
+  value 60 not 100 — and test_movements_show_receipt_and_transfer — a PO receipt
+  and a branch transfer both surface in the ledger with per-branch cost valuation
+  — plus the dashboard-at-cost fix, CSV export and owner-scope/agent-403).
+  Updated test_phase6_branch_stock (pinned the old sale-price valuation; now
+  asserts cost). Full backend suite 416 passed; frontend lint+tsc+build green.
+  Commit: PENDING

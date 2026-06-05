@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
-import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, type JournalExport, type ProfitMarginReport, type VatSummaryReport } from '@/lib/api';
+import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -116,6 +116,22 @@ const reportTranslations: Record<string, Record<string, string>> = {
     vat_collected: 'VAT Collected',
     vat_reversed: 'VAT Reversed',
     net_vat: 'Net VAT Payable',
+    inventory_report: 'Inventory (at Cost)',
+    inventory_hint: 'On-hand stock valued at cost — per product and per branch — plus a movement ledger for the last 30 days.',
+    download_inventory: 'Download Inventory CSV',
+    total_valuation: 'Total Stock Value',
+    total_on_hand: 'Total On Hand',
+    branch: 'Branch',
+    by_branch: 'By Branch',
+    movements: 'Stock Movements',
+    no_movements: 'No stock movements in this period.',
+    mv_type: 'Type',
+    mv_date: 'Date',
+    mv_reference: 'Reference',
+    mv_qty: 'Qty',
+    mv_receipt: 'Receipt',
+    mv_transfer: 'Transfer',
+    mv_adjustment: 'Adjustment',
   },
   ar: {
     reports_analytics: 'التقارير والتحليلات',
@@ -190,6 +206,22 @@ const reportTranslations: Record<string, Record<string, string>> = {
     vat_collected: 'الضريبة المحصلة',
     vat_reversed: 'الضريبة المعكوسة',
     net_vat: 'صافي الضريبة المستحقة',
+    inventory_report: 'المخزون (بالتكلفة)',
+    inventory_hint: 'قيمة المخزون المتوفر بالتكلفة — لكل منتج ولكل فرع — مع سجل الحركات لآخر 30 يومًا.',
+    download_inventory: 'تنزيل ملف المخزون CSV',
+    total_valuation: 'إجمالي قيمة المخزون',
+    total_on_hand: 'إجمالي المتوفر',
+    branch: 'الفرع',
+    by_branch: 'حسب الفرع',
+    movements: 'حركات المخزون',
+    no_movements: 'لا توجد حركات مخزون في هذه الفترة.',
+    mv_type: 'النوع',
+    mv_date: 'التاريخ',
+    mv_reference: 'المرجع',
+    mv_qty: 'الكمية',
+    mv_receipt: 'استلام',
+    mv_transfer: 'تحويل',
+    mv_adjustment: 'تسوية',
   },
   hi: {
     reports_analytics: 'रिपोर्ट और विश्लेषण',
@@ -264,6 +296,22 @@ const reportTranslations: Record<string, Record<string, string>> = {
     vat_collected: 'वैट संग्रहित',
     vat_reversed: 'वैट प्रतिवर्तित',
     net_vat: 'देय शुद्ध वैट',
+    inventory_report: 'इन्वेंटरी (लागत पर)',
+    inventory_hint: 'उपलब्ध स्टॉक का मूल्य लागत पर — प्रति उत्पाद और प्रति शाखा — पिछले 30 दिनों के मूवमेंट लेजर के साथ।',
+    download_inventory: 'इन्वेंटरी CSV डाउनलोड करें',
+    total_valuation: 'कुल स्टॉक मूल्य',
+    total_on_hand: 'कुल उपलब्ध',
+    branch: 'शाखा',
+    by_branch: 'शाखा के अनुसार',
+    movements: 'स्टॉक मूवमेंट',
+    no_movements: 'इस अवधि में कोई स्टॉक मूवमेंट नहीं।',
+    mv_type: 'प्रकार',
+    mv_date: 'तारीख',
+    mv_reference: 'संदर्भ',
+    mv_qty: 'मात्रा',
+    mv_receipt: 'प्राप्ति',
+    mv_transfer: 'स्थानांतरण',
+    mv_adjustment: 'समायोजन',
   },
   ur: {
     reports_analytics: 'رپورٹس اور تجزیات',
@@ -338,6 +386,22 @@ const reportTranslations: Record<string, Record<string, string>> = {
     vat_collected: 'ویٹ وصول شدہ',
     vat_reversed: 'ویٹ واپس شدہ',
     net_vat: 'قابل ادائیگی خالص ویٹ',
+    inventory_report: 'انوینٹری (لاگت پر)',
+    inventory_hint: 'دستیاب اسٹاک کی قیمت لاگت پر — فی پروڈکٹ اور فی برانچ — پچھلے 30 دن کے موومنٹ لیجر کے ساتھ۔',
+    download_inventory: 'انوینٹری CSV ڈاؤن لوڈ کریں',
+    total_valuation: 'کل اسٹاک قیمت',
+    total_on_hand: 'کل دستیاب',
+    branch: 'برانچ',
+    by_branch: 'برانچ کے لحاظ سے',
+    movements: 'اسٹاک موومنٹس',
+    no_movements: 'اس مدت میں کوئی اسٹاک موومنٹ نہیں۔',
+    mv_type: 'قسم',
+    mv_date: 'تاریخ',
+    mv_reference: 'حوالہ',
+    mv_qty: 'مقدار',
+    mv_receipt: 'وصولی',
+    mv_transfer: 'منتقلی',
+    mv_adjustment: 'ایڈجسٹمنٹ',
   },
 };
 
@@ -351,12 +415,14 @@ export default function ReportsAnalytics() {
   const [journal, setJournal] = useState<JournalExport | null>(null);
   const [margin, setMargin] = useState<ProfitMarginReport | null>(null);
   const [vat, setVat] = useState<VatSummaryReport | null>(null);
+  const [inventory, setInventory] = useState<InventoryReport | null>(null);
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [loadingJournal, setLoadingJournal] = useState(true);
   const [loadingMargin, setLoadingMargin] = useState(true);
   const [loadingVat, setLoadingVat] = useState(true);
+  const [loadingInventory, setLoadingInventory] = useState(true);
   // UX-02 (F-051): a failed fetch on any panel must surface a real error state
   // distinct from "no data" — generalizing the RPT-03 payment-panel pattern.
   const [salesError, setSalesError] = useState(false);
@@ -365,10 +431,12 @@ export default function ReportsAnalytics() {
   const [journalError, setJournalError] = useState(false);
   const [marginError, setMarginError] = useState(false);
   const [vatError, setVatError] = useState(false);
+  const [inventoryError, setInventoryError] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingJournal, setExportingJournal] = useState(false);
   const [exportingMargin, setExportingMargin] = useState(false);
   const [exportingVat, setExportingVat] = useState(false);
+  const [exportingInventory, setExportingInventory] = useState(false);
 
   const tr = useCallback(
     (key: string): string => {
@@ -387,6 +455,7 @@ export default function ReportsAnalytics() {
     fetchJournal();
     fetchMargin();
     fetchVat();
+    fetchInventory();
   }, []);
 
   async function fetchSalesData() {
@@ -535,6 +604,40 @@ export default function ReportsAnalytics() {
       URL.revokeObjectURL(url);
     } finally {
       setExportingVat(false);
+    }
+  }
+
+  async function fetchInventory() {
+    setLoadingInventory(true);
+    setInventoryError(false);
+    try {
+      const result = await getInventoryReport(30);
+      setInventory(result || null);
+    } catch {
+      // F-070: a failed fetch must surface a real error distinct from "no stock"
+      // — never silently render an empty inventory valuation (UX-02).
+      setInventoryError(true);
+      setInventory(null);
+    } finally {
+      setLoadingInventory(false);
+    }
+  }
+
+  async function handleExportInventory() {
+    if (!inventory?.csv_content) return;
+    setExportingInventory(true);
+    try {
+      const blob = new Blob([inventory.csv_content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `inventory_${inventory.from_date}_${inventory.to_date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingInventory(false);
     }
   }
 
@@ -1184,6 +1287,159 @@ export default function ReportsAnalytics() {
                   </TableRow>
                 </TableBody>
               </Table>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Inventory — on-hand valuation at cost + movements (F-070) */}
+      <Card className="bg-slate-800 border-slate-700 mb-8">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-white">{tr('inventory_report')}</CardTitle>
+            <p className="text-xs text-slate-400 mt-1">{tr('inventory_hint')}</p>
+          </div>
+          <Button
+            onClick={handleExportInventory}
+            disabled={exportingInventory || !inventory}
+            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+          >
+            {exportingInventory ? '...' : tr('download_inventory')}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loadingInventory ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : inventoryError ? (
+            <div className="text-center py-8" role="alert">
+              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
+              <Button
+                variant="outline"
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                onClick={fetchInventory}
+              >
+                {tr('retry')}
+              </Button>
+            </div>
+          ) : !inventory ? (
+            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <>
+              {/* Totals strip */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('total_on_hand')}</p>
+                  <p className="text-lg font-bold text-white">
+                    {inventory.total_quantity.toLocaleString()}
+                  </p>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('total_valuation')}</p>
+                  <p className="text-lg font-bold text-emerald-400">
+                    {tr('sar')} {inventory.total_valuation.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+
+              {/* On-hand valuation at cost, by product */}
+              {inventory.by_product.length === 0 ? (
+                <p className="text-slate-400 text-sm py-3">{tr('no_data')}</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-slate-700 hover:bg-slate-800">
+                      <TableHead className="text-slate-400">{tr('product_name')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('category')}</TableHead>
+                      <TableHead className="text-slate-400 text-end">{tr('on_hand')}</TableHead>
+                      <TableHead className="text-slate-400 text-end">{tr('cost')}</TableHead>
+                      <TableHead className="text-slate-400 text-end">{tr('stock_value')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {inventory.by_product.map((row) => (
+                      <TableRow key={row.product_id} className="border-slate-700 hover:bg-slate-750">
+                        <TableCell className="text-white font-medium">{row.name}</TableCell>
+                        <TableCell className="text-slate-400 text-xs">{row.category || '—'}</TableCell>
+                        <TableCell className="text-slate-300 text-end">{row.quantity}</TableCell>
+                        <TableCell className="text-slate-300 text-end">
+                          {tr('sar')} {row.cost_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-slate-300 text-end">
+                          {tr('sar')} {row.stock_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+
+              {/* Per-branch valuation */}
+              {inventory.by_branch.length > 0 && (
+                <div className="mt-6">
+                  <h4 className="text-sm font-semibold text-slate-300 mb-2">{tr('by_branch')}</h4>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-slate-700 hover:bg-slate-800">
+                        <TableHead className="text-slate-400">{tr('branch')}</TableHead>
+                        <TableHead className="text-slate-400 text-end">{tr('on_hand')}</TableHead>
+                        <TableHead className="text-slate-400 text-end">{tr('stock_value')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {inventory.by_branch.map((b) => (
+                        <TableRow key={b.branch_id} className="border-slate-700 hover:bg-slate-750">
+                          <TableCell className="text-white font-medium">
+                            {b.branch_name || `#${b.branch_id}`}
+                          </TableCell>
+                          <TableCell className="text-slate-300 text-end">{b.quantity}</TableCell>
+                          <TableCell className="text-slate-300 text-end">
+                            {tr('sar')} {b.stock_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {/* Movement ledger */}
+              <div className="mt-6">
+                <h4 className="text-sm font-semibold text-slate-300 mb-2">{tr('movements')}</h4>
+                {inventory.movements.length === 0 ? (
+                  <p className="text-slate-400 text-sm py-3">{tr('no_movements')}</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-slate-700 hover:bg-slate-800">
+                        <TableHead className="text-slate-400">{tr('mv_date')}</TableHead>
+                        <TableHead className="text-slate-400">{tr('mv_type')}</TableHead>
+                        <TableHead className="text-slate-400">{tr('product_name')}</TableHead>
+                        <TableHead className="text-slate-400 text-end">{tr('mv_qty')}</TableHead>
+                        <TableHead className="text-slate-400">{tr('mv_reference')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {inventory.movements.map((m, idx) => (
+                        <TableRow key={idx} className="border-slate-700 hover:bg-slate-750">
+                          <TableCell className="text-slate-400 text-xs">{m.date}</TableCell>
+                          <TableCell className="text-slate-300 text-xs">
+                            {tr(`mv_${m.type}`)}
+                          </TableCell>
+                          <TableCell className="text-white">
+                            {m.product_name || (m.product_id ? `#${m.product_id}` : '—')}
+                          </TableCell>
+                          <TableCell className="text-slate-300 text-end">{m.quantity}</TableCell>
+                          <TableCell className="text-slate-400 text-xs">{m.reference || '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
             </>
           )}
         </CardContent>

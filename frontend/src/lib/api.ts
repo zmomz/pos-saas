@@ -1030,6 +1030,56 @@ export async function getVatSummaryReport(days = 30): Promise<VatSummaryReport> 
   return response.data;
 }
 
+// RPT-07 / INV-09 (F-070): inventory report — on-hand valued at COST (not sale
+// price) per product and per branch, plus a movement ledger (PO receipts, branch
+// transfers, counts/adjustments) over a trailing window.
+export interface InventoryValuationRow {
+  product_id: number;
+  name: string;
+  category: string | null;
+  quantity: number;
+  cost_price: number;
+  stock_value: number;
+}
+
+export interface BranchValuationRow {
+  branch_id: number;
+  branch_name: string | null;
+  quantity: number;
+  stock_value: number;
+}
+
+export interface InventoryMovementRow {
+  date: string;
+  type: string; // "receipt" | "transfer" | "adjustment"
+  product_id: number | null;
+  product_name: string | null;
+  quantity: number;
+  reference: string | null;
+  note: string | null;
+}
+
+export interface InventoryReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  by_product: InventoryValuationRow[];
+  by_branch: BranchValuationRow[];
+  total_quantity: number;
+  total_valuation: number;
+  movements: InventoryMovementRow[];
+  csv_content: string;
+}
+
+export async function getInventoryReport(days = 30): Promise<InventoryReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/inventory?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.

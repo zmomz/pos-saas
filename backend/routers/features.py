@@ -1702,6 +1702,300 @@ async def report_vat_summary(
 
 
 # ============================================================
+# INVENTORY REPORT — on-hand valuation at cost + movements (RPT-07, F-070)
+# ============================================================
+# A merchant could not pull a stock valuation at cost or a movement ledger: the
+# only stock figure was a dashboard stat valued at SALE price (production.py —
+# now corrected to cost). This report gives the two things every POS leader
+# (Rewaa, Marn, Foodics) surfaces:
+#
+#   • On-hand valuation at ``cost_price`` — the money tied up in inventory, per
+#     product (the authoritative client-level on-hand) and per branch (the
+#     per-branch ledger the POS deducts from), with a grand total.
+#   • A movement ledger over a trailing window — PO receipts (INV-07), inter-branch
+#     transfers (INV-05) and counts/adjustments (INV-06) — so stock changes are
+#     traceable.
+#
+# Owner-scoped to the calling client (SEC-02). Valuation reads a bounded catalog;
+# the movement tables are naturally small and windowed (OPS-05, no load-everything
+# items_json stream is needed here).
+
+class InventoryValuationRow(BaseModel):
+    product_id: int
+    name: str
+    category: Optional[str] = None
+    quantity: float
+    cost_price: float
+    stock_value: float
+
+
+class BranchValuationRow(BaseModel):
+    branch_id: int
+    branch_name: Optional[str] = None
+    quantity: float
+    stock_value: float
+
+
+class InventoryMovementRow(BaseModel):
+    date: str
+    type: str  # "receipt" | "transfer" | "adjustment"
+    product_id: Optional[int] = None
+    product_name: Optional[str] = None
+    quantity: float       # signed change (receipts +, adjustments = variance, …)
+    reference: Optional[str] = None
+    note: Optional[str] = None
+
+
+class InventoryReportResponse(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    by_product: List[InventoryValuationRow]
+    by_branch: List[BranchValuationRow]
+    total_quantity: float
+    total_valuation: float
+    movements: List[InventoryMovementRow]
+    csv_content: str
+
+
+@router.get("/api/v1/reports/inventory", response_model=InventoryReportResponse)
+async def report_inventory(
+    days: int = Query(30, ge=1, le=365),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """On-hand inventory valued at ``cost_price`` + a movement ledger (F-070).
+
+    Valuation is at cost (never sale price) per product and per branch, with a
+    grand total. The movement feed pulls PO receipts, inter-branch transfers and
+    counts/adjustments over the trailing ``days`` window. Owner-scoped to the
+    calling client (SEC-02). Aggregated in SQL over bounded/windowed tables
+    (OPS-05).
+    """
+    from models.branches import Branches
+    from models.product_branch_stock import Product_branch_stock
+    from models.purchase_orders import Purchase_orders
+    from models.stock_adjustments import Stock_adjustments
+    from models.stock_transfers import Stock_transfers
+
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can view the inventory report")
+
+    client_id = role_info["entity_id"]
+    user_id = str(current_user.id)
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    # ---- On-hand valuation at cost, per product (bounded catalog) ----
+    prod_rows = (
+        await db.execute(
+            select(
+                Products.id,
+                Products.name,
+                Products.category,
+                Products.cost_price,
+                Products.quantity,
+            ).where(
+                and_(Products.client_id == client_id, Products.is_active == True)  # noqa: E712
+            )
+        )
+    ).all()
+
+    by_product: List[InventoryValuationRow] = []
+    total_qty = 0.0
+    total_value = 0.0
+    for pid, name, category, cost_price, quantity in prod_rows:
+        qty = float(quantity or 0.0)
+        cost = float(cost_price or 0.0)
+        value = round(qty * cost, 2)
+        total_qty += qty
+        total_value += value
+        by_product.append(
+            InventoryValuationRow(
+                product_id=pid,
+                name=name,
+                category=category or None,
+                quantity=round(qty, 3),
+                cost_price=round(cost, 2),
+                stock_value=value,
+            )
+        )
+    by_product.sort(key=lambda r: (-r.stock_value, r.name))
+    total_qty = round(total_qty, 3)
+    total_value = round(total_value, 2)
+
+    # ---- Per-branch valuation at cost (the ledger the POS deducts from) ----
+    # SUM(on-hand × cost) grouped by branch, in SQL (OPS-05). Joins the product's
+    # cost onto each ledger row; only branches with explicit ledger rows appear
+    # (a branch with no allocation is represented in the client-level product
+    # aggregate above).
+    branch_qty_expr = func.coalesce(Product_branch_stock.quantity, 0.0)
+    branch_value_rows = (
+        await db.execute(
+            select(
+                Product_branch_stock.branch_id,
+                func.sum(branch_qty_expr * func.coalesce(Products.cost_price, 0.0)),
+                func.sum(branch_qty_expr),
+            )
+            .join(Products, Products.id == Product_branch_stock.product_id)
+            .where(Product_branch_stock.client_id == client_id)
+            .group_by(Product_branch_stock.branch_id)
+        )
+    ).all()
+
+    branch_names = {
+        b.id: b.name
+        for b in (
+            await db.execute(select(Branches).where(Branches.user_id == user_id))
+        ).scalars().all()
+    }
+    by_branch: List[BranchValuationRow] = [
+        BranchValuationRow(
+            branch_id=bid,
+            branch_name=branch_names.get(bid),
+            quantity=round(float(qty or 0.0), 3),
+            stock_value=round(float(value or 0.0), 2),
+        )
+        for bid, value, qty in branch_value_rows
+    ]
+    by_branch.sort(key=lambda r: (-r.stock_value, r.branch_id))
+
+    # ---- Movement ledger over the window (owner-scoped, windowed) ----
+    movements: List[InventoryMovementRow] = []
+
+    # PO receipts (INV-07): a received / partially-received PO over the window;
+    # each received product line is one receipt movement.
+    po_rows = (
+        await db.execute(
+            select(Purchase_orders).where(
+                and_(
+                    Purchase_orders.user_id == user_id,
+                    Purchase_orders.status.in_(["received", "partially_received"]),
+                    Purchase_orders.updated_at >= start_date,
+                )
+            )
+        )
+    ).scalars().all()
+    for po in po_rows:
+        try:
+            lines = json.loads(po.items_json) if po.items_json else []
+        except (json.JSONDecodeError, TypeError):
+            lines = []
+        po_date = po.received_date or (
+            po.updated_at.date().isoformat() if po.updated_at else now.date().isoformat()
+        )
+        for line in lines if isinstance(lines, list) else []:
+            received = float(line.get("received") or 0)
+            if received <= 0:
+                continue
+            movements.append(
+                InventoryMovementRow(
+                    date=po_date,
+                    type="receipt",
+                    product_id=line.get("product_id"),
+                    product_name=line.get("product_name") or line.get("name"),
+                    quantity=round(received, 3),
+                    reference=po.order_number or f"PO #{po.id}",
+                    note=None,
+                )
+            )
+
+    # Inter-branch transfers (INV-05).
+    transfer_rows = (
+        await db.execute(
+            select(Stock_transfers).where(
+                and_(
+                    Stock_transfers.user_id == user_id,
+                    Stock_transfers.created_at >= start_date,
+                )
+            )
+        )
+    ).scalars().all()
+    for t in transfer_rows:
+        src = branch_names.get(t.from_branch_id, f"#{t.from_branch_id}")
+        dst = branch_names.get(t.to_branch_id, f"#{t.to_branch_id}")
+        movements.append(
+            InventoryMovementRow(
+                date=t.created_at.date().isoformat() if t.created_at else now.date().isoformat(),
+                type="transfer",
+                product_id=t.product_id,
+                product_name=t.product_name,
+                quantity=round(float(t.quantity or 0), 3),
+                reference=f"{src} → {dst}",
+                note=None,
+            )
+        )
+
+    # Counts / adjustments (INV-06): the signed variance is the movement.
+    adj_rows = (
+        await db.execute(
+            select(Stock_adjustments).where(
+                and_(
+                    Stock_adjustments.user_id == user_id,
+                    Stock_adjustments.created_at >= start_date,
+                )
+            )
+        )
+    ).scalars().all()
+    for a in adj_rows:
+        movements.append(
+            InventoryMovementRow(
+                date=a.created_at.date().isoformat() if a.created_at else now.date().isoformat(),
+                type="adjustment",
+                product_id=a.product_id,
+                product_name=a.product_name,
+                quantity=round(float(a.variance or 0), 3),
+                reference=a.reason,
+                note=a.note,
+            )
+        )
+
+    # Newest first; stable on (date, type) so a window reads like a ledger.
+    movements.sort(key=lambda m: (m.date, m.type), reverse=True)
+
+    # ---- CSV (valuation rows + a movement section) ----
+    output = io.StringIO()
+    writer = csv.writer(output)
+    period_label = f"{start_date.date().isoformat()}..{now.date().isoformat()}"
+    writer.writerow(["Inventory valuation at cost", period_label])
+    writer.writerow(["Product ID", "Name", "Category", "On Hand", "Cost", "Stock Value"])
+    for r in by_product:
+        writer.writerow(
+            [r.product_id, r.name, r.category or "", f"{r.quantity:g}",
+             f"{r.cost_price:.2f}", f"{r.stock_value:.2f}"]
+        )
+    writer.writerow(["", "", "TOTAL", f"{total_qty:g}", "", f"{total_value:.2f}"])
+    writer.writerow([])
+    writer.writerow(["Per-branch valuation at cost"])
+    writer.writerow(["Branch ID", "Branch", "On Hand", "Stock Value"])
+    for b in by_branch:
+        writer.writerow(
+            [b.branch_id, b.branch_name or "", f"{b.quantity:g}", f"{b.stock_value:.2f}"]
+        )
+    writer.writerow([])
+    writer.writerow(["Stock movements (last %d days)" % days])
+    writer.writerow(["Date", "Type", "Product", "Quantity", "Reference", "Note"])
+    for m in movements:
+        writer.writerow(
+            [m.date, m.type, m.product_name or (f"#{m.product_id}" if m.product_id else ""),
+             f"{m.quantity:g}", m.reference or "", m.note or ""]
+        )
+
+    return InventoryReportResponse(
+        days=days,
+        from_date=start_date.date().isoformat(),
+        to_date=now.date().isoformat(),
+        by_product=by_product,
+        by_branch=by_branch,
+        total_quantity=total_qty,
+        total_valuation=total_value,
+        movements=movements,
+        csv_content=output.getvalue(),
+    )
+
+
+# ============================================================
 # Z-REPORT / X-REPORT (RPT-06, PRN-05) — fiscal day-close
 # ============================================================
 # A Z-report reconciles a single shift: sales grouped by tender (the real

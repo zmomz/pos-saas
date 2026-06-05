@@ -96,7 +96,8 @@ async def test_branch_insufficient_stock_rejected(client):
 async def test_branch_inventory_view_uses_ledger(client):
     user, token, client_id = await make_client_account(client)
     headers = auth_headers(token)
-    pid = await add_product(client_id, user["id"], quantity=100, price=5.0)
+    # Stock is valued at COST (F-070): cost 3.0, sale price 5.0.
+    pid = await add_product(client_id, user["id"], quantity=100, price=5.0, cost_price=3.0)
     branch_a = await _make_branch(client, headers, "Branch A")
     await _set_stock(client, headers, branch_a, pid, 4)
 
@@ -106,5 +107,6 @@ async def test_branch_inventory_view_uses_ledger(client):
     assert resp.status_code == 200, resp.text
     branches = resp.json()["branches"]
     assert len(branches) == 1
-    # 4 units * 5.0 = 20.0 from the ledger, not 100 * 5.0 = 500 (the old façade).
-    assert abs(branches[0]["total_stock_value"] - 20.0) < 0.01
+    # 4 units (from the ledger, not the 100 client-level façade) × cost 3.0 = 12.0
+    # — valued at cost (F-070), never the 5.0 sale price.
+    assert abs(branches[0]["total_stock_value"] - 12.0) < 0.01
