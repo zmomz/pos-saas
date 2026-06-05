@@ -292,4 +292,4 @@
   — plus the dashboard-at-cost fix, CSV export and owner-scope/agent-403).
   Updated test_phase6_branch_stock (pinned the old sale-price valuation; now
   asserts cost). Full backend suite 416 passed; frontend lint+tsc+build green.
-  Commit: PENDING
+  Commit: fd67360
