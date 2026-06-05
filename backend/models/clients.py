@@ -43,6 +43,12 @@ class Clients(Base):
     salla_webhook_secret = Column(String, nullable=True)
     invoice_counter = Column(Integer, nullable=True, default=0, server_default='0')
     language_preference = Column(String, nullable=True, default='en', server_default='en')
-    zatca_enabled = Column(Boolean, nullable=True, default=False, server_default='false')
+    # ZA-09: per-client e-invoicing opt-out, honored on the sale path
+    # (services/zatca_sale.py::is_zatca_enabled). ZATCA is the Saudi default so a
+    # new client is provisioned with it ON; an agent may switch it OFF for a
+    # non-VAT-registered merchant, whose sales then complete as simplified
+    # non-tax receipts (no stamp/QR, no zatca_documents row). Only an explicit
+    # False disables — a legacy NULL is treated as enabled (de-facto always-signed).
+    zatca_enabled = Column(Boolean, nullable=True, default=True, server_default='true')
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

@@ -1017,22 +1017,32 @@ async def create_transaction(
     # Persist the captured tenders against the now-known transaction id. These
     # carry the real network/approval/RRN proof for card-like tenders (PAY-01).
     _persist_tenders(db, str(current_user.id), client.id, transaction.id, captured_tenders)
+    # ZA-09: honor the per-client zatca_enabled opt-out. With ZATCA on (the Saudi
+    # default) the invoice is hashed/ECDSA-stamped/chained/archived inside this
+    # same transaction; with it off the sale completes as a simplified non-tax
+    # receipt — no stamp/QR, no zatca_documents row, nothing reported to Fatoora.
     # ZA-06: a VAT-registered buyer on the transaction routes the invoice to B2B
     # clearance; the captured buyer VAT (F-018) is rendered into the UBL buyer block.
-    doc, stamped_qr = await zatca_sale.sign_transaction(
-        db, client, transaction,
-        buyer_vat=transaction.customer_vat_number,
-    )
-    document_id = doc.id
+    if zatca_sale.is_zatca_enabled(client):
+        doc, stamped_qr = await zatca_sale.sign_transaction(
+            db, client, transaction,
+            buyer_vat=transaction.customer_vat_number,
+        )
+        document_id = doc.id
+    else:
+        stamped_qr = None
+        document_id = None
 
     await db.commit()
     await db.refresh(transaction)
 
     # Queue Fatoora reporting out-of-band (C-3): fails closed to "pending" when
     # the gateway/onboarding isn't configured; never blocks the committed sale.
-    background_tasks.add_task(
-        zatca_sale.report_document_background, document_id, client.id
-    )
+    # Skipped entirely when the client has ZATCA disabled (no document to report).
+    if document_id is not None:
+        background_tasks.add_task(
+            zatca_sale.report_document_background, document_id, client.id
+        )
 
     # ---- Domain webhook: sale.completed (Phase 3) ----
     # Fire registered webhooks out-of-band so integrations (accounting, ERP) are
@@ -1066,10 +1076,12 @@ async def create_transaction(
         payment_breakdown=transaction.payment_breakdown,
         status=transaction.status or "completed",
         zatca_qr=stamped_qr,
-        zatca_qr_base64=zatca_service_mod.render_qr_png_base64(stamped_qr),
+        zatca_qr_base64=(
+            zatca_service_mod.render_qr_png_base64(stamped_qr) if stamped_qr else None
+        ),
         zatca_hash=transaction.zatca_hash,
         zatca_document_id=document_id,
-        zatca_status="signed",
+        zatca_status="signed" if document_id is not None else "disabled",
         items_json=transaction.items_json,
         customer_name=transaction.customer_name,
         customer_phone=transaction.customer_phone,
@@ -1228,10 +1240,14 @@ async def process_offline_sale(
             }
         ],
     )
-    doc, _stamped_qr = await zatca_sale.sign_transaction(
-        db, client, transaction,
-        buyer_vat=transaction.customer_vat_number,
-    )
+    # ZA-09: a replayed offline sale follows the same per-client policy — sign and
+    # archive only when the client has ZATCA enabled, otherwise persist the sale
+    # without a fiscal document.
+    if zatca_sale.is_zatca_enabled(client):
+        await zatca_sale.sign_transaction(
+            db, client, transaction,
+            buyer_vat=transaction.customer_vat_number,
+        )
     await db.commit()
     await db.refresh(transaction)
     return {
@@ -1532,7 +1548,10 @@ class RefundResponse(BaseModel):
     total_amount: float
     zatca_qr: Optional[str] = None
     zatca_qr_base64: Optional[str] = None
-    zatca_document_id: int
+    # ZA-09: a credit note is only signed/archived when the client has ZATCA
+    # enabled; for a ZATCA-disabled client these are null and zatca_status is
+    # "disabled".
+    zatca_document_id: Optional[int] = None
     zatca_status: str
     # POS-07: "refunded" when every line is now fully returned, "partial_refunded"
     # when a balance remains on the original invoice.
@@ -1800,23 +1819,32 @@ async def refund_transaction(
     refund_tender_rows = await _refund_tenders(db, original, refund_total)
     _persist_tenders(db, str(current_user.id), client.id, credit.id, refund_tender_rows)
 
-    doc, stamped_qr = await zatca_sale.sign_transaction(
-        db,
-        client,
-        credit,
-        document_type="credit_note",
-        invoice_type_code="381",
-        billing_reference=original.invoice_number,
-        # ZA-06: a B2B credit note inherits the original sale's buyer VAT so it is
-        # cleared/reported on the same path as the invoice it reverses.
-        buyer_vat=credit.customer_vat_number,
-    )
-    document_id = doc.id
+    # ZA-09: a credit note follows the original sale's per-client policy. With
+    # ZATCA on it is a real type-381 ECDSA-signed, hash-chained document; with it
+    # off the refund still issues the credit note + reverses tenders/stock, but
+    # without a fiscal stamp or zatca_documents row.
+    if zatca_sale.is_zatca_enabled(client):
+        doc, stamped_qr = await zatca_sale.sign_transaction(
+            db,
+            client,
+            credit,
+            document_type="credit_note",
+            invoice_type_code="381",
+            billing_reference=original.invoice_number,
+            # ZA-06: a B2B credit note inherits the original sale's buyer VAT so it is
+            # cleared/reported on the same path as the invoice it reverses.
+            buyer_vat=credit.customer_vat_number,
+        )
+        document_id = doc.id
+    else:
+        stamped_qr = None
+        document_id = None
 
     await db.commit()
     await db.refresh(credit)
 
-    background_tasks.add_task(zatca_sale.report_document_background, document_id, client.id)
+    if document_id is not None:
+        background_tasks.add_task(zatca_sale.report_document_background, document_id, client.id)
     background_tasks.add_task(
         fire_event_background,
         str(current_user.id),
@@ -1836,9 +1864,11 @@ async def refund_transaction(
         credit_note_number=credit_number,
         total_amount=credit.total_amount,
         zatca_qr=stamped_qr,
-        zatca_qr_base64=zatca_service_mod.render_qr_png_base64(stamped_qr),
+        zatca_qr_base64=(
+            zatca_service_mod.render_qr_png_base64(stamped_qr) if stamped_qr else None
+        ),
         zatca_document_id=document_id,
-        zatca_status="signed",
+        zatca_status="signed" if document_id is not None else "disabled",
         original_status=original.status,
     )
 

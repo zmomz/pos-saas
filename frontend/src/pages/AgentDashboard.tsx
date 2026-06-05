@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getAgentClients, getAgentBranding, getAgentRevenue, createNewClient, toggleClient, setClientFeature, resetClientPassword, runDunning, type AgentRevenue } from '@/lib/api';
+import { client, getAgentClients, getAgentBranding, getAgentRevenue, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, type AgentRevenue } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -19,6 +19,8 @@ interface ClientItem {
   phone: string;
   is_active: boolean;
   subscription_fee: number;
+  // ZA-09: whether ZATCA e-invoicing is on for this client (default ON).
+  zatca_enabled: boolean;
 }
 
 interface Branding {
@@ -48,6 +50,9 @@ export default function AgentDashboard() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [resettingId, setResettingId] = useState<number | null>(null);
+  // ZA-09 (F-022): per-client ZATCA toggle — id being flipped + a transient error.
+  const [zatcaTogglingId, setZatcaTogglingId] = useState<number | null>(null);
+  const [zatcaError, setZatcaError] = useState<string | null>(null);
   // RSL-01 (F-029): real settled-subscription economics from the commission
   // ledger — collected / owed-to-platform / net margin. Loaded independently so
   // a failure renders this panel's error state, not a blank page.
@@ -166,6 +171,25 @@ export default function AgentDashboard() {
       console.error('Reset client password failed:', err);
     } finally {
       setResettingId(null);
+    }
+  }
+
+  // ZA-09 (F-022): flip ZATCA e-invoicing for a client. The sale path honors the
+  // flag — off means simplified non-tax receipts. Optimistic update with a
+  // rollback on failure so the badge always reflects the real stored policy.
+  async function handleToggleZatca(clientId: number) {
+    setZatcaTogglingId(clientId);
+    setZatcaError(null);
+    try {
+      const result = await setClientZatca(clientId);
+      setClients((prev) =>
+        prev.map((c) => (c.id === clientId ? { ...c, zatca_enabled: result.zatca_enabled } : c))
+      );
+    } catch (err) {
+      console.error('Toggle ZATCA failed:', err);
+      setZatcaError(t('zatca_toggle_failed') || 'Could not change ZATCA status. Please try again.');
+    } finally {
+      setZatcaTogglingId(null);
     }
   }
 
@@ -500,6 +524,12 @@ export default function AgentDashboard() {
           </Dialog>
         </div>
 
+        {zatcaError && (
+          <div role="alert" className={`mb-3 rounded-md px-3 py-2 text-sm ${isDark ? 'bg-red-900/30 text-red-300 border border-red-700/40' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+            {zatcaError}
+          </div>
+        )}
+
         <div className={`overflow-x-auto rounded-lg border ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
           <table className="w-full text-sm">
             <thead className={isDark ? 'bg-slate-800' : 'bg-gray-50'}>
@@ -509,6 +539,7 @@ export default function AgentDashboard() {
                 <th className="p-3 text-start">{t('phone')}</th>
                 <th className="p-3 text-start">{t('subscription_fee')}</th>
                 <th className="p-3 text-start">{t('status')}</th>
+                <th className="p-3 text-start">{t('zatca_status')}</th>
                 <th className="p-3 text-start">{t('actions') || 'Actions'}</th>
               </tr>
             </thead>
@@ -525,7 +556,12 @@ export default function AgentDashboard() {
                     </Badge>
                   </td>
                   <td className="p-3">
-                    <div className="flex gap-2">
+                    <Badge className={c.zatca_enabled ? 'bg-emerald-600 text-white' : (isDark ? 'bg-slate-600 text-slate-200' : 'bg-gray-400 text-white')}>
+                      {c.zatca_enabled ? (t('zatca_on') || 'On') : (t('zatca_off') || 'Off')}
+                    </Badge>
+                  </td>
+                  <td className="p-3">
+                    <div className="flex gap-2 flex-wrap">
                       <Button
                         size="sm"
                         variant={c.is_active ? 'destructive' : 'default'}
@@ -560,6 +596,20 @@ export default function AgentDashboard() {
                         className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700 text-xs' : 'border-gray-300 text-gray-700 hover:bg-gray-100 text-xs'}
                       >
                         {resettingId === c.id ? '...' : (t('reset_password') || 'Reset Password')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleToggleZatca(c.id)}
+                        disabled={zatcaTogglingId === c.id}
+                        title={c.zatca_enabled ? (t('disable_zatca') || 'Disable ZATCA') : (t('enable_zatca') || 'Enable ZATCA')}
+                        className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700 text-xs' : 'border-gray-300 text-gray-700 hover:bg-gray-100 text-xs'}
+                      >
+                        {zatcaTogglingId === c.id
+                          ? '...'
+                          : c.zatca_enabled
+                            ? (t('disable_zatca') || 'Disable ZATCA')
+                            : (t('enable_zatca') || 'Enable ZATCA')}
                       </Button>
                     </div>
                   </td>

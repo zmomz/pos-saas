@@ -1036,6 +1036,18 @@ export async function toggleClient(clientId: number) {
   return response.data;
 }
 
+// ZA-09 (F-022): agent toggles ZATCA e-invoicing on/off for one of their own
+// clients. The sale path honors clients.zatca_enabled — off means simplified
+// non-tax receipts (no stamp/QR, no fiscal document).
+export async function setClientZatca(clientId: number): Promise<{ success: boolean; zatca_enabled: boolean }> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/agent/clients/${clientId}/zatca`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
 export interface ResetPasswordResult {
   success: boolean;
   client_id: number;

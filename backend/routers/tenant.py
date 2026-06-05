@@ -533,7 +533,7 @@ async def list_agent_clients(
             phone=client.phone,
             subscription_fee=client.subscription_fee,
             is_active=client.is_active if client.is_active is not None else True,
-            zatca_enabled=client.zatca_enabled if client.zatca_enabled is not None else False,
+            zatca_enabled=client.zatca_enabled if client.zatca_enabled is not None else True,
             language_preference=client.language_preference or "en",
             created_at=client.created_at,
         ))
@@ -1018,7 +1018,10 @@ async def create_client_for_agent(
         is_active=True,
         language_preference=client_language,
         business_type=business_type,
-        zatca_enabled=False,
+        # ZA-09: ZATCA is the Saudi default — a new merchant is provisioned with
+        # e-invoicing ON. The agent can switch it off later for a non-VAT-registered
+        # client (POST /agent/clients/{id}/zatca).
+        zatca_enabled=True,
         invoice_counter=0,
     )
     db.add(new_client)
@@ -1085,7 +1088,7 @@ async def create_client_for_agent(
         phone=new_client.phone,
         subscription_fee=new_client.subscription_fee,
         is_active=True,
-        zatca_enabled=False,
+        zatca_enabled=True,
         language_preference=new_client.language_preference or "en",
         created_at=new_client.created_at,
         temp_password=temp_password,
@@ -1124,6 +1127,49 @@ async def toggle_client(
     )
     await db.commit()
     return ToggleResponse(success=True, is_active=new_status)
+
+
+class ZatcaToggleResponse(BaseModel):
+    success: bool
+    zatca_enabled: bool
+
+
+@router.post("/agent/clients/{client_id}/zatca", response_model=ZatcaToggleResponse)
+async def toggle_client_zatca(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: turn ZATCA e-invoicing on/off for one of their own clients (ZA-09).
+
+    Makes the per-client ``zatca_enabled`` policy explicit and intentional: when
+    on (the Saudi default) every sale is ECDSA-stamped/chained/archived; when off
+    a non-VAT-registered merchant's sales complete as simplified non-tax receipts
+    with no fiscal document. The sale path honors this via
+    ``services/zatca_sale.py::is_zatca_enabled``. Scoped to the agent's own
+    clients exactly like :func:`toggle_client` — a non-owning agent gets 404
+    (SEC-02). A NULL flag (legacy, de-facto always-signed) reads as enabled, so
+    the first toggle switches it off.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    result = await db.execute(
+        select(Clients).where(
+            Clients.id == client_id, Clients.agent_id == role_info["entity_id"]
+        )
+    )
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    new_value = not (merchant.zatca_enabled is not False)
+    await db.execute(
+        update(Clients).where(Clients.id == client_id).values(zatca_enabled=new_value)
+    )
+    await db.commit()
+    return ZatcaToggleResponse(success=True, zatca_enabled=new_value)
 
 
 class ResetClientPasswordResponse(BaseModel):

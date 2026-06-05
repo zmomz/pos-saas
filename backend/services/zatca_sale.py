@@ -71,6 +71,20 @@ def classify_invoice_subtype(buyer_vat: Optional[str], total: float) -> str:
     return "simplified"
 
 
+def is_zatca_enabled(client: Clients) -> bool:
+    """ZA-09: honor the per-client ``zatca_enabled`` opt-out on the sale path.
+
+    ZATCA e-invoicing is the Saudi default — provisioning enables it and the
+    column defaults ON — but a non-VAT-registered merchant may switch it off via
+    the agent UI. When it is off, a sale (or refund credit note) completes as a
+    simplified non-tax receipt: **no** ECDSA stamp/QR, **no** ``zatca_documents``
+    row, and nothing queued to Fatoora. Only an **explicit** ``False`` disables;
+    a NULL — a legacy client created before the flag was honored, which was
+    de-facto always-signed — is treated as enabled so existing behavior holds.
+    """
+    return getattr(client, "zatca_enabled", None) is not False
+
+
 async def get_or_create_signing_creds(db, client: Clients) -> ZatcaCredentials:
     """Return the client's ZATCA credentials, self-provisioning a signing key.
 
