@@ -1304,6 +1304,10 @@ class ZReportTotals(BaseModel):
     refund_count: int
     void_count: int
     voids: float
+    # POS-13 (F-012): gratuities collected over the shift, on top of the invoice
+    # totals. Outside the VAT base, reported here so a manager can reconcile/pay
+    # out tips per shift.
+    tips: float
 
 
 class ZReportCash(BaseModel):
@@ -1369,6 +1373,7 @@ async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
     vat_reversed = 0.0
     discounts = 0.0
     voids_total = 0.0
+    tips_total = 0.0
     sale_count = 0
     refund_count = 0
     void_count = 0
@@ -1387,6 +1392,7 @@ async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
             gross_sales += float(t.total_amount or 0)
             vat_collected += float(t.vat_amount or 0)
             discounts += float(t.discount_amount or 0)
+            tips_total += float(t.tip_amount or 0)
             sale_count += 1
             sale_ids.append(t.id)
 
@@ -1471,6 +1477,7 @@ async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
             "refund_count": refund_count,
             "void_count": void_count,
             "voids": round(voids_total, 2),
+            "tips": round(tips_total, 2),
         },
         "tenders": tenders,
         "cash": {

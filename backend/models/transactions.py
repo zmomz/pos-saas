@@ -15,6 +15,12 @@ class Transactions(Base):
     vat_amount = Column(Float, nullable=True)
     discount_amount = Column(Float, nullable=True, default=0, server_default='0')
     total_amount = Column(Float, nullable=False)
+    # Gratuity collected on top of the invoice total (POS-13 tips, F-012). A tip is
+    # OUTSIDE the VAT base — it never changes subtotal/vat_amount/total_amount (the
+    # ZATCA tax-invoice total stays goods+VAT). It is added to the amount actually
+    # charged across the tenders, shown as the amount paid on the receipt, and
+    # reported per shift in the Z/X-report. Null/0 on a sale with no tip.
+    tip_amount = Column(Float, nullable=True, default=0, server_default='0')
     payment_method = Column(String, nullable=False)
     # JSON array of {"method": str, "amount": float} for split/mixed tenders
     # (cash+card, etc.). Null/empty for single-tender sales where payment_method

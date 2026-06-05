@@ -67,6 +67,9 @@ interface Receipt {
   items: { name: string; quantity: number; price: number }[];
   discount_amount?: number;
   discount_code?: string;
+  // POS-13 (F-012): gratuity collected on top of total_amount; shown as the amount
+  // paid so the on-screen receipt matches what the customer was charged.
+  tip_amount?: number | null;
   // Captured tenders (PAY-01) — show the network/approval proof on the receipt.
   tenders?: TenderInfo[];
 }
@@ -149,6 +152,10 @@ export default function POSTerminal() {
   ]);
   // CRM-03/PRC-05 (F-038): bearer code for a single-tender gift-card sale.
   const [giftCardCode, setGiftCardCode] = useState('');
+
+  // POS-13 (F-012): tip / gratuity collected on top of the invoice total. Outside
+  // the VAT base; added to the amount due so the tenders cover total + tip.
+  const [tipAmount, setTipAmount] = useState(0);
 
   // Discount state
   const [discountCode, setDiscountCode] = useState('');
@@ -523,6 +530,10 @@ export default function POSTerminal() {
   const discountedSubtotal = subtotal - discountAmount;
   const vatAmount = discountedSubtotal * 0.15;
   const total = discountedSubtotal + vatAmount;
+  // POS-13 (F-012): the tip is OUTSIDE the VAT base above; the customer pays the
+  // invoice total plus the tip, so the tenders (split or single) must cover this.
+  const tip = Math.max(0, Number(tipAmount) || 0);
+  const amountDue = total + tip;
 
   // POS-06: products filtered by the name-search box (Arabic name included).
   const filteredProducts = searchQuery.trim()
@@ -536,9 +547,10 @@ export default function POSTerminal() {
       })
     : products;
 
-  // POS-02: split tenders must add up to the invoice total before checkout.
+  // POS-02: split tenders must add up to the amount due (invoice total + tip,
+  // POS-13) before checkout.
   const splitTotal = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-  const splitBalanced = Math.abs(splitTotal - total) < 0.01;
+  const splitBalanced = Math.abs(splitTotal - amountDue) < 0.01;
 
   function updateSplitPayment(
     idx: number,
@@ -610,6 +622,9 @@ export default function POSTerminal() {
         // no code are gated behind the pos.discount permission server-side).
         discount_code: appliedDiscount?.code,
         discount_amount: discountAmount > 0 ? discountAmount : undefined,
+        // POS-13 (F-012): gratuity on top of the invoice total; the backend adds it
+        // to the amount the tenders must cover and reports it in the Z-report.
+        tip_amount: tip > 0 ? Number(tip.toFixed(2)) : undefined,
         payments: splitMode
           ? splitPayments.filter((p) => (Number(p.amount) || 0) > 0)
           : undefined,
@@ -636,6 +651,7 @@ export default function POSTerminal() {
         total_amount: result.total_amount,
         vat_amount: result.vat_amount,
         subtotal: result.subtotal,
+        tip_amount: result.tip_amount,
         payment_method: result.payment_method || paymentMethod,
         zatca_qr_base64: result.zatca_qr_base64 || '',
         zatca_status: result.zatca_status,
@@ -662,6 +678,7 @@ export default function POSTerminal() {
       setSplitMode(false);
       setSplitPayments([{ method: 'cash', amount: 0 }, { method: 'card', amount: 0 }]);
       setGiftCardCode('');
+      setTipAmount(0);
       setRedeemPoints('');
       setSelectedCustomerId('');
     } catch (err) {
@@ -911,6 +928,19 @@ export default function POSTerminal() {
                 <span>الإجمالي</span>
                 <span>{formatMoneyAr(receipt.total_amount || 0)}</span>
               </div>
+              {/* POS-13 (F-012): tip + the amount actually paid (total + tip). */}
+              {receipt.tip_amount && receipt.tip_amount > 0 && (
+                <>
+                  <div className="flex justify-between text-slate-400 text-sm">
+                    <span>البقشيش</span>
+                    <span>{formatMoneyAr(receipt.tip_amount)}</span>
+                  </div>
+                  <div className="flex justify-between text-emerald-300 font-bold">
+                    <span>المبلغ المدفوع</span>
+                    <span>{formatMoneyAr((receipt.total_amount || 0) + receipt.tip_amount)}</span>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="flex justify-between text-slate-300 text-sm">
@@ -1573,6 +1603,57 @@ export default function POSTerminal() {
             <span>${total.toFixed(2)}</span>
           </div>
 
+          {/* POS-13 (F-012): tip / gratuity on top of the invoice total. Outside the
+              VAT base; quick-percent buttons compute off the total, or enter a custom
+              amount. The amount due (total + tip) is what the tenders must cover. */}
+          <div>
+            <label className="text-slate-400 text-sm block mb-1">{t('tip')}</label>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                value={tipAmount ? String(tipAmount) : ''}
+                onChange={(e) => setTipAmount(Math.max(0, Number(e.target.value) || 0))}
+                placeholder="0.00"
+                dir="ltr"
+                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500 text-sm"
+              />
+              {[10, 15, 20].map((pct) => (
+                <Button
+                  key={pct}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setTipAmount(Number(((total * pct) / 100).toFixed(2)))}
+                  className="border border-slate-600 text-slate-300 hover:bg-slate-700 px-2 whitespace-nowrap"
+                >
+                  {pct}%
+                </Button>
+              ))}
+              {tip > 0 && (
+                <Button
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setTipAmount(0)}
+                  className="h-9 w-9 p-0 text-red-400 hover:text-red-300 hover:bg-transparent"
+                  aria-label={t('clear_tip')}
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {tip > 0 && (
+            <div className="flex justify-between text-emerald-300 font-bold text-lg border-t border-slate-700 pt-2">
+              <span>{t('amount_due')}</span>
+              <span>${amountDue.toFixed(2)}</span>
+            </div>
+          )}
+
           <div>
             <div className="flex items-center justify-between mb-1">
               <label className="text-slate-400 text-sm">{t('payment_method')}</label>
@@ -1658,7 +1739,7 @@ export default function POSTerminal() {
                 ))}
                 <div className={`flex justify-between text-xs ${splitBalanced ? 'text-green-400' : 'text-orange-400'}`}>
                   <span>{t('allocated')}: ${splitTotal.toFixed(2)}</span>
-                  <span>{t('remaining')}: ${(total - splitTotal).toFixed(2)}</span>
+                  <span>{t('remaining')}: ${(amountDue - splitTotal).toFixed(2)}</span>
                 </div>
               </div>
             )}

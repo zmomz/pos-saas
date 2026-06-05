@@ -186,6 +186,9 @@ export interface TransactionResult {
   vat_amount: number;
   discount_amount: number;
   total_amount: number;
+  // POS-13 (F-012): gratuity collected on top of total_amount; null when no tip.
+  // The customer paid total_amount + tip_amount across the tenders.
+  tip_amount?: number | null;
   payment_method: string;
   status: string;
   // Stamped ZATCA TLV (base64) + the ready-to-render fiscal QR PNG (base64).
@@ -229,6 +232,9 @@ export async function createTransaction(data: {
   customer_vat_number?: string;
   // POS-01: persist the applied order discount so totals match what the cashier saw.
   discount_amount?: number;
+  // POS-13 (F-012): gratuity collected on top of the invoice total. Outside the VAT
+  // base; the split/single tenders must cover total_amount + tip_amount.
+  tip_amount?: number;
   // PRC-01: a discount code the server validates and prices authoritatively. When
   // set, the server recomputes the discount from the rule and consumes one use —
   // the client-sent discount_amount is not trusted for the coded portion.

@@ -55,6 +55,10 @@ _L = {
     "discount": "الخصم",
     "vat": "ضريبة القيمة المضافة",
     "grand_total": "الإجمالي شامل الضريبة (ر.س)",
+    # POS-13 (F-012): tip / gratuity collected on top of the tax-invoice total, and
+    # the amount the customer actually paid (total + tip). Shown only when tipped.
+    "tip": "البقشيش",
+    "total_paid": "المبلغ المدفوع (ر.س)",
     "thanks": "شكراً لزيارتكم",
 }
 
@@ -216,6 +220,7 @@ def _render_receipt_image(
     discount: float,
     vat_amount: float,
     total_amount: float,
+    tip_amount: float = 0,
 ):
     """Render the always-Arabic receipt body to a 1-bit PIL image (RTL)."""
     from PIL import Image, ImageDraw, ImageFont
@@ -297,6 +302,12 @@ def _render_receipt_image(
         lr(_L["discount"], "-" + format_money_ar(discount), f_norm)
     lr(_L["vat"], format_money_ar(vat_amount), f_norm)
     lr(_L["grand_total"], format_money_ar(total_amount), f_big)
+    # POS-13 (F-012): a tip is outside the tax-invoice total above; show it plus the
+    # amount the customer actually paid so the printed receipt matches what was
+    # charged. Omitted entirely when no tip was taken.
+    if tip_amount:
+        lr(_L["tip"], format_money_ar(tip_amount), f_norm)
+        lr(_L["total_paid"], format_money_ar(total_amount + tip_amount), f_big)
     rule()
 
     return img.crop((0, 0, _WIDTH_PX, min(y + margin, est_h)))
@@ -329,6 +340,7 @@ def _append_text_fallback(
     discount,
     vat_amount,
     total_amount,
+    tip_amount: float = 0,
     width: int,
 ) -> None:  # pragma: no cover - only hit in a degraded environment
     """Degraded ASCII receipt body when Arabic rendering is unavailable.
@@ -362,6 +374,11 @@ def _append_text_fallback(
     b.bold(True)
     b.line("TOTAL (SAR):".ljust(width - 12) + _money(total_amount).rjust(12))
     b.bold(False)
+    if tip_amount:
+        b.line("Tip:".ljust(width - 12) + _money(tip_amount).rjust(12))
+        b.bold(True)
+        b.line("PAID (SAR):".ljust(width - 12) + _money(total_amount + tip_amount).rjust(12))
+        b.bold(False)
     b.line("-" * width)
 
 
@@ -376,6 +393,7 @@ def build_receipt(
     discount: float,
     vat_amount: float,
     total_amount: float,
+    tip_amount: float = 0,
     zatca_qr: str,
     width: int = 42,
     open_drawer: bool = False,
@@ -405,6 +423,7 @@ def build_receipt(
                 discount=discount,
                 vat_amount=vat_amount,
                 total_amount=total_amount,
+                tip_amount=tip_amount,
             )
             b.align("center").raster_image(body)
             rendered = True
@@ -423,6 +442,7 @@ def build_receipt(
             discount=discount,
             vat_amount=vat_amount,
             total_amount=total_amount,
+            tip_amount=tip_amount,
             width=width,
         )
 

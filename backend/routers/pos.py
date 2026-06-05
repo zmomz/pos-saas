@@ -121,6 +121,12 @@ class CreateTransactionRequest(BaseModel):
     # gated behind the ``pos.discount`` permission.
     discount_code: Optional[str] = None
     discount_amount: Optional[float] = 0
+    # Gratuity collected on top of the invoice total (POS-13 tips, F-012). It is
+    # OUTSIDE the VAT base (not part of the taxable supply) so it never changes the
+    # subtotal/VAT/total the ZATCA document is stamped on; it is added to the amount
+    # the tenders must cover and reported per shift in the Z-report. A split's
+    # per-tender amounts therefore sum to total_amount + tip_amount.
+    tip_amount: Optional[float] = 0
     vat_rate: Optional[float] = 15.0  # fallback; the global rate (MA-05) wins when set
     # Optional split-tender breakdown (POS-02). When given, the per-method amounts
     # must sum to the invoice total; payment_method is derived ("mixed" if >1).
@@ -170,6 +176,9 @@ class TransactionResponse(BaseModel):
     vat_amount: float
     discount_amount: float
     total_amount: float
+    # Gratuity collected on top of total_amount (POS-13, F-012); null when no tip.
+    # The customer paid total_amount + tip_amount across the tenders.
+    tip_amount: Optional[float] = None
     payment_method: str
     payment_breakdown: Optional[str] = None
     status: str
@@ -841,17 +850,28 @@ async def create_transaction(
     vat_amount = round(taxable_amount * (vat_rate / 100), 2)
     total_amount = round(taxable_amount + vat_amount, 2)
 
+    # ---- Tip / gratuity (POS-13, F-012) ----
+    # A tip is collected on TOP of the invoice total and is OUTSIDE the VAT base —
+    # it has already been excluded above (VAT is on taxable_amount only), so the
+    # ZATCA document's subtotal/VAT/total are unaffected. ``charge_total`` is what
+    # the customer actually pays (and what the tenders must cover); the tip is
+    # recorded separately and surfaced in the Z-report and on the receipt.
+    tip_amount = round(float(data.tip_amount or 0), 2)
+    if tip_amount < 0:
+        raise HTTPException(status_code=400, detail="tip_amount cannot be negative")
+    charge_total = round(total_amount + tip_amount, 2)
+
     # ---- Payment breakdown (POS-02): validate + summarise split tenders ----
     payment_breakdown_json: Optional[str] = None
     payment_method = data.payment_method
     if data.payments:
         paid_total = round(sum(p.amount for p in data.payments), 2)
-        if abs(paid_total - total_amount) > 0.01:
+        if abs(paid_total - charge_total) > 0.01:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"Payment breakdown total {paid_total:.2f} does not match "
-                    f"invoice total {total_amount:.2f}"
+                    f"amount due {charge_total:.2f}"
                 ),
             )
         # Redact the gift-card bearer code from the stored breakdown (it is the
@@ -876,7 +896,8 @@ async def create_transaction(
     # internal tenders pass through with no gateway round-trip. A leg may name an
     # in-store SoftPOS terminal (HW-03/F-005) — resolved here to the paired device
     # so the customer taps and the approval is captured before any row is written.
-    tender_specs = _build_tender_specs(data, total_amount)
+    # The tenders must capture the full amount due (invoice total + tip, F-012).
+    tender_specs = _build_tender_specs(data, charge_total)
     await _attach_terminal_gateways(db, str(current_user.id), tender_specs)
     # Gift-card legs (PRC-05/F-038) are validated + atomically decremented FIRST,
     # before any card is charged — so an invalid/insufficient card fails the sale
@@ -938,6 +959,7 @@ async def create_transaction(
         vat_amount=vat_amount,
         discount_amount=discount_amount,
         total_amount=total_amount,
+        tip_amount=tip_amount,
         payment_method=payment_method,
         payment_breakdown=payment_breakdown_json,
         status="completed",
@@ -1072,6 +1094,7 @@ async def create_transaction(
         vat_amount=transaction.vat_amount or 0,
         discount_amount=transaction.discount_amount or 0,
         total_amount=transaction.total_amount,
+        tip_amount=transaction.tip_amount or None,
         payment_method=transaction.payment_method,
         payment_breakdown=transaction.payment_breakdown,
         status=transaction.status or "completed",
@@ -2149,6 +2172,7 @@ async def get_escpos_receipt(
         discount=txn.discount_amount or 0,
         vat_amount=txn.vat_amount or 0,
         total_amount=txn.total_amount,
+        tip_amount=txn.tip_amount or 0,
         zatca_qr=txn.zatca_qr or "",
         open_drawer=open_drawer,
     )

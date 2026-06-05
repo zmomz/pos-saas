@@ -732,6 +732,7 @@ class PDFInvoiceService:
             <tr><td>المرتجعات ({to_arabic_digits(totals.get('refund_count', 0))})</td><td>{format_money_ar(totals.get('refunds', 0))} ر.س</td></tr>
             <tr><td>الإلغاءات ({to_arabic_digits(totals.get('void_count', 0))})</td><td>{format_money_ar(totals.get('voids', 0))} ر.س</td></tr>
             <tr><td>الخصومات</td><td>{format_money_ar(totals.get('discounts', 0))} ر.س</td></tr>
+            <tr><td>البقشيش (خارج وعاء الضريبة)</td><td>{format_money_ar(totals.get('tips', 0))} ر.س</td></tr>
             <tr><td>ضريبة القيمة المضافة المحصّلة</td><td>{format_money_ar(totals.get('vat_collected', 0))} ر.س</td></tr>
             <tr><td>ضريبة القيمة المضافة المعكوسة</td><td>{format_money_ar(totals.get('vat_reversed', 0))} ر.س</td></tr>
             <tr><td><strong>صافي المبيعات</strong></td><td><strong>{format_money_ar(totals.get('net_sales', 0))} ر.س</strong></td></tr>
