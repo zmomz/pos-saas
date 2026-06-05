@@ -175,4 +175,4 @@
   station / test_bump_then_recall / test_kot_render_arabic_no_prices, plus a
   broker real-time-delivery test and the double-gate/owner-scope tests). Full
   backend suite 398 passed; frontend lint+tsc+build green.
-  Commit: PENDING
+  Commit: 1abbe66
