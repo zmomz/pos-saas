@@ -1,4 +1,5 @@
-import { createClient, uploadMultipart, getBlob } from './atomsClient';
+import { createClient, uploadMultipart, getBlob, getToken } from './atomsClient';
+import { getAPIBaseURL } from './config';
 
 export const client = createClient();
 
@@ -2294,6 +2295,138 @@ export async function deleteCombo(comboId: number) {
     data: {},
   });
   return res.data;
+}
+
+// ---------- KDS / KOT + real-time kitchen channel (F-057) ----------
+// A manager defines prep-stations; firing a course (F-055) materializes one KDS
+// card per relevant station and pushes it to the board over SSE (≤1s). A cook
+// bumps a card off the board and recalls a mistaken bump; a per-station 80mm
+// always-Arabic KOT (modifiers grouped by course, no prices) prints for stations
+// without a screen.
+export interface PrepStation {
+  id: number;
+  name: string;
+  name_ar?: string | null;
+  sort_order?: number | null;
+}
+
+export interface KdsCardItem {
+  item_id: number;
+  name?: string | null;
+  qty: number;
+  course?: string | null;
+  notes?: string | null;
+  modifiers: string[];
+}
+
+export interface KdsCard {
+  id: number;
+  order_ticket_id: number;
+  table_id?: number | null;
+  station_id?: number | null;
+  course?: string | null;
+  status: string; // active | bumped
+  customer_name?: string | null;
+  order_type?: string | null;
+  items: KdsCardItem[];
+  fired_at?: string | null;
+  bumped_at?: string | null;
+}
+
+export interface KotCourse {
+  course: string;
+  items: { name?: string | null; qty: number; notes?: string | null; modifiers: string[] }[];
+}
+
+export interface KotPayload {
+  kds_ticket_id: number;
+  order_ticket_id: number;
+  station_id?: number | null;
+  station_name?: string | null;
+  station_name_ar?: string | null;
+  table_id?: number | null;
+  fired_at?: string | null;
+  courses: KotCourse[];
+  kot_base64: string;
+}
+
+export async function getPrepStations(): Promise<PrepStation[]> {
+  const res = await client.apiCall.invoke<PrepStation[]>({
+    url: '/api/v1/restaurant/kds/stations',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function createPrepStation(data: {
+  name: string;
+  name_ar?: string;
+  sort_order?: number;
+}): Promise<PrepStation> {
+  const res = await client.apiCall.invoke<PrepStation>({
+    url: '/api/v1/restaurant/kds/stations',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function deletePrepStation(stationId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/kds/stations/${stationId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getKdsTickets(params?: {
+  status?: string;
+  station_id?: number;
+}): Promise<{ items: KdsCard[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: KdsCard[]; total: number }>({
+    url: '/api/v1/restaurant/kds/tickets',
+    method: 'GET',
+    data: params || {},
+  });
+  return res.data;
+}
+
+export async function bumpKdsTicket(kdsId: number): Promise<KdsCard> {
+  const res = await client.apiCall.invoke<KdsCard>({
+    url: `/api/v1/restaurant/kds/${kdsId}/bump`,
+    method: 'POST',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function recallKdsTicket(kdsId: number): Promise<KdsCard> {
+  const res = await client.apiCall.invoke<KdsCard>({
+    url: `/api/v1/restaurant/kds/${kdsId}/recall`,
+    method: 'POST',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getKdsKot(kdsId: number): Promise<KotPayload> {
+  const res = await client.apiCall.invoke<KotPayload>({
+    url: `/api/v1/restaurant/kds/${kdsId}/kot`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+// The SSE stream URL for the live kitchen board. EventSource can't set an
+// Authorization header, so the JWT rides as a query param (gated server-side by
+// the same restaurant double-gate). Returns null when not authenticated.
+export function kdsStreamUrl(): string | null {
+  const token = getToken();
+  if (!token) return null;
+  return `${getAPIBaseURL()}/api/v1/restaurant/kds/stream?token=${encodeURIComponent(token)}`;
 }
 
 // ---------- ZATCA document status (ZA-08, F-019) ----------

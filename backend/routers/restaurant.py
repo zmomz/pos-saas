@@ -13,24 +13,29 @@ A non-client account (master/agent/unknown) gets 403. Every read/write is scoped
 to the caller's ``user_id`` in the service layer so one client can never see
 another's floor (SEC-02).
 """
+import asyncio
 import json
 import logging
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_db
+from core.auth import AccessTokenError, decode_access_token
+from core.database import db_manager, get_db
 from dependencies.auth import get_current_user
 from dependencies.features import is_feature_enabled
 from models.clients import Clients
 from schemas.auth import UserResponse
 from services import zatca as zatca_service_mod
 from services import zatca_sale
-from services.escpos import build_receipt_base64
+from services.escpos import build_kot_base64, build_receipt_base64
+from services.kds_channel import kds_broker
 from services.restaurant import (
+    KDS_STATUSES,
     ORDER_TYPES,
     SPLIT_STRATEGIES,
     TABLE_STATES,
@@ -47,18 +52,14 @@ RESTAURANT_BUSINESS_TYPES = ("restaurant", "both")
 
 
 # ---------- Gate dependency ----------
-async def get_restaurant_client(
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-) -> Clients:
-    """Resolve the caller's client row and enforce the two restaurant gates.
+async def _resolve_restaurant_client(db: AsyncSession, user_id: str) -> Clients:
+    """Resolve a user's client row and enforce the two restaurant gates.
 
-    Returns the ``Clients`` row (used for ``user_id`` scoping + ``client_id`` on
-    created rows). Raises 403 when the caller is not a client, when their
-    ``business_type`` isn't restaurant/both, or when the ``restaurant`` feature is
-    disabled for them.
+    Shared by the header-auth dependency and the SSE stream's query-token path so
+    the double-gate (business_type ∈ restaurant/both + the ``restaurant`` feature
+    flag) is identical everywhere. Raises 403 when any gate fails.
     """
-    result = await db.execute(select(Clients).where(Clients.user_id == str(current_user.id)))
+    result = await db.execute(select(Clients).where(Clients.user_id == str(user_id)))
     client = result.scalar_one_or_none()
     if client is None:
         raise HTTPException(
@@ -74,6 +75,20 @@ async def get_restaurant_client(
             status_code=403, detail="The 'restaurant' feature is disabled for your account."
         )
     return client
+
+
+async def get_restaurant_client(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Clients:
+    """Resolve the caller's client row and enforce the two restaurant gates.
+
+    Returns the ``Clients`` row (used for ``user_id`` scoping + ``client_id`` on
+    created rows). Raises 403 when the caller is not a client, when their
+    ``business_type`` isn't restaurant/both, or when the ``restaurant`` feature is
+    disabled for them.
+    """
+    return await _resolve_restaurant_client(db, current_user.id)
 
 
 # ---------- Pydantic Schemas ----------
@@ -434,6 +449,31 @@ class BomListResponse(BaseModel):
     total: int
     # Component costs rolled up to a parent cost-of-goods value (F-062 hook).
     cost_of_goods: float
+
+
+# ---------- Prep-station / KDS schemas (F-057) ----------
+class PrepStationData(BaseModel):
+    name: str
+    name_ar: Optional[str] = None
+    sort_order: int = 0
+
+
+class PrepStationUpdateData(BaseModel):
+    name: Optional[str] = None
+    name_ar: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class PrepStationResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    name: str
+    name_ar: Optional[str] = None
+    sort_order: Optional[int] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ---------- Zone routes ----------
@@ -1436,3 +1476,201 @@ async def delete_bom_entry(
     if not ok:
         raise HTTPException(status_code=404, detail="BOM entry not found")
     return {"message": "BOM entry deleted successfully", "id": bom_id}
+
+
+# ---------- Prep-station routes (F-057) ----------
+@router.get("/kds/stations", response_model=List[PrepStationResponse])
+async def list_prep_stations(
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's kitchen prep-stations (F-057)."""
+    service = RestaurantService(db)
+    return await service.list_prep_stations(user_id=client.user_id)
+
+
+@router.post("/kds/stations", response_model=PrepStationResponse, status_code=201)
+async def create_prep_station(
+    data: PrepStationData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Define a prep-station with a bilingual name (F-057)."""
+    service = RestaurantService(db)
+    try:
+        return await service.create_prep_station(
+            data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except Exception as e:
+        logger.error(f"Error creating prep station: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.put("/kds/stations/{station_id}", response_model=PrepStationResponse)
+async def update_prep_station(
+    station_id: int,
+    data: PrepStationUpdateData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a prep-station (requires ownership, F-057)."""
+    service = RestaurantService(db)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    result = await service.update_prep_station(station_id, updates, user_id=client.user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Prep station not found")
+    return result
+
+
+@router.delete("/kds/stations/{station_id}")
+async def delete_prep_station(
+    station_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a prep-station (requires ownership, F-057)."""
+    service = RestaurantService(db)
+    ok = await service.delete_prep_station(station_id, user_id=client.user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Prep station not found")
+    return {"message": "Prep station deleted successfully", "id": station_id}
+
+
+# ---------- Kitchen Display (KDS) routes (F-057) ----------
+@router.get("/kds/tickets")
+async def list_kds_tickets(
+    status: Optional[str] = Query("active"),
+    station_id: Optional[int] = Query(None),
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """The kitchen board snapshot — fired cards the caller owns (F-057).
+
+    Defaults to ``active`` cards (those still cooking); pass ``status=bumped`` to
+    review completed cards or ``status=`` (empty) for all. The real-time updates
+    ride the SSE stream below; this is the initial/poll snapshot.
+    """
+    if status == "":
+        status = None
+    if status is not None and status not in KDS_STATUSES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status. Allowed: {', '.join(KDS_STATUSES)}"
+        )
+    service = RestaurantService(db)
+    cards = await service.list_kds_tickets(
+        user_id=client.user_id, status=status, station_id=station_id
+    )
+    items = [service._kds_to_dict(c) for c in cards]
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/kds/{kds_id}/bump")
+async def bump_kds_ticket(
+    kds_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark a card done — clear it from the active board (F-057).
+
+    Advances the card ``active -> bumped`` and its source order lines to
+    ``bumped`` so the server's screen and the kitchen agree.
+    """
+    service = RestaurantService(db)
+    card = await service.bump_kds_ticket(kds_id, user_id=client.user_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="KDS ticket not found")
+    return card
+
+
+@router.post("/kds/{kds_id}/recall")
+async def recall_kds_ticket(
+    kds_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a mistakenly-bumped card to the active board (F-057)."""
+    service = RestaurantService(db)
+    card = await service.recall_kds_ticket(kds_id, user_id=client.user_id)
+    if card is None:
+        raise HTTPException(status_code=404, detail="KDS ticket not found")
+    return card
+
+
+@router.get("/kds/{kds_id}/kot")
+async def print_kds_kot(
+    kds_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render the per-station 80mm **always-Arabic** KOT for a card (F-057).
+
+    Modifiers are grouped under each course and **no prices appear** — a kitchen
+    ticket carries no money, no QR, no stamp. Returns the structured KOT model
+    plus the base64 ESC/POS stream the browser streams to the station printer.
+    """
+    service = RestaurantService(db)
+    payload = await service.kot_payload(kds_id, user_id=client.user_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="KDS ticket not found")
+    station_label = payload.get("station_name_ar") or payload.get("station_name") or ""
+    kot_base64 = build_kot_base64(
+        station_name=station_label,
+        order_ref=str(payload.get("order_ticket_id") or ""),
+        table_label=str(payload.get("table_id") or ""),
+        fired_at=(payload.get("fired_at") or "")[:16].replace("T", " "),
+        courses=payload.get("courses") or [],
+    )
+    return {**payload, "kot_base64": kot_base64}
+
+
+@router.get("/kds/stream")
+async def kds_stream(
+    token: str = Query(..., description="Bearer JWT (EventSource cannot set headers)"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Real-time Kitchen-Display feed over **Server-Sent Events** (F-057).
+
+    The browser ``EventSource`` can't set an Authorization header, so the JWT is
+    passed as a query param and run through the same double-gate as every other
+    restaurant route. The stream emits an initial ``snapshot`` of the active board,
+    then ``fired`` / ``bumped`` / ``recalled`` events as they happen (≤1s, fanned
+    out by the in-process broker) with periodic ``: keepalive`` comments so proxies
+    don't drop an idle connection.
+    """
+    try:
+        payload = decode_access_token(token)
+    except AccessTokenError:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    client = await _resolve_restaurant_client(db, user_id)
+    owner_id = client.user_id
+
+    queue = kds_broker.subscribe(owner_id)
+
+    async def event_gen():
+        try:
+            # Initial snapshot of the active board (fresh session so we never hold
+            # the request session open for the life of the stream).
+            async with db_manager.async_session_maker() as snap_db:
+                service = RestaurantService(snap_db)
+                cards = await service.list_kds_tickets(user_id=owner_id, status="active")
+                snapshot = [service._kds_to_dict(c) for c in cards]
+            yield f"event: snapshot\ndata: {json.dumps({'items': snapshot})}\n\n"
+
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    # Keepalive comment — keeps proxies/load-balancers from idling out.
+                    yield ": keepalive\n\n"
+        finally:
+            kds_broker.unsubscribe(owner_id, queue)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

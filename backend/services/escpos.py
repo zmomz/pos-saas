@@ -67,6 +67,14 @@ _L = {
     "tip": "البقشيش",
     "total_paid": "المبلغ المدفوع (ر.س)",
     "thanks": "شكراً لزيارتكم",
+    # F-057: kitchen order ticket (KOT) — printed per prep-station for a fired
+    # course. It is an operational ticket, NOT a fiscal document: modifiers are
+    # grouped under each course and **no prices ever appear**.
+    "kot": "تذكرة المطبخ",
+    "station": "المحطة",
+    "order": "الطلب",
+    "table": "الطاولة",
+    "fired": "أُرسلت",
 }
 
 
@@ -507,3 +515,181 @@ def build_receipt(
 def build_receipt_base64(**kwargs) -> str:
     """Convenience wrapper returning the receipt as a base64 string."""
     return base64.b64encode(build_receipt(**kwargs)).decode("ascii")
+
+
+def _render_kot_image(
+    *,
+    station_name: str,
+    order_ref: str,
+    table_label: str,
+    fired_at: str,
+    courses: list,
+):
+    """Render an always-Arabic KOT body to a 1-bit PIL image (RTL) — F-057.
+
+    Items are grouped under their course heading; each item shows only its
+    quantity, name, modifier choices and any note — **never a price** (a kitchen
+    ticket carries no money). ``courses`` is a list of
+    ``{"course": str, "items": [{"name"/"name_ar", "qty", "notes", "modifiers": [str]}]}``.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    f_title = ImageFont.truetype(_FONT_PATH, 42)
+    f_course = ImageFont.truetype(_FONT_PATH, 32)
+    f_item = ImageFont.truetype(_FONT_PATH, 34)
+    f_small = ImageFont.truetype(_FONT_PATH, 24)
+
+    margin = 12
+    n_items = sum(len(c.get("items") or []) for c in courses or [])
+    est_h = 360 + len(courses or []) * 60 + n_items * 130
+    img = Image.new("1", (_WIDTH_PX, est_h), 1)
+    draw = ImageDraw.Draw(img)
+    y = margin
+
+    def row_h(font, pad: int = 8) -> int:
+        ascent, descent = font.getmetrics()
+        return ascent + descent + pad
+
+    def center(text, font) -> None:
+        nonlocal y
+        t = _shape(text)
+        w = draw.textlength(t, font=font)
+        draw.text(((_WIDTH_PX - w) / 2, y), t, font=font, fill=0)
+        y += row_h(font)
+
+    def right(text, font, indent: int = 0) -> None:
+        nonlocal y
+        t = _shape(text)
+        w = draw.textlength(t, font=font)
+        draw.text((_WIDTH_PX - margin - indent - w, y), t, font=font, fill=0)
+        y += row_h(font)
+
+    def lr(right_text, left_text, font) -> None:
+        nonlocal y
+        rt = _shape(right_text)
+        rw = draw.textlength(rt, font=font)
+        draw.text((_WIDTH_PX - margin - rw, y), rt, font=font, fill=0)
+        draw.text((margin, y), str(left_text), font=font, fill=0)
+        y += row_h(font)
+
+    def rule() -> None:
+        nonlocal y
+        y += 2
+        draw.line([(margin, y), (_WIDTH_PX - margin, y)], fill=0, width=2)
+        y += 12
+
+    # ---- header ----
+    center(_L["kot"], f_title)
+    center(station_name or _L["station"], f_course)
+    rule()
+    if order_ref:
+        lr(_L["order"], order_ref, f_small)
+    if table_label:
+        lr(_L["table"], table_label, f_small)
+    if fired_at:
+        lr(_L["fired"], fired_at, f_small)
+    rule()
+
+    # ---- courses + items (no prices) ----
+    for course in courses or []:
+        right(course.get("course") or "", f_course)
+        for item in course.get("items") or []:
+            name = _item_display_name(item)
+            qty = item.get("qty", 1)
+            right(f"{to_arabic_digits(qty)} × {name}", f_item)
+            for mod in item.get("modifiers") or []:
+                right(f"+ {mod}", f_small, indent=28)
+            note = (item.get("notes") or "").strip()
+            if note:
+                right(f"» {note}", f_small, indent=28)
+        rule()
+
+    return img.crop((0, 0, _WIDTH_PX, min(y + margin, est_h)))
+
+
+def _append_kot_text_fallback(
+    b: "EscPosBuilder",
+    *,
+    station_name: str,
+    order_ref: str,
+    table_label: str,
+    courses: list,
+    width: int,
+) -> None:  # pragma: no cover - only hit in a degraded environment
+    """Degraded ASCII KOT body when Arabic rendering is unavailable (OPS-08)."""
+    b.align("center").bold(True).double_size(True)
+    b.line("KOT")
+    b.double_size(False)
+    b.line(station_name or "Station")
+    b.bold(False)
+    b.line("-" * width)
+    b.align("left")
+    if order_ref:
+        b.line(f"Order: {order_ref}")
+    if table_label:
+        b.line(f"Table: {table_label}")
+    b.line("-" * width)
+    for course in courses or []:
+        b.bold(True)
+        b.line(str(course.get("course") or ""))
+        b.bold(False)
+        for item in course.get("items") or []:
+            name = _item_display_name(item)
+            qty = item.get("qty", 1)
+            b.line(f"{qty} x {name}")
+            for mod in item.get("modifiers") or []:
+                b.line(f"  + {mod}")
+            note = (item.get("notes") or "").strip()
+            if note:
+                b.line(f"  » {note}")
+        b.line("-" * width)
+
+
+def build_kot(
+    *,
+    station_name: str,
+    order_ref: str = "",
+    table_label: str = "",
+    fired_at: str = "",
+    courses: list,
+    width: int = 42,
+) -> bytes:
+    """Render a per-station Kitchen Order Ticket as an ESC/POS byte stream (F-057).
+
+    The KOT is an **always-Arabic** operational ticket (the fiscal-document Arabic
+    invariant applies to every printable): items are grouped under each course and
+    carry **no prices** — a kitchen ticket never shows money. No QR, no stamp.
+    """
+    b = EscPosBuilder()
+    rendered = False
+    if _arabic_render_available():
+        try:
+            body = _render_kot_image(
+                station_name=station_name,
+                order_ref=order_ref,
+                table_label=table_label,
+                fired_at=fired_at,
+                courses=courses,
+            )
+            b.align("center").raster_image(body)
+            rendered = True
+        except Exception:  # pragma: no cover - degraded environment
+            logger.warning("Arabic KOT render failed; using text fallback", exc_info=True)
+
+    if not rendered:  # pragma: no cover - degraded environment
+        _append_kot_text_fallback(
+            b,
+            station_name=station_name,
+            order_ref=order_ref,
+            table_label=table_label,
+            courses=courses,
+            width=width,
+        )
+
+    b.feed(3).cut()
+    return b.build()
+
+
+def build_kot_base64(**kwargs) -> str:
+    """Convenience wrapper returning the KOT as a base64 string."""
+    return base64.b64encode(build_kot(**kwargs)).decode("ascii")

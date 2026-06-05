@@ -28,6 +28,7 @@ import {
   Moon,
   UtensilsCrossed,
   Layers,
+  ChefHat,
   ShieldCheck,
   Gift,
 } from 'lucide-react';
@@ -67,6 +68,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: Monitor, label: 'pos_terminal', path: '/pos' },
     { icon: UtensilsCrossed, label: 'floor_map', path: '/floor' },
     { icon: Layers, label: 'menu_builder', path: '/menu-builder' },
+    { icon: ChefHat, label: 'kds', path: '/kds' },
     { icon: ShoppingBag, label: 'products', path: '/products' },
     { icon: FolderTree, label: 'categories', path: '/categories' },
     { icon: UserCheck, label: 'customers', path: '/customers' },

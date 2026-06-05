@@ -215,6 +215,75 @@ class BillOfMaterials(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 
 
+class PrepStations(Base):
+    """A kitchen prep-station a fired item routes to — F-057 (RST).
+
+    A menu manager defines the stations that prepare food (e.g. Grill, Bar,
+    Cold). Each menu line carries an optional ``prep_station_id``
+    (``order_ticket_items.prep_station_id``); when a course is fired the fired
+    lines fan out to the station that prepares them and materialize as
+    ``kds_tickets`` on that station's Kitchen-Display column. Carries a bilingual
+    name so the board and the printed KOT render in Arabic. Owner-scoped like
+    every other entity (SEC-02).
+    """
+
+    __tablename__ = "prep_stations"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    name_ar = Column(String, nullable=True)
+    # Lower sorts first on the board (defaults to creation order otherwise).
+    sort_order = Column(Integer, nullable=True, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
+class KdsTickets(Base):
+    """A materialized kitchen card — the fired items of one course routed to one
+    station — F-057 (RST).
+
+    When a server fires a course (F-055) the fired lines are grouped by their
+    ``prep_station_id`` and one ``kds_ticket`` is minted per station, snapshotting
+    just enough to render the Kitchen-Display card and the 80mm KOT without
+    re-joining: ``items_json`` is the rendered line snapshot (name, qty, notes,
+    modifier names — **never a price**, a KOT carries no money) and ``item_ids``
+    is the list of source ``order_ticket_items`` ids so a bump/recall can keep the
+    line's ``fire_state`` in sync with the card.
+
+    ``status`` is the card's lifecycle: ``active`` (on the board, cooking) ->
+    ``bumped`` (completed, cleared from the active board). A recall flips it back
+    to ``active``. ``fired_at`` drives the on-card timer; ``bumped_at`` stamps the
+    completion. Owner-scoped (SEC-02).
+    """
+
+    __tablename__ = "kds_tickets"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    order_ticket_id = Column(Integer, nullable=False, index=True)
+    table_id = Column(Integer, nullable=True)
+    # The prep-station this card routes to (None = unrouted / expo column).
+    station_id = Column(Integer, nullable=True, index=True)
+    course = Column(String, nullable=True)
+    # active / bumped
+    status = Column(String, nullable=True, default="active", server_default="active")
+    # Serialized JSON list of source order_ticket_item ids (line-state sync).
+    item_ids = Column(String, nullable=True, default="[]", server_default="[]")
+    # Serialized JSON render snapshot: [{name, name_ar, qty, notes, modifiers}].
+    items_json = Column(String, nullable=True, default="[]", server_default="[]")
+    customer_name = Column(String, nullable=True)
+    order_type = Column(String, nullable=True)
+    fired_at = Column(DateTime(timezone=True), default=datetime.now)
+    bumped_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
 class OrderTicketItems(Base):
     """A single line on an order ticket — the heart of F-055 (RST-02).
 

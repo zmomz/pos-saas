@@ -144,3 +144,35 @@
   / test_settle_declined_card_rolls_back_no_invoice). Full backend suite 388
   passed; frontend lint+tsc+build green.
   Commit: a7e8e73
+2026-06-05 · 08 / F-057 — KDS / KOT + real-time kitchen channel. Transport
+  decision: **SSE** (not WebSocket) — the kitchen board is a one-way server→
+  client feed (bump/recall go over ordinary POST), SSE rides plain HTTP with
+  EventSource auto-reconnect and needs no new dependency. Backend: two new
+  owner-scoped triads behind the restaurant double-gate — PrepStations
+  (name/name_ar/sort_order) and KdsTickets (a materialized card = the fired items
+  of one course routed to one prep-station; status active/bumped, item_ids +
+  items_json snapshot carrying NO price, fired_at/bumped_at for timers).
+  RestaurantService gained prep-station CRUD, _materialize_kds_for_fire (groups a
+  course's fired lines by prep_station_id → one card per station, lines with no
+  station collect on a single expo card), list/bump/recall KDS (bump→bumped +
+  source line fire_state→bumped; recall→active + line→fired, so server screen and
+  KDS stay consistent) and kot_payload (modifiers grouped by course, no money).
+  fire_course now materializes cards in the SAME fire transaction and publishes a
+  'fired' event; bump/recall publish too. New services/kds_channel.py is an
+  in-process per-user pub/sub broker (asyncio.Queue fan-out) — the ≤1s real-time
+  seam. New escpos.build_kot/_base64 renders an always-Arabic 80mm KOT (course
+  headings, modifier choices, notes; no prices/QR/stamp; ASCII fallback). Routes
+  under /api/v1/restaurant/kds/stations[/{id}], /kds/tickets, /kds/{id}/bump|
+  recall|kot, and GET /kds/stream (SSE; JWT via query param since EventSource
+  can't set headers, run through the shared double-gate; emits a snapshot then
+  fired/bumped/recalled with keepalives). Frontend: KDS.tsx column-per-station
+  board (live EventSource w/ poll fallback, per-card timers + late flag, all-day
+  count, bump/recall/print-KOT, loading/empty/error/denied/offline, brand tokens,
+  RTL), client-role route /kds + ChefHat sidebar link; typed api.ts wrappers
+  (getPrepStations/createPrepStation/getKdsTickets/bump/recall/getKdsKot +
+  kdsStreamUrl) and KDS types; i18n ×4 (ar/en/hi/ur). Tests:
+  test_phase5_rst_kds_kot.py (10 incl. named test_fire_creates_kds_ticket_per_
+  station / test_bump_then_recall / test_kot_render_arabic_no_prices, plus a
+  broker real-time-delivery test and the double-gate/owner-scope tests). Full
+  backend suite 398 passed; frontend lint+tsc+build green.
+  Commit: PENDING

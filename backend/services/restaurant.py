@@ -7,6 +7,7 @@ invariant the generic entity triad enforces (SEC-02). State transitions
 """
 import json
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
@@ -18,13 +19,16 @@ from models.restaurant import (
     BillOfMaterials,
     Combos,
     FloorZones,
+    KdsTickets,
     Modifiers,
     ModifierGroups,
     OrderTicketItems,
     OrderTickets,
+    PrepStations,
     ProductModifierGroups,
     RestaurantTables,
 )
+from services.kds_channel import kds_broker
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,8 @@ TICKET_STATUSES = ("open", "held", "fired", "settled", "void")
 ITEM_FIRE_STATES = ("open", "fired", "bumped")
 # How a bill can be divided (F-055 split).
 SPLIT_STRATEGIES = ("seat", "amount", "item")
+# A KDS card's lifecycle (F-057): active (on the board) -> bumped (completed).
+KDS_STATUSES = ("active", "bumped")
 # Statuses past which a ticket can no longer be edited from the floor.
 CLOSED_TICKET_STATUSES = ("settled", "void")
 
@@ -554,10 +560,29 @@ class RestaurantService:
             cs[course] = "fired"
             ticket.course_state = json.dumps(cs)
             ticket.status = "fired"
+            # F-057: materialize the fired lines onto the Kitchen Display — one
+            # card per prep-station — in the SAME transaction as the fire, so the
+            # board and the server's screen can never disagree on fired state.
+            kds_cards = self._materialize_kds_for_fire(ticket, course, target, user_id)
             await self.db.commit()
             fired_ids = [line.id for line in target]
-            logger.info(f"Fired course '{course}' on ticket {ticket_id}: {len(fired_ids)} line(s)")
-            return {"ticket_id": ticket_id, "course": course, "fired_item_ids": fired_ids, "fired_count": len(fired_ids)}
+            # Push the new cards to any open kitchen stream (≤1s real-time, F-057).
+            for card in kds_cards:
+                await self.db.refresh(card)
+                kds_broker.publish(
+                    user_id, {"type": "fired", "card": self._kds_to_dict(card)}
+                )
+            logger.info(
+                f"Fired course '{course}' on ticket {ticket_id}: {len(fired_ids)} line(s), "
+                f"{len(kds_cards)} KDS card(s)"
+            )
+            return {
+                "ticket_id": ticket_id,
+                "course": course,
+                "fired_item_ids": fired_ids,
+                "fired_count": len(fired_ids),
+                "kds_ticket_ids": [c.id for c in kds_cards],
+            }
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Error firing course '{course}' on ticket {ticket_id}: {str(e)}")
@@ -997,6 +1022,272 @@ class RestaurantService:
             "fired_item_count": len(rows),
             "fired_qty": round(total_qty, 2),
             "by_product": list(by_product.values()),
+        }
+
+    # ----------------------------------------------------- prep stations (F-057)
+    async def list_prep_stations(self, user_id: str) -> List[PrepStations]:
+        result = await self.db.execute(
+            select(PrepStations)
+            .where(PrepStations.user_id == user_id)
+            .order_by(PrepStations.sort_order.asc(), PrepStations.id.asc())
+        )
+        return result.scalars().all()
+
+    async def get_prep_station(self, station_id: int, user_id: str) -> Optional[PrepStations]:
+        result = await self.db.execute(
+            select(PrepStations).where(
+                PrepStations.id == station_id, PrepStations.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_prep_station(
+        self, data: Dict[str, Any], user_id: str, client_id: Optional[int]
+    ) -> PrepStations:
+        try:
+            station = PrepStations(
+                user_id=user_id,
+                client_id=client_id,
+                name=data["name"],
+                name_ar=data.get("name_ar"),
+                sort_order=int(data.get("sort_order") or 0),
+            )
+            self.db.add(station)
+            await self.db.commit()
+            await self.db.refresh(station)
+            logger.info(f"Created prep station {station.id} for user {user_id}")
+            return station
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error creating prep station: {str(e)}")
+            raise
+
+    async def update_prep_station(
+        self, station_id: int, updates: Dict[str, Any], user_id: str
+    ) -> Optional[PrepStations]:
+        station = await self.get_prep_station(station_id, user_id)
+        if not station:
+            return None
+        try:
+            editable = ("name", "name_ar", "sort_order")
+            for key, value in updates.items():
+                if key in editable and hasattr(station, key):
+                    setattr(station, key, value)
+            await self.db.commit()
+            await self.db.refresh(station)
+            return station
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error updating prep station {station_id}: {str(e)}")
+            raise
+
+    async def delete_prep_station(self, station_id: int, user_id: str) -> bool:
+        station = await self.get_prep_station(station_id, user_id)
+        if not station:
+            return False
+        try:
+            await self.db.delete(station)
+            await self.db.commit()
+            return True
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deleting prep station {station_id}: {str(e)}")
+            raise
+
+    # ------------------------------------------------------ kitchen display (F-057)
+    @staticmethod
+    def _kds_line_snapshot(line: OrderTicketItems) -> Dict[str, Any]:
+        """Render a fired line into the KOT/board snapshot — no price ever (F-057)."""
+        names: List[str] = []
+        try:
+            mods = json.loads(line.modifiers) if line.modifiers else []
+            if isinstance(mods, list):
+                names = [str(m.get("name")) for m in mods if isinstance(m, dict) and m.get("name")]
+        except (ValueError, TypeError):
+            names = []
+        return {
+            "item_id": line.id,
+            "name": line.name,
+            "qty": float(line.qty or 0),
+            "course": line.course,
+            "notes": line.notes,
+            "modifiers": names,
+        }
+
+    def _materialize_kds_for_fire(
+        self, ticket: OrderTickets, course: str, fired_lines: List[OrderTicketItems], user_id: str
+    ) -> List[KdsTickets]:
+        """Group the fired lines by prep-station and stage one card per station.
+
+        Caller stages these in the open fire transaction so they commit atomically
+        with the line ``fire_state`` flip. Lines with no ``prep_station_id`` collect
+        on a single unrouted (expo) card. Returns the staged (un-flushed) cards.
+        """
+        by_station: Dict[Optional[int], List[OrderTicketItems]] = {}
+        for line in fired_lines:
+            by_station.setdefault(line.prep_station_id, []).append(line)
+        cards: List[KdsTickets] = []
+        for station_id, lines in by_station.items():
+            card = KdsTickets(
+                user_id=user_id,
+                client_id=ticket.client_id,
+                order_ticket_id=ticket.id,
+                table_id=ticket.table_id,
+                station_id=station_id,
+                course=course,
+                status="active",
+                item_ids=json.dumps([line.id for line in lines]),
+                items_json=json.dumps([self._kds_line_snapshot(line) for line in lines]),
+                customer_name=ticket.customer_name,
+                order_type=ticket.order_type,
+            )
+            self.db.add(card)
+            cards.append(card)
+        return cards
+
+    @staticmethod
+    def _kds_to_dict(card: KdsTickets) -> Dict[str, Any]:
+        try:
+            items = json.loads(card.items_json) if card.items_json else []
+        except (ValueError, TypeError):
+            items = []
+        return {
+            "id": card.id,
+            "order_ticket_id": card.order_ticket_id,
+            "table_id": card.table_id,
+            "station_id": card.station_id,
+            "course": card.course,
+            "status": card.status,
+            "customer_name": card.customer_name,
+            "order_type": card.order_type,
+            "items": items,
+            "fired_at": card.fired_at.isoformat() if card.fired_at else None,
+            "bumped_at": card.bumped_at.isoformat() if card.bumped_at else None,
+        }
+
+    async def list_kds_tickets(
+        self, user_id: str, status: Optional[str] = "active", station_id: Optional[int] = None
+    ) -> List[KdsTickets]:
+        """The kitchen board: cards the caller owns, newest fired first (F-057)."""
+        query = select(KdsTickets).where(KdsTickets.user_id == user_id)
+        if status is not None:
+            query = query.where(KdsTickets.status == status)
+        if station_id is not None:
+            query = query.where(KdsTickets.station_id == station_id)
+        query = query.order_by(KdsTickets.fired_at.asc(), KdsTickets.id.asc())
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
+    async def get_kds_ticket(self, kds_id: int, user_id: str) -> Optional[KdsTickets]:
+        result = await self.db.execute(
+            select(KdsTickets).where(
+                KdsTickets.id == kds_id, KdsTickets.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    def _kds_item_ids(card: KdsTickets) -> List[int]:
+        try:
+            ids = json.loads(card.item_ids) if card.item_ids else []
+        except (ValueError, TypeError):
+            return []
+        return [int(i) for i in ids] if isinstance(ids, list) else []
+
+    async def _set_lines_fire_state(self, item_ids: List[int], user_id: str, state: str) -> None:
+        """Keep the source order lines' ``fire_state`` in sync with their card."""
+        for item_id in item_ids:
+            line = await self.get_item(item_id, user_id)
+            if line is not None:
+                line.fire_state = state
+
+    async def bump_kds_ticket(self, kds_id: int, user_id: str) -> Optional[Dict[str, Any]]:
+        """Mark a card done — clear it from the active board (F-057).
+
+        The card goes ``active -> bumped`` (stamped ``bumped_at``) and its source
+        order lines advance to ``bumped`` so the server's screen and the kitchen
+        agree. Idempotent on an already-bumped card. Returns ``None`` if not found.
+        """
+        card = await self.get_kds_ticket(kds_id, user_id)
+        if not card:
+            return None
+        try:
+            card.status = "bumped"
+            card.bumped_at = datetime.now()
+            await self._set_lines_fire_state(self._kds_item_ids(card), user_id, "bumped")
+            await self.db.commit()
+            await self.db.refresh(card)
+            payload = self._kds_to_dict(card)
+            kds_broker.publish(user_id, {"type": "bumped", "card": payload})
+            logger.info(f"Bumped KDS card {kds_id}")
+            return payload
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error bumping KDS card {kds_id}: {str(e)}")
+            raise
+
+    async def recall_kds_ticket(self, kds_id: int, user_id: str) -> Optional[Dict[str, Any]]:
+        """Restore a mistakenly-bumped card to the active board (F-057).
+
+        The card goes ``bumped -> active`` (``bumped_at`` cleared) and its source
+        lines drop back to ``fired``. Returns ``None`` if the card isn't found.
+        """
+        card = await self.get_kds_ticket(kds_id, user_id)
+        if not card:
+            return None
+        try:
+            card.status = "active"
+            card.bumped_at = None
+            await self._set_lines_fire_state(self._kds_item_ids(card), user_id, "fired")
+            await self.db.commit()
+            await self.db.refresh(card)
+            payload = self._kds_to_dict(card)
+            kds_broker.publish(user_id, {"type": "recalled", "card": payload})
+            logger.info(f"Recalled KDS card {kds_id}")
+            return payload
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error recalling KDS card {kds_id}: {str(e)}")
+            raise
+
+    async def kot_payload(self, kds_id: int, user_id: str) -> Optional[Dict[str, Any]]:
+        """Build the per-station KOT model for a card — modifiers grouped by course,
+        **no prices** (F-057). Returns ``None`` if the card isn't found.
+        """
+        card = await self.get_kds_ticket(kds_id, user_id)
+        if not card:
+            return None
+        station = (
+            await self.get_prep_station(card.station_id, user_id)
+            if card.station_id is not None
+            else None
+        )
+        try:
+            items = json.loads(card.items_json) if card.items_json else []
+        except (ValueError, TypeError):
+            items = []
+        # Group the snapshot items by course (this card is usually one course, but
+        # group defensively so the KOT layout is identical to the multi-course one).
+        courses: Dict[str, List[Dict[str, Any]]] = {}
+        for it in items:
+            courses.setdefault(it.get("course") or "mains", []).append(
+                {
+                    "name": it.get("name"),
+                    "qty": it.get("qty"),
+                    "notes": it.get("notes"),
+                    "modifiers": it.get("modifiers") or [],
+                }
+            )
+        return {
+            "kds_ticket_id": card.id,
+            "order_ticket_id": card.order_ticket_id,
+            "station_id": card.station_id,
+            "station_name": station.name if station is not None else None,
+            "station_name_ar": station.name_ar if station is not None else None,
+            "table_id": card.table_id,
+            "fired_at": card.fired_at.isoformat() if card.fired_at else None,
+            # One entry per course; items carry NO price field (kitchen ticket).
+            "courses": [{"course": c, "items": lines} for c, lines in courses.items()],
         }
 
     # ------------------------------------------------------- modifier groups
