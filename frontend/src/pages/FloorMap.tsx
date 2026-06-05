@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -40,6 +41,7 @@ const ORDER_TYPES = ['dine_in', 'takeaway', 'delivery'];
 
 export default function FloorMap() {
   const { t } = useLanguage();
+  const navigate = useNavigate();
 
   const [zones, setZones] = useState<FloorZone[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
@@ -160,7 +162,13 @@ export default function FloorMap() {
       setOrderTable(table);
       return;
     }
-    // Occupied → bill printed → free, advancing the table state machine.
+    // An occupied/bill-printed table with an open ticket opens its order ticket
+    // (F-055): add/fire/transfer/merge/split lines from the ticket-edit surface.
+    if (table.current_ticket_id) {
+      navigate(`/floor/ticket/${table.current_ticket_id}`);
+      return;
+    }
+    // No linked ticket — advance the table state machine as a fallback.
     const next = table.state === 'occupied' ? 'bill_printed' : 'free';
     try {
       await updateRestaurantTable(table.id, { state: next });

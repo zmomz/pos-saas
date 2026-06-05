@@ -14,7 +14,7 @@ to the caller's ``user_id`` in the service layer so one client can never see
 another's floor (SEC-02).
 """
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -28,6 +28,7 @@ from models.clients import Clients
 from schemas.auth import UserResponse
 from services.restaurant import (
     ORDER_TYPES,
+    SPLIT_STRATEGIES,
     TABLE_STATES,
     RestaurantService,
 )
@@ -153,6 +154,73 @@ class OrderTicketResponse(BaseModel):
 class OrderTicketListResponse(BaseModel):
     items: List[OrderTicketResponse]
     total: int
+
+
+# ---------- Order ticket line-item schemas (F-055) ----------
+class TicketItemData(BaseModel):
+    product_id: Optional[int] = None
+    variant_id: Optional[int] = None
+    name: Optional[str] = None
+    qty: float = 1
+    unit_price: Optional[float] = None
+    course: Optional[str] = "mains"
+    seat_no: Optional[int] = None
+    notes: Optional[str] = None
+    prep_station_id: Optional[int] = None
+    modifiers: Optional[Any] = None
+
+
+class TicketItemUpdateData(BaseModel):
+    qty: Optional[float] = None
+    unit_price: Optional[float] = None
+    name: Optional[str] = None
+    course: Optional[str] = None
+    seat_no: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class TicketItemResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    ticket_id: int
+    product_id: Optional[int] = None
+    variant_id: Optional[int] = None
+    name: Optional[str] = None
+    qty: float
+    unit_price: float
+    line_total: float
+    course: Optional[str] = None
+    seat_no: Optional[int] = None
+    fire_state: Optional[str] = None
+    prep_station_id: Optional[int] = None
+    notes: Optional[str] = None
+    modifiers: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TicketItemListResponse(BaseModel):
+    items: List[TicketItemResponse]
+    total: int
+
+
+class FireCourseRequest(BaseModel):
+    course: str
+
+
+class TransferRequest(BaseModel):
+    target_table_id: int
+
+
+class MergeRequest(BaseModel):
+    source_ticket_id: int
+
+
+class SplitRequest(BaseModel):
+    strategy: str
+    n_ways: Optional[int] = None
 
 
 # ---------- Zone routes ----------
@@ -350,3 +418,170 @@ async def get_order_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Order ticket not found")
     return ticket
+
+
+# ---------- Order ticket line items (F-055) ----------
+@router.get("/order-tickets/{ticket_id}/items", response_model=TicketItemListResponse)
+async def list_ticket_items(
+    ticket_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List a ticket's line items (owner-scoped, RST-02)."""
+    service = RestaurantService(db)
+    ticket = await service.get_ticket(ticket_id, user_id=client.user_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    items = await service.list_items(ticket_id, user_id=client.user_id)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/order-tickets/{ticket_id}/items", response_model=TicketItemResponse, status_code=201)
+async def add_ticket_item(
+    ticket_id: int,
+    data: TicketItemData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a menu item to an open ticket — qty/course/seat/note (RST-02)."""
+    logger.debug(f"Adding line to ticket {ticket_id} for client {client.id}")
+    service = RestaurantService(db)
+    try:
+        item = await service.add_item(
+            ticket_id, data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error adding line to ticket {ticket_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    if item is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return item
+
+
+@router.put("/order-tickets/{ticket_id}/items/{item_id}", response_model=TicketItemResponse)
+async def update_ticket_item(
+    ticket_id: int,
+    item_id: int,
+    data: TicketItemUpdateData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit an *open* line's qty/course/seat/notes (RST-02)."""
+    service = RestaurantService(db)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    try:
+        item = await service.update_item(ticket_id, item_id, updates, user_id=client.user_id)
+    except ValueError as e:
+        # Fired line — can't be silently re-priced.
+        raise HTTPException(status_code=409, detail=str(e))
+    if item is None:
+        raise HTTPException(status_code=404, detail="Line item not found")
+    return item
+
+
+@router.delete("/order-tickets/{ticket_id}/items/{item_id}")
+async def void_ticket_item(
+    ticket_id: int,
+    item_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove an *open* line; a fired line can't be silently deleted (RST-02)."""
+    service = RestaurantService(db)
+    try:
+        ok = await service.void_item(ticket_id, item_id, user_id=client.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if ok is None:
+        raise HTTPException(status_code=404, detail="Line item not found")
+    return {"message": "Line item removed", "id": item_id}
+
+
+@router.post("/order-tickets/{ticket_id}/fire")
+async def fire_course(
+    ticket_id: int,
+    data: FireCourseRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fire a course to the kitchen — open lines of that course go fired (RST-02)."""
+    service = RestaurantService(db)
+    try:
+        result = await service.fire_course(ticket_id, data.course, user_id=client.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return result
+
+
+@router.post("/order-tickets/{ticket_id}/transfer", response_model=OrderTicketResponse)
+async def transfer_ticket(
+    ticket_id: int,
+    data: TransferRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Transfer a ticket (and its lines) to another table (RST-02)."""
+    service = RestaurantService(db)
+    try:
+        ticket = await service.transfer_ticket(ticket_id, data.target_table_id, user_id=client.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return ticket
+
+
+@router.post("/order-tickets/{ticket_id}/merge", response_model=OrderTicketResponse)
+async def merge_tickets(
+    ticket_id: int,
+    data: MergeRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge another ticket into this one, producing a single bill (RST-02)."""
+    service = RestaurantService(db)
+    try:
+        ticket = await service.merge_tickets(ticket_id, data.source_ticket_id, user_id=client.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return ticket
+
+
+@router.post("/order-tickets/{ticket_id}/split")
+async def split_ticket(
+    ticket_id: int,
+    data: SplitRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute the shares a bill splits into — by seat, amount, or item (RST-02)."""
+    if data.strategy not in SPLIT_STRATEGIES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid strategy. Allowed: {', '.join(SPLIT_STRATEGIES)}"
+        )
+    service = RestaurantService(db)
+    try:
+        result = await service.split_ticket(
+            ticket_id, data.strategy, user_id=client.user_id, n_ways=data.n_ways
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return result
+
+
+@router.get("/all-day-count")
+async def all_day_fired_count(
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """All-day count of fired items across the caller's open tickets (RST-02)."""
+    service = RestaurantService(db)
+    return await service.all_day_fired_count(user_id=client.user_id)

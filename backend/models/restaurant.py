@@ -17,7 +17,7 @@ States (mirrors INTENDED_BEHAVIOR.md §3.5 / the state-machine catalog):
 """
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy import Column, DateTime, Float, Integer, String
 
 from core.database import Base
 
@@ -82,9 +82,53 @@ class OrderTickets(Base):
     order_type = Column(String, nullable=True, default="dine_in", server_default="dine_in")
     # open / held / fired / settled / void
     status = Column(String, nullable=True, default="open", server_default="open")
+    # Serialized JSON map of course -> fire state (e.g. {"starters": "fired"}).
+    # Only fired courses are recorded; absent courses are still held (RST-02). A
+    # held course can be fired later — the all-day view reads from this + items.
+    course_state = Column(String, nullable=True, default="{}", server_default="{}")
     customer_name = Column(String, nullable=True)
     party_size = Column(Integer, nullable=True)
     notes = Column(String, nullable=True)
     opened_at = Column(DateTime(timezone=True), default=datetime.now)
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
+class OrderTicketItems(Base):
+    """A single line on an order ticket — the heart of F-055 (RST-02).
+
+    A server adds menu items to an open ticket; each line carries a ``course``
+    (starters/mains/dessert), an optional ``seat_no``, a free-text ``note``, a
+    serialized ``modifiers`` selection (the modifier model arrives with F-056),
+    and a computed ``line_total`` (``qty * unit_price``).
+
+    ``fire_state`` is the line's kitchen lifecycle: ``open`` (still editable on
+    the floor) -> ``fired`` (sent to the kitchen, no longer silently deletable)
+    -> ``bumped`` (marked done at the station — driven by the KDS slice F-057).
+    Every row carries ``user_id`` + ``client_id`` so the service layer scopes
+    reads/writes to the owner exactly like every other entity (SEC-02).
+    """
+
+    __tablename__ = "order_ticket_items"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    ticket_id = Column(Integer, nullable=False, index=True)
+    product_id = Column(Integer, nullable=True, index=True)
+    variant_id = Column(Integer, nullable=True)
+    name = Column(String, nullable=True)
+    qty = Column(Float, nullable=False, default=1, server_default="1")
+    unit_price = Column(Float, nullable=False, default=0, server_default="0")
+    line_total = Column(Float, nullable=False, default=0, server_default="0")
+    course = Column(String, nullable=True, default="mains", server_default="mains")
+    seat_no = Column(Integer, nullable=True)
+    # open / fired / bumped
+    fire_state = Column(String, nullable=True, default="open", server_default="open")
+    prep_station_id = Column(Integer, nullable=True)
+    notes = Column(String, nullable=True)
+    # Serialized modifier selection (F-056 fills this in; stored as JSON text).
+    modifiers = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

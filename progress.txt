@@ -1,3 +1,19 @@
 # Ralph progress log — Restaurant Vertical (F-055–F-062)
 # One entry per completed slice: date · task · what shipped · commit SHA.
 # Ralph appends below this header each iteration.
+2026-06-05 · 01 / F-055 — Order-ticket line items + course/fire/transfer/merge/split.
+  Backend: new OrderTicketItems model (ticket_id, product_id, qty, unit_price,
+  line_total, course, seat_no, fire_state open/fired/bumped, notes, modifiers) +
+  course_state on OrderTickets. RestaurantService gained add/list/update/void item,
+  fire_course (open->fired, stamps course_state, status->fired, held course fires
+  later), transfer_ticket (source frees / target occupies, lines follow), merge_tickets
+  (folds source into one bill, voids source, frees its table), split_ticket (by
+  seat/amount/item, non-destructive compute) and all_day_fired_count. Routes added
+  under /api/v1/restaurant/order-tickets/{id}/items|fire|transfer|merge|split +
+  /all-day-count, all behind the restaurant double-gate and owner-scoped (SEC-02).
+  Frontend: OrderTicket.tsx ticket-edit surface (loading/empty/error/denied/offline,
+  brand tokens, RTL), route /floor/ticket/:ticketId, FloorMap occupied-tile -> ticket,
+  typed api.ts wrappers, i18n across ar/en/hi/ur. Tests: test_phase5_rst_order_items.py
+  (12 incl. named test_add_items_by_course / test_transfer_table_moves_ticket /
+  test_split_bill_by_seat). Full backend suite 348 passed; frontend lint+build+tsc green.
+  Commit: <pending>

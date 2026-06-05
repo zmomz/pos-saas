@@ -1818,6 +1818,158 @@ export async function openTableOrder(
   return res.data;
 }
 
+// ---------- Order ticket line items (F-055) ----------
+export interface TicketItem {
+  id: number;
+  ticket_id: number;
+  product_id?: number | null;
+  variant_id?: number | null;
+  name?: string | null;
+  qty: number;
+  unit_price: number;
+  line_total: number;
+  course?: string | null;
+  seat_no?: number | null;
+  fire_state?: string | null; // open | fired | bumped
+  notes?: string | null;
+}
+
+export interface SplitShare {
+  seat?: string;
+  share?: number;
+  item_id?: number;
+  name?: string | null;
+  item_ids?: number[];
+  subtotal: number;
+}
+
+export interface SplitResult {
+  ticket_id: number;
+  strategy: string;
+  total: number;
+  shares: SplitShare[];
+}
+
+export interface AllDayCount {
+  fired_item_count: number;
+  fired_qty: number;
+  by_product: { name: string; qty: number }[];
+}
+
+export async function getOrderTicket(ticketId: number): Promise<OrderTicket> {
+  const res = await client.apiCall.invoke<OrderTicket>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getTicketItems(
+  ticketId: number
+): Promise<{ items: TicketItem[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: TicketItem[]; total: number }>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/items`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function addTicketItem(
+  ticketId: number,
+  data: {
+    product_id?: number;
+    name?: string;
+    qty?: number;
+    unit_price?: number;
+    course?: string;
+    seat_no?: number;
+    notes?: string;
+  }
+): Promise<TicketItem> {
+  const res = await client.apiCall.invoke<TicketItem>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/items`,
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function updateTicketItem(
+  ticketId: number,
+  itemId: number,
+  data: { qty?: number; course?: string; seat_no?: number; notes?: string; unit_price?: number }
+): Promise<TicketItem> {
+  const res = await client.apiCall.invoke<TicketItem>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/items/${itemId}`,
+    method: 'PUT',
+    data,
+  });
+  return res.data;
+}
+
+export async function voidTicketItem(ticketId: number, itemId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/items/${itemId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function fireCourse(ticketId: number, course: string) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/fire`,
+    method: 'POST',
+    data: { course },
+  });
+  return res.data;
+}
+
+export async function transferTicket(ticketId: number, targetTableId: number): Promise<OrderTicket> {
+  const res = await client.apiCall.invoke<OrderTicket>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/transfer`,
+    method: 'POST',
+    data: { target_table_id: targetTableId },
+  });
+  return res.data;
+}
+
+export async function mergeTickets(ticketId: number, sourceTicketId: number): Promise<OrderTicket> {
+  const res = await client.apiCall.invoke<OrderTicket>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/merge`,
+    method: 'POST',
+    data: { source_ticket_id: sourceTicketId },
+  });
+  return res.data;
+}
+
+export async function splitTicket(
+  ticketId: number,
+  strategy: 'seat' | 'amount' | 'item',
+  nWays?: number
+): Promise<SplitResult> {
+  const res = await client.apiCall.invoke<SplitResult>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/split`,
+    method: 'POST',
+    data: { strategy, n_ways: nWays },
+  });
+  return res.data;
+}
+
+export async function getOrderTickets(params?: {
+  status?: string;
+  table_id?: number;
+}): Promise<{ items: OrderTicket[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: OrderTicket[]; total: number }>({
+    url: '/api/v1/restaurant/order-tickets',
+    method: 'GET',
+    data: params || {},
+  });
+  return res.data;
+}
+
 // ---------- ZATCA document status (ZA-08, F-019) ----------
 // Client-scoped fiscal-document visibility: onboarding status, a status-count
 // summary (with a stuck pending/failed alert), the retained document list, and
