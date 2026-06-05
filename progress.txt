@@ -143,4 +143,4 @@
   test_check_is_non_fiscal_no_qr / test_settle_creates_zatca_invoice_and_frees_table
   / test_settle_declined_card_rolls_back_no_invoice). Full backend suite 388
   passed; frontend lint+tsc+build green.
-  Commit: PENDING
+  Commit: a7e8e73
