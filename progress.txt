@@ -96,4 +96,4 @@
   (10 incl. named test_bom_sale_depletes_components + the atomic
   no-partial-deduction and COGS-rollup catch-forever tests). Full backend suite 379
   passed. Backend-only slice (no new screen per the F-062 acceptance criteria).
-  Commit: PENDING
+  Commit: 7309d8a
