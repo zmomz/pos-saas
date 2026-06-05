@@ -92,12 +92,14 @@ Severity: `BLOCKER` (core flow unusable / P0 table-stake absent / compliance-blo
 - Catch forever: pytest asserting cash-sale ESC/POS output contains the `0x1B 0x70` drawer-kick bytes.
 - **Live-credential / hardware step (operator):** set `GEIDEA_API_KEY` (+ `GEIDEA_TERMINAL_SERIAL`) and pair a physical Geidea SoftPOS device; the live capture/refund endpoints in `GeideaTerminalGateway` are shaped from the documented flow but are **inactive and unverified against real hardware** until then — the sandbox path runs in the meantime.
 
-**F-006 — Stripe Checkout router is orphaned (no caller)** · `ORPHAN_CODE`
+**F-006 — ✅ DONE (orphan removed) — Stripe Checkout router is orphaned (no caller)** · `ORPHAN_CODE`
+- **Fixed (deleted the dead Stripe Checkout HTTP router):** `backend/routers/payment.py` (the auto-discovered `POST /api/v1/payments/checkout` + `GET /api/v1/payments/status/{session_id}` endpoints) had **no frontend caller** and shared the `/api/v1/payments` prefix with the real Saudi gateway router (`routers/payments_gateway.py`, F-002/F-005), so it was both dead and a confusing prefix collision. Resolution is **remove**, not "wire as PAY-07 payment links": payment-link/hosted-checkout is a Saudi-gateway product decision and the committed payment stack is **Moyasar (online) + Geidea (in-store)** (F-001/F-002/F-005), not Stripe Checkout — so a PAY-07 link surface, if/when built, rides on the gateway abstraction, not this orphan. `services/payment.py` is **kept** (it is *not* fully orphaned — `services/subscription_billing.py::initialize_stripe` uses it for the Stripe Connect subscription-charge path). The previous `test_payment.py` (which asserted the dead router answered 503/401) is **inverted** into a removal guard. After removal the app boots and auto-discovery omits `routers.payment`; the live `/api/v1/payments/*` surface (tender-types/charge/terminals/terminal-charge) is untouched. Tests: `backend/tests/test_payment.py::test_orphaned_stripe_checkout_endpoint_is_removed`, `::test_orphaned_stripe_checkout_status_endpoint_is_removed`, `::test_real_saudi_gateway_surface_still_mounted`. **Out of scope (F-054):** the remaining orphans (AI Hub, blog, OAuth callback, `integrations.py`, object storage, the `receipt_templates` wire-up) and a repo-wide orphan-lint are F-054, not this finding.
 - Violated: IB §8 orphan ledger; PAY-07 (P1) payment links.
 - Evidence: `backend/routers/payment.py:44-72`; `frontend/src` grep `checkout|createCheckout` → none (subscription uses the `tenant.py` Connect path).
 - Severity: MINOR · Confidence: HIGH
 - Fix: Either wire as the PAY-07 payment-link surface or delete.
 - Catch forever: CI lint flagging a backend endpoint with no `api.ts` wrapper.
+- Traceability: PAY-07 / IB §8 → `backend/tests/test_payment.py::test_orphaned_stripe_checkout_endpoint_is_removed`, `::test_orphaned_stripe_checkout_status_endpoint_is_removed`, `::test_real_saudi_gateway_surface_still_mounted`.
 
 ### POS — Retail core
 

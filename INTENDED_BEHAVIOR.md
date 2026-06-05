@@ -452,7 +452,7 @@ Built code with no reachable caller/UI — the review must rule each **dead** (r
 |---|---|---|---|
 | **AI Hub** | `routers/aihub.py`, `services/aihub.py` (gentxt/genimg/genvideo/genaudio/transcribe/analyzepdf) | No frontend caller anywhere | Almost certainly MGX scaffolding → **remove** unless a use is intended. |
 | **Object storage / presigned URLs** | `routers/storage.py` (buckets/objects/upload-url/download-url) | No caller; logo upload uses local disk (`uploads/logos/`) | Decide: adopt for logos/exports (S3, AG-07) or **remove**. |
-| **Stripe Checkout (generic)** | `routers/payment.py` (`/payments/checkout`,`/status`) | No caller; subscription uses `tenant.py` Connect path | Either fold into PAY-07 (payment links) or **remove**. |
+| **Stripe Checkout (generic)** | ~~`routers/payment.py` (`/payments/checkout`,`/status`)~~ | No caller; subscription uses `tenant.py` Connect path | **✅ REMOVED (F-006)** — deleted; `services/payment.py` kept for the Connect subscription path. PAY-07 links, if built, ride the Moyasar/Geidea gateway, not Stripe Checkout. |
 | **Blog** | `pages/blog/*`, `blog-routes.tsx`, `components/blog/*` | `App.tsx` never imports blog routes | **Remove** unless a marketing blog is wanted. |
 | **OAuth callback** | `/auth/callback`, `/auth/error` routes | Local-auth-only system | Leftover OIDC scaffolding → **remove**. |
 | **Duplicate bulk/search/webhook/email** | `integrations.py` vs `production.py` | Two implementations of the same capability | Consolidate to one; the other is dead. |
