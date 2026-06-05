@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select, func, update, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -719,10 +719,214 @@ class TopProductsResponse(BaseModel):
     items: List[TopProductItem]
 
 
+# ============================================================
+# REPORT → PDF EXPORT (RPT-10, F-072)
+# ============================================================
+# Every /reports/* endpoint answers ``?format=pdf`` by handing its already
+# computed response to a per-report section builder and then to the shared,
+# RTL-aware ``services.pdf_render.report_pdf_bytes`` renderer (always-Arabic,
+# Latin-1-safe fallback). The reports stay aggregated server-side (OPS-05); the
+# PDF is built from the same in-memory response the JSON path returns, so no
+# extra query runs.
+
+_FMT_FORMATS = "^(json|pdf)$"
+
+
+def _m(x) -> str:
+    """Money cell: two decimals."""
+    return f"{float(x or 0):.2f}"
+
+
+def _q(x) -> str:
+    """Quantity cell: trim trailing zeros."""
+    return f"{float(x or 0):g}"
+
+
+def _ts(value) -> str:
+    """Render an ISO timestamp as ``YYYY-MM-DD HH:MM`` (or pass through/blank)."""
+    if not value:
+        return ""
+    return str(value).replace("T", " ")[:16]
+
+
+def _pdf_response(pdf_bytes: bytes, filename: str) -> Response:
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}.pdf"'},
+    )
+
+
+def _report_pdf(title, meta, sections, filename: str) -> Response:
+    """Render the report structure to a PDF download response (F-072)."""
+    from services.pdf_render import report_pdf_bytes
+
+    try:
+        pdf_bytes = report_pdf_bytes(title=title, meta=meta, sections=sections)
+    except RuntimeError as exc:  # fpdf2 missing
+        raise HTTPException(status_code=501, detail=str(exc))
+    return _pdf_response(pdf_bytes, filename)
+
+
+def _pdf_sales_summary(resp: "SalesSummaryResponse") -> Response:
+    rows = [[i.period, _m(i.total_sales), str(i.transaction_count), _m(i.avg_transaction)] for i in resp.items]
+    sections = [{
+        "heading": ("المبيعات حسب الفترة", "Sales by period"),
+        "columns": [("الفترة", "Period"), ("إجمالي المبيعات", "Total sales"),
+                    ("عدد العمليات", "Transactions"), ("متوسط العملية", "Avg sale")],
+        "rows": rows,
+    }]
+    meta = [(("إجمالي المبيعات", "Total sales"), _m(resp.total_sales)),
+            (("إجمالي العمليات", "Total transactions"), str(resp.total_transactions))]
+    return _report_pdf(("ملخص المبيعات", "Sales Summary"), meta, sections, "sales-summary")
+
+
+def _pdf_top_products(resp: "TopProductsResponse") -> Response:
+    rows = [[i.name, str(i.total_quantity_sold), _m(i.total_revenue)] for i in resp.items]
+    sections = [{
+        "heading": ("الأكثر مبيعاً", "Top products"),
+        "columns": [("الصنف", "Item"), ("الكمية المباعة", "Qty sold"), ("الإيراد", "Revenue")],
+        "rows": rows,
+        "widths": [110, 35, 35],
+    }]
+    return _report_pdf(("أفضل المنتجات", "Top Products"), [], sections, "top-products")
+
+
+def _pdf_payment_breakdown(resp: "PaymentBreakdownResponse") -> Response:
+    rows = [[t.tender_type, _m(t.collected), _m(t.refunds), _m(t.net), str(t.count)] for t in resp.tenders]
+    sections = [{
+        "heading": ("حسب طريقة الدفع", "By payment method"),
+        "columns": [("الطريقة", "Method"), ("المحصّل", "Collected"),
+                    ("المرتجع", "Refunds"), ("الصافي", "Net"), ("العدد", "Count")],
+        "rows": rows,
+    }]
+    meta = [(("إجمالي المحصّل", "Total collected"), _m(resp.total_collected)),
+            (("إجمالي المرتجع", "Total refunds"), _m(resp.total_refunds)),
+            (("الصافي", "Net"), _m(resp.net))]
+    return _report_pdf(("تفصيل طرق الدفع", "Payment Breakdown"), meta, sections, "payment-breakdown")
+
+
+def _pdf_journal(resp: "JournalExportResponse") -> Response:
+    rows = [[l.account_code, l.account, l.description, _m(l.debit), _m(l.credit)] for l in resp.lines]
+    sections = [{
+        "heading": ("قيود اليومية", "Journal entries"),
+        "columns": [("الرمز", "Code"), ("الحساب", "Account"), ("البيان", "Description"),
+                    ("مدين", "Debit"), ("دائن", "Credit")],
+        "rows": rows,
+        "widths": [20, 45, 65, 30, 30],
+    }]
+    meta = [(("الفترة", "Period"), f"{resp.from_date}..{resp.to_date}"),
+            (("إجمالي المدين", "Total debit"), _m(resp.total_debit)),
+            (("إجمالي الدائن", "Total credit"), _m(resp.total_credit)),
+            (("متوازن", "Balanced"), "✓" if resp.balanced else "✗")]
+    return _report_pdf(("قيد اليومية المحاسبية", "Accounting Journal"), meta, sections, "journal")
+
+
+def _pdf_profit_margin(resp: "ProfitMarginResponse") -> Response:
+    cols = [("الصنف", "Name"), ("الفئة", "Category"), ("الكمية", "Qty"),
+            ("الإيراد", "Revenue"), ("التكلفة", "COGS"), ("الربح", "Gross"), ("الهامش %", "Margin %")]
+
+    def _mrows(items):
+        return [[r.name, r.category or "", _q(r.qty_sold), _m(r.revenue), _m(r.cogs),
+                 _m(r.gross_profit), _m(r.margin_pct)] for r in items]
+
+    sections = [
+        {"heading": ("حسب الصنف", "By item"), "columns": cols, "rows": _mrows(resp.by_item)},
+        {"heading": ("حسب الفئة", "By category"), "columns": cols, "rows": _mrows(resp.by_category)},
+        {"heading": ("المخزون الراكد", "Dead stock"),
+         "columns": [("الصنف", "Name"), ("الفئة", "Category"), ("المتوفر", "On hand"),
+                     ("التكلفة", "Cost"), ("قيمة المخزون", "Stock value")],
+         "rows": [[d.name, d.category or "", _q(d.quantity), _m(d.cost_price), _m(d.stock_value)]
+                  for d in resp.dead_stock]},
+    ]
+    t = resp.totals
+    meta = [(("الفترة", "Period"), f"{resp.from_date}..{resp.to_date}"),
+            (("الإيراد", "Revenue"), _m(t.revenue)),
+            (("التكلفة", "COGS"), _m(t.cogs)),
+            (("إجمالي الربح", "Gross profit"), _m(t.gross_profit)),
+            (("الهامش %", "Margin %"), _m(t.margin_pct))]
+    return _report_pdf(("تقرير الأرباح والهوامش", "Profit & Margin"), meta, sections, "profit-margin")
+
+
+def _pdf_vat_summary(resp: "VatSummaryResponse") -> Response:
+    rows = [[b.label, _q(b.rate), _m(b.taxable_base), _m(b.vat_amount)] for b in resp.buckets]
+    sections = [{
+        "heading": ("خانات الإقرار الضريبي", "VAT-return boxes"),
+        "columns": [("الفئة", "Bucket"), ("النسبة %", "Rate %"),
+                    ("الوعاء الخاضع", "Taxable base"), ("الضريبة", "VAT")],
+        "rows": rows,
+    }]
+    meta = [(("الفترة", "Period"), f"{resp.from_date}..{resp.to_date}"),
+            (("الضريبة المحصّلة", "VAT collected"), _m(resp.vat_collected)),
+            (("الضريبة المرتجعة", "VAT reversed"), _m(resp.vat_reversed)),
+            (("صافي الضريبة", "Net VAT"), _m(resp.net_vat)),
+            (("إجمالي الوعاء", "Total taxable base"), _m(resp.total_taxable_base))]
+    return _report_pdf(("ملخص ضريبة القيمة المضافة", "VAT Summary"), meta, sections, "vat-summary")
+
+
+def _pdf_inventory(resp: "InventoryReportResponse") -> Response:
+    sections = [
+        {"heading": ("التقييم حسب الصنف", "Valuation by item"),
+         "columns": [("الصنف", "Name"), ("الفئة", "Category"), ("المتوفر", "On hand"),
+                     ("التكلفة", "Cost"), ("قيمة المخزون", "Stock value")],
+         "rows": [[r.name, r.category or "", _q(r.quantity), _m(r.cost_price), _m(r.stock_value)]
+                  for r in resp.by_product]},
+        {"heading": ("التقييم حسب الفرع", "Valuation by branch"),
+         "columns": [("الفرع", "Branch"), ("المتوفر", "On hand"), ("قيمة المخزون", "Stock value")],
+         "rows": [[b.branch_name or f"#{b.branch_id}", _q(b.quantity), _m(b.stock_value)]
+                  for b in resp.by_branch]},
+        {"heading": ("حركات المخزون", "Stock movements"),
+         "columns": [("التاريخ", "Date"), ("النوع", "Type"), ("الصنف", "Product"),
+                     ("الكمية", "Qty"), ("المرجع", "Reference")],
+         "rows": [[m.date, m.type, m.product_name or (f"#{m.product_id}" if m.product_id else ""),
+                   _q(m.quantity), m.reference or ""] for m in resp.movements]},
+    ]
+    meta = [(("الفترة", "Period"), f"{resp.from_date}..{resp.to_date}"),
+            (("إجمالي الكمية", "Total quantity"), _q(resp.total_quantity)),
+            (("إجمالي التقييم", "Total valuation"), _m(resp.total_valuation))]
+    return _report_pdf(("تقرير المخزون بالتكلفة", "Inventory at Cost"), meta, sections, "inventory")
+
+
+def _pdf_refunds_voids(resp: "RefundVoidReportResponse") -> Response:
+    type_label = {"refund": "مرتجع", "void": "إلغاء"}
+    rows = [[type_label.get(r.type, r.type), r.invoice_number or "", r.actor or "",
+             r.reason or "", _m(r.amount), _ts(r.timestamp), r.original_invoice or ""] for r in resp.rows]
+    sections = [{
+        "heading": ("المرتجعات والإلغاءات", "Refunds & voids"),
+        "columns": [("النوع", "Type"), ("الفاتورة", "Invoice"), ("المنفّذ", "Actor"),
+                    ("السبب", "Reason"), ("المبلغ", "Amount"), ("الوقت", "When"),
+                    ("الفاتورة الأصلية", "Original")],
+        "rows": rows,
+        "widths": [16, 26, 30, 34, 22, 30, 32],
+    }]
+    meta = [(("الفترة", "Period"), f"{resp.from_date}..{resp.to_date}"),
+            (("عدد المرتجعات", "Refund count"), str(resp.refund_count)),
+            (("إجمالي المرتجعات", "Refund total"), _m(resp.refund_total)),
+            (("عدد الإلغاءات", "Void count"), str(resp.void_count)),
+            (("إجمالي الإلغاءات", "Void total"), _m(resp.void_total))]
+    return _report_pdf(("المرتجعات والإلغاءات", "Refunds & Voids"), meta, sections, "refunds-voids")
+
+
+def _pdf_discounts(resp: "DiscountReportResponse") -> Response:
+    rows = [[r.invoice_number or "", r.actor or "", (r.code or "يدوي" if r.is_manual else (r.code or "")),
+             _m(r.discount_amount), _m(r.subtotal), _ts(r.timestamp)] for r in resp.rows]
+    sections = [{
+        "heading": ("المبيعات المخصومة", "Discounted sales"),
+        "columns": [("الفاتورة", "Invoice"), ("المنفّذ", "Actor"), ("الرمز", "Code"),
+                    ("الخصم", "Discount"), ("المجموع الفرعي", "Subtotal"), ("الوقت", "When")],
+        "rows": rows,
+    }]
+    meta = [(("الفترة", "Period"), f"{resp.from_date}..{resp.to_date}"),
+            (("عدد الخصومات", "Discount count"), str(resp.discount_count)),
+            (("إجمالي الخصومات", "Discount total"), _m(resp.discount_total))]
+    return _report_pdf(("تقرير الخصومات", "Discounts"), meta, sections, "discounts")
+
+
 @router.get("/api/v1/reports/sales-summary", response_model=SalesSummaryResponse)
 async def get_sales_summary(
     period: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
     days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -776,17 +980,21 @@ async def get_sales_summary(
         total_sales += total
         total_transactions += count
 
-    return SalesSummaryResponse(
+    resp = SalesSummaryResponse(
         items=items,
         total_sales=round(total_sales, 2),
         total_transactions=total_transactions,
     )
+    if format == "pdf":
+        return _pdf_sales_summary(resp)
+    return resp
 
 
 @router.get("/api/v1/reports/top-products", response_model=TopProductsResponse)
 async def get_top_products(
     limit: int = Query(10, ge=1, le=50),
     days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -849,7 +1057,10 @@ async def get_top_products(
         for pid, data in sorted_products
     ]
 
-    return TopProductsResponse(items=items)
+    resp = TopProductsResponse(items=items)
+    if format == "pdf":
+        return _pdf_top_products(resp)
+    return resp
 
 
 @router.get("/api/v1/reports/export-csv")
@@ -937,6 +1148,7 @@ class PaymentBreakdownResponse(BaseModel):
 @router.get("/api/v1/reports/payment-breakdown", response_model=PaymentBreakdownResponse)
 async def get_payment_breakdown(
     days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1003,13 +1215,16 @@ async def get_payment_breakdown(
     total_collected = round(sum(t.collected for t in tenders), 2)
     total_refunds = round(sum(t.refunds for t in tenders), 2)
 
-    return PaymentBreakdownResponse(
+    resp = PaymentBreakdownResponse(
         days=days,
         tenders=tenders,
         total_collected=total_collected,
         total_refunds=total_refunds,
         net=round(total_collected - total_refunds, 2),
     )
+    if format == "pdf":
+        return _pdf_payment_breakdown(resp)
+    return resp
 
 
 # ============================================================
@@ -1086,6 +1301,7 @@ class JournalExportResponse(BaseModel):
 @router.get("/api/v1/reports/journal-export", response_model=JournalExportResponse)
 async def export_accounting_journal(
     days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1252,7 +1468,7 @@ async def export_accounting_journal(
         ])
     writer.writerow([period_label, "", "TOTAL", "", f"{total_debit:.2f}", f"{total_credit:.2f}"])
 
-    return JournalExportResponse(
+    resp = JournalExportResponse(
         days=days,
         from_date=start_date.date().isoformat(),
         to_date=now.date().isoformat(),
@@ -1262,6 +1478,9 @@ async def export_accounting_journal(
         balanced=balanced,
         csv_content=output.getvalue(),
     )
+    if format == "pdf":
+        return _pdf_journal(resp)
+    return resp
 
 
 # ============================================================
@@ -1322,6 +1541,7 @@ def _margin_pct(revenue: float, gross: float) -> float:
 async def report_profit_margin(
     days: int = Query(30, ge=1, le=365),
     dead_stock_days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1542,7 +1762,7 @@ async def report_profit_margin(
              f"{d.cost_price:.2f}", f"{d.stock_value:.2f}"]
         )
 
-    return ProfitMarginResponse(
+    resp = ProfitMarginResponse(
         days=days,
         from_date=start_date.date().isoformat(),
         to_date=now.date().isoformat(),
@@ -1553,6 +1773,9 @@ async def report_profit_margin(
         totals=totals,
         csv_content=output.getvalue(),
     )
+    if format == "pdf":
+        return _pdf_profit_margin(resp)
+    return resp
 
 
 # ============================================================
@@ -1598,6 +1821,7 @@ class VatSummaryResponse(BaseModel):
 @router.get("/api/v1/reports/vat-summary", response_model=VatSummaryResponse)
 async def report_vat_summary(
     days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1688,7 +1912,7 @@ async def report_vat_summary(
     writer.writerow(["Net VAT payable", f"{net_vat:.2f}"])
     writer.writerow(["Total taxable base", f"{total_taxable_base:.2f}"])
 
-    return VatSummaryResponse(
+    resp = VatSummaryResponse(
         days=days,
         from_date=start_date.date().isoformat(),
         to_date=now.date().isoformat(),
@@ -1699,6 +1923,9 @@ async def report_vat_summary(
         net_vat=net_vat,
         csv_content=output.getvalue(),
     )
+    if format == "pdf":
+        return _pdf_vat_summary(resp)
+    return resp
 
 
 # ============================================================
@@ -1761,6 +1988,7 @@ class InventoryReportResponse(BaseModel):
 @router.get("/api/v1/reports/inventory", response_model=InventoryReportResponse)
 async def report_inventory(
     days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1982,7 +2210,7 @@ async def report_inventory(
              f"{m.quantity:g}", m.reference or "", m.note or ""]
         )
 
-    return InventoryReportResponse(
+    resp = InventoryReportResponse(
         days=days,
         from_date=start_date.date().isoformat(),
         to_date=now.date().isoformat(),
@@ -1993,6 +2221,9 @@ async def report_inventory(
         movements=movements,
         csv_content=output.getvalue(),
     )
+    if format == "pdf":
+        return _pdf_inventory(resp)
+    return resp
 
 
 # ============================================================
@@ -2072,6 +2303,7 @@ class RefundVoidReportResponse(BaseModel):
 @router.get("/api/v1/reports/refunds-voids", response_model=RefundVoidReportResponse)
 async def report_refunds_voids(
     days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2231,7 +2463,7 @@ async def report_refunds_voids(
     writer.writerow(["Refund count", refund_count, "Refund total", f"{refund_total:.2f}"])
     writer.writerow(["Void count", void_count, "Void total", f"{void_total:.2f}"])
 
-    return RefundVoidReportResponse(
+    resp = RefundVoidReportResponse(
         days=days,
         from_date=start_date.date().isoformat(),
         to_date=now.date().isoformat(),
@@ -2242,6 +2474,9 @@ async def report_refunds_voids(
         void_total=void_total,
         csv_content=output.getvalue(),
     )
+    if format == "pdf":
+        return _pdf_refunds_voids(resp)
+    return resp
 
 
 class DiscountRow(BaseModel):
@@ -2269,6 +2504,7 @@ class DiscountReportResponse(BaseModel):
 @router.get("/api/v1/reports/discounts", response_model=DiscountReportResponse)
 async def report_discounts(
     days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2350,7 +2586,7 @@ async def report_discounts(
         ["Discount count", discount_count, "Discount total", f"{discount_total:.2f}"]
     )
 
-    return DiscountReportResponse(
+    resp = DiscountReportResponse(
         days=days,
         from_date=start_date.date().isoformat(),
         to_date=now.date().isoformat(),
@@ -2359,6 +2595,9 @@ async def report_discounts(
         discount_total=discount_total,
         csv_content=output.getvalue(),
     )
+    if format == "pdf":
+        return _pdf_discounts(resp)
+    return resp
 
 
 # ============================================================

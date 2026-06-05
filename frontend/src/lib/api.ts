@@ -1819,6 +1819,29 @@ export async function downloadInvoicePdf(transactionId: number, invoiceNumber: s
   URL.revokeObjectURL(url);
 }
 
+// F-072 / RPT-10: download any /reports/* report as a real PDF. The shared,
+// always-Arabic RTL renderer lives server-side; the client just asks for
+// ?format=pdf and saves the bytes. ``path`` is the report path (no leading
+// slash), ``params`` the report's query args (days, period, …).
+export async function downloadReportPdf(
+  path: string,
+  filename: string,
+  params: Record<string, string | number> = {},
+) {
+  const qs = new URLSearchParams({ ...Object.fromEntries(
+    Object.entries(params).map(([k, v]) => [k, String(v)]),
+  ), format: 'pdf' }).toString();
+  const blob = await getBlob(`/api/v1/reports/${path}?${qs}`);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${filename}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 // POS-04: email a receipt for a transaction
 export async function emailReceipt(transactionId: number, toEmail: string) {
   const response = await client.apiCall.invoke({

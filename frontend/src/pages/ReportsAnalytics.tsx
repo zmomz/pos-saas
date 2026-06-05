@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
-import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport } from '@/lib/api';
+import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, downloadReportPdf, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -60,6 +60,7 @@ const reportTranslations: Record<string, Record<string, string>> = {
     qty_sold: 'Qty Sold',
     revenue: 'Revenue',
     export_csv: 'Export CSV',
+    export_pdf: 'PDF',
     loading: 'Loading...',
     no_data: 'No data available',
     sar: 'SAR',
@@ -171,6 +172,7 @@ const reportTranslations: Record<string, Record<string, string>> = {
     qty_sold: 'الكمية المباعة',
     revenue: 'الإيرادات',
     export_csv: 'تصدير CSV',
+    export_pdf: 'PDF',
     loading: 'جاري التحميل...',
     no_data: 'لا توجد بيانات',
     sar: 'ر.س',
@@ -282,6 +284,7 @@ const reportTranslations: Record<string, Record<string, string>> = {
     qty_sold: 'बेची गई मात्रा',
     revenue: 'राजस्व',
     export_csv: 'CSV निर्यात',
+    export_pdf: 'PDF',
     loading: 'लोड हो रहा है...',
     no_data: 'कोई डेटा उपलब्ध नहीं',
     sar: 'SAR',
@@ -393,6 +396,7 @@ const reportTranslations: Record<string, Record<string, string>> = {
     qty_sold: 'فروخت شدہ مقدار',
     revenue: 'آمدنی',
     export_csv: 'CSV برآمد',
+    export_pdf: 'PDF',
     loading: 'لوڈ ہو رہا ہے...',
     no_data: 'کوئی ڈیٹا دستیاب نہیں',
     sar: 'SAR',
@@ -529,6 +533,8 @@ export default function ReportsAnalytics() {
   const [exportingInventory, setExportingInventory] = useState(false);
   const [exportingRefundsVoids, setExportingRefundsVoids] = useState(false);
   const [exportingDiscounts, setExportingDiscounts] = useState(false);
+  // F-072: which report's PDF is currently downloading (its path), else null.
+  const [exportingPdf, setExportingPdf] = useState<string | null>(null);
 
   const tr = useCallback(
     (key: string): string => {
@@ -803,6 +809,24 @@ export default function ReportsAnalytics() {
     }
   }
 
+  // F-072 / RPT-10: download any report as a real (always-Arabic, RTL) PDF via
+  // the shared server renderer. ``path`` keys the in-flight spinner so only the
+  // clicked report's button shows the loading state.
+  async function handleExportPdf(
+    path: string,
+    filename: string,
+    params: Record<string, string | number> = {},
+  ) {
+    setExportingPdf(path);
+    try {
+      await downloadReportPdf(path, filename, params);
+    } catch {
+      // best-effort download — the report data is already on screen.
+    } finally {
+      setExportingPdf(null);
+    }
+  }
+
   // Localize a tender_type to its display label; fall back to the raw type for
   // any tender the UI doesn't yet have a label for.
   function tenderLabel(type: string): string {
@@ -964,8 +988,16 @@ export default function ReportsAnalytics() {
 
       {/* Sales Chart */}
       <Card className="bg-slate-800 border-slate-700 mb-8">
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-white">{tr('sales_chart')}</CardTitle>
+          <Button
+            onClick={() => handleExportPdf('sales-summary', 'sales_summary', { period })}
+            disabled={exportingPdf === 'sales-summary' || salesData.length === 0}
+            variant="outline"
+            className="border-slate-600 text-slate-200 hover:bg-slate-700 shrink-0"
+          >
+            {exportingPdf === 'sales-summary' ? '...' : tr('export_pdf')}
+          </Button>
         </CardHeader>
         <CardContent>
           {loadingSales ? (
@@ -1010,8 +1042,16 @@ export default function ReportsAnalytics() {
 
       {/* Payment Breakdown (RPT-03) */}
       <Card className="bg-slate-800 border-slate-700 mb-8">
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-white">{tr('payment_breakdown')}</CardTitle>
+          <Button
+            onClick={() => handleExportPdf('payment-breakdown', 'payment_breakdown')}
+            disabled={exportingPdf === 'payment-breakdown' || paymentTenders.length === 0}
+            variant="outline"
+            className="border-slate-600 text-slate-200 hover:bg-slate-700 shrink-0"
+          >
+            {exportingPdf === 'payment-breakdown' ? '...' : tr('export_pdf')}
+          </Button>
         </CardHeader>
         <CardContent>
           {loadingPayments ? (
@@ -1092,13 +1132,23 @@ export default function ReportsAnalytics() {
             <CardTitle className="text-white">{tr('journal_export')}</CardTitle>
             <p className="text-xs text-slate-400 mt-1">{tr('journal_hint')}</p>
           </div>
-          <Button
-            onClick={handleExportJournal}
-            disabled={exportingJournal || !journal || journal.lines.length === 0}
-            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
-          >
-            {exportingJournal ? '...' : tr('download_journal')}
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              onClick={handleExportJournal}
+              disabled={exportingJournal || !journal || journal.lines.length === 0}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {exportingJournal ? '...' : tr('download_journal')}
+            </Button>
+            <Button
+              onClick={() => handleExportPdf('journal-export', `journal_${journal?.from_date}_${journal?.to_date}`)}
+              disabled={exportingPdf === 'journal-export' || !journal || journal.lines.length === 0}
+              variant="outline"
+              className="border-slate-600 text-slate-200 hover:bg-slate-700"
+            >
+              {exportingPdf === 'journal-export' ? '...' : tr('export_pdf')}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loadingJournal ? (
@@ -1194,13 +1244,23 @@ export default function ReportsAnalytics() {
             <CardTitle className="text-white">{tr('profit_margin')}</CardTitle>
             <p className="text-xs text-slate-400 mt-1">{tr('profit_margin_hint')}</p>
           </div>
-          <Button
-            onClick={handleExportMargin}
-            disabled={exportingMargin || !margin || margin.by_item.length === 0}
-            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
-          >
-            {exportingMargin ? '...' : tr('download_margin')}
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              onClick={handleExportMargin}
+              disabled={exportingMargin || !margin || margin.by_item.length === 0}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {exportingMargin ? '...' : tr('download_margin')}
+            </Button>
+            <Button
+              onClick={() => handleExportPdf('profit-margin', `profit_margin_${margin?.from_date}_${margin?.to_date}`)}
+              disabled={exportingPdf === 'profit-margin' || !margin || margin.by_item.length === 0}
+              variant="outline"
+              className="border-slate-600 text-slate-200 hover:bg-slate-700"
+            >
+              {exportingPdf === 'profit-margin' ? '...' : tr('export_pdf')}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loadingMargin ? (
@@ -1365,13 +1425,23 @@ export default function ReportsAnalytics() {
             <CardTitle className="text-white">{tr('vat_summary')}</CardTitle>
             <p className="text-xs text-slate-400 mt-1">{tr('vat_summary_hint')}</p>
           </div>
-          <Button
-            onClick={handleExportVat}
-            disabled={exportingVat || !vat}
-            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
-          >
-            {exportingVat ? '...' : tr('download_vat')}
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              onClick={handleExportVat}
+              disabled={exportingVat || !vat}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {exportingVat ? '...' : tr('download_vat')}
+            </Button>
+            <Button
+              onClick={() => handleExportPdf('vat-summary', `vat_summary_${vat?.from_date}_${vat?.to_date}`)}
+              disabled={exportingPdf === 'vat-summary' || !vat}
+              variant="outline"
+              className="border-slate-600 text-slate-200 hover:bg-slate-700"
+            >
+              {exportingPdf === 'vat-summary' ? '...' : tr('export_pdf')}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loadingVat ? (
@@ -1461,13 +1531,23 @@ export default function ReportsAnalytics() {
             <CardTitle className="text-white">{tr('inventory_report')}</CardTitle>
             <p className="text-xs text-slate-400 mt-1">{tr('inventory_hint')}</p>
           </div>
-          <Button
-            onClick={handleExportInventory}
-            disabled={exportingInventory || !inventory}
-            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
-          >
-            {exportingInventory ? '...' : tr('download_inventory')}
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              onClick={handleExportInventory}
+              disabled={exportingInventory || !inventory}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {exportingInventory ? '...' : tr('download_inventory')}
+            </Button>
+            <Button
+              onClick={() => handleExportPdf('inventory', `inventory_${inventory?.from_date}_${inventory?.to_date}`)}
+              disabled={exportingPdf === 'inventory' || !inventory}
+              variant="outline"
+              className="border-slate-600 text-slate-200 hover:bg-slate-700"
+            >
+              {exportingPdf === 'inventory' ? '...' : tr('export_pdf')}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loadingInventory ? (
@@ -1614,13 +1694,23 @@ export default function ReportsAnalytics() {
             <CardTitle className="text-white">{tr('refunds_voids')}</CardTitle>
             <p className="text-xs text-slate-400 mt-1">{tr('refunds_voids_hint')}</p>
           </div>
-          <Button
-            onClick={handleExportRefundsVoids}
-            disabled={exportingRefundsVoids || !refundsVoids}
-            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
-          >
-            {exportingRefundsVoids ? '...' : tr('download_refunds_voids')}
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              onClick={handleExportRefundsVoids}
+              disabled={exportingRefundsVoids || !refundsVoids}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {exportingRefundsVoids ? '...' : tr('download_refunds_voids')}
+            </Button>
+            <Button
+              onClick={() => handleExportPdf('refunds-voids', `refunds_voids_${refundsVoids?.from_date}_${refundsVoids?.to_date}`)}
+              disabled={exportingPdf === 'refunds-voids' || !refundsVoids}
+              variant="outline"
+              className="border-slate-600 text-slate-200 hover:bg-slate-700"
+            >
+              {exportingPdf === 'refunds-voids' ? '...' : tr('export_pdf')}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loadingRefundsVoids ? (
@@ -1725,13 +1815,23 @@ export default function ReportsAnalytics() {
             <CardTitle className="text-white">{tr('discounts_report')}</CardTitle>
             <p className="text-xs text-slate-400 mt-1">{tr('discounts_hint')}</p>
           </div>
-          <Button
-            onClick={handleExportDiscounts}
-            disabled={exportingDiscounts || !discounts}
-            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
-          >
-            {exportingDiscounts ? '...' : tr('download_discounts')}
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <Button
+              onClick={handleExportDiscounts}
+              disabled={exportingDiscounts || !discounts}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {exportingDiscounts ? '...' : tr('download_discounts')}
+            </Button>
+            <Button
+              onClick={() => handleExportPdf('discounts', `discounts_${discounts?.from_date}_${discounts?.to_date}`)}
+              disabled={exportingPdf === 'discounts' || !discounts}
+              variant="outline"
+              className="border-slate-600 text-slate-200 hover:bg-slate-700"
+            >
+              {exportingPdf === 'discounts' ? '...' : tr('export_pdf')}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {loadingDiscounts ? (
@@ -1811,8 +1911,16 @@ export default function ReportsAnalytics() {
 
       {/* Top Products */}
       <Card className="bg-slate-800 border-slate-700">
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle className="text-white">{tr('top_products')}</CardTitle>
+          <Button
+            onClick={() => handleExportPdf('top-products', 'top_products')}
+            disabled={exportingPdf === 'top-products' || topProducts.length === 0}
+            variant="outline"
+            className="border-slate-600 text-slate-200 hover:bg-slate-700 shrink-0"
+          >
+            {exportingPdf === 'top-products' ? '...' : tr('export_pdf')}
+          </Button>
         </CardHeader>
         <CardContent>
           {loadingProducts ? (

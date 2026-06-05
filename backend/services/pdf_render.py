@@ -411,6 +411,157 @@ def subscription_invoice_pdf_bytes(
     return _render_subscription_latin(rows)
 
 
+# ---------------------------------------------------------------------------
+# F-072 — Generic report → PDF renderer (RPT-10). A shared, RTL-aware tabular
+# renderer sitting alongside the invoice renderer so *every* /reports/* endpoint
+# can answer ``?format=pdf``. Reports render **always-Arabic** (consistent with
+# the fiscal-Arabic rule) using the bundled Amiri font + reshaper/bidi when
+# available, falling back to a Latin-1-safe layout so a valid PDF is always
+# produced even if the shaping stack is missing.
+#
+# The caller passes a language-neutral description of the report:
+#   • title   — an ``(arabic, english)`` pair for the document heading
+#   • meta    — a list of ``((label_ar, label_en), value)`` summary lines
+#   • sections — a list of dicts: ``{heading: (ar, en) | None, columns:
+#     [(ar, en), …], rows: [[cell, …], …], aligns: ["R"|"C"|"L", …] | None}``
+# Cells are plain strings (numbers / names) and are language-neutral; only the
+# chrome (title / labels / column headers) carries both languages.
+# ---------------------------------------------------------------------------
+
+
+def _pair(value, idx: int) -> str:
+    """Pick the arabic (idx 0) or english (idx 1) half of a label pair.
+
+    Tolerates a plain string (used for both languages) so callers may pass a
+    single language-neutral header where no translation is needed.
+    """
+    if isinstance(value, (tuple, list)):
+        return str(value[idx]) if len(value) > idx else str(value[0])
+    return "" if value is None else str(value)
+
+
+def _fit(value: object, width_mm: float) -> str:
+    """Truncate a cell so it roughly fits ``width_mm`` (≈1.9mm per glyph at 9pt)."""
+    s = "" if value is None else str(value)
+    max_chars = max(3, int(width_mm / 1.9))
+    return s if len(s) <= max_chars else s[: max_chars - 1] + "…"
+
+
+def _render_report_arabic(title, meta, sections) -> bytes:
+    from fpdf import FPDF
+
+    pdf = FPDF(unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.set_margins(10, 10, 10)
+    pdf.add_font(_FONT_FAMILY, "", _FONT_PATH, uni=True)
+    pdf.add_page()
+    epw = pdf.w - pdf.l_margin - pdf.r_margin
+
+    pdf.set_font(_FONT_FAMILY, "", 16)
+    pdf.cell(0, 10, _shape(_pair(title, 0)), ln=True, align="C")
+    pdf.ln(1)
+
+    pdf.set_font(_FONT_FAMILY, "", 10)
+    for label, value in meta or []:
+        # RTL line: "value  :label" so the colon hugs the Arabic label.
+        pdf.cell(0, 6, _shape(f"{value}  :{_pair(label, 0)}"), ln=True, align="R")
+
+    for section in sections:
+        pdf.ln(2)
+        heading = section.get("heading")
+        if heading:
+            pdf.set_font(_FONT_FAMILY, "", 12)
+            pdf.cell(0, 7, _shape(_pair(heading, 0)), ln=True, align="R")
+        columns = section["columns"]
+        rows = section.get("rows", [])
+        n = len(columns)
+        widths = section.get("widths") or [round(epw / n, 2)] * n
+        # RTL: reverse the column order so logical column 0 sits on the right.
+        order = list(range(n))[::-1]
+
+        pdf.set_font(_FONT_FAMILY, "", 9)
+        for i in order:
+            pdf.cell(widths[i], 7, _shape(_pair(columns[i], 0)), border=1, align="C")
+        pdf.ln()
+
+        if not rows:
+            pdf.cell(epw, 6, _shape("لا توجد بيانات"), border=1, align="C", ln=True)
+            continue
+        for row in rows:
+            for i in order:
+                pdf.cell(widths[i], 6, _shape(_fit(row[i], widths[i])), border=1, align="R")
+            pdf.ln()
+
+    return bytes(pdf.output())
+
+
+def _render_report_latin(title, meta, sections) -> bytes:
+    from fpdf import FPDF
+
+    pdf = FPDF(unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.set_margins(10, 10, 10)
+    pdf.add_page()
+    epw = pdf.w - pdf.l_margin - pdf.r_margin
+
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, _safe(_pair(title, 1)), ln=True, align="C")
+    pdf.ln(1)
+
+    pdf.set_font("Helvetica", "", 10)
+    for label, value in meta or []:
+        pdf.cell(0, 6, _safe(f"{_pair(label, 1)}: {value}"), ln=True)
+
+    for section in sections:
+        pdf.ln(2)
+        heading = section.get("heading")
+        if heading:
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 7, _safe(_pair(heading, 1)), ln=True)
+        columns = section["columns"]
+        rows = section.get("rows", [])
+        n = len(columns)
+        widths = section.get("widths") or [round(epw / n, 2)] * n
+
+        pdf.set_font("Helvetica", "B", 9)
+        for i in range(n):
+            pdf.cell(widths[i], 7, _safe(_pair(columns[i], 1)), border=1, align="C")
+        pdf.ln()
+
+        pdf.set_font("Helvetica", "", 9)
+        if not rows:
+            pdf.cell(epw, 6, _safe("No data"), border=1, align="C", ln=True)
+            continue
+        for row in rows:
+            for i in range(n):
+                pdf.cell(widths[i], 6, _safe(_fit(row[i], widths[i])), border=1, align="R")
+            pdf.ln()
+
+    return bytes(pdf.output())
+
+
+def report_pdf_bytes(*, title, meta=None, sections) -> bytes:
+    """Render a generic tabular report to PDF bytes (F-072).
+
+    ``title`` is an ``(arabic, english)`` pair, ``meta`` a list of
+    ``(label_pair, value)`` summary lines, ``sections`` a list of table dicts
+    (see the module note above). Always-Arabic via the bundled Amiri font when
+    available, else a Latin-1-safe fallback. Raises RuntimeError if fpdf2 is
+    absent.
+    """
+    try:
+        import fpdf  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - dependency is in requirements
+        raise RuntimeError("fpdf2 is not installed; cannot render PDF") from exc
+
+    if _arabic_available():
+        try:
+            return _render_report_arabic(title, meta or [], sections)
+        except Exception as exc:  # pragma: no cover - fall back rather than fail
+            logger.warning("Arabic report PDF render failed (%s); using Latin fallback", exc)
+    return _render_report_latin(title, meta or [], sections)
+
+
 def invoice_pdf_bytes(
     *,
     seller_name: str,

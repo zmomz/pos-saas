@@ -328,3 +328,33 @@
     surfaces the code, CSV export, and owner-scope/agent-403). Full backend suite
     421 passed; frontend lint+tsc+build green.
     Commit: 0453b43
+2026-06-05 · 05 / F-072 — PDF export for every report (RPT-10). Every data report
+    was CSV-only; PDF rendering existed only for invoices. Backend: new generic
+    RTL-aware report→PDF renderer services/pdf_render.report_pdf_bytes — a sibling
+    to the invoice renderer that takes a language-neutral structure (title +
+    summary meta lines + tabular sections) and renders it ALWAYS-ARABIC via the
+    bundled Amiri font + arabic_reshaper/python-bidi (RTL: columns reversed so
+    logical col 0 sits on the right, cells shaped + right-aligned, per-cell width
+    fit), with a Latin-1-safe fallback so a valid PDF is always produced. Chrome
+    (title/labels/column headers) carries an (ar, en) pair; data cells are
+    language-neutral. Every /reports/* endpoint — the four existing (sales-summary,
+    top-products, payment-breakdown, journal-export) AND the four new reporting-
+    depth ones (profit-margin, vat-summary, inventory, refunds-voids, discounts) —
+    gained a `format=json|pdf` query param; when pdf, the SAME already-computed
+    response object is handed to a per-report section builder
+    (_pdf_sales_summary/_pdf_top_products/_pdf_payment_breakdown/_pdf_journal/
+    _pdf_profit_margin/_pdf_vat_summary/_pdf_inventory/_pdf_refunds_voids/
+    _pdf_discounts) → report_pdf_bytes → an application/pdf Response (no extra
+    query; reports stay OPS-05 server-aggregated, role gate runs before the pdf
+    branch so SEC-02 holds). Frontend: generic downloadReportPdf(path, filename,
+    params) api.ts wrapper (appends format=pdf, saves the blob); ReportsAnalytics
+    gained a PDF button on every report card (sales chart, top products, payment
+    breakdown, journal, profit-margin, vat, inventory, refunds-voids, discounts)
+    via one shared handleExportPdf + per-path exportingPdf spinner; export_pdf
+    i18n key x4 (ar/en/hi/ur). Tests: test_phase7_rpt_pdf_export.py (3 incl. the
+    named test_every_report_exports_pdf_with_arabic — an Arabic-named product +
+    discounted sale, then all nine endpoints return application/pdf whose body
+    starts with the %PDF magic bytes — plus default-format-is-json and the
+    agent-403 owner-scope check across all paths). Full backend suite 424 passed;
+    frontend lint+tsc+build green. RPT cluster (F-068–F-072) COMPLETE.
+    Commit: <pending>
