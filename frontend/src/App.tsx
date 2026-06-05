@@ -10,8 +10,6 @@ import { BrandingProvider } from '@/contexts/BrandingContext';
 import { LanguageProvider } from '@/lib/i18n';
 import LandingPage from './pages/LandingPage';
 import Index from './pages/Index';
-import AuthCallback from './pages/AuthCallback';
-import AuthError from './pages/AuthError';
 import MasterDashboard from './pages/MasterDashboard';
 import AgentDashboard from './pages/AgentDashboard';
 import ClientDashboard from './pages/ClientDashboard';
@@ -82,8 +80,6 @@ const AppRoutes = () => (
     <Route path="/" element={<LandingPage />} />
     <Route path="/login" element={<Index />} />
     <Route path="/d/:agentId" element={<AgentLandingPage />} />
-    <Route path="/auth/callback" element={<AuthCallback />} />
-    <Route path="/auth/error" element={<AuthError />} />
     <Route path="/customer-display" element={<CustomerDisplay />} />
     {/* First-login force-password-change (consumes must_change_password) */}
     <Route path="/force-reset" element={<ForceResetPassword />} />
