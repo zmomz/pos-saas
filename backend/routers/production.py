@@ -26,6 +26,9 @@ from models.stock_transfers import Stock_transfers  # noqa: F401
 # Imported so the stock_adjustments table registers on Base.metadata at startup
 # (INV-06 / F-036 counts & adjustments).
 from models.stock_adjustments import Stock_adjustments  # noqa: F401
+# Imported so the cash_movements table registers on Base.metadata at startup
+# (FIN-04 / POS-09 / F-044 drawer pay-in/pay-out/cash-drop tied to the shift).
+from models.cash_movements import Cash_movements  # noqa: F401
 from services.production import (
     AnalyticsService,
     BulkImportService,
@@ -96,6 +99,14 @@ class ShiftOpenRequest(BaseModel):
 class ShiftCloseRequest(BaseModel):
     closing_cash: float
     notes: Optional[str] = None
+
+
+class CashMovementRequest(BaseModel):
+    # FIN-04 / POS-09 drawer movement against the open shift. ``amount`` is the
+    # positive cash magnitude; the sign is implied by ``movement_type``.
+    movement_type: str = Field(description="pay_in | pay_out | cash_drop")
+    amount: float = Field(gt=0, description="Positive cash magnitude")
+    reason: Optional[str] = None
 
 
 class LoyaltyEarnRequest(BaseModel):
@@ -626,6 +637,9 @@ async def close_shift(
         "cash_difference": cash_difference,
         "cash_sales": recon["cash_sales"],
         "cash_refunds": recon["cash_refunds"],
+        "pay_in": recon["pay_in"],
+        "pay_out": recon["pay_out"],
+        "cash_drops": recon["cash_drops"],
         "total_sales": shift.total_sales,
         "total_transactions": shift.total_transactions,
         "reconciliation": "balanced" if abs(cash_difference) < 0.01 else ("over" if cash_difference > 0 else "short"),
@@ -701,6 +715,129 @@ async def get_shift_history(
             for s in shifts
         ],
         "total": len(shifts),
+    }
+
+
+# Cash drawer movements (FIN-04 / POS-09): pay-in / pay-out / cash-drop entries
+# recorded against the open shift so the close-time reconciliation accounts for
+# cash that entered or left the till outside a sale, and the Z/X-report shows the
+# payouts line (RPT-06).
+_MOVEMENT_TYPES = {"pay_in", "pay_out", "cash_drop"}
+
+
+@router.post("/shifts/movements")
+async def record_cash_movement(
+    data: CashMovementRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Record a pay-in / pay-out / cash-drop against the caller's open shift.
+
+    There must be an open shift (a drawer movement only makes sense while the till
+    is open); ``movement_type`` must be one of pay_in/pay_out/cash_drop and
+    ``amount`` a positive magnitude. The movement is owned by ``user_id`` and tied
+    to the open shift (SEC-02), and the response carries the recomputed drawer
+    expectation so the UI can refresh without a round-trip."""
+    from models.shifts import Shifts
+
+    movement_type = (data.movement_type or "").lower()
+    if movement_type not in _MOVEMENT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="movement_type must be one of pay_in, pay_out, cash_drop",
+        )
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+
+    result = await db.execute(
+        select(Shifts).where(
+            Shifts.user_id == str(current_user.id),
+            Shifts.status == "open",
+        )
+    )
+    shift = result.scalar_one_or_none()
+    if not shift:
+        raise HTTPException(status_code=404, detail="No open shift to record a cash movement against")
+
+    movement = Cash_movements(
+        user_id=str(current_user.id),
+        client_id=shift.client_id,
+        shift_id=shift.id,
+        movement_type=movement_type,
+        amount=round(abs(float(data.amount)), 2),
+        reason=data.reason,
+    )
+    db.add(movement)
+    await db.commit()
+    await db.refresh(movement)
+
+    recon = await compute_shift_cash_reconciliation(db, shift)
+    return {
+        "id": movement.id,
+        "shift_id": shift.id,
+        "movement_type": movement.movement_type,
+        "amount": movement.amount,
+        "reason": movement.reason,
+        "expected_cash": recon["expected_cash"],
+        "pay_in": recon["pay_in"],
+        "pay_out": recon["pay_out"],
+        "cash_drops": recon["cash_drops"],
+    }
+
+
+@router.get("/shifts/movements")
+async def list_cash_movements(
+    shift_id: Optional[int] = Query(None, description="Shift to list movements for; omit for the current open shift"),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's drawer movements for a shift (owner-scoped, SEC-02).
+
+    With ``shift_id`` omitted, lists the caller's open shift's movements; an
+    unknown/foreign shift id resolves to no movements (the query is filtered on
+    ``user_id``)."""
+    from models.shifts import Shifts
+
+    if shift_id is None:
+        result = await db.execute(
+            select(Shifts).where(
+                Shifts.user_id == str(current_user.id),
+                Shifts.status == "open",
+            )
+        )
+        shift = result.scalar_one_or_none()
+        if not shift:
+            return {"movements": [], "total": 0, "pay_in": 0.0, "pay_out": 0.0, "cash_drops": 0.0}
+        shift_id = shift.id
+
+    result = await db.execute(
+        select(Cash_movements)
+        .where(
+            Cash_movements.user_id == str(current_user.id),
+            Cash_movements.shift_id == shift_id,
+        )
+        .order_by(Cash_movements.id.desc())
+    )
+    movements = result.scalars().all()
+    pay_in = round(sum(abs(float(m.amount or 0)) for m in movements if (m.movement_type or "") == "pay_in"), 2)
+    pay_out = round(sum(abs(float(m.amount or 0)) for m in movements if (m.movement_type or "") == "pay_out"), 2)
+    cash_drops = round(sum(abs(float(m.amount or 0)) for m in movements if (m.movement_type or "") == "cash_drop"), 2)
+    return {
+        "movements": [
+            {
+                "id": m.id,
+                "shift_id": m.shift_id,
+                "movement_type": m.movement_type,
+                "amount": m.amount,
+                "reason": m.reason,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in movements
+        ],
+        "total": len(movements),
+        "pay_in": pay_in,
+        "pay_out": pay_out,
+        "cash_drops": cash_drops,
     }
 
 

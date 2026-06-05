@@ -9,9 +9,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { client, printZReport } from '@/lib/api';
+import {
+  client,
+  printZReport,
+  recordCashMovement,
+  getCashMovements,
+  type CashMovement,
+  type CashMovementType,
+} from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { Clock, PlayCircle, StopCircle, History, Receipt } from 'lucide-react';
+import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle } from 'lucide-react';
 
 interface Shift {
   id: string;
@@ -67,6 +74,13 @@ export default function ShiftManagement() {
   const [submitting, setSubmitting] = useState(false);
   // RPT-06/PRN-05: id of the shift just closed, so its Z-report can be (re)printed.
   const [lastClosedShiftId, setLastClosedShiftId] = useState<number | null>(null);
+  // FIN-04/POS-09: drawer movements (pay-in/pay-out/cash-drop) on the open shift.
+  const [movements, setMovements] = useState<CashMovement[]>([]);
+  const [movementDialog, setMovementDialog] = useState(false);
+  const [movementType, setMovementType] = useState<CashMovementType>('pay_out');
+  const [movementAmount, setMovementAmount] = useState('');
+  const [movementReason, setMovementReason] = useState('');
+  const [movementError, setMovementError] = useState<string | null>(null);
 
   const { t } = useLanguage();
 
@@ -89,11 +103,20 @@ export default function ShiftManagement() {
       const rawShift = cur?.shift ?? (cur?.id != null ? cur : null);
       if (rawShift && rawShift.id != null) {
         setCurrentShift(normalizeShift(rawShift));
+        // POS-09/FIN-04: load this shift's drawer movements so the panel renders.
+        try {
+          const list = await getCashMovements();
+          setMovements(list.movements || []);
+        } catch {
+          setMovements([]);
+        }
       } else {
         setCurrentShift(null);
+        setMovements([]);
       }
     } catch {
       setCurrentShift(null);
+      setMovements([]);
     }
     try {
       const historyRes = await client.apiCall.invoke({
@@ -171,6 +194,38 @@ export default function ShiftManagement() {
     }
   }
 
+  function openMovementDialog(type: CashMovementType) {
+    setMovementType(type);
+    setMovementAmount('');
+    setMovementReason('');
+    setMovementError(null);
+    setMovementDialog(true);
+  }
+
+  async function handleRecordMovement() {
+    const amount = parseFloat(movementAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setMovementError(t('movement_failed'));
+      return;
+    }
+    setSubmitting(true);
+    setMovementError(null);
+    try {
+      await recordCashMovement({
+        movement_type: movementType,
+        amount,
+        reason: movementReason || undefined,
+      });
+      setMovementDialog(false);
+      await loadShiftData();
+    } catch (err) {
+      console.error('Failed to record cash movement:', err);
+      setMovementError(t('movement_failed'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function formatDuration(start: string) {
     const ms = Date.now() - new Date(start).getTime();
     const hours = Math.floor(ms / 3600000);
@@ -227,11 +282,52 @@ export default function ShiftManagement() {
                 </Button>
                 <Button
                   variant="outline"
+                  onClick={() => openMovementDialog('pay_out')}
+                  className="border-slate-600 text-slate-200 hover:bg-slate-700"
+                >
+                  <ArrowDownCircle className="h-4 w-4 mr-2" /> {t('record_cash_movement')}
+                </Button>
+                <Button
+                  variant="outline"
                   onClick={() => printZReport()}
                   className="border-slate-600 text-slate-200 hover:bg-slate-700"
                 >
                   <Receipt className="h-4 w-4 mr-2" /> {t('x_report')}
                 </Button>
+              </div>
+
+              {/* Cash drawer movements (FIN-04 / POS-09) for the open shift. */}
+              <div className="rounded-lg border border-slate-700">
+                <div className="px-3 py-2 border-b border-slate-700 text-slate-300 text-sm font-medium">
+                  {t('cash_drawer_movements')}
+                </div>
+                {movements.length === 0 ? (
+                  <p className="px-3 py-4 text-center text-slate-500 text-sm">{t('no_cash_movements')}</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <tbody>
+                      {movements.map((m) => (
+                        <tr key={m.id} className="border-t border-slate-700 text-slate-300">
+                          <td className="px-3 py-2">
+                            <Badge
+                              className={
+                                m.movement_type === 'pay_in'
+                                  ? 'bg-green-500/20 text-green-400'
+                                  : 'bg-amber-500/20 text-amber-400'
+                              }
+                            >
+                              {t(m.movement_type)}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-2 text-slate-400">{m.reason || '—'}</td>
+                          <td className="px-3 py-2 text-end text-white font-medium">
+                            {m.movement_type === 'pay_in' ? '+' : '−'}SAR {Number(m.amount).toFixed(2)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
             </div>
           ) : (
@@ -394,6 +490,68 @@ export default function ShiftManagement() {
             )}
             <Button onClick={handleCloseShift} disabled={submitting} className="w-full bg-red-600 hover:bg-red-700 text-white">
               {submitting ? t('loading') : 'Close Shift'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cash Movement Dialog (FIN-04 / POS-09) */}
+      <Dialog open={movementDialog} onOpenChange={setMovementDialog}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">{t('record_cash_movement')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('movement_type')}</label>
+              <div className="grid grid-cols-3 gap-2">
+                {(['pay_in', 'pay_out', 'cash_drop'] as CashMovementType[]).map((type) => (
+                  <Button
+                    key={type}
+                    type="button"
+                    variant={movementType === type ? 'default' : 'outline'}
+                    onClick={() => setMovementType(type)}
+                    className={
+                      movementType === type
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'border-slate-600 text-slate-200 hover:bg-slate-700'
+                    }
+                  >
+                    {t(type)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('movement_amount')}</label>
+              <Input
+                type="number"
+                dir="ltr"
+                value={movementAmount}
+                onChange={(e) => setMovementAmount(e.target.value)}
+                placeholder="0.00"
+                className="bg-slate-700 border-slate-600 text-white text-lg"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('movement_reason')}</label>
+              <Input
+                value={movementReason}
+                onChange={(e) => setMovementReason(e.target.value)}
+                className="bg-slate-700 border-slate-600 text-white"
+              />
+            </div>
+            {movementError && (
+              <p role="alert" className="text-red-400 text-sm">
+                {movementError}
+              </p>
+            )}
+            <Button
+              onClick={handleRecordMovement}
+              disabled={submitting}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {submitting ? t('loading') : t('record_cash_movement')}
             </Button>
           </div>
         </DialogContent>

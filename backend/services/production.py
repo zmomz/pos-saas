@@ -745,6 +745,9 @@ class PDFInvoiceService:
             <tr><td>النقد الافتتاحي</td><td>{format_money_ar(cash.get('opening_cash', 0))} ر.س</td></tr>
             <tr><td>مبيعات نقدية</td><td>{format_money_ar(cash.get('cash_sales', 0))} ر.س</td></tr>
             <tr><td>مرتجعات نقدية</td><td>{format_money_ar(cash.get('cash_refunds', 0))} ر.س</td></tr>
+            <tr><td>إيداع نقدي بالدرج</td><td>{format_money_ar(cash.get('pay_in', 0))} ر.س</td></tr>
+            <tr><td>مدفوعات نقدية من الدرج</td><td>{format_money_ar(cash.get('pay_out', 0))} ر.س</td></tr>
+            <tr><td>سحب نقدي للخزنة</td><td>{format_money_ar(cash.get('cash_drops', 0))} ر.س</td></tr>
             <tr><td><strong>النقد المتوقع</strong></td><td><strong>{format_money_ar(cash.get('expected_cash', 0))} ر.س</strong></td></tr>
             {counted_html}
             {variance_html}
@@ -1337,11 +1340,19 @@ async def compute_shift_cash_reconciliation(db: AsyncSession, shift) -> Dict[str
     drawer — a card/Mada refund goes back to the card via the gateway, so it is
     read from the credit note's ``refunded`` tender rows (a legacy credit note with
     no recorded refund tenders still falls back to its full total as cash out).
+    Cash that enters or leaves the drawer **outside a sale** is recorded as a
+    ``cash_movements`` row tied to the shift (FIN-04 / POS-09): a ``pay_in`` adds to
+    the drawer, a ``pay_out`` (petty cash / supplier paid from the till) and a
+    ``cash_drop`` (skim to the safe) take from it. The drawer expectation folds them
+    in: ``opening + cash_sales − cash_refunds + pay_in − pay_out − cash_drops``.
+
     This is the single source of truth shared by ``close_shift`` and the Z/X-report
     aggregator, so the printed report and the stored shift agree.
 
-    Returns ``{cash_sales, cash_refunds, expected_cash}`` (all rounded to 2dp).
+    Returns ``{cash_sales, cash_refunds, pay_in, pay_out, cash_drops,
+    expected_cash}`` (all rounded to 2dp).
     """
+    from models.cash_movements import Cash_movements
     from models.payment_tenders import PaymentTenders
     from models.transactions import Transactions
 
@@ -1414,11 +1425,38 @@ async def compute_shift_cash_reconciliation(db: AsyncSession, shift) -> Dict[str
             # total as cash paid out (pre-F-004 behavior).
             cash_refunds += abs(float(t.total_amount or 0))
 
+    # Drawer movements outside a sale (FIN-04): pay-in adds to the drawer, pay-out
+    # and cash-drop take from it. Tied to this shift, scoped to the shift owner.
+    pay_in = 0.0
+    pay_out = 0.0
+    cash_drops = 0.0
+    movement_result = await db.execute(
+        select(Cash_movements).where(Cash_movements.shift_id == shift.id)
+    )
+    for m in movement_result.scalars().all():
+        amount = abs(float(m.amount or 0))
+        mtype = (m.movement_type or "").lower()
+        if mtype == "pay_in":
+            pay_in += amount
+        elif mtype == "pay_out":
+            pay_out += amount
+        elif mtype == "cash_drop":
+            cash_drops += amount
+
     cash_sales = round(cash_sales, 2)
     cash_refunds = round(cash_refunds, 2)
-    expected_cash = round((shift.opening_cash or 0) + cash_sales - cash_refunds, 2)
+    pay_in = round(pay_in, 2)
+    pay_out = round(pay_out, 2)
+    cash_drops = round(cash_drops, 2)
+    expected_cash = round(
+        (shift.opening_cash or 0) + cash_sales - cash_refunds + pay_in - pay_out - cash_drops,
+        2,
+    )
     return {
         "cash_sales": cash_sales,
         "cash_refunds": cash_refunds,
+        "pay_in": pay_in,
+        "pay_out": pay_out,
+        "cash_drops": cash_drops,
         "expected_cash": expected_cash,
     }

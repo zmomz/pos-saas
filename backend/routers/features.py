@@ -1314,6 +1314,12 @@ class ZReportCash(BaseModel):
     opening_cash: float
     cash_sales: float
     cash_refunds: float
+    # FIN-04 / POS-09 drawer movements outside a sale: pay-in adds to the drawer,
+    # pay-out (petty cash) and cash-drop (skim to the safe) take from it. The
+    # expected cash already folds these in.
+    pay_in: float = 0.0
+    pay_out: float = 0.0
+    cash_drops: float = 0.0
     expected_cash: float
     counted_cash: Optional[float] = None
     variance: Optional[float] = None
@@ -1484,6 +1490,9 @@ async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
             "opening_cash": round(shift.opening_cash or 0, 2),
             "cash_sales": cash_sales,
             "cash_refunds": cash_refunds,
+            "pay_in": recon["pay_in"],
+            "pay_out": recon["pay_out"],
+            "cash_drops": recon["cash_drops"],
             "expected_cash": expected_cash,
             "counted_cash": counted_cash,
             "variance": variance,

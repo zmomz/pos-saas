@@ -982,6 +982,62 @@ export async function printZReport(shiftId?: number) {
   win.print();
 }
 
+// Cash drawer movements (FIN-04 / POS-09): pay-in / pay-out / cash-drop recorded
+// against the open shift, folded into the drawer reconciliation and the Z/X-report.
+export type CashMovementType = 'pay_in' | 'pay_out' | 'cash_drop';
+
+export interface CashMovement {
+  id: number;
+  shift_id: number;
+  movement_type: CashMovementType;
+  amount: number;
+  reason?: string | null;
+  created_at?: string | null;
+}
+
+export interface CashMovementResult {
+  id: number;
+  shift_id: number;
+  movement_type: CashMovementType;
+  amount: number;
+  reason?: string | null;
+  expected_cash: number;
+  pay_in: number;
+  pay_out: number;
+  cash_drops: number;
+}
+
+export interface CashMovementsList {
+  movements: CashMovement[];
+  total: number;
+  pay_in: number;
+  pay_out: number;
+  cash_drops: number;
+}
+
+export async function recordCashMovement(data: {
+  movement_type: CashMovementType;
+  amount: number;
+  reason?: string;
+}): Promise<CashMovementResult> {
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/production/shifts/movements',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function getCashMovements(shiftId?: number): Promise<CashMovementsList> {
+  const query = shiftId != null ? `?shift_id=${shiftId}` : '';
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/production/shifts/movements${query}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // Notifications
 export async function getNotifications() {
   const response = await client.apiCall.invoke({
