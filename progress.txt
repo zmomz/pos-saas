@@ -238,4 +238,28 @@
   the report's COGS — plus category roll-up + CSV, dead-stock listing, refund
   netting, and owner-scope/agent-403). Full backend suite 407 passed; frontend
   lint+tsc+build green.
-  Commit: PENDING
+  Commit: 12a46b0
+2026-06-05 · 02 / F-069 — VAT / tax summary by rate (RPT-05). A merchant filing a
+  ZATCA VAT return can now see output VAT broken into the return boxes instead of
+  the single aggregate vat_amount the journal carries. Backend: new
+  GET /api/v1/reports/vat-summary (client-owner-scoped, SEC-02; trailing `days`
+  window) aggregates the window's transactions ENTIRELY IN SQL (OPS-05, no
+  load-everything) into standard-rated (15%) / zero-rated (0%) / exempt buckets,
+  each with taxable base (subtotal − discount) + VAT. VAT is one rate per sale, so
+  each transaction is bucketed by the VAT it actually carried (abs(vat) > 0 →
+  standard, else zero) via a SQL CASE GROUP BY; credit notes store NEGATIVE
+  subtotal/VAT (POS-07) so a signed SUM nets collected − reversed for free. The
+  response also surfaces vat_collected / vat_reversed / net_vat (conditional SQL
+  sums) and a CSV export. The exempt box is always emitted for ZATCA-return parity
+  but stays empty (the data model carries no exempt tax-category marker yet — noted
+  in the endpoint comment). Frontend: ReportsAnalytics gained a VAT Summary card —
+  a collected/reversed/net strip, the three ZATCA boxes as a table with a net-VAT
+  footer row, and a CSV download, with loading/error+retry/empty states, brand
+  tokens, RTL; getVatSummaryReport typed api.ts wrapper + VatBucket/VatSummaryReport
+  types; i18n ×4 (ar/en/hi/ur). Tests: test_phase7_rpt_vat_summary.py (4 incl. the
+  named test_vat_summary_splits_standard_and_zero — 15% base 100/VAT 15 and 0% base
+  50/VAT 0 land in the right boxes — and test_vat_summary_nets_credit_notes — sell
+  15 then refund 4 → standard box nets to base 60/VAT 9, collected 15 / reversed 6 /
+  net 9 — plus CSV export and owner-scope/agent-403). Full backend suite 411
+  passed; frontend lint+tsc+build green.
+  Commit: f9b2061

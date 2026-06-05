@@ -8,7 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func, update, and_, or_
+from sqlalchemy import select, func, update, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, db_manager
@@ -1551,6 +1551,152 @@ async def report_profit_margin(
         by_category=by_category,
         dead_stock=dead_stock,
         totals=totals,
+        csv_content=output.getvalue(),
+    )
+
+
+# ============================================================
+# VAT / TAX SUMMARY BY RATE (RPT-05, F-069)
+# ============================================================
+# A merchant filing a ZATCA VAT return needs output VAT broken out by rate, not
+# the single aggregate ``vat_amount`` line the journal carries. This report
+# aggregates the window's sales into the ZATCA VAT-return boxes —
+# **standard-rated (15%) / zero-rated (0%) / exempt** — each with its **taxable
+# base** and **VAT amount**.
+#
+# VAT is charged once per sale at a single rate (the global rate, MA-05, or the
+# per-request fallback), and a credit note (refund) is stored with **negative**
+# subtotal/VAT (POS-07), so a plain signed SUM nets collected − reversed for free.
+# Each sale is bucketed by the VAT it actually carried: any VAT > 0 is the
+# standard-rated box, VAT == 0 is zero-rated. The data model carries no exempt
+# tax-category marker yet, so the **exempt** box is always emitted (ZATCA-return
+# parity) but stays empty until exempt supplies are modelled.
+#
+# Aggregated entirely in SQL (OPS-05, never load-everything): a single grouped
+# query over the date-windowed, owner-scoped transactions.
+
+class VatBucket(BaseModel):
+    key: str            # "standard" | "zero" | "exempt"
+    label: str
+    rate: float
+    taxable_base: float
+    vat_amount: float   # net of credit notes (collected − reversed) in this box
+
+
+class VatSummaryResponse(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    buckets: List[VatBucket]
+    total_taxable_base: float
+    vat_collected: float
+    vat_reversed: float
+    net_vat: float
+    csv_content: str
+
+
+@router.get("/api/v1/reports/vat-summary", response_model=VatSummaryResponse)
+async def report_vat_summary(
+    days: int = Query(30, ge=1, le=365),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Output VAT by rate over a window — the ZATCA VAT-return boxes (F-069).
+
+    Buckets the window's sales into standard-rated (15%) / zero-rated (0%) / exempt,
+    each with taxable base and VAT. Credit notes carry negative amounts so a signed
+    SUM nets collected − reversed. Owner-scoped to the calling client (SEC-02),
+    windowed by ``days``, aggregated in SQL (OPS-05).
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can view the VAT summary report")
+
+    client_id = role_info["entity_id"]
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    # Held tickets / voided sales are not fiscal supplies; everything else
+    # (completed sales + credit notes) nets via signed amounts. ``is_distinct_from``
+    # keeps NULL-status legacy completed sales in.
+    not_excluded = and_(
+        Transactions.status.is_distinct_from("held"),
+        Transactions.status.is_distinct_from("voided"),
+    )
+    base_expr = func.coalesce(Transactions.subtotal, 0.0) - func.coalesce(
+        Transactions.discount_amount, 0.0
+    )
+    vat_expr = func.coalesce(Transactions.vat_amount, 0.0)
+    # Standard-rated when any VAT was charged; otherwise zero-rated. A credit note's
+    # VAT is negative, so ``abs`` keeps a 15% refund in the standard box where it
+    # nets the collected total down.
+    bucket_expr = case((func.abs(vat_expr) > 0.005, "standard"), else_="zero")
+
+    rows = (
+        await db.execute(
+            select(
+                bucket_expr.label("bucket"),
+                func.sum(base_expr),
+                func.sum(vat_expr),
+                func.sum(case((vat_expr > 0, vat_expr), else_=0.0)),
+                func.sum(case((vat_expr < 0, -vat_expr), else_=0.0)),
+            )
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    not_excluded,
+                )
+            )
+            .group_by(bucket_expr)
+        )
+    ).all()
+
+    agg = {r[0]: r for r in rows}
+
+    def _box(key: str, label: str, rate: float) -> VatBucket:
+        r = agg.get(key)
+        return VatBucket(
+            key=key,
+            label=label,
+            rate=rate,
+            taxable_base=round(float(r[1] or 0.0), 2) if r else 0.0,
+            vat_amount=round(float(r[2] or 0.0), 2) if r else 0.0,
+        )
+
+    buckets = [
+        _box("standard", "Standard-rated (15%)", 15.0),
+        _box("zero", "Zero-rated (0%)", 0.0),
+        # No exempt tax-category marker in the model yet — always-present, empty box.
+        VatBucket(key="exempt", label="Exempt", rate=0.0, taxable_base=0.0, vat_amount=0.0),
+    ]
+
+    vat_collected = round(sum(float(r[3] or 0.0) for r in rows), 2)
+    vat_reversed = round(sum(float(r[4] or 0.0) for r in rows), 2)
+    net_vat = round(vat_collected - vat_reversed, 2)
+    total_taxable_base = round(sum(b.taxable_base for b in buckets), 2)
+
+    # ---- CSV (one row per ZATCA box + the collected/reversed/net summary) ----
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["VAT Bucket", "Rate %", "Taxable Base", "VAT Amount"])
+    for b in buckets:
+        writer.writerow([b.label, f"{b.rate:g}", f"{b.taxable_base:.2f}", f"{b.vat_amount:.2f}"])
+    writer.writerow([])
+    writer.writerow(["VAT collected", f"{vat_collected:.2f}"])
+    writer.writerow(["VAT reversed (credit notes)", f"{vat_reversed:.2f}"])
+    writer.writerow(["Net VAT payable", f"{net_vat:.2f}"])
+    writer.writerow(["Total taxable base", f"{total_taxable_base:.2f}"])
+
+    return VatSummaryResponse(
+        days=days,
+        from_date=start_date.date().isoformat(),
+        to_date=now.date().isoformat(),
+        buckets=buckets,
+        total_taxable_base=total_taxable_base,
+        vat_collected=vat_collected,
+        vat_reversed=vat_reversed,
+        net_vat=net_vat,
         csv_content=output.getvalue(),
     )
 

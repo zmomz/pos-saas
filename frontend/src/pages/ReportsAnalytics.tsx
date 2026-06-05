@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
-import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, type JournalExport, type ProfitMarginReport } from '@/lib/api';
+import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, type JournalExport, type ProfitMarginReport, type VatSummaryReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -107,6 +107,15 @@ const reportTranslations: Record<string, Record<string, string>> = {
     cost: 'Cost',
     stock_value: 'Stock Value',
     no_dead_stock: 'No dead stock — everything is selling.',
+    vat_summary: 'VAT Summary',
+    vat_summary_hint: 'Output VAT by rate for the last 30 days — the ZATCA VAT-return boxes. Credit notes are netted.',
+    download_vat: 'Download VAT CSV',
+    tax_category: 'Tax Category',
+    taxable_base: 'Taxable Base',
+    vat_amount: 'VAT Amount',
+    vat_collected: 'VAT Collected',
+    vat_reversed: 'VAT Reversed',
+    net_vat: 'Net VAT Payable',
   },
   ar: {
     reports_analytics: 'التقارير والتحليلات',
@@ -172,6 +181,15 @@ const reportTranslations: Record<string, Record<string, string>> = {
     cost: 'التكلفة',
     stock_value: 'قيمة المخزون',
     no_dead_stock: 'لا يوجد مخزون راكد — كل المنتجات تُباع.',
+    vat_summary: 'ملخص ضريبة القيمة المضافة',
+    vat_summary_hint: 'ضريبة المخرجات حسب النسبة لآخر 30 يومًا — خانات إقرار ضريبة القيمة المضافة لهيئة الزكاة. تُخصم الإشعارات الدائنة.',
+    download_vat: 'تنزيل ملف الضريبة CSV',
+    tax_category: 'الفئة الضريبية',
+    taxable_base: 'الوعاء الخاضع للضريبة',
+    vat_amount: 'مبلغ الضريبة',
+    vat_collected: 'الضريبة المحصلة',
+    vat_reversed: 'الضريبة المعكوسة',
+    net_vat: 'صافي الضريبة المستحقة',
   },
   hi: {
     reports_analytics: 'रिपोर्ट और विश्लेषण',
@@ -237,6 +255,15 @@ const reportTranslations: Record<string, Record<string, string>> = {
     cost: 'लागत',
     stock_value: 'स्टॉक मूल्य',
     no_dead_stock: 'कोई मृत स्टॉक नहीं — सब कुछ बिक रहा है।',
+    vat_summary: 'वैट सारांश',
+    vat_summary_hint: 'पिछले 30 दिनों के लिए दर के अनुसार आउटपुट वैट — ZATCA वैट-रिटर्न बॉक्स। क्रेडिट नोट घटाए जाते हैं।',
+    download_vat: 'वैट CSV डाउनलोड करें',
+    tax_category: 'कर श्रेणी',
+    taxable_base: 'कर योग्य आधार',
+    vat_amount: 'वैट राशि',
+    vat_collected: 'वैट संग्रहित',
+    vat_reversed: 'वैट प्रतिवर्तित',
+    net_vat: 'देय शुद्ध वैट',
   },
   ur: {
     reports_analytics: 'رپورٹس اور تجزیات',
@@ -302,6 +329,15 @@ const reportTranslations: Record<string, Record<string, string>> = {
     cost: 'لاگت',
     stock_value: 'اسٹاک ویلیو',
     no_dead_stock: 'کوئی غیر فعال اسٹاک نہیں — سب کچھ فروخت ہو رہا ہے۔',
+    vat_summary: 'ویٹ خلاصہ',
+    vat_summary_hint: 'پچھلے 30 دن کے لیے شرح کے حساب سے آؤٹ پٹ ویٹ — ZATCA ویٹ ریٹرن خانے۔ کریڈٹ نوٹس منہا کیے جاتے ہیں۔',
+    download_vat: 'ویٹ CSV ڈاؤن لوڈ کریں',
+    tax_category: 'ٹیکس زمرہ',
+    taxable_base: 'قابل ٹیکس بنیاد',
+    vat_amount: 'ویٹ رقم',
+    vat_collected: 'ویٹ وصول شدہ',
+    vat_reversed: 'ویٹ واپس شدہ',
+    net_vat: 'قابل ادائیگی خالص ویٹ',
   },
 };
 
@@ -314,11 +350,13 @@ export default function ReportsAnalytics() {
   const [paymentTenders, setPaymentTenders] = useState<PaymentTender[]>([]);
   const [journal, setJournal] = useState<JournalExport | null>(null);
   const [margin, setMargin] = useState<ProfitMarginReport | null>(null);
+  const [vat, setVat] = useState<VatSummaryReport | null>(null);
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [loadingJournal, setLoadingJournal] = useState(true);
   const [loadingMargin, setLoadingMargin] = useState(true);
+  const [loadingVat, setLoadingVat] = useState(true);
   // UX-02 (F-051): a failed fetch on any panel must surface a real error state
   // distinct from "no data" — generalizing the RPT-03 payment-panel pattern.
   const [salesError, setSalesError] = useState(false);
@@ -326,9 +364,11 @@ export default function ReportsAnalytics() {
   const [paymentError, setPaymentError] = useState(false);
   const [journalError, setJournalError] = useState(false);
   const [marginError, setMarginError] = useState(false);
+  const [vatError, setVatError] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingJournal, setExportingJournal] = useState(false);
   const [exportingMargin, setExportingMargin] = useState(false);
+  const [exportingVat, setExportingVat] = useState(false);
 
   const tr = useCallback(
     (key: string): string => {
@@ -346,6 +386,7 @@ export default function ReportsAnalytics() {
     fetchPaymentBreakdown();
     fetchJournal();
     fetchMargin();
+    fetchVat();
   }, []);
 
   async function fetchSalesData() {
@@ -460,6 +501,40 @@ export default function ReportsAnalytics() {
       URL.revokeObjectURL(url);
     } finally {
       setExportingMargin(false);
+    }
+  }
+
+  async function fetchVat() {
+    setLoadingVat(true);
+    setVatError(false);
+    try {
+      const result = await getVatSummaryReport(30);
+      setVat(result || null);
+    } catch {
+      // F-069: a failed fetch must surface a real error distinct from "no sales"
+      // — never silently render an empty VAT return (UX-02).
+      setVatError(true);
+      setVat(null);
+    } finally {
+      setLoadingVat(false);
+    }
+  }
+
+  async function handleExportVat() {
+    if (!vat?.csv_content) return;
+    setExportingVat(true);
+    try {
+      const blob = new Blob([vat.csv_content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `vat_summary_${vat.from_date}_${vat.to_date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingVat(false);
     }
   }
 
@@ -1013,6 +1088,102 @@ export default function ReportsAnalytics() {
                   </TableBody>
                 </Table>
               )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* VAT / Tax Summary by rate (F-069) */}
+      <Card className="bg-slate-800 border-slate-700 mb-8">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-white">{tr('vat_summary')}</CardTitle>
+            <p className="text-xs text-slate-400 mt-1">{tr('vat_summary_hint')}</p>
+          </div>
+          <Button
+            onClick={handleExportVat}
+            disabled={exportingVat || !vat}
+            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+          >
+            {exportingVat ? '...' : tr('download_vat')}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loadingVat ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : vatError ? (
+            <div className="text-center py-8" role="alert">
+              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
+              <Button
+                variant="outline"
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                onClick={fetchVat}
+              >
+                {tr('retry')}
+              </Button>
+            </div>
+          ) : !vat ? (
+            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <>
+              {/* Net-VAT strip */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('vat_collected')}</p>
+                  <p className="text-lg font-bold text-white">
+                    {tr('sar')} {vat.vat_collected.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('vat_reversed')}</p>
+                  <p className="text-lg font-bold text-white">
+                    {tr('sar')} {vat.vat_reversed.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('net_vat')}</p>
+                  <p className="text-lg font-bold text-emerald-400">
+                    {tr('sar')} {vat.net_vat.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+
+              {/* The ZATCA VAT-return boxes */}
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-700 hover:bg-slate-800">
+                    <TableHead className="text-slate-400">{tr('tax_category')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('taxable_base')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('vat_amount')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {vat.buckets.map((b) => (
+                    <TableRow key={b.key} className="border-slate-700 hover:bg-slate-750">
+                      <TableCell className="text-white font-medium">{b.label}</TableCell>
+                      <TableCell className="text-slate-300 text-end">
+                        {tr('sar')} {b.taxable_base.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell className="text-slate-300 text-end">
+                        {tr('sar')} {b.vat_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow className="border-slate-700 bg-slate-900/40">
+                    <TableCell className="text-white font-semibold">{tr('net_vat')}</TableCell>
+                    <TableCell className="text-slate-300 text-end">
+                      {tr('sar')} {vat.total_taxable_base.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell className="text-emerald-400 text-end font-semibold">
+                      {tr('sar')} {vat.net_vat.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
             </>
           )}
         </CardContent>

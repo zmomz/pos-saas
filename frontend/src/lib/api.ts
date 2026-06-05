@@ -998,6 +998,38 @@ export async function getProfitMarginReport(days = 30, deadStockDays = 30): Prom
   return response.data;
 }
 
+// RPT-05 (F-069): VAT / tax summary by rate — the ZATCA VAT-return boxes.
+// Each bucket carries its taxable base + VAT; credit notes net the VAT down so
+// net_vat = vat_collected − vat_reversed.
+export interface VatBucket {
+  key: string;
+  label: string;
+  rate: number;
+  taxable_base: number;
+  vat_amount: number;
+}
+
+export interface VatSummaryReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  buckets: VatBucket[];
+  total_taxable_base: number;
+  vat_collected: number;
+  vat_reversed: number;
+  net_vat: number;
+  csv_content: string;
+}
+
+export async function getVatSummaryReport(days = 30): Promise<VatSummaryReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/vat-summary?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.
