@@ -211,4 +211,4 @@
   duplicate-no-op, plus invalid-signature-rejected, unknown-location/provider, and
   two-providers-one-external-id routing). Full backend suite 402 passed; frontend
   lint+tsc+build green.
-  Commit: PENDING
+  Commit: 28c8092
