@@ -16,4 +16,4 @@
   typed api.ts wrappers, i18n across ar/en/hi/ur. Tests: test_phase5_rst_order_items.py
   (12 incl. named test_add_items_by_course / test_transfer_table_moves_ticket /
   test_split_bill_by_seat). Full backend suite 348 passed; frontend lint+build+tsc green.
-  Commit: <pending>
+  Commit: a5aae80
