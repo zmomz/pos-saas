@@ -22,10 +22,14 @@ import {
   getRestaurantTables,
   getOrderTickets,
   getProducts,
+  getProductModifierGroups,
+  getCombos,
   type OrderTicket as OrderTicketT,
   type TicketItem,
   type RestaurantTable,
   type SplitResult,
+  type ProductModifierGroup,
+  type Combo,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import {
@@ -56,6 +60,18 @@ interface ProductLite {
   price: number;
 }
 
+// Render a line's serialized modifier selection as "Extra cheese, Bacon" (F-056).
+function modifierLabel(serialized?: string | null): string {
+  if (!serialized) return '';
+  try {
+    const mods = JSON.parse(serialized);
+    if (!Array.isArray(mods)) return '';
+    return mods.map((m: { name?: string }) => m.name).filter(Boolean).join(', ');
+  } catch {
+    return '';
+  }
+}
+
 export default function OrderTicket() {
   const { t } = useLanguage();
   const navigate = useNavigate();
@@ -65,6 +81,7 @@ export default function OrderTicket() {
   const [ticket, setTicket] = useState<OrderTicketT | null>(null);
   const [items, setItems] = useState<TicketItem[]>([]);
   const [products, setProducts] = useState<ProductLite[]>([]);
+  const [combos, setCombos] = useState<Combo[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [otherTickets, setOtherTickets] = useState<OrderTicketT[]>([]);
 
@@ -77,11 +94,15 @@ export default function OrderTicket() {
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState<{
     product_id?: number;
+    combo_id?: number;
     qty: number;
     course: string;
     seat_no?: number;
     notes: string;
   }>({ qty: 1, course: 'mains', notes: '' });
+  // Modifier picker state for the selected product (F-056).
+  const [productGroups, setProductGroups] = useState<ProductModifierGroup[]>([]);
+  const [selectedMods, setSelectedMods] = useState<Set<number>>(new Set());
 
   const [transferOpen, setTransferOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
@@ -104,16 +125,18 @@ export default function OrderTicket() {
     setError(false);
     setDenied(false);
     try {
-      const [tk, it, prods, tbls, tks] = await Promise.all([
+      const [tk, it, prods, tbls, tks, cmb] = await Promise.all([
         getOrderTicket(ticketId),
         getTicketItems(ticketId),
         getProducts(),
         getRestaurantTables(),
         getOrderTickets({ status: 'open' }),
+        getCombos().catch(() => [] as Combo[]),
       ]);
       setTicket(tk);
       setItems(Array.isArray(it?.items) ? it.items : []);
       setProducts(Array.isArray(prods) ? (prods as ProductLite[]) : []);
+      setCombos(Array.isArray(cmb) ? cmb : []);
       setTables(Array.isArray(tbls?.items) ? tbls.items : []);
       setOtherTickets((Array.isArray(tks?.items) ? tks.items : []).filter((o) => o.id !== ticketId));
     } catch (err: unknown) {
@@ -132,19 +155,71 @@ export default function OrderTicket() {
     load();
   }, [load]);
 
+  // Load the selected product's modifier groups for the picker (F-056).
+  async function handleSelectProduct(productId?: number) {
+    setSelectedMods(new Set());
+    setAddForm((f) => ({ ...f, product_id: productId, combo_id: undefined }));
+    if (!productId) {
+      setProductGroups([]);
+      return;
+    }
+    try {
+      const res = await getProductModifierGroups(productId);
+      setProductGroups(Array.isArray(res?.items) ? res.items : []);
+    } catch {
+      setProductGroups([]);
+    }
+  }
+
+  function handleSelectCombo(comboId?: number) {
+    setSelectedMods(new Set());
+    setProductGroups([]);
+    setAddForm((f) => ({ ...f, combo_id: comboId, product_id: undefined }));
+  }
+
+  function toggleModifier(group: ProductModifierGroup, modId: number) {
+    setSelectedMods((prev) => {
+      const next = new Set(prev);
+      if (next.has(modId)) {
+        next.delete(modId);
+        return next;
+      }
+      // Honour the group's max_select: a single-select group replaces its pick.
+      const max = group.max_select ?? 1;
+      if (max === 1) {
+        for (const m of group.modifiers) next.delete(m.id);
+      } else if (max && max > 0) {
+        const inGroup = group.modifiers.filter((m) => next.has(m.id)).length;
+        if (inGroup >= max) return prev; // at the cap; ignore
+      }
+      next.add(modId);
+      return next;
+    });
+  }
+
+  // Every required group must have a selection before the line can be sent (F-056).
+  const requiredUnmet = productGroups
+    .filter((g) => g.required)
+    .some((g) => !g.modifiers.some((m) => selectedMods.has(m.id)));
+  const canAdd = (!!addForm.product_id && !requiredUnmet) || !!addForm.combo_id;
+
   async function handleAdd() {
-    if (!addForm.product_id) return;
+    if (!addForm.product_id && !addForm.combo_id) return;
     setSubmitting(true);
     try {
       await addTicketItem(ticketId, {
         product_id: addForm.product_id,
+        combo_id: addForm.combo_id,
         qty: addForm.qty || 1,
         course: addForm.course,
         seat_no: addForm.seat_no,
         notes: addForm.notes || undefined,
+        modifiers: selectedMods.size ? Array.from(selectedMods) : undefined,
       });
       setAddOpen(false);
       setAddForm({ qty: 1, course: 'mains', notes: '' });
+      setProductGroups([]);
+      setSelectedMods(new Set());
       await load();
     } catch (err) {
       console.error('Failed to add line:', err);
@@ -349,6 +424,9 @@ export default function OrderTicket() {
                                 </span>
                               )}
                             </div>
+                            {modifierLabel(item.modifiers) && (
+                              <p className="text-xs text-blue-300 mt-0.5">+ {modifierLabel(item.modifiers)}</p>
+                            )}
                             {item.notes && <p className="text-xs text-slate-400 mt-0.5">{item.notes}</p>}
                           </div>
                           <div className="flex items-center gap-3">
@@ -420,9 +498,7 @@ export default function OrderTicket() {
               <label className="text-sm text-slate-400 mb-1 block">{t('product')}</label>
               <select
                 value={addForm.product_id ?? ''}
-                onChange={(e) =>
-                  setAddForm((f) => ({ ...f, product_id: e.target.value ? parseInt(e.target.value) : undefined }))
-                }
+                onChange={(e) => handleSelectProduct(e.target.value ? parseInt(e.target.value) : undefined)}
                 className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
               >
                 <option value="">—</option>
@@ -433,6 +509,74 @@ export default function OrderTicket() {
                 ))}
               </select>
             </div>
+
+            {/* Combo selector (F-056) — a bundle prices the line at its bundle price */}
+            {combos.length > 0 && (
+              <div>
+                <label className="text-sm text-slate-400 mb-1 block">{t('combo')}</label>
+                <select
+                  value={addForm.combo_id ?? ''}
+                  onChange={(e) => handleSelectCombo(e.target.value ? parseInt(e.target.value) : undefined)}
+                  className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                >
+                  <option value="">—</option>
+                  {combos.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} ({c.bundle_price})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Modifier picker (F-056) — required groups must be satisfied */}
+            {productGroups.map((g) => {
+              const groupSelected = g.modifiers.filter((m) => selectedMods.has(m.id)).length;
+              const unmet = g.required && groupSelected === 0;
+              return (
+                <div key={g.id} className="rounded-md border border-slate-700 p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-sm text-white">{g.name}</span>
+                    {g.required && (
+                      <Badge className={unmet ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}>
+                        {t('required')}
+                      </Badge>
+                    )}
+                    {g.max_select != null && g.max_select > 1 && (
+                      <span className="text-xs text-slate-400">{t('max')} {g.max_select}</span>
+                    )}
+                  </div>
+                  {g.modifiers.length === 0 ? (
+                    <p className="text-xs text-slate-500">{t('no_modifiers')}</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {g.modifiers.map((m) => (
+                        <label
+                          key={m.id}
+                          className="flex items-center justify-between gap-2 text-sm text-slate-300 cursor-pointer"
+                        >
+                          <span className="flex items-center gap-2">
+                            <input
+                              type={g.max_select === 1 ? 'radio' : 'checkbox'}
+                              name={`group-${g.id}`}
+                              checked={selectedMods.has(m.id)}
+                              onChange={() => toggleModifier(g, m.id)}
+                            />
+                            {m.name}
+                          </span>
+                          {m.price_delta !== 0 && (
+                            <span className="text-xs text-slate-400">
+                              {m.price_delta > 0 ? '+' : ''}
+                              {m.price_delta}
+                            </span>
+                          )}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-sm text-slate-400 mb-1 block">{t('quantity')}</label>
@@ -479,7 +623,7 @@ export default function OrderTicket() {
             </div>
             <Button
               onClick={handleAdd}
-              disabled={submitting || !addForm.product_id}
+              disabled={submitting || !canAdd}
               className="w-full bg-blue-600 hover:bg-blue-700 text-white"
             >
               {submitting ? t('loading') : t('add_item')}

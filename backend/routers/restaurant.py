@@ -159,6 +159,7 @@ class OrderTicketListResponse(BaseModel):
 # ---------- Order ticket line-item schemas (F-055) ----------
 class TicketItemData(BaseModel):
     product_id: Optional[int] = None
+    combo_id: Optional[int] = None
     variant_id: Optional[int] = None
     name: Optional[str] = None
     qty: float = 1
@@ -167,6 +168,8 @@ class TicketItemData(BaseModel):
     seat_no: Optional[int] = None
     notes: Optional[str] = None
     prep_station_id: Optional[int] = None
+    # A list of selected modifier ids (or dicts carrying ``id``); F-056 resolves,
+    # validates required groups, prices the deltas, and serializes the selection.
     modifiers: Optional[Any] = None
 
 
@@ -221,6 +224,98 @@ class MergeRequest(BaseModel):
 class SplitRequest(BaseModel):
     strategy: str
     n_ways: Optional[int] = None
+
+
+# ---------- Modifier group / modifier / combo schemas (F-056) ----------
+class ModifierGroupData(BaseModel):
+    name: str
+    name_ar: Optional[str] = None
+    required: bool = False
+    min_select: int = 0
+    max_select: Optional[int] = 1
+
+
+class ModifierGroupUpdateData(BaseModel):
+    name: Optional[str] = None
+    name_ar: Optional[str] = None
+    required: Optional[bool] = None
+    min_select: Optional[int] = None
+    max_select: Optional[int] = None
+
+
+class ModifierGroupResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    name: str
+    name_ar: Optional[str] = None
+    required: Optional[bool] = None
+    min_select: Optional[int] = None
+    max_select: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ModifierData(BaseModel):
+    name: str
+    name_ar: Optional[str] = None
+    price_delta: float = 0
+
+
+class ModifierUpdateData(BaseModel):
+    name: Optional[str] = None
+    name_ar: Optional[str] = None
+    price_delta: Optional[float] = None
+
+
+class ModifierResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    group_id: int
+    name: str
+    name_ar: Optional[str] = None
+    price_delta: float
+
+    class Config:
+        from_attributes = True
+
+
+class ComboComponent(BaseModel):
+    product_id: int
+    qty: float = 1
+
+
+class ComboData(BaseModel):
+    name: str
+    name_ar: Optional[str] = None
+    bundle_price: float = 0
+    components: List[ComboComponent] = []
+    is_active: bool = True
+
+
+class ComboUpdateData(BaseModel):
+    name: Optional[str] = None
+    name_ar: Optional[str] = None
+    bundle_price: Optional[float] = None
+    components: Optional[List[ComboComponent]] = None
+    is_active: Optional[bool] = None
+
+
+class ComboResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    name: str
+    name_ar: Optional[str] = None
+    bundle_price: float
+    components: List[ComboComponent] = []
+    component_sum: Optional[float] = None
+    is_active: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
 
 
 # ---------- Zone routes ----------
@@ -585,3 +680,258 @@ async def all_day_fired_count(
     """All-day count of fired items across the caller's open tickets (RST-02)."""
     service = RestaurantService(db)
     return await service.all_day_fired_count(user_id=client.user_id)
+
+
+# ---------- Modifier group routes (F-056) ----------
+@router.get("/modifier-groups", response_model=List[ModifierGroupResponse])
+async def list_modifier_groups(
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's modifier groups (F-056)."""
+    service = RestaurantService(db)
+    return await service.list_modifier_groups(user_id=client.user_id)
+
+
+@router.post("/modifier-groups", response_model=ModifierGroupResponse, status_code=201)
+async def create_modifier_group(
+    data: ModifierGroupData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a modifier group with required + min/max rules (F-056)."""
+    service = RestaurantService(db)
+    try:
+        return await service.create_modifier_group(
+            data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except Exception as e:
+        logger.error(f"Error creating modifier group: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.put("/modifier-groups/{group_id}", response_model=ModifierGroupResponse)
+async def update_modifier_group(
+    group_id: int,
+    data: ModifierGroupUpdateData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a modifier group (requires ownership)."""
+    service = RestaurantService(db)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    result = await service.update_modifier_group(group_id, updates, user_id=client.user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Modifier group not found")
+    return result
+
+
+@router.delete("/modifier-groups/{group_id}")
+async def delete_modifier_group(
+    group_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a modifier group and its modifiers/attachments (requires ownership)."""
+    service = RestaurantService(db)
+    ok = await service.delete_modifier_group(group_id, user_id=client.user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Modifier group not found")
+    return {"message": "Modifier group deleted successfully", "id": group_id}
+
+
+# ---------- Modifier routes (F-056) ----------
+@router.get("/modifier-groups/{group_id}/modifiers", response_model=List[ModifierResponse])
+async def list_modifiers(
+    group_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List a group's modifiers (owner-scoped, F-056)."""
+    service = RestaurantService(db)
+    group = await service.get_modifier_group(group_id, user_id=client.user_id)
+    if not group:
+        raise HTTPException(status_code=404, detail="Modifier group not found")
+    return await service.list_modifiers(group_id, user_id=client.user_id)
+
+
+@router.post("/modifier-groups/{group_id}/modifiers", response_model=ModifierResponse, status_code=201)
+async def create_modifier(
+    group_id: int,
+    data: ModifierData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a modifier (bilingual name + price delta) to a group (F-056)."""
+    service = RestaurantService(db)
+    modifier = await service.create_modifier(
+        group_id, data.model_dump(), user_id=client.user_id, client_id=client.id
+    )
+    if modifier is None:
+        raise HTTPException(status_code=404, detail="Modifier group not found")
+    return modifier
+
+
+@router.put("/modifiers/{modifier_id}", response_model=ModifierResponse)
+async def update_modifier(
+    modifier_id: int,
+    data: ModifierUpdateData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a modifier (requires ownership)."""
+    service = RestaurantService(db)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    result = await service.update_modifier(modifier_id, updates, user_id=client.user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Modifier not found")
+    return result
+
+
+@router.delete("/modifiers/{modifier_id}")
+async def delete_modifier(
+    modifier_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a modifier (requires ownership)."""
+    service = RestaurantService(db)
+    ok = await service.delete_modifier(modifier_id, user_id=client.user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Modifier not found")
+    return {"message": "Modifier deleted successfully", "id": modifier_id}
+
+
+# ---------- Product ↔ modifier-group attachment routes (F-056) ----------
+@router.get("/products/{product_id}/modifier-groups")
+async def list_product_modifier_groups(
+    product_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the modifier groups (with their modifiers) attached to a product (F-056)."""
+    service = RestaurantService(db)
+    groups = await service.list_product_groups(product_id, user_id=client.user_id)
+    return {"items": groups, "total": len(groups)}
+
+
+@router.post("/products/{product_id}/modifier-groups/{group_id}", status_code=201)
+async def attach_modifier_group(
+    product_id: int,
+    group_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Attach a modifier group to a product (idempotent, F-056)."""
+    service = RestaurantService(db)
+    link = await service.attach_group_to_product(
+        product_id, group_id, user_id=client.user_id, client_id=client.id
+    )
+    if link is None:
+        raise HTTPException(status_code=404, detail="Product or modifier group not found")
+    return {"message": "Modifier group attached", "product_id": product_id, "group_id": group_id}
+
+
+@router.delete("/products/{product_id}/modifier-groups/{group_id}")
+async def detach_modifier_group(
+    product_id: int,
+    group_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Detach a modifier group from a product (F-056)."""
+    service = RestaurantService(db)
+    ok = await service.detach_group_from_product(product_id, group_id, user_id=client.user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    return {"message": "Modifier group detached", "product_id": product_id, "group_id": group_id}
+
+
+# ---------- Combo routes (F-056) ----------
+async def _combo_to_response(service: RestaurantService, combo, user_id: str) -> dict:
+    """Serialize a combo with parsed components + the (overridden) component sum."""
+    component_sum = await service.combo_component_sum(combo, user_id)
+    return {
+        "id": combo.id,
+        "user_id": combo.user_id,
+        "client_id": combo.client_id,
+        "name": combo.name,
+        "name_ar": combo.name_ar,
+        "bundle_price": float(combo.bundle_price or 0),
+        "components": service._load_components(combo),
+        "component_sum": component_sum,
+        "is_active": combo.is_active,
+    }
+
+
+@router.get("/combos", response_model=List[ComboResponse])
+async def list_combos(
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's combos with each one's component sum (F-056)."""
+    service = RestaurantService(db)
+    combos = await service.list_combos(user_id=client.user_id)
+    return [await _combo_to_response(service, c, client.user_id) for c in combos]
+
+
+@router.get("/combos/{combo_id}", response_model=ComboResponse)
+async def get_combo(
+    combo_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a combo, including its component sum vs bundle price (F-056)."""
+    service = RestaurantService(db)
+    combo = await service.get_combo(combo_id, user_id=client.user_id)
+    if not combo:
+        raise HTTPException(status_code=404, detail="Combo not found")
+    return await _combo_to_response(service, combo, client.user_id)
+
+
+@router.post("/combos", response_model=ComboResponse, status_code=201)
+async def create_combo(
+    data: ComboData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a combo — components + a bundle price that overrides their sum (F-056)."""
+    service = RestaurantService(db)
+    try:
+        combo = await service.create_combo(
+            data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except Exception as e:
+        logger.error(f"Error creating combo: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    return await _combo_to_response(service, combo, client.user_id)
+
+
+@router.put("/combos/{combo_id}", response_model=ComboResponse)
+async def update_combo(
+    combo_id: int,
+    data: ComboUpdateData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a combo (requires ownership)."""
+    service = RestaurantService(db)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    combo = await service.update_combo(combo_id, updates, user_id=client.user_id)
+    if not combo:
+        raise HTTPException(status_code=404, detail="Combo not found")
+    return await _combo_to_response(service, combo, client.user_id)
+
+
+@router.delete("/combos/{combo_id}")
+async def delete_combo(
+    combo_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a combo (requires ownership)."""
+    service = RestaurantService(db)
+    ok = await service.delete_combo(combo_id, user_id=client.user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Combo not found")
+    return {"message": "Combo deleted successfully", "id": combo_id}

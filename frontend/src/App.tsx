@@ -35,6 +35,7 @@ import UserProfile from './pages/UserProfile';
 import BranchManagement from './pages/BranchManagement';
 import FloorMap from './pages/FloorMap';
 import OrderTicket from './pages/OrderTicket';
+import MenuBuilder from './pages/MenuBuilder';
 import ZatcaStatus from './pages/ZatcaStatus';
 import ChannelOrders from './pages/ChannelOrders';
 import GiftCardManagement from './pages/GiftCardManagement';
@@ -124,6 +125,7 @@ const AppRoutes = () => (
       <Route path="/branches" element={<BranchManagement />} />
       <Route path="/floor" element={<FloorMap />} />
       <Route path="/floor/ticket/:ticketId" element={<OrderTicket />} />
+      <Route path="/menu-builder" element={<MenuBuilder />} />
       <Route path="/channels" element={<ChannelOrders />} />
       <Route path="/zatca" element={<ZatcaStatus />} />
       <Route path="/gift-cards" element={<GiftCardManagement />} />

@@ -14,9 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.products import Products
 from models.restaurant import (
+    Combos,
     FloorZones,
+    Modifiers,
+    ModifierGroups,
     OrderTicketItems,
     OrderTickets,
+    ProductModifierGroups,
     RestaurantTables,
 )
 
@@ -308,15 +312,37 @@ class RestaurantService:
             if product is None:
                 raise ValueError("Product not found")
 
+        # A combo prices the line at its bundle price — overriding the component
+        # sum (F-056). It can't be combined with a standalone product on one line.
+        combo = None
+        combo_id = data.get("combo_id")
+        if combo_id is not None:
+            combo = await self.get_combo(combo_id, user_id)
+            if combo is None:
+                raise ValueError("Combo not found")
+
         unit_price = data.get("unit_price")
         if unit_price is None:
-            unit_price = float(product.price) if product is not None else 0.0
+            if combo is not None:
+                unit_price = float(combo.bundle_price)
+            elif product is not None:
+                unit_price = float(product.price)
+            else:
+                unit_price = 0.0
         unit_price = round(float(unit_price), 2)
 
-        name = data.get("name") or (product.name if product is not None else None)
-        modifiers = data.get("modifiers")
-        if modifiers is not None and not isinstance(modifiers, str):
-            modifiers = json.dumps(modifiers)
+        name = (
+            data.get("name")
+            or (combo.name if combo is not None else None)
+            or (product.name if product is not None else None)
+        )
+
+        # Resolve the selected modifiers: enforce required groups, sum the price
+        # deltas (added once per line, before VAT — the line-math contract), and
+        # persist the serialized selection so the kitchen makes it as ordered.
+        modifier_total, modifiers = await self._resolve_modifiers(
+            data.get("modifiers"), product_id, user_id
+        )
 
         try:
             item = OrderTicketItems(
@@ -328,7 +354,7 @@ class RestaurantService:
                 name=name,
                 qty=qty,
                 unit_price=unit_price,
-                line_total=round(qty * unit_price, 2),
+                line_total=round(qty * unit_price + modifier_total, 2),
                 course=data.get("course") or "mains",
                 seat_no=data.get("seat_no"),
                 fire_state="open",
@@ -370,7 +396,10 @@ class RestaurantService:
                     setattr(item, key, value)
             item.qty = float(item.qty or 0)
             item.unit_price = round(float(item.unit_price or 0), 2)
-            item.line_total = round(item.qty * item.unit_price, 2)
+            # Keep the (qty-independent) modifier deltas folded into the line total.
+            item.line_total = round(
+                item.qty * item.unit_price + self._modifier_total(item.modifiers), 2
+            )
             await self.db.commit()
             await self.db.refresh(item)
             return item
@@ -603,7 +632,460 @@ class RestaurantService:
             "by_product": list(by_product.values()),
         }
 
+    # ------------------------------------------------------- modifier groups
+    async def list_modifier_groups(self, user_id: str) -> List[ModifierGroups]:
+        result = await self.db.execute(
+            select(ModifierGroups)
+            .where(ModifierGroups.user_id == user_id)
+            .order_by(ModifierGroups.id.asc())
+        )
+        return result.scalars().all()
+
+    async def get_modifier_group(self, group_id: int, user_id: str) -> Optional[ModifierGroups]:
+        result = await self.db.execute(
+            select(ModifierGroups).where(
+                ModifierGroups.id == group_id, ModifierGroups.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_modifier_group(
+        self, data: Dict[str, Any], user_id: str, client_id: Optional[int]
+    ) -> ModifierGroups:
+        try:
+            group = ModifierGroups(
+                user_id=user_id,
+                client_id=client_id,
+                name=data["name"],
+                name_ar=data.get("name_ar"),
+                required=bool(data.get("required", False)),
+                min_select=int(data.get("min_select") or 0),
+                max_select=int(data["max_select"]) if data.get("max_select") is not None else 1,
+            )
+            self.db.add(group)
+            await self.db.commit()
+            await self.db.refresh(group)
+            logger.info(f"Created modifier group {group.id} for user {user_id}")
+            return group
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error creating modifier group: {str(e)}")
+            raise
+
+    async def update_modifier_group(
+        self, group_id: int, updates: Dict[str, Any], user_id: str
+    ) -> Optional[ModifierGroups]:
+        group = await self.get_modifier_group(group_id, user_id)
+        if not group:
+            return None
+        try:
+            editable = ("name", "name_ar", "required", "min_select", "max_select")
+            for key, value in updates.items():
+                if key in editable and hasattr(group, key):
+                    setattr(group, key, value)
+            await self.db.commit()
+            await self.db.refresh(group)
+            return group
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error updating modifier group {group_id}: {str(e)}")
+            raise
+
+    async def delete_modifier_group(self, group_id: int, user_id: str) -> bool:
+        group = await self.get_modifier_group(group_id, user_id)
+        if not group:
+            return False
+        try:
+            # Cascade: drop the group's modifiers and any product attachments so we
+            # never leave orphaned children pointing at a vanished group.
+            for mod in await self.list_modifiers(group_id, user_id):
+                await self.db.delete(mod)
+            links = (
+                await self.db.execute(
+                    select(ProductModifierGroups).where(
+                        ProductModifierGroups.group_id == group_id,
+                        ProductModifierGroups.user_id == user_id,
+                    )
+                )
+            ).scalars().all()
+            for link in links:
+                await self.db.delete(link)
+            await self.db.delete(group)
+            await self.db.commit()
+            return True
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deleting modifier group {group_id}: {str(e)}")
+            raise
+
+    # ------------------------------------------------------------- modifiers
+    async def list_modifiers(self, group_id: int, user_id: str) -> List[Modifiers]:
+        result = await self.db.execute(
+            select(Modifiers)
+            .where(Modifiers.group_id == group_id, Modifiers.user_id == user_id)
+            .order_by(Modifiers.id.asc())
+        )
+        return result.scalars().all()
+
+    async def get_modifier(self, modifier_id: int, user_id: str) -> Optional[Modifiers]:
+        result = await self.db.execute(
+            select(Modifiers).where(
+                Modifiers.id == modifier_id, Modifiers.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_modifier(
+        self, group_id: int, data: Dict[str, Any], user_id: str, client_id: Optional[int]
+    ) -> Optional[Modifiers]:
+        group = await self.get_modifier_group(group_id, user_id)
+        if not group:
+            return None  # caller maps to 404
+        try:
+            modifier = Modifiers(
+                user_id=user_id,
+                client_id=client_id,
+                group_id=group_id,
+                name=data["name"],
+                name_ar=data.get("name_ar"),
+                price_delta=round(float(data.get("price_delta") or 0), 2),
+            )
+            self.db.add(modifier)
+            await self.db.commit()
+            await self.db.refresh(modifier)
+            logger.info(f"Created modifier {modifier.id} in group {group_id}")
+            return modifier
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error creating modifier in group {group_id}: {str(e)}")
+            raise
+
+    async def update_modifier(
+        self, modifier_id: int, updates: Dict[str, Any], user_id: str
+    ) -> Optional[Modifiers]:
+        modifier = await self.get_modifier(modifier_id, user_id)
+        if not modifier:
+            return None
+        try:
+            editable = ("name", "name_ar", "price_delta")
+            for key, value in updates.items():
+                if key in editable and hasattr(modifier, key):
+                    setattr(modifier, key, value)
+            modifier.price_delta = round(float(modifier.price_delta or 0), 2)
+            await self.db.commit()
+            await self.db.refresh(modifier)
+            return modifier
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error updating modifier {modifier_id}: {str(e)}")
+            raise
+
+    async def delete_modifier(self, modifier_id: int, user_id: str) -> bool:
+        modifier = await self.get_modifier(modifier_id, user_id)
+        if not modifier:
+            return False
+        try:
+            await self.db.delete(modifier)
+            await self.db.commit()
+            return True
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deleting modifier {modifier_id}: {str(e)}")
+            raise
+
+    # ----------------------------------------------- product ↔ group attachments
+    async def list_product_groups(self, product_id: int, user_id: str) -> List[Dict[str, Any]]:
+        """Modifier groups attached to a product, each with its modifiers (F-056)."""
+        links = (
+            await self.db.execute(
+                select(ProductModifierGroups).where(
+                    ProductModifierGroups.product_id == product_id,
+                    ProductModifierGroups.user_id == user_id,
+                )
+            )
+        ).scalars().all()
+        out: List[Dict[str, Any]] = []
+        for link in links:
+            group = await self.get_modifier_group(link.group_id, user_id)
+            if group is None:
+                continue
+            mods = await self.list_modifiers(group.id, user_id)
+            out.append({
+                "id": group.id,
+                "name": group.name,
+                "name_ar": group.name_ar,
+                "required": bool(group.required),
+                "min_select": group.min_select,
+                "max_select": group.max_select,
+                "modifiers": [
+                    {
+                        "id": m.id,
+                        "name": m.name,
+                        "name_ar": m.name_ar,
+                        "price_delta": float(m.price_delta or 0),
+                    }
+                    for m in mods
+                ],
+            })
+        return out
+
+    async def attach_group_to_product(
+        self, product_id: int, group_id: int, user_id: str, client_id: Optional[int]
+    ) -> Optional[ProductModifierGroups]:
+        """Attach a modifier group to a product (idempotent). ``None`` if either is
+        not owned by the caller (caller maps to 404)."""
+        product = await self._owned_product(product_id, user_id)
+        group = await self.get_modifier_group(group_id, user_id)
+        if product is None or group is None:
+            return None
+        existing = (
+            await self.db.execute(
+                select(ProductModifierGroups).where(
+                    ProductModifierGroups.product_id == product_id,
+                    ProductModifierGroups.group_id == group_id,
+                    ProductModifierGroups.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        try:
+            link = ProductModifierGroups(
+                user_id=user_id,
+                client_id=client_id,
+                product_id=product_id,
+                group_id=group_id,
+            )
+            self.db.add(link)
+            await self.db.commit()
+            await self.db.refresh(link)
+            return link
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error attaching group {group_id} to product {product_id}: {str(e)}")
+            raise
+
+    async def detach_group_from_product(
+        self, product_id: int, group_id: int, user_id: str
+    ) -> bool:
+        link = (
+            await self.db.execute(
+                select(ProductModifierGroups).where(
+                    ProductModifierGroups.product_id == product_id,
+                    ProductModifierGroups.group_id == group_id,
+                    ProductModifierGroups.user_id == user_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if link is None:
+            return False
+        try:
+            await self.db.delete(link)
+            await self.db.commit()
+            return True
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error detaching group {group_id} from product {product_id}: {str(e)}")
+            raise
+
+    # ---------------------------------------------------------------- combos
+    async def list_combos(self, user_id: str) -> List[Combos]:
+        result = await self.db.execute(
+            select(Combos).where(Combos.user_id == user_id).order_by(Combos.id.asc())
+        )
+        return result.scalars().all()
+
+    async def get_combo(self, combo_id: int, user_id: str) -> Optional[Combos]:
+        result = await self.db.execute(
+            select(Combos).where(Combos.id == combo_id, Combos.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def create_combo(
+        self, data: Dict[str, Any], user_id: str, client_id: Optional[int]
+    ) -> Combos:
+        components = self._normalize_components(data.get("components"))
+        try:
+            combo = Combos(
+                user_id=user_id,
+                client_id=client_id,
+                name=data["name"],
+                name_ar=data.get("name_ar"),
+                bundle_price=round(float(data.get("bundle_price") or 0), 2),
+                components=json.dumps(components),
+                is_active=bool(data.get("is_active", True)),
+            )
+            self.db.add(combo)
+            await self.db.commit()
+            await self.db.refresh(combo)
+            logger.info(f"Created combo {combo.id} for user {user_id}")
+            return combo
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error creating combo: {str(e)}")
+            raise
+
+    async def update_combo(
+        self, combo_id: int, updates: Dict[str, Any], user_id: str
+    ) -> Optional[Combos]:
+        combo = await self.get_combo(combo_id, user_id)
+        if not combo:
+            return None
+        try:
+            if "components" in updates:
+                combo.components = json.dumps(self._normalize_components(updates["components"]))
+            for key in ("name", "name_ar", "is_active"):
+                if key in updates and updates[key] is not None:
+                    setattr(combo, key, updates[key])
+            if updates.get("bundle_price") is not None:
+                combo.bundle_price = round(float(updates["bundle_price"]), 2)
+            await self.db.commit()
+            await self.db.refresh(combo)
+            return combo
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error updating combo {combo_id}: {str(e)}")
+            raise
+
+    async def delete_combo(self, combo_id: int, user_id: str) -> bool:
+        combo = await self.get_combo(combo_id, user_id)
+        if not combo:
+            return False
+        try:
+            await self.db.delete(combo)
+            await self.db.commit()
+            return True
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deleting combo {combo_id}: {str(e)}")
+            raise
+
+    async def combo_component_sum(self, combo: Combos, user_id: str) -> float:
+        """Sum of the combo components' catalog prices × their qty (F-056).
+
+        The bundle price overrides this; surfacing it lets the menu-builder show
+        the saving and lets a test assert ``bundle_price < component_sum``.
+        """
+        total = 0.0
+        for comp in self._load_components(combo):
+            pid = comp.get("product_id")
+            cqty = float(comp.get("qty") or 1)
+            if pid is None:
+                continue
+            product = await self._owned_product(pid, user_id)
+            if product is not None:
+                total += float(product.price) * cqty
+        return round(total, 2)
+
     # ----------------------------------------------------------------- helpers
+    async def _resolve_modifiers(
+        self, raw: Any, product_id: Optional[int], user_id: str
+    ) -> tuple:
+        """Validate + price a modifier selection (F-056).
+
+        ``raw`` is a list of modifier ids (or dicts carrying ``id``/``modifier_id``).
+        Required groups attached to the product are enforced; the price deltas are
+        summed (once per line, before VAT) and the selection is serialized as
+        ``[{id, group_id, name, name_ar, price_delta}]`` for the kitchen ticket.
+
+        Returns ``(modifier_total, serialized_json_or_None)`` and raises
+        ``ValueError`` when a required group is unsatisfied or a group's
+        ``max_select`` is exceeded.
+        """
+        selected_ids = self._extract_modifier_ids(raw)
+
+        # Resolve each selected id to an owned Modifier row.
+        chosen: List[Modifiers] = []
+        for mid in selected_ids:
+            mod = await self.get_modifier(mid, user_id)
+            if mod is None:
+                raise ValueError(f"Modifier {mid} not found")
+            chosen.append(mod)
+
+        # Enforce the product's attached groups (required + min/max).
+        if product_id is not None:
+            groups = await self.list_product_groups(product_id, user_id)
+            for g in groups:
+                count = sum(1 for m in chosen if m.group_id == g["id"])
+                min_sel = g["min_select"] or 0
+                if g["required"] and min_sel < 1:
+                    min_sel = 1  # a required group needs at least one pick
+                if g["required"] and count < min_sel:
+                    raise ValueError(
+                        f"Required modifier group '{g['name']}' needs at least "
+                        f"{min_sel} selection(s)"
+                    )
+                max_sel = g["max_select"]
+                if max_sel is not None and max_sel > 0 and count > max_sel:
+                    raise ValueError(
+                        f"Modifier group '{g['name']}' allows at most {max_sel} selection(s)"
+                    )
+
+        if not chosen:
+            return 0.0, None
+        total = round(sum(float(m.price_delta or 0) for m in chosen), 2)
+        serialized = json.dumps([
+            {
+                "id": m.id,
+                "group_id": m.group_id,
+                "name": m.name,
+                "name_ar": m.name_ar,
+                "price_delta": float(m.price_delta or 0),
+            }
+            for m in chosen
+        ])
+        return total, serialized
+
+    @staticmethod
+    def _extract_modifier_ids(raw: Any) -> List[int]:
+        if not raw:
+            return []
+        ids: List[int] = []
+        for item in raw:
+            if isinstance(item, dict):
+                val = item.get("id", item.get("modifier_id"))
+            else:
+                val = item
+            if val is not None:
+                ids.append(int(val))
+        return ids
+
+    @staticmethod
+    def _modifier_total(serialized: Optional[str]) -> float:
+        """Sum the price deltas off a line's serialized modifier selection."""
+        if not serialized:
+            return 0.0
+        try:
+            data = json.loads(serialized)
+        except (ValueError, TypeError):
+            return 0.0
+        if not isinstance(data, list):
+            return 0.0
+        return round(sum(float(m.get("price_delta") or 0) for m in data if isinstance(m, dict)), 2)
+
+    @staticmethod
+    def _normalize_components(raw: Any) -> List[Dict[str, Any]]:
+        """Coerce combo components to ``[{product_id, qty}]`` (drops malformed rows)."""
+        if not raw:
+            return []
+        out: List[Dict[str, Any]] = []
+        for comp in raw:
+            if not isinstance(comp, dict):
+                continue
+            pid = comp.get("product_id")
+            if pid is None:
+                continue
+            out.append({"product_id": int(pid), "qty": float(comp.get("qty") or 1)})
+        return out
+
+    @staticmethod
+    def _load_components(combo: Combos) -> List[Dict[str, Any]]:
+        try:
+            data = json.loads(combo.components) if combo.components else []
+        except (ValueError, TypeError):
+            return []
+        return data if isinstance(data, list) else []
+
     async def _owned_product(self, product_id: int, user_id: str) -> Optional[Products]:
         result = await self.db.execute(
             select(Products).where(Products.id == product_id, Products.user_id == user_id)

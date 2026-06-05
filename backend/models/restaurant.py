@@ -17,7 +17,7 @@ States (mirrors INTENDED_BEHAVIOR.md §3.5 / the state-machine catalog):
 """
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
 
 from core.database import Base
 
@@ -90,6 +90,94 @@ class OrderTickets(Base):
     party_size = Column(Integer, nullable=True)
     notes = Column(String, nullable=True)
     opened_at = Column(DateTime(timezone=True), default=datetime.now)
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
+class ModifierGroups(Base):
+    """A named set of choices that attaches to menu items — F-056 (RST).
+
+    e.g. "Doneness", "Add-ons". ``required`` forces a selection before the line
+    can be sent to the kitchen; ``min_select`` / ``max_select`` bound how many
+    modifiers in the group may be picked. Owner-scoped like every other entity
+    (SEC-02).
+    """
+
+    __tablename__ = "modifier_groups"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    name_ar = Column(String, nullable=True)
+    required = Column(Boolean, nullable=True, default=False, server_default="false")
+    min_select = Column(Integer, nullable=True, default=0, server_default="0")
+    max_select = Column(Integer, nullable=True, default=1, server_default="1")
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
+class Modifiers(Base):
+    """A single choice within a modifier group — F-056 (RST).
+
+    Carries a bilingual name and a ``price_delta`` (e.g. "extra cheese +5 SAR")
+    folded into the line total before VAT. Owner-scoped (SEC-02).
+    """
+
+    __tablename__ = "modifiers"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    group_id = Column(Integer, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    name_ar = Column(String, nullable=True)
+    price_delta = Column(Float, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
+class ProductModifierGroups(Base):
+    """Link row attaching a modifier group to a product — F-056 (RST).
+
+    When that product is added to a ticket, the attached groups surface (and any
+    ``required`` group is enforced). Owner-scoped (SEC-02).
+    """
+
+    __tablename__ = "product_modifier_groups"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    product_id = Column(Integer, nullable=False, index=True)
+    group_id = Column(Integer, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
+class Combos(Base):
+    """A meal bundle sold at a price that overrides the component sum — F-056 (RST).
+
+    ``components`` is a serialized JSON list of ``{"product_id": int, "qty": float}``;
+    ``bundle_price`` is the single charge for the whole bundle (it deliberately
+    overrides the sum of the components' catalog prices). Owner-scoped (SEC-02).
+    """
+
+    __tablename__ = "combos"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    name_ar = Column(String, nullable=True)
+    bundle_price = Column(Float, nullable=False, default=0, server_default="0")
+    # Serialized JSON list of {"product_id": int, "qty": float}.
+    components = Column(String, nullable=True, default="[]", server_default="[]")
+    is_active = Column(Boolean, nullable=True, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 

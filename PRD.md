@@ -33,7 +33,7 @@ Rewaa / Marn, localized for Saudi.
 ## Tasks
 
 - [x] **01 · F-055 — Order-ticket line items** (add/qty/course/seat/note/void, fire, transfer, merge, split; ticket lifecycle) → `.scratch/restaurant-vertical/01-F055-order-ticket-line-items.md` · Blocked by: none
-- [ ] **02 · F-056 — Modifiers, modifier groups & combos** → `.scratch/restaurant-vertical/02-F056-modifiers-and-combos.md` · Blocked by: 01
+- [x] **02 · F-056 — Modifiers, modifier groups & combos** → `.scratch/restaurant-vertical/02-F056-modifiers-and-combos.md` · Blocked by: 01
 - [ ] **03 · F-058 — Order types drive behavior** (tableless takeaway/delivery, print routing) → `.scratch/restaurant-vertical/03-F058-order-types.md` · Blocked by: 01
 - [ ] **04 · F-061 — Service charge outside the VAT base** → `.scratch/restaurant-vertical/04-F061-service-charge.md` · Blocked by: 01
 - [ ] **05 · F-062 — Composite / recipe BOM depletion** → `.scratch/restaurant-vertical/05-F062-bom-depletion.md` · Blocked by: 01

@@ -1832,6 +1832,7 @@ export interface TicketItem {
   seat_no?: number | null;
   fire_state?: string | null; // open | fired | bumped
   notes?: string | null;
+  modifiers?: string | null; // serialized JSON of the selected modifiers (F-056)
 }
 
 export interface SplitShare {
@@ -1880,12 +1881,14 @@ export async function addTicketItem(
   ticketId: number,
   data: {
     product_id?: number;
+    combo_id?: number;
     name?: string;
     qty?: number;
     unit_price?: number;
     course?: string;
     seat_no?: number;
     notes?: string;
+    modifiers?: number[]; // selected modifier ids (F-056)
   }
 ): Promise<TicketItem> {
   const res = await client.apiCall.invoke<TicketItem>({
@@ -1966,6 +1969,171 @@ export async function getOrderTickets(params?: {
     url: '/api/v1/restaurant/order-tickets',
     method: 'GET',
     data: params || {},
+  });
+  return res.data;
+}
+
+// ---------- Modifiers, modifier groups & combos (F-056) ----------
+// The menu-builder surface: a manager defines modifier groups (required + min/
+// max), modifiers (bilingual name + price delta), attaches groups to products,
+// and defines combos (components + a bundle price that overrides their sum).
+export interface ModifierGroup {
+  id: number;
+  name: string;
+  name_ar?: string | null;
+  required?: boolean | null;
+  min_select?: number | null;
+  max_select?: number | null;
+}
+
+export interface Modifier {
+  id: number;
+  group_id: number;
+  name: string;
+  name_ar?: string | null;
+  price_delta: number;
+}
+
+// A product's attached group, with its modifiers nested (the ticket picker reads this).
+export interface ProductModifierGroup extends ModifierGroup {
+  modifiers: Modifier[];
+}
+
+export interface ComboComponentRef {
+  product_id: number;
+  qty: number;
+}
+
+export interface Combo {
+  id: number;
+  name: string;
+  name_ar?: string | null;
+  bundle_price: number;
+  components: ComboComponentRef[];
+  component_sum?: number | null;
+  is_active?: boolean | null;
+}
+
+export async function getModifierGroups(): Promise<ModifierGroup[]> {
+  const res = await client.apiCall.invoke<ModifierGroup[]>({
+    url: '/api/v1/restaurant/modifier-groups',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function createModifierGroup(data: {
+  name: string;
+  name_ar?: string;
+  required?: boolean;
+  min_select?: number;
+  max_select?: number;
+}): Promise<ModifierGroup> {
+  const res = await client.apiCall.invoke<ModifierGroup>({
+    url: '/api/v1/restaurant/modifier-groups',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function deleteModifierGroup(groupId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/modifier-groups/${groupId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getModifiers(groupId: number): Promise<Modifier[]> {
+  const res = await client.apiCall.invoke<Modifier[]>({
+    url: `/api/v1/restaurant/modifier-groups/${groupId}/modifiers`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function createModifier(
+  groupId: number,
+  data: { name: string; name_ar?: string; price_delta?: number }
+): Promise<Modifier> {
+  const res = await client.apiCall.invoke<Modifier>({
+    url: `/api/v1/restaurant/modifier-groups/${groupId}/modifiers`,
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function deleteModifier(modifierId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/modifiers/${modifierId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getProductModifierGroups(
+  productId: number
+): Promise<{ items: ProductModifierGroup[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: ProductModifierGroup[]; total: number }>({
+    url: `/api/v1/restaurant/products/${productId}/modifier-groups`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function attachModifierGroup(productId: number, groupId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/products/${productId}/modifier-groups/${groupId}`,
+    method: 'POST',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function detachModifierGroup(productId: number, groupId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/products/${productId}/modifier-groups/${groupId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getCombos(): Promise<Combo[]> {
+  const res = await client.apiCall.invoke<Combo[]>({
+    url: '/api/v1/restaurant/combos',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function createCombo(data: {
+  name: string;
+  name_ar?: string;
+  bundle_price: number;
+  components: ComboComponentRef[];
+}): Promise<Combo> {
+  const res = await client.apiCall.invoke<Combo>({
+    url: '/api/v1/restaurant/combos',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function deleteCombo(comboId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/combos/${comboId}`,
+    method: 'DELETE',
+    data: {},
   });
   return res.data;
 }

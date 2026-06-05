@@ -17,3 +17,25 @@
   (12 incl. named test_add_items_by_course / test_transfer_table_moves_ticket /
   test_split_bill_by_seat). Full backend suite 348 passed; frontend lint+build+tsc green.
   Commit: a5aae80
+2026-06-05 · 02 / F-056 — Modifiers, modifier groups & combos.
+  Backend: four new owner-scoped triads on the restaurant vertical behind the
+  double-gate — ModifierGroups (required + min_select/max_select), Modifiers
+  (group_id, name/name_ar, price_delta), ProductModifierGroups (product↔group
+  link) and Combos (serialized components + bundle_price). RestaurantService gained
+  full CRUD for each plus attach/detach + list_product_groups (nested modifiers),
+  combo_component_sum, and _resolve_modifiers which validates required groups
+  (min/max enforced) and folds the selected deltas into the line total ONCE before
+  VAT per the line-math contract, persisting the serialized selection on the line.
+  add_item now accepts combo_id (prices the line at bundle_price, overriding the
+  component sum) and a list of modifier ids; update_item preserves the modifier
+  delta when re-pricing. Routes under /api/v1/restaurant/modifier-groups[/{id}/
+  modifiers], /modifiers/{id}, /products/{id}/modifier-groups[/{gid}], /combos.
+  Frontend: MenuBuilder.tsx menu-builder (groups/modifiers/combos CRUD,
+  loading/empty/error/denied/offline, brand tokens, RTL), route /menu-builder +
+  sidebar link; OrderTicket add-item gained a modifier picker (radio/checkbox by
+  max_select, required-group enforcement gating the Add button) and a combo
+  selector, lines show their modifiers; typed api.ts wrappers; i18n ×4 (ar/en/hi/
+  ur). Tests: test_phase5_rst_modifiers.py (8 incl. named
+  test_required_modifier_group_enforced / test_combo_price_overrides_component_sum).
+  Full backend suite 356 passed; frontend lint+tsc+build green.
+  Commit: __PENDING__
