@@ -1265,6 +1265,297 @@ async def export_accounting_journal(
 
 
 # ============================================================
+# PROFIT / COGS / MARGIN REPORT + DEAD STOCK (RPT-04 / INV-09, F-068)
+# ============================================================
+# A merchant can finally see gross profit and margin. COGS is computed
+# (moving-average on PO receive) but until now only surfaced inside the GL
+# journal. This report breaks revenue / COGS / gross profit / margin % down by
+# item and by category over a trailing window, and lists dead stock (no sale in
+# N days, on-hand > 0) so slow movers can be marked down or returned.
+#
+# Margin is stable over time because each sale line snapshots its product cost
+# at sale time (F-068, services/sale_core.snapshot_cost_prices): the report reads
+# that snapshot in preference to the live cost, so a later cost change does not
+# rewrite history. Legacy lines with no snapshot fall back to the current cost.
+#
+# Aggregated server-side (OPS-05, never load-everything): the catalog cost map is
+# bounded, and each transaction's items_json is streamed exactly once.
+
+class MarginRow(BaseModel):
+    key: str
+    name: str
+    category: Optional[str] = None
+    qty_sold: float
+    revenue: float
+    cogs: float
+    gross_profit: float
+    margin_pct: float
+
+
+class DeadStockRow(BaseModel):
+    product_id: int
+    name: str
+    category: Optional[str] = None
+    quantity: float
+    cost_price: float
+    stock_value: float
+
+
+class ProfitMarginResponse(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    dead_stock_days: int
+    by_item: List[MarginRow]
+    by_category: List[MarginRow]
+    dead_stock: List[DeadStockRow]
+    totals: MarginRow
+    csv_content: str
+
+
+def _margin_pct(revenue: float, gross: float) -> float:
+    """Gross margin as a % of revenue (0 when there is no revenue)."""
+    return round((gross / revenue) * 100, 2) if revenue else 0.0
+
+
+@router.get("/api/v1/reports/profit-margin", response_model=ProfitMarginResponse)
+async def report_profit_margin(
+    days: int = Query(30, ge=1, le=365),
+    dead_stock_days: int = Query(30, ge=1, le=365),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Profit / COGS / margin by item and category, plus a dead-stock list (F-068).
+
+    Revenue and COGS are netted by credit notes (refunds reverse both). COGS uses
+    the per-line cost snapshot taken at sale time, falling back to the live product
+    cost for legacy lines. Owner-scoped to the calling client (SEC-02), windowed by
+    ``days``; dead stock is products with on-hand > 0 and no sale in
+    ``dead_stock_days``. Aggregated by streaming items_json once (OPS-05).
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can view the profit/margin report")
+
+    client_id = role_info["entity_id"]
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    # ---- Bounded product catalog (id -> name / category / cost / on-hand) ----
+    prod_rows = (
+        await db.execute(
+            select(
+                Products.id,
+                Products.name,
+                Products.category,
+                Products.cost_price,
+                Products.quantity,
+            ).where(Products.client_id == client_id)
+        )
+    ).all()
+    catalog = {r[0]: r for r in prod_rows}
+    cost_map = {r[0]: float(r[3] or 0.0) for r in prod_rows}
+
+    not_excluded = and_(
+        Transactions.status.is_distinct_from("held"),
+        Transactions.status.is_distinct_from("voided"),
+    )
+
+    # ---- Stream items_json once, aggregating revenue/COGS/qty per product ----
+    per_product: dict = {}
+    sold_pids: set = set()
+    stream = await db.stream(
+        select(Transactions.items_json, Transactions.status).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                not_excluded,
+            )
+        )
+    )
+    async for items_json, status in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        # A credit note (refund) reverses both revenue and COGS.
+        sign = -1.0 if status == "credit_note" else 1.0
+        for item in items:
+            pid = item.get("product_id")
+            qty = float(item.get("quantity", 0) or 0)
+            price = float(item.get("price", 0) or 0)
+            line_disc = float(item.get("discount", 0) or 0)
+            # The sale-time snapshot wins; legacy lines fall back to current cost.
+            snap = item.get("cost_price")
+            cost = float(snap) if snap is not None else cost_map.get(pid, 0.0)
+            if pid is not None:
+                sold_pids.add(pid)
+            agg = per_product.setdefault(
+                pid, {"qty": 0.0, "revenue": 0.0, "cogs": 0.0}
+            )
+            agg["qty"] += sign * qty
+            agg["revenue"] += sign * (price * qty - line_disc)
+            agg["cogs"] += sign * cost * qty
+
+    # ---- Per-item rows (largest gross profit first) ----
+    by_item: List[MarginRow] = []
+    by_category_agg: dict = {}
+    tot_qty = tot_rev = tot_cogs = 0.0
+    for pid, agg in per_product.items():
+        revenue = round(agg["revenue"], 2)
+        cogs = round(agg["cogs"], 2)
+        gross = round(revenue - cogs, 2)
+        prod = catalog.get(pid)
+        name = prod[1] if prod else (f"Item #{pid}" if pid is not None else "Ad-hoc")
+        category = (prod[2] if prod else None) or None
+        by_item.append(
+            MarginRow(
+                key=str(pid) if pid is not None else "adhoc",
+                name=name,
+                category=category,
+                qty_sold=round(agg["qty"], 3),
+                revenue=revenue,
+                cogs=cogs,
+                gross_profit=gross,
+                margin_pct=_margin_pct(revenue, gross),
+            )
+        )
+        cat_key = category or "Uncategorized"
+        cat = by_category_agg.setdefault(
+            cat_key, {"qty": 0.0, "revenue": 0.0, "cogs": 0.0}
+        )
+        cat["qty"] += agg["qty"]
+        cat["revenue"] += agg["revenue"]
+        cat["cogs"] += agg["cogs"]
+        tot_qty += agg["qty"]
+        tot_rev += agg["revenue"]
+        tot_cogs += agg["cogs"]
+    by_item.sort(key=lambda r: (-r.gross_profit, r.name))
+
+    # ---- Per-category rows ----
+    by_category: List[MarginRow] = []
+    for cat_key, agg in by_category_agg.items():
+        revenue = round(agg["revenue"], 2)
+        cogs = round(agg["cogs"], 2)
+        gross = round(revenue - cogs, 2)
+        by_category.append(
+            MarginRow(
+                key=cat_key,
+                name=cat_key,
+                category=cat_key,
+                qty_sold=round(agg["qty"], 3),
+                revenue=revenue,
+                cogs=cogs,
+                gross_profit=gross,
+                margin_pct=_margin_pct(revenue, gross),
+            )
+        )
+    by_category.sort(key=lambda r: (-r.gross_profit, r.name))
+
+    tot_rev = round(tot_rev, 2)
+    tot_cogs = round(tot_cogs, 2)
+    tot_gross = round(tot_rev - tot_cogs, 2)
+    totals = MarginRow(
+        key="__total__",
+        name="Total",
+        category=None,
+        qty_sold=round(tot_qty, 3),
+        revenue=tot_rev,
+        cogs=tot_cogs,
+        gross_profit=tot_gross,
+        margin_pct=_margin_pct(tot_rev, tot_gross),
+    )
+
+    # ---- Dead stock (on-hand > 0, no sale in dead_stock_days) ----
+    # Reuse the report window's sold set when the windows match; otherwise stream
+    # the dead-stock window once collecting only the sold product ids (bounded).
+    if dead_stock_days == days:
+        sold_recent = sold_pids
+    else:
+        sold_recent = set()
+        ds_start = now - timedelta(days=dead_stock_days)
+        ds_stream = await db.stream(
+            select(Transactions.items_json).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= ds_start,
+                    not_excluded,
+                )
+            )
+        )
+        async for (items_json,) in ds_stream:
+            if not items_json:
+                continue
+            try:
+                for item in json.loads(items_json):
+                    if item.get("product_id") is not None:
+                        sold_recent.add(item.get("product_id"))
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+    dead_stock: List[DeadStockRow] = []
+    for pid, prod in catalog.items():
+        on_hand = float(prod[4] or 0.0)
+        if on_hand > 0 and pid not in sold_recent:
+            cost = float(prod[3] or 0.0)
+            dead_stock.append(
+                DeadStockRow(
+                    product_id=pid,
+                    name=prod[1],
+                    category=prod[2] or None,
+                    quantity=round(on_hand, 3),
+                    cost_price=round(cost, 2),
+                    stock_value=round(on_hand * cost, 2),
+                )
+            )
+    dead_stock.sort(key=lambda r: (-r.stock_value, r.name))
+
+    # ---- CSV (per-item margin + a dead-stock section) ----
+    output = io.StringIO()
+    writer = csv.writer(output)
+    period_label = f"{start_date.date().isoformat()}..{now.date().isoformat()}"
+    writer.writerow(
+        ["Type", "Key", "Name", "Category", "Qty Sold", "Revenue", "COGS", "Gross Profit", "Margin %"]
+    )
+    for r in by_item:
+        writer.writerow(
+            ["ITEM", r.key, r.name, r.category or "", f"{r.qty_sold:g}",
+             f"{r.revenue:.2f}", f"{r.cogs:.2f}", f"{r.gross_profit:.2f}", f"{r.margin_pct:.2f}"]
+        )
+    for r in by_category:
+        writer.writerow(
+            ["CATEGORY", r.key, r.name, "", f"{r.qty_sold:g}",
+             f"{r.revenue:.2f}", f"{r.cogs:.2f}", f"{r.gross_profit:.2f}", f"{r.margin_pct:.2f}"]
+        )
+    writer.writerow(
+        ["TOTAL", "", "Total", "", f"{totals.qty_sold:g}",
+         f"{totals.revenue:.2f}", f"{totals.cogs:.2f}", f"{totals.gross_profit:.2f}", f"{totals.margin_pct:.2f}"]
+    )
+    writer.writerow([])
+    writer.writerow(["Dead stock (no sale in last %d days)" % dead_stock_days])
+    writer.writerow(["Product ID", "Name", "Category", "On Hand", "Cost", "Stock Value"])
+    for d in dead_stock:
+        writer.writerow(
+            [d.product_id, d.name, d.category or "", f"{d.quantity:g}",
+             f"{d.cost_price:.2f}", f"{d.stock_value:.2f}"]
+        )
+
+    return ProfitMarginResponse(
+        days=days,
+        from_date=start_date.date().isoformat(),
+        to_date=now.date().isoformat(),
+        dead_stock_days=dead_stock_days,
+        by_item=by_item,
+        by_category=by_category,
+        dead_stock=dead_stock,
+        totals=totals,
+        csv_content=output.getvalue(),
+    )
+
+
+# ============================================================
 # Z-REPORT / X-REPORT (RPT-06, PRN-05) — fiscal day-close
 # ============================================================
 # A Z-report reconciles a single shift: sales grouped by tender (the real

@@ -954,6 +954,50 @@ export async function getJournalExport(days = 30): Promise<JournalExport> {
   return response.data;
 }
 
+// RPT-04 / INV-09 (F-068): profit / COGS / margin report + dead-stock list.
+// Each row carries revenue, COGS, gross profit and margin %; COGS uses the cost
+// snapshotted onto the sale line at sale time so historical margin is stable.
+export interface MarginRow {
+  key: string;
+  name: string;
+  category: string | null;
+  qty_sold: number;
+  revenue: number;
+  cogs: number;
+  gross_profit: number;
+  margin_pct: number;
+}
+
+export interface DeadStockItem {
+  product_id: number;
+  name: string;
+  category: string | null;
+  quantity: number;
+  cost_price: number;
+  stock_value: number;
+}
+
+export interface ProfitMarginReport {
+  days: number;
+  dead_stock_days: number;
+  from_date: string;
+  to_date: string;
+  by_item: MarginRow[];
+  by_category: MarginRow[];
+  dead_stock: DeadStockItem[];
+  totals: MarginRow;
+  csv_content: string;
+}
+
+export async function getProfitMarginReport(days = 30, deadStockDays = 30): Promise<ProfitMarginReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/profit-margin?days=${days}&dead_stock_days=${deadStockDays}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.

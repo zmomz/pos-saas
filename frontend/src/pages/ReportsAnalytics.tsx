@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
-import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, type JournalExport } from '@/lib/api';
+import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, type JournalExport, type ProfitMarginReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -91,6 +91,22 @@ const reportTranslations: Record<string, Record<string, string>> = {
     journal_balanced: 'Balanced',
     journal_unbalanced: 'Out of balance',
     retry: 'Retry',
+    profit_margin: 'Profit & Margin',
+    profit_margin_hint: 'Gross profit and margin by item and category for the last 30 days — COGS uses the cost recorded at sale time.',
+    download_margin: 'Download Margin CSV',
+    cogs: 'COGS',
+    gross_profit: 'Gross Profit',
+    margin: 'Margin %',
+    by_item: 'By Item',
+    by_category: 'By Category',
+    item: 'Item',
+    category: 'Category',
+    dead_stock: 'Dead Stock',
+    dead_stock_hint: 'On-hand products with no sale in the last 30 days.',
+    on_hand: 'On Hand',
+    cost: 'Cost',
+    stock_value: 'Stock Value',
+    no_dead_stock: 'No dead stock — everything is selling.',
   },
   ar: {
     reports_analytics: 'التقارير والتحليلات',
@@ -140,6 +156,22 @@ const reportTranslations: Record<string, Record<string, string>> = {
     journal_balanced: 'متوازن',
     journal_unbalanced: 'غير متوازن',
     retry: 'إعادة المحاولة',
+    profit_margin: 'الربح والهامش',
+    profit_margin_hint: 'إجمالي الربح والهامش حسب الصنف والفئة لآخر 30 يومًا — تكلفة البضاعة المباعة تُحتسب بالتكلفة وقت البيع.',
+    download_margin: 'تنزيل ملف الهامش CSV',
+    cogs: 'تكلفة البضاعة',
+    gross_profit: 'إجمالي الربح',
+    margin: 'الهامش %',
+    by_item: 'حسب الصنف',
+    by_category: 'حسب الفئة',
+    item: 'الصنف',
+    category: 'الفئة',
+    dead_stock: 'المخزون الراكد',
+    dead_stock_hint: 'منتجات متوفرة في المخزون ولم تُبَع خلال آخر 30 يومًا.',
+    on_hand: 'المتوفر',
+    cost: 'التكلفة',
+    stock_value: 'قيمة المخزون',
+    no_dead_stock: 'لا يوجد مخزون راكد — كل المنتجات تُباع.',
   },
   hi: {
     reports_analytics: 'रिपोर्ट और विश्लेषण',
@@ -189,6 +221,22 @@ const reportTranslations: Record<string, Record<string, string>> = {
     journal_balanced: 'संतुलित',
     journal_unbalanced: 'असंतुलित',
     retry: 'पुनः प्रयास',
+    profit_margin: 'लाभ और मार्जिन',
+    profit_margin_hint: 'पिछले 30 दिनों के लिए वस्तु और श्रेणी के अनुसार सकल लाभ और मार्जिन — COGS बिक्री के समय की लागत का उपयोग करता है।',
+    download_margin: 'मार्जिन CSV डाउनलोड करें',
+    cogs: 'COGS',
+    gross_profit: 'सकल लाभ',
+    margin: 'मार्जिन %',
+    by_item: 'वस्तु अनुसार',
+    by_category: 'श्रेणी अनुसार',
+    item: 'वस्तु',
+    category: 'श्रेणी',
+    dead_stock: 'मृत स्टॉक',
+    dead_stock_hint: 'पिछले 30 दिनों में बिना बिक्री वाले उपलब्ध उत्पाद।',
+    on_hand: 'उपलब्ध',
+    cost: 'लागत',
+    stock_value: 'स्टॉक मूल्य',
+    no_dead_stock: 'कोई मृत स्टॉक नहीं — सब कुछ बिक रहा है।',
   },
   ur: {
     reports_analytics: 'رپورٹس اور تجزیات',
@@ -238,6 +286,22 @@ const reportTranslations: Record<string, Record<string, string>> = {
     journal_balanced: 'متوازن',
     journal_unbalanced: 'غیر متوازن',
     retry: 'دوبارہ کوشش',
+    profit_margin: 'منافع اور مارجن',
+    profit_margin_hint: 'پچھلے 30 دن کے لیے آئٹم اور زمرے کے حساب سے مجموعی منافع اور مارجن — COGS فروخت کے وقت کی لاگت استعمال کرتا ہے۔',
+    download_margin: 'مارجن CSV ڈاؤن لوڈ کریں',
+    cogs: 'لاگتِ فروخت',
+    gross_profit: 'مجموعی منافع',
+    margin: 'مارجن %',
+    by_item: 'آئٹم کے حساب سے',
+    by_category: 'زمرے کے حساب سے',
+    item: 'آئٹم',
+    category: 'زمرہ',
+    dead_stock: 'غیر فعال اسٹاک',
+    dead_stock_hint: 'موجودہ اسٹاک والے مصنوعات جو پچھلے 30 دن میں فروخت نہیں ہوئیں۔',
+    on_hand: 'دستیاب',
+    cost: 'لاگت',
+    stock_value: 'اسٹاک ویلیو',
+    no_dead_stock: 'کوئی غیر فعال اسٹاک نہیں — سب کچھ فروخت ہو رہا ہے۔',
   },
 };
 
@@ -249,18 +313,22 @@ export default function ReportsAnalytics() {
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [paymentTenders, setPaymentTenders] = useState<PaymentTender[]>([]);
   const [journal, setJournal] = useState<JournalExport | null>(null);
+  const [margin, setMargin] = useState<ProfitMarginReport | null>(null);
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
   const [loadingJournal, setLoadingJournal] = useState(true);
+  const [loadingMargin, setLoadingMargin] = useState(true);
   // UX-02 (F-051): a failed fetch on any panel must surface a real error state
   // distinct from "no data" — generalizing the RPT-03 payment-panel pattern.
   const [salesError, setSalesError] = useState(false);
   const [productsError, setProductsError] = useState(false);
   const [paymentError, setPaymentError] = useState(false);
   const [journalError, setJournalError] = useState(false);
+  const [marginError, setMarginError] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingJournal, setExportingJournal] = useState(false);
+  const [exportingMargin, setExportingMargin] = useState(false);
 
   const tr = useCallback(
     (key: string): string => {
@@ -277,6 +345,7 @@ export default function ReportsAnalytics() {
     fetchTopProducts();
     fetchPaymentBreakdown();
     fetchJournal();
+    fetchMargin();
   }, []);
 
   async function fetchSalesData() {
@@ -357,6 +426,40 @@ export default function ReportsAnalytics() {
       URL.revokeObjectURL(url);
     } finally {
       setExportingJournal(false);
+    }
+  }
+
+  async function fetchMargin() {
+    setLoadingMargin(true);
+    setMarginError(false);
+    try {
+      const result = await getProfitMarginReport(30, 30);
+      setMargin(result || null);
+    } catch {
+      // F-068: a failed fetch must surface a real error distinct from "no sales"
+      // — never silently render an empty margin report (UX-02).
+      setMarginError(true);
+      setMargin(null);
+    } finally {
+      setLoadingMargin(false);
+    }
+  }
+
+  async function handleExportMargin() {
+    if (!margin?.csv_content) return;
+    setExportingMargin(true);
+    try {
+      const blob = new Blob([margin.csv_content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `profit_margin_${margin.from_date}_${margin.to_date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingMargin(false);
     }
   }
 
@@ -739,6 +842,177 @@ export default function ReportsAnalytics() {
                   </TableRow>
                 </TableBody>
               </Table>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Profit / COGS / Margin + Dead Stock (F-068) */}
+      <Card className="bg-slate-800 border-slate-700 mb-8">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-white">{tr('profit_margin')}</CardTitle>
+            <p className="text-xs text-slate-400 mt-1">{tr('profit_margin_hint')}</p>
+          </div>
+          <Button
+            onClick={handleExportMargin}
+            disabled={exportingMargin || !margin || margin.by_item.length === 0}
+            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+          >
+            {exportingMargin ? '...' : tr('download_margin')}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loadingMargin ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : marginError ? (
+            <div className="text-center py-8" role="alert">
+              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
+              <Button
+                variant="outline"
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                onClick={fetchMargin}
+              >
+                {tr('retry')}
+              </Button>
+            </div>
+          ) : !margin || margin.by_item.length === 0 ? (
+            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <>
+              {/* Totals strip */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('revenue')}</p>
+                  <p className="text-lg font-bold text-white">
+                    {tr('sar')} {margin.totals.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('cogs')}</p>
+                  <p className="text-lg font-bold text-white">
+                    {tr('sar')} {margin.totals.cogs.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('gross_profit')}</p>
+                  <p className="text-lg font-bold text-emerald-400">
+                    {tr('sar')} {margin.totals.gross_profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('margin')}</p>
+                  <p className="text-lg font-bold text-emerald-400">
+                    {margin.totals.margin_pct.toFixed(1)}%
+                  </p>
+                </div>
+              </div>
+
+              {/* By item */}
+              <h3 className="text-sm font-semibold text-slate-300 mb-2">{tr('by_item')}</h3>
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-700 hover:bg-slate-800">
+                    <TableHead className="text-slate-400">{tr('item')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('qty_sold')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('revenue')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('cogs')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('gross_profit')}</TableHead>
+                    <TableHead className="text-slate-400 text-end">{tr('margin')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {margin.by_item.map((row) => (
+                    <TableRow key={row.key} className="border-slate-700 hover:bg-slate-750">
+                      <TableCell className="text-white font-medium">{row.name}</TableCell>
+                      <TableCell className="text-slate-300 text-end">{row.qty_sold}</TableCell>
+                      <TableCell className="text-slate-300 text-end">
+                        {tr('sar')} {row.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell className="text-slate-300 text-end">
+                        {tr('sar')} {row.cogs.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell className="text-emerald-400 text-end">
+                        {tr('sar')} {row.gross_profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </TableCell>
+                      <TableCell className="text-slate-300 text-end">{row.margin_pct.toFixed(1)}%</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+
+              {/* By category */}
+              {margin.by_category.length > 0 && (
+                <>
+                  <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-2">{tr('by_category')}</h3>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-slate-700 hover:bg-slate-800">
+                        <TableHead className="text-slate-400">{tr('category')}</TableHead>
+                        <TableHead className="text-slate-400 text-end">{tr('revenue')}</TableHead>
+                        <TableHead className="text-slate-400 text-end">{tr('cogs')}</TableHead>
+                        <TableHead className="text-slate-400 text-end">{tr('gross_profit')}</TableHead>
+                        <TableHead className="text-slate-400 text-end">{tr('margin')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {margin.by_category.map((row) => (
+                        <TableRow key={row.key} className="border-slate-700 hover:bg-slate-750">
+                          <TableCell className="text-white font-medium">{row.name}</TableCell>
+                          <TableCell className="text-slate-300 text-end">
+                            {tr('sar')} {row.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-slate-300 text-end">
+                            {tr('sar')} {row.cogs.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-emerald-400 text-end">
+                            {tr('sar')} {row.gross_profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-slate-300 text-end">{row.margin_pct.toFixed(1)}%</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </>
+              )}
+
+              {/* Dead stock */}
+              <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-1">{tr('dead_stock')}</h3>
+              <p className="text-xs text-slate-500 mb-2">{tr('dead_stock_hint')}</p>
+              {margin.dead_stock.length === 0 ? (
+                <p className="text-slate-400 text-sm py-3">{tr('no_dead_stock')}</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-slate-700 hover:bg-slate-800">
+                      <TableHead className="text-slate-400">{tr('product_name')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('category')}</TableHead>
+                      <TableHead className="text-slate-400 text-end">{tr('on_hand')}</TableHead>
+                      <TableHead className="text-slate-400 text-end">{tr('cost')}</TableHead>
+                      <TableHead className="text-slate-400 text-end">{tr('stock_value')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {margin.dead_stock.map((row) => (
+                      <TableRow key={row.product_id} className="border-slate-700 hover:bg-slate-750">
+                        <TableCell className="text-white font-medium">{row.name}</TableCell>
+                        <TableCell className="text-slate-400 text-xs">{row.category || '—'}</TableCell>
+                        <TableCell className="text-slate-300 text-end">{row.quantity}</TableCell>
+                        <TableCell className="text-slate-300 text-end">
+                          {tr('sar')} {row.cost_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-slate-300 text-end">
+                          {tr('sar')} {row.stock_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </>
           )}
         </CardContent>

@@ -1,5 +1,7 @@
 # COMPLETENESS_REVIEW.md — Code vs. Vision (Prompt 2 audit)
 
+> **ROUND 2 (re-audit · 2026-06-05).** Round-1 findings **F-001–F-054 are all ✅ closed** (commits in git history; their full detail is archived at the bottom of this file under *📦 Archive — Round 1*). Round 1 closed each gap as a deliberate **first slice**, leaving documented deferred sub-scope. This round re-audits that deferred scope **plus newly-surfaced gaps**, re-traced front→back against *current* code with a mandatory refutation pass (6 parallel family-cluster audits, each citing `file:line` for both the gap and what was searched to rule out an alternate impl). **The active backlog is §R2 below — `F-055`–`F-098`.** Prompt 3 consumes it (skip ✅-marked rows). When the code and `srs.md` disagree, the SRS wins.
+
 **What this is.** A prioritized backlog of *suspicions* — the gap between the running code and the market-parity vision in `srs.md` v2.0 + `INTENDED_BEHAVIOR.md`, traced end-to-end (`frontend control → src/lib/api.ts → atomsClient.ts → router → service → model → side effect`). It is **for human review and test-promotion, not a release gate.** Every confirmed finding cites `file:line` and states what was searched to rule out an alternate implementation.
 
 **Method.** Audited all 20 feature families across 7 parallel deep traces, each with a mandatory refutation pass. Where the spec's own "suspected" status was **wrong**, that is recorded under Verified-complete so the spec can be corrected (notably: Alembic migrations, audit completeness, triad pagination, i18n key parity — all more built than the docs claim).
@@ -7,6 +9,464 @@
 **Date:** 2026-06-03 · **Branch:** main · **Bar:** Foodics / Rewaa / Marn parity, localized for Saudi.
 
 ---
+
+# §R2 — Round-2 backlog (active · F-055–F-098)
+
+## R2.1 Summary table — remaining gaps after Round 1
+
+Counts are open round-2 findings per family. The big-ticket areas are **RST** (the restaurant vertical is still skeletal — F-045 shipped tables + a bare open-ticket only), **RPT/FIN** (profit/VAT/inventory reports + AP), **PRC** (promotions beyond %/flat), and **reseller depth** (impersonation, proration, branded printables, agent payment onboarding).
+
+| Family | Open findings | BLOCKER | MAJOR | MINOR | Headline gaps |
+|---|---|---|---|---|---|
+| RST — Restaurant | 8 | 3 | 4 | 1 | order-ticket line items, modifiers/combos, KDS/KOT, settle-to-invoice |
+| PAY — Payments | 3 | 0 | 3 | 0 | per-client gateway accounts, payment links, settlement reporting |
+| INV — Inventory | 3 | 0 | 2 | 1 | stock-count session, per-branch reorder, composite/BOM |
+| PRC — Pricing | 4 | 0 | 3 | 1 | auto-promos, BOGO/bundle, price lists, scheduled pricing |
+| RPT — Reporting | 5 | 0 | 4 | 1 | profit/COGS/margin, VAT report, inventory report, refund/discount report, report-PDF |
+| FIN — Finance | 3 | 0 | 1 | 2 | expense attachment+P&L, accounting integrations, AP |
+| AG — White-label | 4 | 0 | 3 | 1 | branded printables wire-up, agent payment onboarding, trial funnel, PWA |
+| CL — Billing | 2 | 0 | 1 | 1 | proration on plan change, usage add-ons |
+| RSL — Reseller econ | 3 | 0 | 2 | 1 | impersonation, merchant health, payout statement |
+| CRM — Customers | 2 | 0 | 2 | 0 | SMS/WhatsApp campaigns, house accounts |
+| OMN — Omnichannel | 3 | 0 | 1 | 2 | Zid connector, unified customer/loyalty, click-and-collect |
+| ZA — ZATCA | 1 | 0 | 1 | 0 | hash over raw XML, not C14N-canonicalized UBL (needs official SDK vectors) |
+| PRN — Printables | (in AG/HW) | 0 | 1 | 0 | dunning-notice PDF, shelf label |
+| HW — Hardware | 2 | 0 | 0 | 2 | weighing scale, label printer |
+| L10N — Localization | 1 | 0 | 0 | 1 | hardcoded strings on a few shipped screens |
+| **Total** | **44** | **3** | **27** | **14** | |
+
+> **The five biggest round-2 gaps:** (1) **RST core** — F-055/F-056/F-057: an order ticket carries no items, no modifiers/combos, and there is no KDS/KOT — a restaurant client still cannot operate; (2) **RPT depth** — F-068/F-069/F-070/F-071: no profit/COGS, VAT-return, inventory, or refund/discount reports; (3) **PRC promotions** — F-076/F-077/F-078: no auto-promos, BOGO, or price lists; (4) **reseller depth** — F-086/F-087/F-080/F-084: no impersonation, merchant-health, branded-printable wire-up, or proration; (5) **PAY breadth** — F-063/F-064/F-065: per-client gateway accounts, payment links, settlement. Plus the one compliance item **F-094** (ZATCA C14N), which is gated on the official ZATCA SDK sample vectors.
+
+---
+
+## R2.2 Confirmed findings (F-055–F-098)
+
+Severity: `BLOCKER` (P0 table-stake absent / core flow unusable / compliance-blocking) · `MAJOR` (feature visibly incomplete) · `MINOR` (edge/cosmetic). Confidence: `HIGH`/`MEDIUM`/`LOW`. Each cites `file:line` and what was searched to refute. **All blocks below are unfixed (no ✅).**
+
+### BLOCKER — Restaurant core (P0; a restaurant client cannot operate)
+
+**F-055 — Order tickets carry no line items; no add/fire-by-course, transfer, or merge/split** · `MISSING_ENTITY` / `MISSING_TRANSITION`
+- Violated: **RST-03 (P0)** *"add/fire items by course, transfer table, merge/split bills, split by seat/amount/item"*; **RST-07 (P1)** course coordination, hold-and-fire, all-day counts.
+- Manifests: a server can open a ticket against a table (F-045) but can **never add a single item to it** — `OrderTickets` has no line-item child table, no `course_state`, and the router has no add-item/fire/transfer/merge/split routes. The ticket lifecycle states (`held`/`fired`/`settled`) are defined but only `open` is ever set.
+- Evidence: `backend/models/restaurant.py:65-90` (no items relation / no `course_state`); `backend/routers/restaurant.py` ends at `get_order_ticket :341` (no item routes); `backend/services/restaurant.py:21` (statuses defined, only `open` set). **Searched** `course|merge|split_bill|transfer|fire` in backend → no source hits (the only "hold/recall" is the unrelated retail POS-10 held-cart).
+- Severity: **BLOCKER** · Confidence: HIGH
+- Fix: New triad `order_ticket_items` (ticket_id, product_id, qty, modifiers, course, fire_state, seat_no); add `course_state` to `OrderTickets`; router `POST …/order-tickets/{id}/items|/fire|/transfer|/merge|/split`; a React ticket-edit surface; i18n ×4 (ar/en/hi/ur), RTL; Arabic on the kitchen ticket.
+- Catch forever: pytest `test_add_items_by_course` / `test_transfer_table_moves_ticket` / `test_split_bill_by_seat`.
+
+**F-056 — No modifiers / modifier-groups / combos — the menu is flat products only** · `MISSING_ENTITY` / `MARKET_GAP`
+- Violated: **RST-05 (P0)** *"required/optional modifier groups, add-on pricing, combo/meal bundles."*
+- Manifests: a merchant cannot define "no onions / extra cheese (+5 SAR)" or a meal combo; line price and the (absent) kitchen ticket can never reflect modifiers.
+- Evidence: no `modifiers`/`modifier_groups`/`combos` models, services, or routers. **Searched** `modifier|combo` → only shadcn `combobox.tsx` + deferral docstrings; `srs.md:465` + IB §4.5 expect these entities.
+- Severity: **BLOCKER** · Confidence: HIGH
+- Fix: Triads `modifier_groups` (required/optional, min/max), `modifiers` (name, price_delta), `combos` (components + bundle price); link to products and `order_ticket_items`; fold add-ons into the line total **before** VAT; menu-builder page; i18n ×4; Arabic on KOT.
+- Catch forever: pytest `test_required_modifier_group_enforced` + `test_combo_price_overrides_component_sum`.
+
+**F-057 — No KDS / KOT — no kitchen display, kitchen printer, prep-stations, real-time channel, or bump/recall** · `MISSING_FEATURE` / `DESIGN_GAP`
+- Violated: **RST-06 (P0)** *"fire items to a Kitchen Display and/or kitchen printer by prep-station; bump/recall; ticket timing"*; **HW-06 (P1)** kitchen printer/KDS; **PRN-06 (P1)** per-station KOT printable.
+- Manifests: firing a ticket has nowhere to go — no KDS page, no `kds_tickets`/`prep_stations`, no WS/SSE channel (SRS §5.1 requires KDS update ≤1 s), no bump/recall, no KOT print.
+- Evidence: `App.tsx:124` registers only `/floor` (no KDS route); no `kds_tickets`/`prep_stations` models (`srs.md:466`); `backend/models/notifications.py:18` explicitly defers KDS; PRN-06 marked absent in IB §6. **Searched** `kds|kitchen|prep_station` → docstrings only.
+- Severity: **BLOCKER** · Confidence: HIGH
+- Fix: Triads `prep_stations` + `kds_tickets`; the F-055 fire route routes items to a station; a WS/SSE stream (`GET /kds/tickets`) + `POST /kds/{id}/bump|recall`; a `KDS.tsx` column-per-station board with timers/all-day counts; an 80mm Arabic KOT (modifiers by course, no prices); i18n ×4.
+- Catch forever: pytest `test_fire_creates_kds_ticket_per_station` + `test_bump_then_recall`; KOT-render snapshot test.
+
+### MAJOR — Restaurant (rest of the vertical)
+
+**F-058 — Order TYPES are an enum label that drives nothing (no tax/printing/flow; no tableless takeaway/delivery)** · `MISSING_SIDE_EFFECT`
+- Violated: **RST-02 (P0)** *"dine-in (table), takeaway, delivery; each drives tax/printing/flow rules."*
+- Manifests: `order_type` can be set but changes nothing; takeaway/delivery still require a table (open-order is reachable only via `POST /tables/{id}/open-order`), and no rule keys off `order_type`.
+- Evidence: `backend/services/restaurant.py:20` (enum validated only); `backend/routers/restaurant.py:298` (table-bound open-order only); `order_type` never read downstream. **Searched** `takeaway|delivery` → enum strings only.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: A tableless `POST …/order-tickets` create path for takeaway/delivery; branch print routing and any delivery-fee/tax rule on `order_type`; i18n `dine_in/takeaway/delivery` ×4.
+- Catch forever: pytest `test_takeaway_order_needs_no_table` + `test_order_type_drives_print_routing`.
+
+**F-059 — No bill-before-payment (non-fiscal "check") and no settle-to-ZATCA-invoice path** · `MISSING_TRANSITION`
+- Violated: **RST-04 (P1)** *"print a non-fiscal 'check' (طلب/فاتورة مبدئية), then settle to a ZATCA invoice on payment."*
+- Manifests: `FloorMap` flips a table to `bill_printed` purely client-side (no document produced), and **no endpoint converts an order ticket into a sale + ZATCA invoice** — the `settled` state is unreachable.
+- Evidence: `frontend/src/pages/FloorMap.tsx:164` (client-side state flip, no printable); no settle route in `restaurant.py` (status `settled` defined `services/restaurant.py:21`, never set); IB §4.5 requires check→settle→ZATCA via the POS atomic path.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `POST …/order-tickets/{id}/check` → 80mm non-fiscal **always-Arabic** printable marked *فاتورة مبدئية* (no QR/stamp); `POST …/order-tickets/{id}/settle` → reuse the `pos.py` atomic sale path to mint the ZATCA invoice, set ticket `settled` + free the table; i18n ×4.
+- Catch forever: pytest `test_check_is_non_fiscal_no_qr` + `test_settle_creates_zatca_invoice_and_frees_table`.
+
+**F-060 — No aggregator-order ingest (Jahez/HungerStation) into POS/KDS via middleware** · `MARKET_GAP`
+- Violated: **RST-08 (P1 `[market]`)** *"Aggregator orders ingest into the POS/KDS and reconcile into sales & stock — via middleware (Deliverect-class) or Delivery Hero POS-partner; no direct aggregator APIs."*
+- Manifests: `channel_orders` exists but is Salla/Zid e-commerce only; there is no Deliverect-class/DH inbound webhook and nothing surfaces aggregator orders to the (absent) KDS.
+- Evidence: `backend/models/channel_orders.py:34` (`provider` defaults `salla`); `srs.md:472` expects `hungerstation|jahez|…`; IB §4.5 requires middleware ingest to KDS+stock. **Searched** `aggregator|deliverect|delivery_hero` → no source hits. *(Build the middleware adapter only — SRS forbids direct aggregator APIs.)*
+- Severity: MAJOR · Confidence: HIGH
+- Fix: An HMAC-verified Deliverect-class inbound webhook that materializes an aggregator order as an `order_ticket` (fires to KDS) **and** a ZATCA sale decrementing shared stock, reusing `channel_orders` idempotency on `(provider, external_id, client_id)`; providers `deliverect`/`delivery_hero`.
+- Catch forever: pytest `test_deliverect_webhook_creates_ticket_and_sale_idempotent`.
+
+### MINOR — Restaurant / inventory shared
+
+**F-061 — No service-charge handling distinct from VAT** · `MISSING_SIDE_EFFECT`
+- Violated: **RST-10 (P2)** *"Service charge handling (optional %) distinct from VAT, ZATCA-correct."*
+- Manifests: a restaurant cannot add an optional service % that sits **outside** the VAT base and renders correctly on the ZATCA invoice (parallels the shipped F-012 tips-outside-VAT pattern).
+- Evidence: no `service_charge` field/logic in `OrderTickets` (`models/restaurant.py`) or in `pos.py` invoice math. **Searched** `service_charge|serviceCharge` → no source hits.
+- Severity: MINOR · Confidence: HIGH
+- Fix: Add `service_charge_pct/amount` on the ticket→sale path; compute as a separate line outside the VAT base (mirror the F-012 tip treatment); render on the ZATCA invoice; i18n `رسوم خدمة` ×4.
+- Catch forever: pytest `test_service_charge_excluded_from_vat_base_and_shown_on_invoice`.
+
+**F-062 — No composite/bundle products or recipe-BOM ingredient depletion** · `MISSING_FEATURE` / `MARKET_GAP`
+- Violated: **INV-10 (P2)** *"Composite/bundle products and recipe BOM"*; **RST-09 (P2)** *"a sold dish deducts its recipe components."*
+- Manifests: selling a burger cannot deduct buns/patties from stock, and a retail bundle SKU cannot deplete its components — `_deduct_inventory` deducts only the sold product itself.
+- Evidence: no `recipe`/`bom`/`composite` model in `backend/models/*.py`; `backend/routers/pos.py:281-311` deducts the sold product only. **Searched** `recipe|bom|composite|bundle` → only an unrelated "composite stock-key" refund comment + i18n.
+- Severity: MINOR · Confidence: HIGH
+- Fix: A `bill_of_materials` table (parent_product_id → component_product_id, qty_per); on sale/settle, expand BOM-backed lines into component deductions inside the same atomic stock transaction; cost roll-up feeds the F-068 margin report.
+- Catch forever: pytest `test_bom_sale_depletes_components`.
+
+### MAJOR — Payments
+
+**F-063 — Gateway selection is platform-wide env only; no per-agent/per-client `payment_accounts`** · `MISSING_SIDE_EFFECT` / `MARKET_GAP`
+- Violated: **PAY-06 (P1)** *"Pluggable per agent/client"* + `srs.md §6` data model `payment_accounts (owner, gateway, credentials_enc, is_active)`.
+- Manifests: an agent/client cannot bring their own Moyasar/Geidea merchant account — every card-like charge routes through the single platform `MOYASAR_API_KEY`/`GEIDEA_API_KEY`, so funds settle to the **platform**, not the merchant. Fatal for a white-label reseller model.
+- Evidence: `backend/services/payment_gateway.py:482-493` (`get_gateway()` reads only `settings.moyasar_api_key`, with the inline "Per-client gateway accounts … are a later refinement"); `:470-476` likewise for Geidea. No `payment_accounts` model. **Searched** `payment_account` → only the deferral comment + spec refs.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `models/payment_accounts.py` (owner_type[agent|client], owner_id, gateway, credentials_enc [Fernet at rest], is_active) + a CRUD triad (owner-scoped, SEC-02); resolve the active row by the caller's tenancy in `get_gateway()/get_terminal_gateway()`, falling back to the platform env then sandbox.
+- Catch forever: pytest — a client with a `payment_accounts` row resolves to a gateway bound to **that** client's key; a client with no row falls back to sandbox.
+
+**F-064 — No online payment links / hosted checkout for invoices, quotations, or subscriptions** · `MISSING_ENDPOINT`
+- Violated: **PAY-07 (P1)** *"Online payment links / hosted checkout for invoices, quotations-to-invoice, and subscriptions."*
+- Manifests: a merchant cannot send a customer a pay-by-link for an unpaid invoice/quotation, and subscriptions have no hosted-checkout surface — only in-person capture works.
+- Evidence: `backend/routers/payments_gateway.py` exposes only `/tender-types`, `/charge`, `/terminals`, `/terminal/charge`. **Searched** `payment_link|hosted|checkout|link` in routers → none (Stripe Checkout was removed in F-006 — do not resurrect; the link must ride Moyasar). IB §4.6 requires it.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `POST /api/v1/payments/links {target_type, target_id, amount}` → Moyasar hosted invoice/payment returning a public URL + a pending tender; public `GET /payments/links/{token}` status/redirect; a webhook to capture the tender + mark the target paid; typed `api.ts` wrapper.
+- Catch forever: pytest (sandbox) — create a link for an invoice → URL + pending tender; simulate callback → tender `captured`, invoice paid.
+
+**F-065 — No settlement & payout reporting** · `MISSING_ENDPOINT`
+- Violated: **PAY-08 (P1)** *"per-tender totals reconcilable against the gateway/acquirer settlement."*
+- Manifests: a finance user cannot reconcile captured card/Mada/wallet tenders against acquirer settlement — cash variance exists (Z-report) but card settlement does not.
+- Evidence: no `GET /payments/settlement` in any router. **Searched** `settlement|payout` → only restaurant table-settlement + cash-drawer payouts. The data exists (`payment_tenders` carry gateway/network/gateway_ref) but is never aggregated.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `GET /api/v1/payments/settlement?from&to&branch_id` grouping `payment_tenders` by tender_type/network/gateway and status into per-tender + grand totals (owner-scoped, SQL); phase 2 match against the acquirer settlement file by `gateway_ref`.
+- Catch forever: pytest — captured tenders across mada/card/cash + one refund → per-tender net totals equal the seeded amounts and reconcile.
+
+### MAJOR — Inventory
+
+**F-066 — Multi-line stock-COUNT SESSION absent — only single-SKU adjustment exists** · `MISSING_FEATURE`
+- Violated: **INV-06 (P1)** *"Stock counts / adjustments with reasons … producing a variance record."*
+- Manifests: a merchant doing a physical count of a whole branch cannot open one count document, enter counted qty per SKU, review aggregate variance, and post all adjustments atomically — they must `POST` one adjustment per product.
+- Evidence: `backend/models/stock_adjustments.py:20-22` ("a multi-line count *session* … is deferred"); single-row endpoint confirmed in `backend/tests/test_phase6_stock_adjustment.py:57-67`. **Searched** `stock_count|count_session` → only the deferral comment + i18n.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `models/stock_counts.py` (session header: branch, status draft/posted) + `stock_count_lines` (product, system_qty snapshot, counted_qty, variance); router to create (snapshot on-hand), patch lines, and **post** — fanning out to the existing `Stock_adjustments` primitive in one transaction; owner-scoped.
+- Catch forever: pytest `test_stock_count_session_posts_batch_variances`.
+
+**F-067 — Reorder points are per-PRODUCT only — no per-BRANCH reorder / auto-PO** · `PARTIAL_CRUD`
+- Violated: **INV-08 (P1)** *"reorder points per product/branch; optional auto-PO suggestion."*
+- Manifests: a multi-branch merchant cannot set a different reorder point per branch; low-stock and reorder suggestions read `Products.quantity` (the client-level aggregate), so a branch can be empty while the aggregate looks healthy.
+- Evidence: `reorder_point/reorder_quantity` on `Products` (`backend/models/products.py:25-26`), not on `product_branch_stock` (`:23-30` has only `quantity`); `GET /products/reorder-suggestions` + `_low_stock_clause` query `Products` globally (`backend/routers/features.py:120-126, 416-469`). **Searched** `branch.*reorder` → none.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Add nullable `reorder_point/reorder_quantity` to `product_branch_stock`; when `branch_id` is supplied, evaluate the branch ledger against the branch point (fallback product point → fixed threshold); add `?branch_id=` to both endpoints.
+- Catch forever: pytest `test_branch_reorder_triggers_per_branch`.
+
+### MAJOR — Pricing & promotions
+
+**F-076 — Auto-applied promotions (happy-hour / time-window, no typed code) absent** · `PARTIAL_CRUD` / `MARKET_GAP`
+- Violated: **PRC-02 (P1)** *"Coupon/promo codes; auto-applied promotions (e.g. happy-hour, time-window)."*
+- Manifests: a merchant cannot run a happy-hour that discounts automatically without the cashier typing a code; the sale path handles only a typed `discount_code` and a permissioned manual amount. (F-041 added a *validity window* on typed codes only.)
+- Evidence: `backend/models/discounts.py:12` (keys on `code`); `services/discounts.py:214-216` (`get_by_code` required); `backend/routers/pos.py:784-809` (only `discount_code`/manual). **Searched** `auto_apply|happy_hour` → none.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Add `auto_apply` (+ optional day/time window) to discounts; after subtotal, also select active auto-apply discounts whose window covers now and apply the best-eligible automatically; surface applied auto-promos in the response.
+- Catch forever: pytest `test_happy_hour_auto_applies_without_code` (and a sale outside the window gets nothing).
+
+**F-077 — BOGO / quantity-break / bundle promotions absent** · `MISSING_FEATURE`
+- Violated: **PRC-03 (P1)** *"BOGO / quantity-break / bundle promotions."*
+- Manifests: a merchant cannot configure "buy 2 get 1 free", tiered quantity-break, or a bundle promo — `compute_discount_amount` only knows percentage/fixed on the whole subtotal.
+- Evidence: `backend/services/discounts.py:36-48` (percentage vs fixed only); model has no qty thresholds/item targeting (`models/discounts.py`). **Searched** `bogo|quantity_break|bundle` → incidental only.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Extend the rule with `promo_type` (bogo/qty_break/bundle), trigger qty, reward qty/target product; evaluate against the **cart line items** server-side in `create_transaction` and compute the line-level discount.
+- Catch forever: pytest `test_bogo_buy2_get1`.
+
+**F-078 — Customer-/segment-/branch-specific pricing & PRICE LISTS absent** · `MISSING_FEATURE`
+- Violated: **PRC-04 (P1)** *"Customer-/segment-specific & branch-specific pricing and price lists."*
+- Manifests: a merchant cannot maintain a wholesale/VIP or per-branch price list — every sale uses the single `Products.price` (or a permissioned manual override).
+- Evidence: no `price_list` model in `backend/models/*.py`; sale pricing validates against the single catalog `Products.price` (`backend/routers/pos.py:749-768`). **Searched** `price_list|pricelist` → only an i18n key.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `price_lists` (name, scope customer/segment/branch) + `price_list_items` (price); resolve the applicable list at sale time from customer/segment/branch and use it as the catalog baseline for the override check.
+- Catch forever: pytest `test_branch_price_list_overrides_catalog`.
+
+### MINOR — Pricing
+
+**F-079 — Scheduled price changes & cost-plus margin pricing absent** · `MISSING_FEATURE`
+- Violated: **PRC-06 (P2)** *"Scheduled price changes and cost-plus margin pricing."*
+- Manifests: a merchant cannot schedule a future price change nor set price = `cost × (1 + margin)` that auto-recomputes when landed cost changes via moving-average COGS.
+- Evidence: `Products` has a single static `price` (`backend/models/products.py:16`), no `effective_from`/`markup_pct`; no scheduled-price table. **Searched** scheduled-price terms → none.
+- Severity: MINOR · Confidence: HIGH
+- Fix: `scheduled_price_changes` (product, new_price OR margin_pct, effective_at) applied at read time / by a job; optional `markup_pct` on `Products` recomputed on PO receive.
+- Catch forever: pytest `test_cost_plus_price_recomputes_on_receive`.
+
+### MAJOR — Reporting
+
+**F-068 — No profit / COGS / margin report; no dead-stock / slow-mover** · `MISSING_FEATURE`
+- Violated: **RPT-04 (P1)** *"Profit & COGS / margin reports; dead-stock and slow-movers"*; **INV-09 (P1)** *"COGS & valuation feeding margin reports."*
+- Manifests: a merchant cannot see gross profit or per-item/category margin anywhere; COGS is computed (moving-average on PO receive) but surfaced **only** inside the GL journal, never as a P&L. No dead-stock list.
+- Evidence: `backend/routers/features.py` `/reports/*` are sales-summary/top-products/export-csv/payment-breakdown/journal-export/zreport — no margin endpoint; COGS appears only in journal-export (`:1168-1199`). **Searched** `margin|gross_profit|cogs|dead.?stock` → COGS only in journal-export; no frontend surface.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `GET /api/v1/reports/profit-margin` reusing the journal COGS stream + revenue-by-product → per-item/category revenue, COGS, margin %, plus a dead-stock list (no sale in N days, on-hand > 0); **snapshot `cost_price` onto the sale line** so historical margin is stable; CSV + a ReportsAnalytics tab.
+- Catch forever: pytest `test_margin_report_uses_cogs` (revenue 100, COGS 60, gross 40).
+
+**F-069 — No VAT / tax report (output VAT by rate) for VAT-return filing** · `MISSING_FEATURE`
+- Violated: **RPT-05 (P1)** *"Tax/VAT report (output VAT, by rate) supporting VAT return filing."*
+- Manifests: a merchant filing a ZATCA VAT return has no report of output VAT by rate (15% / 0% / exempt); `vat_amount` is a single aggregate line inside journal-export.
+- Evidence: `features.py:1230` books one "Output VAT collected" line (no rate breakdown); no `/reports/vat`. **Searched** `vat.*report|tax.*report` → only ZATCA reporting-job hits.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `GET /api/v1/reports/vat-summary` aggregating transactions into standard-rated / zero-rated / exempt buckets (taxable base + VAT per rate) matching the ZATCA VAT-return boxes, credit notes netted; CSV + tab.
+- Catch forever: pytest — sales at 15% and 0% split correctly; net VAT = collected − reversed.
+
+**F-070 — No inventory report (on-hand value at cost, movements, transfers, adjustments)** · `MISSING_FEATURE`
+- Violated: **RPT-07 (P1)** *"Inventory reports: on-hand value, movements, transfers, adjustments."*
+- Manifests: a merchant cannot pull an inventory valuation at cost or a stock-movement ledger; the only stock figure is a dashboard stat valued at **sale price**, not cost.
+- Evidence: `backend/routers/production.py:1254` (`total_stock_value = Σ price*qty` — sale price, single scalar, no history); no `/reports/inventory`. **Searched** `inventory.*report|on.?hand.?value|valuation` → no report endpoint.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `GET /api/v1/reports/inventory` — on-hand valuation at `cost_price` + a movements feed from PO receipts / branch transfers / adjustments; CSV + tab. *(Adjacent: the dashboard stat valuing stock at sale price is a latent bug — value at cost.)*
+- Catch forever: pytest — valuation uses `cost_price`; a PO receive + transfer appear in movements.
+
+**F-071 — No refund/void report and no discount report (who/when/why)** · `MISSING_FEATURE`
+- Violated: **RPT-08 (P1)** *"Refund/void report; discount report (who/when/why)."*
+- Manifests: a manager cannot audit refunds/voids/discounts as a cross-period report with actor + reason — these totals appear only per-shift inside the Z-report.
+- Evidence: `features.py` refund/void/discount totals only inside `_aggregate_zreport` (`:1376-1487`, single shift); no `/reports/refunds` or `/reports/discounts`. **Searched** `refund.*report|discount.*report` → only a Z-report column.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `GET /api/v1/reports/refunds-voids` and `/reports/discounts` over the window, joining `audit_logs`/`transactions` for actor + reason; CSV + tabs.
+- Catch forever: pytest — a void (with reason) + a discounted sale each appear with actor/reason/amount.
+
+### MINOR — Reporting
+
+**F-072 — No PDF export for reports (CSV-only; PDF exists for invoices only)** · `DESIGN_GAP`
+- Violated: **RPT-10 (P1)** *"CSV + PDF export for every report."*
+- Manifests: every data report (sales-summary, top-products, payment-breakdown, journal, and the new ones) is CSV-only; only invoices/subscription-invoices/Z-report HTML render to PDF.
+- Evidence: `pdf_render.py` renders only tax invoices (`:414`) + subscription invoices (`:365`); `export-csv`/`journal-export` return CSV/JSON. **Searched** `pdf|reportlab` → fpdf2 for invoices only.
+- Severity: MINOR · Confidence: HIGH
+- Fix: A generic report→PDF renderer (fpdf2, RTL-aware table) + a `?format=pdf` branch on each `/reports/*`; `downloadReportPdf` in `api.ts`.
+- Catch forever: pytest — each report with `format=pdf` returns `application/pdf` (`%PDF` magic).
+
+### MAJOR — Finance
+
+**F-073 — Expense receipt attachment + server-side revenue-vs-expense both absent** · `MISSING_SIDE_EFFECT` / `SPEC_DIVERGENCE`
+- Violated: **FIN-01 (P1)** *"Expense tracking (category, amount, date, attachment) and revenue-vs-expense view."*
+- Manifests: a merchant cannot attach a receipt image to an expense (no column/upload), and the "Net Profit/Loss" view is computed **in the browser** by summing raw transaction totals — non-authoritative (ignores voids/refunds).
+- Evidence: `models/expenses.py:6-17` (no attachment field); `frontend/src/pages/ExpenseTracking.tsx:73-89` (`netProfit` client-side reduce over `tx.total`). **Searched** `attachment|receipt_url` → only ZATCA XML `cac:Attachment`.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Add `attachment_url` to expenses + an upload via the storage router + a field on the page; add `GET /api/v1/reports/profit-loss` (realized revenue ex voids/refunds − expenses) and replace the client-side reduce.
+- Catch forever: pytest — an expense persists `attachment_url`; the P&L endpoint excludes voided sales.
+
+### MINOR — Finance
+
+**F-074 — No accounting integrations (Zoho Books / QuickBooks / Odoo push)** · `MISSING_FEATURE`
+- Violated: **FIN-03 (P2)** *"Integrations: Zoho Books, QuickBooks, Odoo (push invoices/journal)."*
+- Manifests: a bookkeeper must hand-import the CSV journal (the FIN-02 docstring says so); no direct push exists.
+- Evidence: `features.py:1019-1020` defers it. **Searched** `zoho|quickbooks|odoo` → only that comment.
+- Severity: MINOR · Confidence: HIGH
+- Fix: `services/accounting_integrations/` adapters (OAuth + journal/invoice push) behind a feature flag, fed by the existing journal-export builder.
+- Catch forever: contract test mocking each provider asserting the journal payload maps to its journal-entry schema.
+
+**F-075 — No supplier payments / accounts-payable basics** · `MISSING_FEATURE`
+- Violated: **FIN-05 (P2)** *"Supplier payments / accounts payable basics."*
+- Manifests: a merchant cannot record what is owed/paid to suppliers — suppliers + PO receipts exist, but no AP ledger, bill, or payment.
+- Evidence: **Searched** `accounts_payable|supplier.*payment` → zero hits; `purchase_orders.py` handles receiving/COGS only.
+- Severity: MINOR · Confidence: HIGH
+- Fix: `supplier_bills` + `supplier_payments` (amount, due_date, status, supplier_id, po_id) + a triad and an AP-aging view; optionally book to a GL A/P account.
+- Catch forever: pytest — a bill + a partial payment leaves the correct outstanding balance.
+
+### MAJOR — White-label & reseller
+
+**F-080 — Branded printables not wired — `receipt_templates` exists but no renderer consumes it** · `STUB_TODO` / `MARKET_GAP`
+- Violated: **AG-07 (P1)** *"agent/client logo, header/footer, contact details on receipts, invoices, quotations (within ZATCA layout rules)."*
+- Manifests: a client sets a `receipt_template` (header/footer/show_logo/logo_url) but every printable ignores it — receipts/invoices render the generic store name only, no brand. (F-054 kept `receipt_templates` allowlisted **for this wire-up**.)
+- Evidence: `backend/services/escpos.py:385` (`build_receipt` takes only seller_name/vat_number); `pdf_render.py:414`; `production.py:385` (`generate_invoice_html`) — none take logo/header/footer. **Searched** `Receipt_templates|header_text|show_logo` in render code → only the orphan triad + tests/migration; no render-path import.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Load the client's default `Receipt_templates` row in the print path and pass header/footer/show_logo + agent `logo_url` (raster into ESC/POS via `raster_image`, into the PDF via `pdf.image`; honor `show_qr_code`/`show_vat_details`) **within** the always-Arabic ZATCA layout.
+- Catch forever: pytest — a receipt built with a template carrying `header_text` + `show_logo` contains the header text + an image block; `show_qr_code=False` omits the QR.
+
+**F-081 — No agent payment-settings / Stripe-Connect onboarding — `stripe_account_id` can never be set** · `DEAD_END_UI` / `MISSING_ENDPOINT`
+- Violated: **AG-09 (P1)** *"connect the agent's Saudi gateway / Stripe-Connect account for collecting subscriptions."*
+- Manifests: an agent has no way to connect a payout account; `agents.stripe_account_id` is **read** on the subscription charge but there is no endpoint/UI to populate it, so Connect routing is dead and every charge falls to the platform account.
+- Evidence: `models/agents.py:31` (column declared); read-only at `tenant.py:1490`, `dunning.py:162`, `subscription_billing.py:65`. **Searched** `stripe_account_id|account_link|onboard|connect` in routers → reads only, no setter; frontend → none.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Agent endpoints to (a) create a Stripe Connect account + AccountLink onboarding URL and persist the returned id, and/or (b) store Saudi-gateway creds (ties F-063); a "Payment settings" panel; label subscription billing `manual` until set.
+- Catch forever: pytest — `POST /tenant/agent/payment-settings` persists `stripe_account_id`; a later subscription charge passes `stripe_account=<id>`.
+
+**F-082 — Agent funnel "Start Free Trial" CTA does not provision — every CTA routes to `/login`** · `DEAD_END_UI` / `MISSING_ENDPOINT`
+- Violated: **AG-10 (P2)** *"trial-signup CTA that provisions a client"*; **CL-11 (P2)** *"self-service trial signup creating a trial client with expiry + conversion prompt."*
+- Manifests: a prospect clicks "Start Free Trial"/a pricing plan and lands on the login screen with no account — no signup form, no provisioning, no trial creation.
+- Evidence: `AgentLandingPage.tsx` CTAs all `navigate('/login')` (`:348, :384, :578, :636, :668`); no public client-provisioning endpoint (`create_client_for_agent` at `tenant.py:935` requires an authed agent); no `trial_*` fields. **Searched** `trial|signup|public.*client` → none.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Public `POST /tenant/agent/{agent_id}/trial-signup` creating a trial `Clients` row (`subscription_status='trial'`, new `trial_ends_at`) against a free slot + a login, emailed via the AG-06 branded path; wire the CTAs to a signup form; conversion prompt as `trial_ends_at` nears; gate auth/economics on it.
+- Catch forever: pytest — the public endpoint creates a `trial` client with a future `trial_ends_at`, decrements a slot, and works unauthenticated.
+
+**F-084 — No proration on subscription plan change — fee/cycle change applies with no credit** · `MISSING_SIDE_EFFECT`
+- Violated: **CL-07 (P1)** *"upgrading/downgrading a client mid-cycle prorates the next invoice."*
+- Manifests: an agent changes a client's fee/cycle mid-cycle; the change applies with zero proration — no credit for the unused remainder. The client is over/under-charged.
+- Evidence: `tenant.py:1666` (`update_client_subscription` writes fee/cycle, no proration, `next_billing_date` untouched). **Searched** `prorat|mid.?cycle|credit.*remaining` → only POS refund line-proration.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: On a mid-cycle change, compute the unused-time credit (`next_billing_date` vs now at the old fee) and apply it to the next invoice (a prorated `Subscription_payments` adjustment / negative line); reflect it in the commission ledger.
+- Catch forever: pytest — changing the fee with 15 days left in a 30-day cycle yields a credit ≈ `old_fee*0.5`.
+
+**F-086 — No merchant impersonation / "log in as" for support (audited)** · `MISSING_ENDPOINT`
+- Violated: **RSL-05 (P1)** *"Merchant impersonation / 'log in as' for support, fully audited."*
+- Manifests: an agent/master cannot log in as a merchant to reproduce an issue; the only support lever is password reset (RSL-06), which locks the merchant out.
+- Evidence: **Searched** `impersonat|act_as|on_behalf|log.?in.?as` across backend+frontend → no matches; `core/auth.py` issues tokens only for the authenticating user.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `POST /tenant/agent/clients/{id}/impersonate` (owner-scoped) minting a short-lived JWT for the merchant's user_id carrying an `impersonator` claim, with start/end `Audit_logs` rows + a UI banner; master may impersonate any agent/client.
+- Catch forever: pytest — an owning agent gets a token resolving to the client's role; a non-owning agent gets 403/404; an `AGENT_IMPERSONATE` audit row is written.
+
+**F-087 — No merchant health view for the agent (last activity, sales trend, subscription status)** · `MARKET_GAP`
+- Violated: **RSL-07 (P1)** *"Merchant health view … for the agent."*
+- Manifests: an agent's client list shows static fields only — no last-activity, sales trend, or at-a-glance dunning health — so the agent can't spot a churning/dormant merchant.
+- Evidence: `list_agent_clients` (`tenant.py:496`) returns only `ClientListItem` (no last_activity/trend). **Searched** `last_activity|merchant.*health` → none (`health.py` is system liveness).
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `GET /tenant/agent/clients/{id}/health` (or enrich the list) aggregating last-transaction ts, N-day sales trend, `subscription_status` + dunning state, in SQL, owner-scoped; a health badge in `AgentDashboard`.
+- Catch forever: pytest — the health endpoint returns `last_sale_at` + a 7-day trend matching seeded sales, scoped to the owning agent (404 for a foreign client).
+
+### MINOR — White-label & reseller
+
+**F-083 — No PWA manifest — installable branded app missing (SW precaches a manifest that 404s)** · `DESIGN_GAP`
+- Violated: **AG-08 (P2)** *"branded mobile app (PWA installable now)."*
+- Manifests: a merchant cannot "Add to Home Screen"; browsers won't offer install with no manifest, and `sw.js` tries to precache `/manifest.webmanifest` which doesn't exist.
+- Evidence: `frontend/public/` has only favicon/robots/`sw.js`; `sw.js:9` lists `/manifest.webmanifest` in `SHELL`; `index.html:5` has no `<link rel="manifest">`. **Searched** `manifest|webmanifest` in `frontend/src` → only the SW registration.
+- Severity: MINOR · Confidence: HIGH
+- Fix: Add `public/manifest.webmanifest` (name/icons/start_url/display:standalone/theme_color from brand tokens) + the `<link>` in `index.html`; for true white-label, serve a per-agent dynamic manifest from branding-by-domain. *(Do not edit `index.html`'s `%VITE_*%` placeholders — add only the manifest link per the build rules; confirm with the operator if that touches a placeholder line.)*
+- Catch forever: test — `GET /manifest.webmanifest` is 200 with name+icons+`display:standalone`.
+
+**F-085 — No usage-based add-on metering/billing (extra branches/terminals/API)** · `MISSING_FEATURE`
+- Violated: **CL-10 (P2)** *"usage-based add-ons meter and bill on top of the base fee."*
+- Manifests: an agent can bill only a flat `subscription_fee`; overage (extra terminals/branches/API) is invisible and uncharged.
+- Evidence: `Clients` carries only `subscription_fee/billing_cycle` (`tenant.py:1377`); commission split computes on the flat fee only (`subscription_billing.py:140`). **Searched** `add_on|addon|usage|metered` → no metering model.
+- Severity: MINOR · Confidence: HIGH
+- Fix: `add_ons`/`usage_records` (kind, unit_price, quantity, period); fold metered overage into the period charge + commission split; configurable add-ons in the agent's client-subscription panel.
+- Catch forever: pytest — a client with 2 extra terminals @X is charged `base + 2X` and the commission row reflects the larger gross.
+
+**F-088 — No automated payout/settlement statement between agent and master** · `MISSING_FEATURE`
+- Violated: **RSL-04 (P2)** *"automated payout/settlement between agent and master (or statement for manual settlement)."*
+- Manifests: the commission ledger records `master_cut` per payment but nothing settles or produces a period statement of what each agent owes the master — no payout run, no downloadable statement.
+- Evidence: ledger rows written (`subscription_billing.py:146`) + aggregated for display (`tenant.py:567/686`), but **Searched** `payout|settlement` → only cash_movements + restaurant table-settlement; no settlement model/endpoint/PDF.
+- Severity: MINOR · Confidence: HIGH
+- Fix: A period settlement run snapshotting `Σ master_cut` per agent into a `settlements` table (open/paid) + a downloadable statement (reuse `pdf_render`).
+- Catch forever: pytest — a monthly settlement equals `Σ master_cut` over the agent's ledger rows and creates one `open` row.
+
+### MAJOR — Customers
+
+**F-089 — No SMS/WhatsApp marketing campaign engine** · `MARKET_GAP`
+- Violated: **CRM-05 (P1)** *"SMS/WhatsApp marketing campaigns (promotions, win-back) — consent-aware (PDPL)."*
+- Manifests: a merchant cannot create or send any marketing campaign despite PDPL consent already being captured (F-050); `core/sms.py` is single-recipient receipt-only.
+- Evidence: consent flag is the only artifact (`models/customers.py:33`); `core/sms.py:28` is single-recipient. **Searched** `campaign|whatsapp|marketing|win.?back` → only consent comments + a discounts docstring; no WhatsApp anywhere.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Triad `campaigns` (channel sms|whatsapp, segment filter reusing CRM-04 tags/RFM, body template, schedule) enumerating consenting customers (`marketing_consent AND pii_erased_at IS NULL`) and fanning out via `core.sms.send_sms` / a new `core.whatsapp` adapter (honest stub-until-configured, OPS-08); owner-scoped.
+- Catch forever: pytest `test_campaign_excludes_non_consenting` (consenting / opted-out / erased).
+
+**F-090 — No house-account / credit-customer ledger or statements** · `MARKET_GAP`
+- Violated: **CRM-06 (P2)** *"house accounts / credit customers with statements."*
+- Manifests: a merchant cannot let a customer buy on account (A/R), set a credit limit, or issue a customer statement.
+- Evidence: no credit-limit/balance on `Customers` (`models/customers.py`); no charge-to-account tender. **Searched** `house_account|credit.?limit|statement` → only the gift-card `store_credit` label + SQL "statements".
+- Severity: MAJOR · Confidence: HIGH *(P2 — severity reflects feature size; triage after P1s)*
+- Fix: Add `credit_limit/account_balance` to `Customers`, a `house_account` tender posting to a new `customer_account_entries` ledger (charge on sale, credit on payment), and a statement endpoint + `pdf_render.statement_pdf_bytes` (Arabic/SAR/RTL/branded).
+- Catch forever: pytest `test_house_account_charge_and_statement` (running balance ordering).
+
+### MAJOR — Omnichannel
+
+**F-091 — Zid online-store connector absent (Salla-only)** · `MARKET_GAP`
+- Violated: **OMN-02 (P1)** *"Zid integration (shared catalog & stock, import online orders)."*
+- Manifests: a Zid merchant cannot connect; Zid order webhooks have no route and would never materialize as POS sales / decrement shared stock.
+- Evidence: `routers/omnichannel.py` is Salla-only (`/salla/connect`, `/salla/webhook`); `services/omnichannel.py` `PROVIDER_SALLA` only; `models/channel_orders.py:34` comments Zid "reuses this table later". **Searched** `\bzid\b` → only doc comments.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `/zid/connect` + `/zid/webhook`, `verify_zid_signature` + `extract_zid_order`, `Clients.zid_store_id/zid_webhook_secret`, reuse the ingest path with `PROVIDER_ZID` (the `channel_orders` provider discriminator already exists).
+- Catch forever: pytest `test_zid_webhook_materializes_sale` (Transactions + stock decrement + `channel_orders(provider="zid")`).
+
+### MINOR — Omnichannel
+
+**F-092 — No unified customer/loyalty across channels — online orders not linked to CRM** · `MARKET_GAP`
+- Violated: **OMN-04 (P2)** *"unified customer & loyalty across channels."*
+- Manifests: a Salla order's buyer is never reconciled to the in-store `Customers` record, so LTV/RFM/loyalty don't span online + in-store (the same person is two identities; it only "works" by phone-string coincidence).
+- Evidence: `services/omnichannel.py:257-269` writes `customer_name/customer_phone` as denormalized strings; `ingest_salla_order` never upserts a `Customers` row or loyalty. **Searched** `unified.*customer|cross.?channel` → none.
+- Severity: MINOR · Confidence: MEDIUM
+- Fix: In `ingest_salla_order`, upsert a `Customers` row by phone within the client scope and attribute loyalty there, carrying the link explicitly so RFM is channel-agnostic by design.
+- Catch forever: pytest `test_online_order_attributes_to_existing_customer`.
+
+**F-093 — Click-and-collect / fulfilment status never set — `fulfilled` is a dead enum** · `MISSING_TRANSITION` / `DEAD_END_UI`
+- Violated: **OMN-05 (P2)** *"click-and-collect / online-order fulfilment status."*
+- Manifests: staff cannot mark an online order ready/collected; it is stuck at `imported` forever, yet `ChannelOrders.tsx` renders a `fulfilled` badge no action can trigger.
+- Evidence: `models/channel_orders.py:42-43` (documents `…→fulfilled`, never written); no fulfilment route (**searched** `fulfill|mark.*fulfilled` in `routers/omnichannel.py` → none); `frontend/src/pages/ChannelOrders.tsx:20-24` (dead badge) + i18n key.
+- Severity: MINOR · Confidence: HIGH
+- Fix: `PATCH /channel-orders/{id}/status` (owner-scoped; `imported→ready→fulfilled`) + a "Mark fulfilled / ready for pickup" action in `ChannelOrders.tsx`.
+- Catch forever: pytest `test_channel_order_fulfilment_transition` (valid transition persists; invalid rejected).
+
+### MAJOR — ZATCA (compliance; credential-gated)
+
+**F-094 — ZATCA invoice hash is over RAW ElementTree serialization, not C14N-canonicalized UBL** · `SPEC_DIVERGENCE` (compliance)
+- Violated: **ZA-02/03/04 (P0)** real stamp / TLV QR hash / chain — and `srs.md §7` *"Validate the hash chain, QR/TLV, and signature against ZATCA's official SDK"* (round-1 low-confidence **L-01**, now confirmed).
+- Manifests: the invoice hash (→ ECDSA stamp + QR tag-6) is computed over raw `tostring(...)`; a ZATCA validator re-canonicalizing the UBL computes a **different** digest → stamp/QR verification fails clearance/reporting conformance. Crypto is real and internally self-consistent, but not provably ZATCA-conformant.
+- Evidence: `backend/services/production.py:367` (`tostring(..., xml_declaration=False)` raw); `backend/services/zatca_sale.py:211` hashes it directly; `zatca.py:238-240` just SHA-256s the bytes. **Searched** `c14n|canonical|canonicalize` → only the word in docstrings; no `ElementTree.canonicalize`/lxml C14N/XML-DSig `SignedInfo`.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: Insert a real canonicalization (`xml.etree.ElementTree.canonicalize` or lxml C14N) before hashing in `generate_xml_invoice`/`sign_transaction`, matching ZATCA's prescribed C14N + UBL `Extensions/Signature` placement.
+- **Credential / dependency gap (operator):** full conformance **cannot be self-verified** — it needs the **official ZATCA SDK sample invoice vectors** (known-good XML + expected `invoiceHash`/signature) and ideally a sandbox CSID to round-trip. STOP and obtain these before claiming green. *(Per Prompt 3, a ZATCA-scope item: confirm scope with the operator before implementing.)*
+- Catch forever: pytest `test_invoice_hash_matches_zatca_sample_vector` — golden-vector test against the official SDK sample once available.
+
+### MAJOR — Printables
+
+**F-095 — Dunning notice is a plaintext email, not a branded Arabic PDF printable** · `MARKET_GAP` / `DESIGN_GAP`
+- Violated: **PRN-08 (P1)** *"Subscription invoice (agent→client) **and dunning notices**"* (the subscription-invoice half shipped in F-053; the dunning-notice printable did not). IB §6 marks it absent.
+- Manifests: an overdue merchant receives only a plaintext bilingual email — no branded, Arabic, RTL printable dunning notice with overdue amount, grace deadline, and pay link. (The CL-06 dunning **logic** exists via F-028.)
+- Evidence: `services/dunning.py:112-135` (`_send_dunning_notice` builds plain text via `core.email.send_email`); `pdf_render.py` has invoice + subscription renderers (`:365`) but **no** dunning renderer. **Searched** `dunning.*notice|dunning.*pdf` → only the email helper + an inline ClientDashboard notice.
+- Severity: MAJOR · Confidence: HIGH
+- Fix: `pdf_render.dunning_notice_pdf_bytes` (Arabic/RTL/SAR, agent brand header/footer, overdue amount + grace deadline + pay link [ties F-064]), attached from `_send_dunning_notice`, plus an agent download endpoint; mirror `subscription_invoice_pdf_bytes`.
+- Catch forever: pytest `test_dunning_notice_pdf_contains_overdue_and_deadline` (overdue amount, deadline, brand name present).
+
+### MINOR — Hardware & printables
+
+**F-096 — No weighing-scale hardware driver; weight is entered manually** · `MARKET_GAP`
+- Violated: **HW-07 (P2)** *"Weighing scale integration (grocery)."*
+- Manifests: a grocery cashier on a weighted item (shipped F-011) must hand-type the weight; the connected scale's reading is never read by the POS.
+- Evidence: weighted items exist (`POSTerminal.tsx` `is_weighted`/`unit_label`) but quantity is manual. **Searched** `scale|weigh|WebSerial` → only CSS `hover:scale-*` + the manual UI; no scale driver.
+- Severity: MINOR · Confidence: HIGH
+- Fix: `frontend/src/lib/scaleDriver.ts` using Web Serial (`navigator.serial`) to read a common continuous-weight protocol behind an `isScaleSupported()` guard (mirror `thermalPrint.ts`'s WebUSB guard); "Read scale" populates the fractional qty, manual entry stays as fallback (OPS-08).
+- Catch forever: unit test mocking `navigator.serial` with a canned weight frame → the weighted line qty + total update.
+
+**F-097 — No label/barcode printer output path; PRN-07 shelf label absent** · `MARKET_GAP` / `DESIGN_GAP`
+- Violated: **HW-08 (P2)** *"Label/barcode printer for shelf & product labels"*; **PRN-07 (P1)** barcode/shelf label.
+- Manifests: a retail merchant cannot print shelf/product labels (name_ar, price, barcode) — no label render or printer output; barcodes can be scanned but never produced.
+- Evidence: `services/escpos.py` builds only the receipt (`qr()` emits QR, not a 1-D barcode); `lib/thermalPrint.ts` is a generic ESC/POS pipe with no label path. **Searched** `label.?print|shelf.?label|printLabel` → no code; `ProductManagement.tsx` has no print-label action.
+- Severity: MINOR · Confidence: HIGH
+- Fix: A label renderer (`build_label()` rendering name_ar + SAR price + a Code128/EAN-13 bitmap via the PIL raster path, or a ZPL builder) + `GET /api/v1/products/{id}/label` (+ batch); a "Print label" action in `ProductManagement.tsx`; name_ar always-Arabic per PRN-07.
+- Catch forever: pytest — `build_label()` output contains name_ar, formatted SAR price, and a decodable barcode region (or valid ZPL).
+
+### MINOR — Localization
+
+**F-098 — Hardcoded English strings / inline-ternary i18n on shipped screens** · `SPEC_DIVERGENCE`
+- Violated: **L10N-01 (P0)** *"every key present in every locale (no silent English fallback in shipped screens)"* (round-1 low-confidence **L-05**, now confirmed).
+- Manifests: an Arabic user sees English placeholders on Product Management; Notifications duplicates translations via inline 4-way ternaries instead of i18n keys (drift risk).
+- Evidence: `frontend/src/pages/ProductManagement.tsx:402` `placeholder="Product name"`, `:679` `"Search products..."`, `:684` `"Category"`, `:946` `"Red / Large"`, `:973` `"SKU"` (raw English); `frontend/src/pages/Notifications.tsx:109/142/166` (`language === 'ar' ? … : 'Notifications'` ternaries). Both files already import `useLanguage` — the fix is localized, not structural.
+- Severity: MINOR · Confidence: HIGH
+- Fix: Replace hardcoded placeholders/ternaries with `t('...')` and add the keys to all four locale objects in `i18n.ts`.
+- Catch forever: an i18n key-parity test asserting the four language maps have identical key sets (+ a lint scanning pages for string-literal JSX text / `placeholder=` on non-icon elements).
+
+---
+
+## R2.3 Low-confidence / needs human confirmation (round 2)
+
+- **L-08 — SEC-05 data-residency (P1, deferred from F-050).** Consent + data-subject export/erasure shipped (F-050), but **data-residency awareness is entirely absent** — no in-Kingdom region pinning, no `DATABASE_URL`/region assertion, no `RUN.md` residency section. **Searched** `residency|in.?kingdom|region` in `RUN.md` + backend → no matches. Not emitted as a finding card because it is an infra/deployment-doc concern with no code surface to point at; promote to a finding if doc-only gaps are in scope. Recommend a `RUN.md` residency section + a startup region assertion.
+- **L-09 — OMN-04 partial-by-accident (see F-092).** An online sale already counts toward a customer's LTV when the denormalized phone happens to match an existing record (`routers/customers.py:432` matches on phone), so it "partially works" rather than being fully absent — hence F-092 is MINOR/MEDIUM, not MAJOR.
+- **L-10 — Inventory valued at sale price (adjacent to F-070).** `production.py:1254 total_stock_value = Σ price*qty` values stock at **sale price**, not `cost_price` — a latent valuation bug independent of the missing RPT-07 report. Fold into F-070 or fix standalone.
+- **Round-1 carry-overs still open:** L-02 (`_next_icv` concurrency — needs a concurrency test) and L-03 (F-031 exploitability — runtime verification) from the archive remain unverified; L-01 was **promoted to F-094** this round.
+
+---
+
+## R2.4 Round-2 finish — counts & triage
+
+- **Total round-2 findings:** 44 (`F-055`–`F-098`) + 3 low-confidence (`L-08`–`L-10`).
+- **By severity:** **BLOCKER 3** (F-055, F-056, F-057 — all restaurant-core P0) · **MAJOR ~27** · **MINOR ~14** · INFO 0.
+- **P0 table-stakes not fully built (round 2):** the restaurant vertical (RST-02/03/05/06 → F-055/056/057/058), RPT-04/05/07/08 reporting depth (P1 but P0-adjacent for "see profit / file VAT"), L10N-01 (F-098), and the compliance item ZA C14N (F-094).
+- **Triage order (highest value first):**
+  1. **F-055 / F-056 / F-057** — restaurant order-ticket items, modifiers/combos, KDS/KOT (the vertical is unusable without these). Build as a coherent sequence; F-055 first (line items unblock the rest).
+  2. **F-094** — ZATCA C14N (compliance). **Operator decision required** (official SDK sample vectors) before implementing.
+  3. **F-068 / F-069 / F-070 / F-071** — profit/COGS, VAT, inventory, refund/discount reports (merchant "see profit / file VAT").
+  4. **F-080 / F-081 / F-086 / F-084 / F-087** — reseller depth: branded printables, agent payment onboarding, impersonation, proration, merchant health.
+  5. **F-063 / F-064 / F-065** — payments breadth: per-client gateway accounts, payment links, settlement.
+  6. **F-076 / F-077 / F-078** — promotions: auto-promos, BOGO, price lists.
+
+> **Reminder:** this is a *prioritized backlog of suspicions for human review and test-promotion, not a release gate.* Each finding ships with a deterministic "catch-forever" test to promote when it is closed (Prompt 3 closes one per session, building to the `INTENDED_BEHAVIOR.md` design + the named test). Several findings depend on each other (F-055→F-056/F-057; F-059 needs F-055; F-064 pay-link is reused by F-095 dunning; F-068 margin reuses F-062 BOM cost roll-up) — note the dependency when sequencing.
+
+---
+
+# 📦 Archive — Round 1 (F-001–F-054 — all ✅ closed)
+
+> The sections below are the **original Round-1 audit (2026-06-03)**, retained verbatim for traceability (SRS ID → test mappings in §6). Every Round-1 finding is closed; Prompt 3 skips them. The active backlog is **§R2 above**.
 
 ## 1. Summary table
 

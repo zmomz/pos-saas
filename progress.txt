@@ -212,3 +212,30 @@
   two-providers-one-external-id routing). Full backend suite 402 passed; frontend
   lint+tsc+build green.
   Commit: 28c8092
+2026-06-05 · 01 / F-068 — Profit / COGS / margin report + dead stock. The first
+  reporting-depth slice (RPT-04 / INV-09): a merchant can finally see gross profit
+  and margin, not just revenue. Backend: services/sale_core.snapshot_cost_prices
+  stamps each sold line's product cost_price onto items_json at sale time (purely
+  additive in execute_sale — the atomic sale's stock/totals/signing are unchanged,
+  so test_pos_atomic + test_phase2_zatca_sale pass UNCHANGED), giving the report a
+  STABLE historical cost basis that a later cost change can't rewrite. New
+  GET /api/v1/reports/profit-margin (client-owner-scoped, SEC-02; trailing `days`
+  window + independent `dead_stock_days`): streams items_json ONCE against a bounded
+  catalog cost map (OPS-05, no load-everything) to roll revenue / COGS / gross
+  profit / margin % up per item and per category — COGS reads the per-line snapshot,
+  falling back to the live cost for legacy lines; credit notes net both revenue and
+  COGS down. Plus a dead-stock list (on-hand > 0, no sale in the window) and a CSV
+  export (item + category + dead-stock sections). Reuses the journal-export COGS
+  streaming pattern (routers/features.py). Frontend: ReportsAnalytics gained a
+  Profit & Margin card — a totals strip (revenue/COGS/gross/margin), by-item and
+  by-category tables, a dead-stock table and a CSV download, with
+  loading/error+retry/empty states, brand tokens, RTL; getProfitMarginReport typed
+  api.ts wrapper + MarginRow/DeadStockItem/ProfitMarginReport types (reconciled the
+  prior incomplete wrapper to the real response shape); i18n ×4 (ar/en/hi/ur).
+  Tests: test_phase7_rpt_profit_margin.py (5 incl. the named
+  test_margin_report_uses_cogs — revenue 100 / COGS 60 / gross 40, and the
+  catch-forever assertion that moving the product cost AFTER the sale does NOT move
+  the report's COGS — plus category roll-up + CSV, dead-stock listing, refund
+  netting, and owner-scope/agent-403). Full backend suite 407 passed; frontend
+  lint+tsc+build green.
+  Commit: PENDING

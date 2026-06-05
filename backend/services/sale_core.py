@@ -370,6 +370,44 @@ async def attach_terminal_gateways(
         spec["_gateway"] = get_terminal_gateway(terminal.provider)
 
 
+async def snapshot_cost_prices(
+    db: AsyncSession,
+    client_id: int,
+    lines: List[Any],
+    line_dicts: List[dict],
+) -> None:
+    """Stamp each sold line's product ``cost_price`` onto its items_json dict (F-068).
+
+    Historical margin must be **stable** — computed from the cost at sale time, not
+    recomputed later from the product's current (moving-average) cost. So at sale
+    time we snapshot the catalog cost onto the line. The profit/margin report reads
+    this snapshot in preference to the live cost.
+
+    Purely **additive and behavior-preserving**: it only fills a ``cost_price`` key
+    that isn't already present and touches nothing else on the line, so the atomic
+    sale (stock, totals, signing) is unchanged. Lines whose ``product_id`` doesn't
+    map to one of the client's products (ad-hoc lines) are left without a cost.
+    """
+    pids = {int(p) for it in lines if (p := getattr(it, "product_id", None)) is not None}
+    if not pids:
+        return
+    rows = (
+        await db.execute(
+            select(Products.id, Products.cost_price).where(
+                Products.id.in_(pids),
+                Products.client_id == client_id,
+            )
+        )
+    ).all()
+    cost_map = {pid: float(cost or 0.0) for pid, cost in rows}
+    for it, d in zip(lines, line_dicts):
+        if d.get("cost_price") is not None:
+            continue
+        pid = getattr(it, "product_id", None)
+        if pid is not None and int(pid) in cost_map:
+            d["cost_price"] = cost_map[int(pid)]
+
+
 def persist_tenders(
     db: AsyncSession, user_id: str, client_id: int, txn_id: int, captured: List[dict]
 ) -> None:
@@ -491,10 +529,12 @@ async def execute_sale(db: AsyncSession, cart: NormalizedCart) -> SaleResult:
     )
     invoice_number = f"INV-{client.id:04d}-{current_counter:06d}"
 
-    items_json = json.dumps(
-        [item.model_dump() for item in cart.lines],
-        ensure_ascii=False,
-    )
+    # Snapshot each line's product cost onto items_json (F-068) so the profit/
+    # margin report has a stable historical cost basis. Additive only — the rest
+    # of the atomic sale is unchanged.
+    line_dicts = [item.model_dump() for item in cart.lines]
+    await snapshot_cost_prices(db, client.id, cart.lines, line_dicts)
+    items_json = json.dumps(line_dicts, ensure_ascii=False)
 
     transaction = Transactions(
         user_id=user_id,
