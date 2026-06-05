@@ -1,0 +1,3 @@
+# Ralph progress log — Restaurant Vertical (F-055–F-062)
+# One entry per completed slice: date · task · what shipped · commit SHA.
+# Ralph appends below this header each iteration.
