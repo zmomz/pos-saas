@@ -460,6 +460,9 @@ class NormalizedCart:
     tender_specs: List[dict] = field(default_factory=list)
     payment_method: str = "cash"
     payment_breakdown_json: Optional[str] = None
+    # The discount code applied to the order (PRC-01), persisted onto the sale for
+    # the discount report (F-071). Null for a manual override or no discount.
+    discount_code: Optional[str] = None
     # Tip (POS-13/F-012) and service charge (F-061) both live OUTSIDE the VAT base —
     # they never change subtotal/VAT/total, only what the tenders must cover. The
     # caller folds them into ``tender_specs``; the core records the tip on the row.
@@ -544,6 +547,7 @@ async def execute_sale(db: AsyncSession, cart: NormalizedCart) -> SaleResult:
         subtotal=cart.subtotal,
         vat_amount=cart.vat_amount,
         discount_amount=cart.discount_amount,
+        discount_code=cart.discount_code,
         total_amount=cart.total_amount,
         tip_amount=cart.tip_amount,
         payment_method=cart.payment_method,

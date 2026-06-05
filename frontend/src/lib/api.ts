@@ -1080,6 +1080,75 @@ export async function getInventoryReport(days = 30): Promise<InventoryReport> {
   return response.data;
 }
 
+// RPT-08 (F-071): refund/void report — each refund (credit note) and void over a
+// window with actor, reason, amount, timestamp. A void's actor/reason/when come
+// from its audit event; a refund's from the credit-note transaction.
+export interface RefundVoidRow {
+  type: string; // "refund" | "void"
+  transaction_id: number;
+  invoice_number: string | null;
+  actor_id: string | null;
+  actor: string | null;
+  reason: string | null;
+  amount: number;
+  timestamp: string | null;
+  original_invoice: string | null;
+}
+
+export interface RefundVoidReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  rows: RefundVoidRow[];
+  refund_count: number;
+  refund_total: number;
+  void_count: number;
+  void_total: number;
+  csv_content: string;
+}
+
+export async function getRefundVoidReport(days = 30): Promise<RefundVoidReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/refunds-voids?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// RPT-08 (F-071): discount report — each discounted sale over a window with actor,
+// the applied promo code (is_manual for a codeless override), amount, timestamp.
+export interface DiscountRow {
+  transaction_id: number;
+  invoice_number: string | null;
+  actor_id: string | null;
+  actor: string | null;
+  code: string | null;
+  is_manual: boolean;
+  discount_amount: number;
+  subtotal: number;
+  timestamp: string | null;
+}
+
+export interface DiscountReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  rows: DiscountRow[];
+  discount_count: number;
+  discount_total: number;
+  csv_content: string;
+}
+
+export async function getDiscountReport(days = 30): Promise<DiscountReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/discounts?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.

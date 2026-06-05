@@ -668,6 +668,7 @@ async def create_transaction(
             lines=data.items,
             subtotal=subtotal,
             discount_amount=discount_amount,
+            discount_code=(discount_code or None),
             vat_rate=vat_rate,
             vat_amount=vat_amount,
             total_amount=total_amount,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
-import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport } from '@/lib/api';
+import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -132,6 +132,27 @@ const reportTranslations: Record<string, Record<string, string>> = {
     mv_receipt: 'Receipt',
     mv_transfer: 'Transfer',
     mv_adjustment: 'Adjustment',
+    refunds_voids: 'Refunds & Voids',
+    refunds_voids_hint: 'Every refund and void in the last 30 days — who did it, why, and how much.',
+    download_refunds_voids: 'Download Refunds/Voids CSV',
+    discounts_report: 'Discounts',
+    discounts_hint: 'Every discounted sale in the last 30 days — who applied it, the code, and how much.',
+    download_discounts: 'Download Discounts CSV',
+    rv_type: 'Type',
+    rv_refund: 'Refund',
+    rv_void: 'Void',
+    actor: 'Actor',
+    reason: 'Reason',
+    amount: 'Amount',
+    when: 'When',
+    invoice: 'Invoice',
+    original_invoice: 'Original Invoice',
+    code: 'Code',
+    manual: 'Manual',
+    refund_count: 'Refunds',
+    void_count: 'Voids',
+    discount_count: 'Discounts',
+    discount_total: 'Total Discount',
   },
   ar: {
     reports_analytics: 'التقارير والتحليلات',
@@ -222,6 +243,27 @@ const reportTranslations: Record<string, Record<string, string>> = {
     mv_receipt: 'استلام',
     mv_transfer: 'تحويل',
     mv_adjustment: 'تسوية',
+    refunds_voids: 'المبالغ المستردة والملغاة',
+    refunds_voids_hint: 'كل عملية استرداد وإلغاء خلال آخر 30 يومًا — من قام بها ولماذا وبكم.',
+    download_refunds_voids: 'تنزيل ملف المستردات/الملغاة CSV',
+    discounts_report: 'الخصومات',
+    discounts_hint: 'كل عملية بيع عليها خصم خلال آخر 30 يومًا — من طبّقها والرمز والمبلغ.',
+    download_discounts: 'تنزيل ملف الخصومات CSV',
+    rv_type: 'النوع',
+    rv_refund: 'استرداد',
+    rv_void: 'إلغاء',
+    actor: 'المستخدم',
+    reason: 'السبب',
+    amount: 'المبلغ',
+    when: 'التاريخ',
+    invoice: 'الفاتورة',
+    original_invoice: 'الفاتورة الأصلية',
+    code: 'الرمز',
+    manual: 'يدوي',
+    refund_count: 'المستردات',
+    void_count: 'الملغاة',
+    discount_count: 'الخصومات',
+    discount_total: 'إجمالي الخصم',
   },
   hi: {
     reports_analytics: 'रिपोर्ट और विश्लेषण',
@@ -312,6 +354,27 @@ const reportTranslations: Record<string, Record<string, string>> = {
     mv_receipt: 'प्राप्ति',
     mv_transfer: 'स्थानांतरण',
     mv_adjustment: 'समायोजन',
+    refunds_voids: 'रिफंड और रद्दीकरण',
+    refunds_voids_hint: 'पिछले 30 दिनों की हर रिफंड और रद्दीकरण — किसने की, क्यों, और कितनी।',
+    download_refunds_voids: 'रिफंड/रद्दीकरण CSV डाउनलोड करें',
+    discounts_report: 'छूट',
+    discounts_hint: 'पिछले 30 दिनों की हर छूट वाली बिक्री — किसने लगाई, कोड, और कितनी।',
+    download_discounts: 'छूट CSV डाउनलोड करें',
+    rv_type: 'प्रकार',
+    rv_refund: 'रिफंड',
+    rv_void: 'रद्द',
+    actor: 'उपयोगकर्ता',
+    reason: 'कारण',
+    amount: 'राशि',
+    when: 'कब',
+    invoice: 'चालान',
+    original_invoice: 'मूल चालान',
+    code: 'कोड',
+    manual: 'मैनुअल',
+    refund_count: 'रिफंड',
+    void_count: 'रद्दीकरण',
+    discount_count: 'छूट',
+    discount_total: 'कुल छूट',
   },
   ur: {
     reports_analytics: 'رپورٹس اور تجزیات',
@@ -402,6 +465,27 @@ const reportTranslations: Record<string, Record<string, string>> = {
     mv_receipt: 'وصولی',
     mv_transfer: 'منتقلی',
     mv_adjustment: 'ایڈجسٹمنٹ',
+    refunds_voids: 'ری فنڈز اور منسوخیاں',
+    refunds_voids_hint: 'پچھلے 30 دن کی ہر ری فنڈ اور منسوخی — کس نے کی، کیوں، اور کتنی۔',
+    download_refunds_voids: 'ری فنڈز/منسوخیاں CSV ڈاؤن لوڈ کریں',
+    discounts_report: 'رعایتیں',
+    discounts_hint: 'پچھلے 30 دن کی ہر رعایتی فروخت — کس نے لگائی، کوڈ، اور کتنی۔',
+    download_discounts: 'رعایتیں CSV ڈاؤن لوڈ کریں',
+    rv_type: 'قسم',
+    rv_refund: 'ری فنڈ',
+    rv_void: 'منسوخ',
+    actor: 'صارف',
+    reason: 'وجہ',
+    amount: 'رقم',
+    when: 'کب',
+    invoice: 'انوائس',
+    original_invoice: 'اصل انوائس',
+    code: 'کوڈ',
+    manual: 'دستی',
+    refund_count: 'ری فنڈز',
+    void_count: 'منسوخیاں',
+    discount_count: 'رعایتیں',
+    discount_total: 'کل رعایت',
   },
 };
 
@@ -416,6 +500,8 @@ export default function ReportsAnalytics() {
   const [margin, setMargin] = useState<ProfitMarginReport | null>(null);
   const [vat, setVat] = useState<VatSummaryReport | null>(null);
   const [inventory, setInventory] = useState<InventoryReport | null>(null);
+  const [refundsVoids, setRefundsVoids] = useState<RefundVoidReport | null>(null);
+  const [discounts, setDiscounts] = useState<DiscountReport | null>(null);
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
@@ -423,6 +509,8 @@ export default function ReportsAnalytics() {
   const [loadingMargin, setLoadingMargin] = useState(true);
   const [loadingVat, setLoadingVat] = useState(true);
   const [loadingInventory, setLoadingInventory] = useState(true);
+  const [loadingRefundsVoids, setLoadingRefundsVoids] = useState(true);
+  const [loadingDiscounts, setLoadingDiscounts] = useState(true);
   // UX-02 (F-051): a failed fetch on any panel must surface a real error state
   // distinct from "no data" — generalizing the RPT-03 payment-panel pattern.
   const [salesError, setSalesError] = useState(false);
@@ -432,11 +520,15 @@ export default function ReportsAnalytics() {
   const [marginError, setMarginError] = useState(false);
   const [vatError, setVatError] = useState(false);
   const [inventoryError, setInventoryError] = useState(false);
+  const [refundsVoidsError, setRefundsVoidsError] = useState(false);
+  const [discountsError, setDiscountsError] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingJournal, setExportingJournal] = useState(false);
   const [exportingMargin, setExportingMargin] = useState(false);
   const [exportingVat, setExportingVat] = useState(false);
   const [exportingInventory, setExportingInventory] = useState(false);
+  const [exportingRefundsVoids, setExportingRefundsVoids] = useState(false);
+  const [exportingDiscounts, setExportingDiscounts] = useState(false);
 
   const tr = useCallback(
     (key: string): string => {
@@ -456,6 +548,8 @@ export default function ReportsAnalytics() {
     fetchMargin();
     fetchVat();
     fetchInventory();
+    fetchRefundsVoids();
+    fetchDiscounts();
   }, []);
 
   async function fetchSalesData() {
@@ -638,6 +732,74 @@ export default function ReportsAnalytics() {
       URL.revokeObjectURL(url);
     } finally {
       setExportingInventory(false);
+    }
+  }
+
+  async function fetchRefundsVoids() {
+    setLoadingRefundsVoids(true);
+    setRefundsVoidsError(false);
+    try {
+      const result = await getRefundVoidReport(30);
+      setRefundsVoids(result || null);
+    } catch {
+      // F-071: a failed fetch must surface a real error distinct from "no refunds"
+      // — never silently render an empty audit (UX-02).
+      setRefundsVoidsError(true);
+      setRefundsVoids(null);
+    } finally {
+      setLoadingRefundsVoids(false);
+    }
+  }
+
+  async function handleExportRefundsVoids() {
+    if (!refundsVoids?.csv_content) return;
+    setExportingRefundsVoids(true);
+    try {
+      const blob = new Blob([refundsVoids.csv_content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `refunds_voids_${refundsVoids.from_date}_${refundsVoids.to_date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingRefundsVoids(false);
+    }
+  }
+
+  async function fetchDiscounts() {
+    setLoadingDiscounts(true);
+    setDiscountsError(false);
+    try {
+      const result = await getDiscountReport(30);
+      setDiscounts(result || null);
+    } catch {
+      // F-071: a failed fetch must surface a real error distinct from "no discounts"
+      // — never silently render an empty audit (UX-02).
+      setDiscountsError(true);
+      setDiscounts(null);
+    } finally {
+      setLoadingDiscounts(false);
+    }
+  }
+
+  async function handleExportDiscounts() {
+    if (!discounts?.csv_content) return;
+    setExportingDiscounts(true);
+    try {
+      const blob = new Blob([discounts.csv_content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `discounts_${discounts.from_date}_${discounts.to_date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingDiscounts(false);
     }
   }
 
@@ -1440,6 +1602,208 @@ export default function ReportsAnalytics() {
                   </Table>
                 )}
               </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Refunds & Voids — actor / reason / amount over a window (F-071) */}
+      <Card className="bg-slate-800 border-slate-700 mb-8">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-white">{tr('refunds_voids')}</CardTitle>
+            <p className="text-xs text-slate-400 mt-1">{tr('refunds_voids_hint')}</p>
+          </div>
+          <Button
+            onClick={handleExportRefundsVoids}
+            disabled={exportingRefundsVoids || !refundsVoids}
+            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+          >
+            {exportingRefundsVoids ? '...' : tr('download_refunds_voids')}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loadingRefundsVoids ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : refundsVoidsError ? (
+            <div className="text-center py-8" role="alert">
+              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
+              <Button
+                variant="outline"
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                onClick={fetchRefundsVoids}
+              >
+                {tr('retry')}
+              </Button>
+            </div>
+          ) : !refundsVoids ? (
+            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <>
+              {/* Totals strip */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('refund_count')}</p>
+                  <p className="text-lg font-bold text-white">
+                    {refundsVoids.refund_count}
+                    <span className="text-sm text-slate-400 ms-2">
+                      {tr('sar')} {refundsVoids.refund_total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </p>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('void_count')}</p>
+                  <p className="text-lg font-bold text-white">
+                    {refundsVoids.void_count}
+                    <span className="text-sm text-slate-400 ms-2">
+                      {tr('sar')} {refundsVoids.void_total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              {refundsVoids.rows.length === 0 ? (
+                <p className="text-slate-400 text-center py-6">{tr('no_data')}</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-slate-700 hover:bg-slate-800">
+                      <TableHead className="text-slate-400">{tr('rv_type')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('invoice')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('actor')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('reason')}</TableHead>
+                      <TableHead className="text-slate-400 text-end">{tr('amount')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('when')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {refundsVoids.rows.map((r, idx) => (
+                      <TableRow key={idx} className="border-slate-700 hover:bg-slate-750">
+                        <TableCell>
+                          <Badge
+                            className={
+                              r.type === 'void'
+                                ? 'bg-red-900 text-red-200'
+                                : 'bg-amber-900 text-amber-200'
+                            }
+                          >
+                            {tr(`rv_${r.type}`)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-white text-xs">
+                          {r.invoice_number || '—'}
+                          {r.original_invoice ? (
+                            <span className="text-slate-500"> ← {r.original_invoice}</span>
+                          ) : null}
+                        </TableCell>
+                        <TableCell className="text-slate-300 text-xs">{r.actor || '—'}</TableCell>
+                        <TableCell className="text-slate-400 text-xs">{r.reason || '—'}</TableCell>
+                        <TableCell className="text-slate-300 text-end">
+                          {tr('sar')} {r.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-slate-400 text-xs">
+                          {r.timestamp ? r.timestamp.slice(0, 10) : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Discounts — actor / code / amount over a window (F-071) */}
+      <Card className="bg-slate-800 border-slate-700 mb-8">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-white">{tr('discounts_report')}</CardTitle>
+            <p className="text-xs text-slate-400 mt-1">{tr('discounts_hint')}</p>
+          </div>
+          <Button
+            onClick={handleExportDiscounts}
+            disabled={exportingDiscounts || !discounts}
+            className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+          >
+            {exportingDiscounts ? '...' : tr('download_discounts')}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {loadingDiscounts ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+              ))}
+            </div>
+          ) : discountsError ? (
+            <div className="text-center py-8" role="alert">
+              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
+              <Button
+                variant="outline"
+                className="border-slate-700 text-slate-300 hover:bg-slate-800"
+                onClick={fetchDiscounts}
+              >
+                {tr('retry')}
+              </Button>
+            </div>
+          ) : !discounts ? (
+            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('discount_count')}</p>
+                  <p className="text-lg font-bold text-white">{discounts.discount_count}</p>
+                </div>
+                <div className="bg-slate-900 rounded-lg p-3">
+                  <p className="text-xs text-slate-400">{tr('discount_total')}</p>
+                  <p className="text-lg font-bold text-emerald-400">
+                    {tr('sar')} {discounts.discount_total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
+
+              {discounts.rows.length === 0 ? (
+                <p className="text-slate-400 text-center py-6">{tr('no_data')}</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-slate-700 hover:bg-slate-800">
+                      <TableHead className="text-slate-400">{tr('invoice')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('actor')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('code')}</TableHead>
+                      <TableHead className="text-slate-400 text-end">{tr('amount')}</TableHead>
+                      <TableHead className="text-slate-400">{tr('when')}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {discounts.rows.map((r, idx) => (
+                      <TableRow key={idx} className="border-slate-700 hover:bg-slate-750">
+                        <TableCell className="text-white text-xs">{r.invoice_number || '—'}</TableCell>
+                        <TableCell className="text-slate-300 text-xs">{r.actor || '—'}</TableCell>
+                        <TableCell className="text-slate-400 text-xs">
+                          {r.is_manual ? (
+                            <span className="italic text-slate-500">{tr('manual')}</span>
+                          ) : (
+                            r.code
+                          )}
+                        </TableCell>
+                        <TableCell className="text-slate-300 text-end">
+                          {tr('sar')} {r.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-slate-400 text-xs">
+                          {r.timestamp ? r.timestamp.slice(0, 10) : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </>
           )}
         </CardContent>

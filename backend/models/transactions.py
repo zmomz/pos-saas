@@ -14,6 +14,10 @@ class Transactions(Base):
     subtotal = Column(Float, nullable=True)
     vat_amount = Column(Float, nullable=True)
     discount_amount = Column(Float, nullable=True, default=0, server_default='0')
+    # The discount *code* applied to this sale (PRC-01), persisted so the discount
+    # report (RPT-08/F-071) can show who applied which promo. Null for a manual
+    # (codeless) ``pos.discount`` override and for sales with no discount.
+    discount_code = Column(String, nullable=True)
     total_amount = Column(Float, nullable=False)
     # Gratuity collected on top of the invoice total (POS-13 tips, F-012). A tip is
     # OUTSIDE the VAT base — it never changes subtotal/vat_amount/total_amount (the

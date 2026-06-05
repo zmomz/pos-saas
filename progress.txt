@@ -293,3 +293,38 @@
   Updated test_phase6_branch_stock (pinned the old sale-price valuation; now
   asserts cost). Full backend suite 416 passed; frontend lint+tsc+build green.
   Commit: fd67360
+2026-06-05 · 04 / F-071 — Refund/void + discount reports (RPT-08). A manager could
+    only audit refunds/voids/discounts per-shift inside the Z-report; these two
+    windowed reports generalize that bucketing and add the audit dimension the
+    Z-report omits — WHO did it, WHY, WHEN. Backend: new
+    GET /api/v1/reports/refunds-voids (client-owner-scoped, SEC-02; trailing `days`)
+    lists each refund (credit-note transaction, the stored NEGATIVE amount reported
+    as the positive amount reversed, with a pointer to the original invoice) and
+    each void (the POS_VOID_SALE audit event — actor/reason/when from the audit row,
+    amount from the voided txn; owner-scoped by intersecting void entity_ids with
+    this client's transactions). Reason parsed from the audit detail's "reason:" tail.
+    New GET /api/v1/reports/discounts lists each discounted sale (the Z-report
+    "original sale" bucket via is_distinct_from held/voided/credit_note,
+    discount_amount > 0) with the applied promo code (is_manual for a codeless
+    pos.discount override), amount, actor, timestamp. Both resolve actor user_id ->
+    name/email in ONE bounded users IN-lookup (no N+1) and emit a CSV. To make the
+    discount report show the real code, persisted the applied code on the sale:
+    new Transactions.discount_code column (additive, nullable) threaded through
+    NormalizedCart -> sale_core.execute_sale (so the POS, restaurant settle and
+    aggregator paths all stamp it) + alembic e7f8a9b0c1d2 (idempotent add_column on
+    the pre-existing transactions table). Purely additive — the atomic sale's
+    totals/stock/signing are unchanged (test_pos_atomic + test_phase2_zatca_sale
+    pass UNCHANGED). Frontend: ReportsAnalytics gained a Refunds & Voids card
+    (refund/void count+total strip, a typed table with a void/refund badge,
+    actor/reason/amount/when + original-invoice pointer) and a Discounts card
+    (count/total strip, table with actor/code (manual italic)/amount/when), both
+    with loading/error+retry/empty states, brand tokens, RTL; getRefundVoidReport /
+    getDiscountReport typed api.ts wrappers + RefundVoidReport/RefundVoidRow,
+    DiscountReport/DiscountRow types; i18n x4 (ar/en/hi/ur) for the new keys.
+    Tests: test_phase7_rpt_refund_void_discount.py (5 incl. the named
+    test_void_and_discount_show_actor_reason_amount — a void with reason "wrong
+    item" surfaces with actor+reason+amount and a manual discount surfaces with
+    actor+amount+is_manual — plus refund-with-original-invoice, coded-discount
+    surfaces the code, CSV export, and owner-scope/agent-403). Full backend suite
+    421 passed; frontend lint+tsc+build green.
+    Commit: __PENDING__

@@ -1996,6 +1996,372 @@ async def report_inventory(
 
 
 # ============================================================
+# REFUND / VOID + DISCOUNT REPORTS (RPT-08, F-071)
+# ============================================================
+# A manager could only audit refunds/voids/discounts per-shift inside the Z-report
+# (_aggregate_zreport buckets them by transaction status). These two reports
+# generalize that same bucketing across a date window and add the audit dimension
+# the Z-report omits — WHO did it, WHY, and WHEN — by joining the POS_VOID_SALE
+# audit event (POS-08) and the credit-note / sale rows.
+#
+#   • /reports/refunds-voids — every refund (credit note) and void in the window,
+#     each with actor, reason, amount, timestamp. A void draws actor/reason/when
+#     from its audit row; a refund from the credit-note transaction.
+#   • /reports/discounts — every discounted sale in the window with actor, the
+#     applied code (or a manual flag for a codeless override), amount, timestamp.
+#
+# Owner-scoped to the calling client (SEC-02), windowed by ``days``. Aggregated in
+# SQL over windowed tables (OPS-05); actor names resolved in one bounded lookup.
+
+
+def _void_reason_from_details(details: Optional[str]) -> Optional[str]:
+    """Pull the cashier reason out of a POS_VOID_SALE audit detail string.
+
+    The void handler (routers/pos.py) writes ``… — reason: <reason>`` when a reason
+    was given; return that tail, else None.
+    """
+    if not details:
+        return None
+    marker = "reason:"
+    idx = details.find(marker)
+    if idx == -1:
+        return None
+    reason = details[idx + len(marker):].strip()
+    return reason or None
+
+
+async def _resolve_actor_names(db: AsyncSession, user_ids) -> dict:
+    """Map user ids → a display name (name, else email, else the raw id).
+
+    One bounded ``IN`` lookup over the users table so each report row can name who
+    performed the action without an N+1 query.
+    """
+    ids = {str(u) for u in user_ids if u}
+    if not ids:
+        return {}
+    rows = (
+        await db.execute(select(User.id, User.name, User.email).where(User.id.in_(ids)))
+    ).all()
+    return {r[0]: (r[1] or r[2] or r[0]) for r in rows}
+
+
+class RefundVoidRow(BaseModel):
+    type: str  # "refund" | "void"
+    transaction_id: int
+    invoice_number: Optional[str] = None
+    actor_id: Optional[str] = None
+    actor: Optional[str] = None
+    reason: Optional[str] = None
+    amount: float                       # positive amount reversed / voided
+    timestamp: Optional[str] = None
+    original_invoice: Optional[str] = None  # the sale a refund reverses
+
+
+class RefundVoidReportResponse(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    rows: List[RefundVoidRow]
+    refund_count: int
+    refund_total: float
+    void_count: int
+    void_total: float
+    csv_content: str
+
+
+@router.get("/api/v1/reports/refunds-voids", response_model=RefundVoidReportResponse)
+async def report_refunds_voids(
+    days: int = Query(30, ge=1, le=365),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every refund + void over a window with actor / reason / amount / time (F-071).
+
+    Refunds are the credit-note transactions (POS-07; the negative amounts reported
+    as the positive amount reversed). Voids are the POS_VOID_SALE audit events
+    (POS-08) — the actor, reason and timestamp come from the audit row, the amount
+    from the voided sale. Owner-scoped to the calling client (SEC-02), windowed by
+    ``days``.
+    """
+    from models.audit_logs import Audit_logs
+
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can view the refunds/voids report")
+
+    client_id = role_info["entity_id"]
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    rows: List[RefundVoidRow] = []
+
+    # ---- Refunds: credit-note transactions in the window (POS-07) ----
+    cn_rows = (
+        await db.execute(
+            select(Transactions).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.status == "credit_note",
+                    Transactions.created_at >= start_date,
+                )
+            )
+        )
+    ).scalars().all()
+
+    # Resolve each credit note's original invoice number (bounded lookup).
+    orig_ids = {cn.original_transaction_id for cn in cn_rows if cn.original_transaction_id}
+    orig_invoice: dict = {}
+    if orig_ids:
+        orig_invoice = {
+            r[0]: r[1]
+            for r in (
+                await db.execute(
+                    select(Transactions.id, Transactions.invoice_number).where(
+                        Transactions.id.in_(orig_ids)
+                    )
+                )
+            ).all()
+        }
+
+    refund_total = 0.0
+    for cn in cn_rows:
+        amount = round(abs(float(cn.total_amount or 0)), 2)
+        refund_total += amount
+        rows.append(
+            RefundVoidRow(
+                type="refund",
+                transaction_id=cn.id,
+                invoice_number=cn.invoice_number,
+                actor_id=cn.user_id,
+                reason=None,  # credit notes carry no captured reason
+                amount=amount,
+                timestamp=cn.created_at.isoformat() if cn.created_at else None,
+                original_invoice=orig_invoice.get(cn.original_transaction_id),
+            )
+        )
+    refund_count = len(cn_rows)
+
+    # ---- Voids: the POS_VOID_SALE audit events in the window (POS-08) ----
+    # The void event (actor / reason / when) lives in audit_logs; the amount on the
+    # voided transaction. Owner-scoped by intersecting with this client's txns.
+    void_audits = (
+        await db.execute(
+            select(Audit_logs).where(
+                and_(
+                    Audit_logs.action == "POS_VOID_SALE",
+                    Audit_logs.created_at >= start_date,
+                )
+            )
+        )
+    ).scalars().all()
+
+    void_txn_ids: set = set()
+    for a in void_audits:
+        try:
+            void_txn_ids.add(int(a.entity_id))
+        except (TypeError, ValueError):
+            continue
+    void_txn: dict = {}
+    if void_txn_ids:
+        void_txn = {
+            t.id: t
+            for t in (
+                await db.execute(
+                    select(Transactions).where(
+                        and_(
+                            Transactions.id.in_(void_txn_ids),
+                            Transactions.client_id == client_id,
+                        )
+                    )
+                )
+            ).scalars().all()
+        }
+
+    void_total = 0.0
+    void_count = 0
+    for a in void_audits:
+        try:
+            tid = int(a.entity_id)
+        except (TypeError, ValueError):
+            continue
+        txn = void_txn.get(tid)
+        if txn is None:
+            continue  # not this client's sale (SEC-02) — skip
+        amount = round(abs(float(txn.total_amount or 0)), 2)
+        void_total += amount
+        void_count += 1
+        rows.append(
+            RefundVoidRow(
+                type="void",
+                transaction_id=txn.id,
+                invoice_number=txn.invoice_number,
+                actor_id=a.user_id,
+                reason=_void_reason_from_details(a.details),
+                amount=amount,
+                timestamp=a.created_at.isoformat() if a.created_at else None,
+                original_invoice=None,
+            )
+        )
+
+    # Resolve actor display names in one bounded lookup, then stamp each row.
+    name_map = await _resolve_actor_names(db, [r.actor_id for r in rows])
+    for r in rows:
+        r.actor = name_map.get(r.actor_id or "", r.actor_id)
+
+    # Newest first across both kinds (ISO timestamps sort lexicographically).
+    rows.sort(key=lambda r: (r.timestamp or ""), reverse=True)
+
+    refund_total = round(refund_total, 2)
+    void_total = round(void_total, 2)
+
+    # ---- CSV ----
+    output = io.StringIO()
+    writer = csv.writer(output)
+    period_label = f"{start_date.date().isoformat()}..{now.date().isoformat()}"
+    writer.writerow(["Refunds & voids", period_label])
+    writer.writerow(
+        ["Type", "Invoice", "Actor", "Reason", "Amount", "Timestamp", "Original Invoice"]
+    )
+    for r in rows:
+        writer.writerow(
+            [r.type, r.invoice_number or "", r.actor or "", r.reason or "",
+             f"{r.amount:.2f}", r.timestamp or "", r.original_invoice or ""]
+        )
+    writer.writerow([])
+    writer.writerow(["Refund count", refund_count, "Refund total", f"{refund_total:.2f}"])
+    writer.writerow(["Void count", void_count, "Void total", f"{void_total:.2f}"])
+
+    return RefundVoidReportResponse(
+        days=days,
+        from_date=start_date.date().isoformat(),
+        to_date=now.date().isoformat(),
+        rows=rows,
+        refund_count=refund_count,
+        refund_total=refund_total,
+        void_count=void_count,
+        void_total=void_total,
+        csv_content=output.getvalue(),
+    )
+
+
+class DiscountRow(BaseModel):
+    transaction_id: int
+    invoice_number: Optional[str] = None
+    actor_id: Optional[str] = None
+    actor: Optional[str] = None
+    code: Optional[str] = None   # the applied promo code, None for a manual override
+    is_manual: bool = False
+    discount_amount: float
+    subtotal: float
+    timestamp: Optional[str] = None
+
+
+class DiscountReportResponse(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    rows: List[DiscountRow]
+    discount_count: int
+    discount_total: float
+    csv_content: str
+
+
+@router.get("/api/v1/reports/discounts", response_model=DiscountReportResponse)
+async def report_discounts(
+    days: int = Query(30, ge=1, le=365),
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every discounted sale over a window with actor / code / amount / time (F-071).
+
+    Lists the Z-report's "original sale" rows (completed / refunded / partial —
+    never held, voided or credit notes) that carried a discount, with the applied
+    code (PRC-01; ``is_manual`` for a codeless ``pos.discount`` override), the
+    discount amount and who rang it. Owner-scoped (SEC-02), windowed by ``days``.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can view the discount report")
+
+    client_id = role_info["entity_id"]
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+
+    # Original sale rows only (the Z-report bucketing): exclude held tickets, voids
+    # and credit notes. ``is_distinct_from`` keeps NULL-status legacy sales in.
+    not_excluded = and_(
+        Transactions.status.is_distinct_from("held"),
+        Transactions.status.is_distinct_from("voided"),
+        Transactions.status.is_distinct_from("credit_note"),
+    )
+    sale_rows = (
+        await db.execute(
+            select(Transactions).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    func.coalesce(Transactions.discount_amount, 0.0) > 0.005,
+                    not_excluded,
+                )
+            )
+        )
+    ).scalars().all()
+
+    rows: List[DiscountRow] = []
+    discount_total = 0.0
+    for t in sale_rows:
+        amount = round(float(t.discount_amount or 0), 2)
+        discount_total += amount
+        code = (t.discount_code or "").strip() or None
+        rows.append(
+            DiscountRow(
+                transaction_id=t.id,
+                invoice_number=t.invoice_number,
+                actor_id=t.user_id,
+                code=code,
+                is_manual=code is None,
+                discount_amount=amount,
+                subtotal=round(float(t.subtotal or 0), 2),
+                timestamp=t.created_at.isoformat() if t.created_at else None,
+            )
+        )
+
+    name_map = await _resolve_actor_names(db, [r.actor_id for r in rows])
+    for r in rows:
+        r.actor = name_map.get(r.actor_id or "", r.actor_id)
+
+    rows.sort(key=lambda r: (r.timestamp or ""), reverse=True)
+    discount_count = len(rows)
+    discount_total = round(discount_total, 2)
+
+    # ---- CSV ----
+    output = io.StringIO()
+    writer = csv.writer(output)
+    period_label = f"{start_date.date().isoformat()}..{now.date().isoformat()}"
+    writer.writerow(["Discounts", period_label])
+    writer.writerow(["Invoice", "Actor", "Code", "Discount", "Subtotal", "Timestamp"])
+    for r in rows:
+        writer.writerow(
+            [r.invoice_number or "", r.actor or "", r.code or "manual",
+             f"{r.discount_amount:.2f}", f"{r.subtotal:.2f}", r.timestamp or ""]
+        )
+    writer.writerow([])
+    writer.writerow(
+        ["Discount count", discount_count, "Discount total", f"{discount_total:.2f}"]
+    )
+
+    return DiscountReportResponse(
+        days=days,
+        from_date=start_date.date().isoformat(),
+        to_date=now.date().isoformat(),
+        rows=rows,
+        discount_count=discount_count,
+        discount_total=discount_total,
+        csv_content=output.getvalue(),
+    )
+
+
+# ============================================================
 # Z-REPORT / X-REPORT (RPT-06, PRN-05) — fiscal day-close
 # ============================================================
 # A Z-report reconciles a single shift: sales grouped by tender (the real
