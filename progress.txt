@@ -357,4 +357,4 @@
     starts with the %PDF magic bytes — plus default-format-is-json and the
     agent-403 owner-scope check across all paths). Full backend suite 424 passed;
     frontend lint+tsc+build green. RPT cluster (F-068–F-072) COMPLETE.
-    Commit: <pending>
+    Commit: ea36bcc
