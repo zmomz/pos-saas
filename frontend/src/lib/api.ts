@@ -1412,6 +1412,9 @@ export async function createDiscount(data: {
   min_purchase?: number;
   max_uses?: number;
   is_active?: boolean;
+  // PRC-02 validity window (ISO datetimes; either bound omitted ⇒ open-ended).
+  starts_at?: string | null;
+  ends_at?: string | null;
 }) {
   const response = await client.entities.discounts.create({ data });
   return response.data;

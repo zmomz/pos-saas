@@ -34,6 +34,9 @@ class DiscountsData(BaseModel):
     is_active: bool = None
     usage_count: int = None
     max_uses: int = None
+    # PRC-02 validity window (either bound optional ⇒ open-ended on that side).
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
 
 
 class DiscountsUpdateData(BaseModel):
@@ -45,6 +48,8 @@ class DiscountsUpdateData(BaseModel):
     is_active: Optional[bool] = None
     usage_count: Optional[int] = None
     max_uses: Optional[int] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
 
 
 class DiscountsResponse(BaseModel):
@@ -58,6 +63,8 @@ class DiscountsResponse(BaseModel):
     is_active: Optional[bool] = None
     usage_count: Optional[int] = None
     max_uses: Optional[int] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

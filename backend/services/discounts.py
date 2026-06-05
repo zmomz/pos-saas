@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy import select, func, update, or_
@@ -13,9 +14,23 @@ class DiscountValidationError(ValueError):
     """A discount code failed server-side validation (mapped to HTTP 400).
 
     Raised by ``DiscountsService.validate`` when a code is unknown, inactive,
-    below its ``min_purchase`` floor, or has exhausted its ``max_uses`` cap.
-    PRC-01 requires the server — not the client — to make this judgement.
+    below its ``min_purchase`` floor, outside its validity window, or has
+    exhausted its ``max_uses`` cap. PRC-01 requires the server — not the
+    client — to make this judgement.
     """
+
+
+def _as_naive(dt: Optional[datetime]) -> Optional[datetime]:
+    """Coerce a datetime to naive wall-clock for comparison.
+
+    The schema stores validity bounds as naive datetimes (SQLite drops the tz,
+    matching the ``created_at`` convention), so a tz-aware ``now`` would raise on
+    comparison. Dropping ``tzinfo`` keeps both sides comparable without changing
+    the wall-clock instant.
+    """
+    if dt is not None and dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
 
 
 def compute_discount_amount(discount: Discounts, subtotal: float) -> float:
@@ -177,20 +192,40 @@ class DiscountsService:
             logger.error(f"Error fetching discount by code: {str(e)}")
             raise
 
-    async def validate(self, code: str, subtotal: float, user_id: str) -> Discounts:
-        """Validate a discount code for an order subtotal (PRC-01). Read-only.
+    async def validate(
+        self,
+        code: str,
+        subtotal: float,
+        user_id: str,
+        now: Optional[datetime] = None,
+    ) -> Discounts:
+        """Validate a discount code for an order subtotal (PRC-01/PRC-02). Read-only.
 
         Enforces, server-side: the code exists in the caller's scope, is active,
+        falls inside its scheduled validity window (PRC-02 time-window promos),
         the order meets ``min_purchase``, and the ``max_uses`` cap is not already
         exhausted. Raises ``DiscountValidationError`` (→ HTTP 400) otherwise.
         Does **not** consume a use — call ``consume`` for that, atomically with
         the sale, so a rolled-back sale never spends a use.
+
+        ``now`` is injectable so the window check is deterministic in tests; it
+        defaults to the server wall-clock (naive, matching the stored bounds).
         """
         discount = await self.get_by_code(code, user_id)
         if not discount:
             raise DiscountValidationError("Invalid discount code")
         if discount.is_active is False:
             raise DiscountValidationError("This discount is no longer active")
+        # PRC-02: honour the scheduled validity window. A code with a future
+        # ``starts_at`` is not yet live (a scheduled promo); one past its
+        # ``ends_at`` has expired. Either bound NULL ⇒ open-ended on that side.
+        reference = _as_naive(now) if now is not None else datetime.now()
+        starts_at = _as_naive(discount.starts_at)
+        ends_at = _as_naive(discount.ends_at)
+        if starts_at is not None and reference < starts_at:
+            raise DiscountValidationError("This discount is not active yet")
+        if ends_at is not None and reference > ends_at:
+            raise DiscountValidationError("This discount has expired")
         if discount.min_purchase and float(subtotal) < float(discount.min_purchase):
             raise DiscountValidationError(
                 f"Minimum purchase of {float(discount.min_purchase):.2f} required"

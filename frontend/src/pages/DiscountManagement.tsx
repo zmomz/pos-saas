@@ -29,7 +29,10 @@ interface Discount {
   min_purchase?: number;
   max_uses?: number;
   used_count?: number;
+  usage_count?: number;
   is_active?: boolean;
+  starts_at?: string | null;
+  ends_at?: string | null;
   created_at?: string;
 }
 
@@ -39,6 +42,8 @@ interface DiscountFormData {
   value: string;
   min_purchase: string;
   max_uses: string;
+  starts_at: string;
+  ends_at: string;
 }
 
 const emptyForm: DiscountFormData = {
@@ -47,7 +52,24 @@ const emptyForm: DiscountFormData = {
   value: '',
   min_purchase: '',
   max_uses: '',
+  starts_at: '',
+  ends_at: '',
 };
+
+// A native datetime-local control emits/consumes "YYYY-MM-DDTHH:mm"; the API
+// stores/returns full ISO datetimes, so trim to the minute for the input.
+function toLocalInput(iso?: string | null): string {
+  return iso ? iso.slice(0, 16) : '';
+}
+
+// PRC-02: where "now" sits relative to a discount's scheduled window.
+type WindowState = 'scheduled' | 'expired' | 'live';
+
+function windowState(discount: Discount, now: Date = new Date()): WindowState {
+  if (discount.starts_at && now < new Date(discount.starts_at)) return 'scheduled';
+  if (discount.ends_at && now > new Date(discount.ends_at)) return 'expired';
+  return 'live';
+}
 
 function generateCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -103,6 +125,8 @@ export default function DiscountManagement() {
         min_purchase: formData.min_purchase ? parseFloat(formData.min_purchase) : undefined,
         max_uses: formData.max_uses ? parseInt(formData.max_uses, 10) : undefined,
         is_active: true,
+        starts_at: formData.starts_at || undefined,
+        ends_at: formData.ends_at || undefined,
       });
       setAddOpen(false);
       setFormData(emptyForm);
@@ -122,6 +146,8 @@ export default function DiscountManagement() {
       value: String(discount.value),
       min_purchase: discount.min_purchase ? String(discount.min_purchase) : '',
       max_uses: discount.max_uses ? String(discount.max_uses) : '',
+      starts_at: toLocalInput(discount.starts_at),
+      ends_at: toLocalInput(discount.ends_at),
     });
     setEditOpen(true);
   }
@@ -136,6 +162,8 @@ export default function DiscountManagement() {
         value: parseFloat(formData.value),
         min_purchase: formData.min_purchase ? parseFloat(formData.min_purchase) : null,
         max_uses: formData.max_uses ? parseInt(formData.max_uses, 10) : null,
+        starts_at: formData.starts_at || null,
+        ends_at: formData.ends_at || null,
       });
       setEditOpen(false);
       setSelectedDiscount(null);
@@ -247,6 +275,31 @@ export default function DiscountManagement() {
             className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
+        {/* PRC-02 scheduled validity window — a coupon is only honoured between
+            these bounds; leave either empty for an open-ended (always-on) code. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm text-slate-400 mb-1 block">{t('valid_from')}</label>
+            <Input
+              type="datetime-local"
+              dir="ltr"
+              value={formData.starts_at}
+              onChange={(e) => handleFormChange('starts_at', e.target.value)}
+              className="bg-slate-700 border-slate-600 text-white"
+            />
+          </div>
+          <div>
+            <label className="text-sm text-slate-400 mb-1 block">{t('valid_until')}</label>
+            <Input
+              type="datetime-local"
+              dir="ltr"
+              value={formData.ends_at}
+              onChange={(e) => handleFormChange('ends_at', e.target.value)}
+              className="bg-slate-700 border-slate-600 text-white"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-slate-500">{t('validity_window_hint')}</p>
         <div className="flex gap-3 pt-2">
           <Button
             onClick={onSubmit}
@@ -333,6 +386,7 @@ export default function DiscountManagement() {
               <th className="p-3 text-start">Value</th>
               <th className="p-3 text-start">Min Purchase</th>
               <th className="p-3 text-start">Usage</th>
+              <th className="p-3 text-start">{t('validity_window')}</th>
               <th className="p-3 text-start">{t('status')}</th>
               <th className="p-3 text-start">Actions</th>
             </tr>
@@ -340,7 +394,7 @@ export default function DiscountManagement() {
           <tbody>
             {discounts.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-slate-500">
+                <td colSpan={8} className="p-6 text-center text-slate-500">
                   No discounts created yet
                 </td>
               </tr>
@@ -362,8 +416,31 @@ export default function DiscountManagement() {
                     {discount.min_purchase ? `SAR ${discount.min_purchase}` : '—'}
                   </td>
                   <td className="p-3">
-                    {discount.used_count || 0}
+                    {discount.used_count ?? discount.usage_count ?? 0}
                     {discount.max_uses ? ` / ${discount.max_uses}` : ' / ∞'}
+                  </td>
+                  <td className="p-3">
+                    {!discount.starts_at && !discount.ends_at ? (
+                      <span className="text-slate-500">{t('validity_always')}</span>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xs text-slate-400" dir="ltr">
+                          {discount.starts_at ? toLocalInput(discount.starts_at) : '…'}
+                          {' → '}
+                          {discount.ends_at ? toLocalInput(discount.ends_at) : '…'}
+                        </span>
+                        {windowState(discount) === 'scheduled' && (
+                          <Badge className="bg-amber-600/20 text-amber-400 border border-amber-600/40 w-fit">
+                            {t('discount_scheduled')}
+                          </Badge>
+                        )}
+                        {windowState(discount) === 'expired' && (
+                          <Badge className="bg-red-600/20 text-red-400 border border-red-600/40 w-fit">
+                            {t('discount_expired')}
+                          </Badge>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="p-3">
                     {discount.is_active !== false ? (

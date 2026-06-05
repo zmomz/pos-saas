@@ -16,5 +16,11 @@ class Discounts(Base):
     is_active = Column(Boolean, nullable=True)
     usage_count = Column(Integer, nullable=True)
     max_uses = Column(Integer, nullable=True)
+    # PRC-02 / PRC-01 validity window: a coupon/promo is only honoured between
+    # ``starts_at`` and ``ends_at`` (either bound NULL ⇒ open-ended on that side).
+    # This is what turns a flat code into a time-window promotion (e.g. a campaign
+    # that runs Jun 1–30, or a "happy-hour" code scheduled to go live later).
+    starts_at = Column(DateTime(timezone=True), nullable=True)
+    ends_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
