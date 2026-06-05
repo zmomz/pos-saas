@@ -40,4 +40,4 @@ Rewaa / Marn, localized for Saudi.
 - [x] **06 · Sale-core extraction** (one fiscal sale path; behavior-preserving refactor) → `.scratch/restaurant-vertical/06-sale-core-extraction.md` · Blocked by: 04, 05
 - [x] **07 · F-059 — Check + settle-to-ZATCA** → `.scratch/restaurant-vertical/07-F059-check-and-settle.md` · Blocked by: 01, 04, 05, 06
 - [x] **08 · F-057 — KDS / KOT + real-time kitchen channel** → `.scratch/restaurant-vertical/08-F057-kds-kot.md` · Blocked by: 01
-- [ ] **09 · F-060 — Aggregator ingest** (Deliverect-class webhook) → `.scratch/restaurant-vertical/09-F060-aggregator-ingest.md` · Blocked by: 03, 06, 08
+- [x] **09 · F-060 — Aggregator ingest** (Deliverect-class webhook) → `.scratch/restaurant-vertical/09-F060-aggregator-ingest.md` · Blocked by: 03, 06, 08

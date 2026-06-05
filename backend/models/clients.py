@@ -41,6 +41,16 @@ class Clients(Base):
     # their Salla store.
     salla_store_id = Column(String, nullable=True, index=True)
     salla_webhook_secret = Column(String, nullable=True)
+    # Aggregator ingest — Deliverect-class middleware connection (F-060). A delivery
+    # aggregator (Jahez / HungerStation) reaches us only through a Deliverect /
+    # Delivery-Hero-POS-partner middleware (the SRS forbids direct aggregator APIs).
+    # ``aggregator_location_id`` is the middleware's location/outlet identifier the
+    # inbound webhook carries; it routes an order to this client.
+    # ``aggregator_webhook_secret`` (optional) verifies the webhook HMAC signature —
+    # when unset, verification is skipped (sandbox / graceful degradation, OPS-08).
+    # Both null until the client connects an aggregator middleware.
+    aggregator_location_id = Column(String, nullable=True, index=True)
+    aggregator_webhook_secret = Column(String, nullable=True)
     invoice_counter = Column(Integer, nullable=True, default=0, server_default='0')
     language_preference = Column(String, nullable=True, default='en', server_default='en')
     # ZA-09: per-client e-invoicing opt-out, honored on the sale path

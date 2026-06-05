@@ -8,8 +8,11 @@ import PermissionDenied from '@/components/states/PermissionDenied';
 import {
   getSallaConnection,
   connectSalla,
+  getAggregatorConnection,
+  connectAggregator,
   getChannelOrders,
   type SallaConnection,
+  type AggregatorConnection,
   type ChannelOrder,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
@@ -38,14 +41,27 @@ export default function ChannelOrders() {
   const [saving, setSaving] = useState(false);
   const [connectMsg, setConnectMsg] = useState<string | null>(null);
 
+  // Aggregator (Deliverect-class) middleware connection (F-060).
+  const [aggregator, setAggregator] = useState<AggregatorConnection | null>(null);
+  const [locationId, setLocationId] = useState('');
+  const [aggSecret, setAggSecret] = useState('');
+  const [aggSaving, setAggSaving] = useState(false);
+  const [aggMsg, setAggMsg] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(false);
     setDenied(false);
     try {
-      const [conn, list] = await Promise.all([getSallaConnection(), getChannelOrders()]);
+      const [conn, agg, list] = await Promise.all([
+        getSallaConnection(),
+        getAggregatorConnection(),
+        getChannelOrders(),
+      ]);
       setConnection(conn);
       setStoreId(conn.store_id || '');
+      setAggregator(agg);
+      setLocationId(agg.location_id || '');
       setOrders(Array.isArray(list.items) ? list.items : []);
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
@@ -85,6 +101,29 @@ export default function ChannelOrders() {
       }
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleConnectAggregator() {
+    if (!locationId.trim()) return;
+    setAggSaving(true);
+    setAggMsg(null);
+    try {
+      const conn = await connectAggregator(locationId.trim(), aggSecret.trim() || undefined);
+      setAggregator(conn);
+      setAggSecret('');
+      setAggMsg(t('aggregator_connected'));
+      await load();
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 409) {
+        setAggMsg(t('aggregator_location_in_use'));
+      } else {
+        const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+        setAggMsg(detail || t('aggregator_connect_failed'));
+      }
+    } finally {
+      setAggSaving(false);
     }
   }
 
@@ -176,6 +215,55 @@ export default function ChannelOrders() {
         </CardContent>
       </Card>
 
+      {/* Delivery-aggregator connection (F-060) */}
+      <Card className="bg-slate-800 border-slate-700">
+        <CardContent className="p-4 space-y-3">
+          <div className="flex items-center gap-2 text-white font-semibold">
+            <Link2 className="h-5 w-5 text-orange-400" />
+            {t('aggregator_connection')}
+            {aggregator?.connected && (
+              <Badge className="bg-green-500/20 text-green-400">
+                <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> {t('aggregator_connected_badge')}
+              </Badge>
+            )}
+          </div>
+          <p className="text-slate-400 text-sm">{t('aggregator_connection_hint')}</p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Input
+              dir="ltr"
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              placeholder={t('aggregator_location_id')}
+              className="bg-slate-900 border-slate-600 text-white"
+            />
+            <Input
+              dir="ltr"
+              type="password"
+              value={aggSecret}
+              onChange={(e) => setAggSecret(e.target.value)}
+              placeholder={
+                aggregator?.webhook_secret_set
+                  ? t('salla_webhook_secret_set')
+                  : t('salla_webhook_secret')
+              }
+              className="bg-slate-900 border-slate-600 text-white"
+            />
+            <Button
+              onClick={handleConnectAggregator}
+              disabled={aggSaving || !locationId.trim()}
+              className="bg-orange-600 hover:bg-orange-700 text-white shrink-0"
+            >
+              {aggSaving ? t('loading') : t('connect')}
+            </Button>
+          </div>
+          {aggMsg && (
+            <p className="text-sm text-slate-300" role="status">
+              {aggMsg}
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Imported orders: empty state vs table */}
       {orders.length === 0 ? (
         <Card className="bg-slate-800 border-slate-700">
@@ -192,6 +280,7 @@ export default function ChannelOrders() {
               <thead>
                 <tr className="border-b border-slate-700 text-slate-400">
                   <th className="text-start p-3">{t('order_number')}</th>
+                  <th className="text-start p-3">{t('channel_provider')}</th>
                   <th className="text-start p-3">{t('customer')}</th>
                   <th className="text-start p-3">{t('total')}</th>
                   <th className="text-start p-3">{t('status')}</th>
@@ -203,6 +292,7 @@ export default function ChannelOrders() {
                 {orders.map((o) => (
                   <tr key={o.id} className="border-b border-slate-700/50">
                     <td className="p-3 text-white">{o.external_reference || o.external_order_id}</td>
+                    <td className="p-3 text-slate-300">{o.provider}</td>
                     <td className="p-3 text-slate-300">{o.customer_name || '—'}</td>
                     <td className="p-3 text-slate-300">
                       {o.total_amount != null ? `${o.total_amount} ${o.currency || ''}` : '—'}

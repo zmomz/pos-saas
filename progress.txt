@@ -176,3 +176,39 @@
   broker real-time-delivery test and the double-gate/owner-scope tests). Full
   backend suite 398 passed; frontend lint+tsc+build green.
   Commit: 1abbe66
+2026-06-05 · 09 / F-060 — Aggregator ingest (Deliverect-class middleware
+  webhook). Brings Jahez/HungerStation orders into the POS through a Deliverect /
+  Delivery-Hero POS-partner middleware ONLY (the SRS forbids direct aggregator
+  APIs). Backend: two new owner-scoped routing columns on Clients
+  (aggregator_location_id indexed + aggregator_webhook_secret) + alembic
+  d6e7f8a9b0c1 (add_column on the pre-existing clients table; new F-055..57 tables
+  ride the baseline create_all); channel_orders.provider extended to include
+  deliverect/delivery_hero, reusing the SAME idempotency key
+  (provider, external_order_id, client_id). New services/aggregator.py: pure
+  tolerant parsers (verify_aggregator_signature HMAC-SHA256, extract_location,
+  extract_aggregator_order, _normalize_order_type -> tableless takeaway/delivery)
+  + ingest_aggregator_order which composes the existing restaurant slices —
+  create_ticket (tableless, F-058) -> add_item per matched line (plu->barcode then
+  name match, SEC-02; unmatched lines still ring up, no deduction) -> fire_course
+  per present course (materializes KDS cards, F-057) -> settle_ticket through the
+  SHARED services.sale_core.execute_sale (F-059/06): out-of-band `online` tender,
+  allow_negative_stock, expand_bom — minting a real ECDSA-stamped ZATCA invoice
+  that decrements the same shared stock as an in-store sale. New routers/
+  aggregator.py mounts /api/v1/aggregator: POST /connect + GET /connection
+  (restaurant double-gated, owner-scoped, 409 on a location already claimed) and
+  the unauthenticated POST /{provider}/webhook (provider in deliverect/delivery_
+  hero else 404; routes by location -> verifies signature -> restaurant gate ->
+  ingest; acks 200 for unknown-location/feature-disabled so the middleware stops
+  retrying, 401 on bad signature). Frontend: ChannelOrders.tsx gained a
+  delivery-aggregator connection card (location id + optional secret, brand
+  tokens, RTL, loading/empty/error/denied states reused) + a Channel/provider
+  column so deliverect/delivery_hero orders are distinguishable in the same
+  back-office list; getAggregatorConnection/connectAggregator typed api.ts
+  wrappers + AggregatorConnection type; i18n x4 (ar/en/hi/ur) for the aggregator
+  keys + channel_provider. Tests: test_phase5_rst_aggregator_ingest.py (4 incl.
+  the named test_deliverect_webhook_creates_ticket_and_sale_idempotent — fired
+  KDS card with no price + shared-stock decrement + ZATCA doc + re-delivery
+  duplicate-no-op, plus invalid-signature-rejected, unknown-location/provider, and
+  two-providers-one-external-id routing). Full backend suite 402 passed; frontend
+  lint+tsc+build green.
+  Commit: PENDING

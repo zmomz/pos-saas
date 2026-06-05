@@ -31,7 +31,10 @@ class Channel_orders(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     user_id = Column(String, nullable=False, index=True)
     client_id = Column(Integer, nullable=True, index=True)
-    # Source channel. "salla" today; "zid" (OMN-02) reuses this table later.
+    # Source channel. "salla" (OMN-01); "zid" (OMN-02) reuses this table later;
+    # "deliverect" / "delivery_hero" are the delivery-aggregator middleware
+    # connectors (F-060) — the same idempotency mechanism, keyed on
+    # (provider, external_order_id, client_id), guards every provider.
     provider = Column(String, nullable=False, default="salla", server_default="salla")
     # The external store/order identity used for routing + idempotent ingest.
     external_order_id = Column(String, nullable=False, index=True)

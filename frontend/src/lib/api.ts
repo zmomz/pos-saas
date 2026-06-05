@@ -2569,3 +2569,36 @@ export async function getChannelOrders(page = 1, pageSize = 20): Promise<Channel
   });
   return res.data;
 }
+
+// ---------- Aggregator — Deliverect-class delivery middleware (F-060) ----------
+// Connect the restaurant's aggregator middleware location (Jahez / HungerStation
+// arrive only through a Deliverect / Delivery-Hero POS-partner middleware). Ingested
+// orders fire to the KDS and book a ZATCA sale that decrements the shared stock; they
+// surface in the same back-office channel-orders list (getChannelOrders) by provider.
+
+export interface AggregatorConnection {
+  connected: boolean;
+  location_id?: string | null;
+  webhook_secret_set: boolean;
+}
+
+export async function getAggregatorConnection(): Promise<AggregatorConnection> {
+  const res = await client.apiCall.invoke<AggregatorConnection>({
+    url: '/api/v1/aggregator/connection',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function connectAggregator(
+  locationId: string,
+  webhookSecret?: string
+): Promise<AggregatorConnection> {
+  const res = await client.apiCall.invoke<AggregatorConnection>({
+    url: '/api/v1/aggregator/connect',
+    method: 'POST',
+    data: { location_id: locationId, webhook_secret: webhookSecret || undefined },
+  });
+  return res.data;
+}
