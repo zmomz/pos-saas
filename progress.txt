@@ -117,4 +117,4 @@
   (3 — core mints a signed sale + fiscal doc directly, owns BOM expansion, and
   the BOM-shortfall atomic-rollback catch-forever test). Full backend suite 382
   passed. Backend-only slice (architectural refactor; no new screen).
-  Commit: PENDING
+  Commit: 6bb7451
