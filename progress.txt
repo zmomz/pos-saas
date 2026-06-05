@@ -327,4 +327,4 @@
     actor+amount+is_manual — plus refund-with-original-invoice, coded-discount
     surfaces the code, CSV export, and owner-scope/agent-403). Full backend suite
     421 passed; frontend lint+tsc+build green.
-    Commit: __PENDING__
+    Commit: 0453b43
