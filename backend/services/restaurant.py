@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.products import Products
 from models.restaurant import (
+    BillOfMaterials,
     Combos,
     FloorZones,
     Modifiers,
@@ -1146,6 +1147,191 @@ class RestaurantService:
             if product is not None:
                 total += float(product.price) * cqty
         return round(total, 2)
+
+    # --------------------------------------------------- bill of materials (F-062)
+    async def list_bom(self, parent_product_id: int, user_id: str) -> List[BillOfMaterials]:
+        """The BOM rows (components) of a parent product, owner-scoped (F-062)."""
+        result = await self.db.execute(
+            select(BillOfMaterials)
+            .where(
+                BillOfMaterials.parent_product_id == parent_product_id,
+                BillOfMaterials.user_id == user_id,
+            )
+            .order_by(BillOfMaterials.id.asc())
+        )
+        return result.scalars().all()
+
+    async def get_bom_entry(self, bom_id: int, user_id: str) -> Optional[BillOfMaterials]:
+        result = await self.db.execute(
+            select(BillOfMaterials).where(
+                BillOfMaterials.id == bom_id, BillOfMaterials.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_bom_entry(
+        self, parent_product_id: int, data: Dict[str, Any], user_id: str, client_id: Optional[int]
+    ) -> Optional[BillOfMaterials]:
+        """Add a component to a parent product's BOM (F-062).
+
+        Returns ``None`` if the parent or component isn't an owned product (caller
+        maps to 404). Raises ``ValueError`` on a self-referencing component or a
+        non-positive ``qty_per``.
+        """
+        parent = await self._owned_product(parent_product_id, user_id)
+        component_id = data.get("component_product_id")
+        component = (
+            await self._owned_product(component_id, user_id) if component_id is not None else None
+        )
+        if parent is None or component is None:
+            return None
+        if int(component_id) == int(parent_product_id):
+            raise ValueError("A product cannot be a component of itself")
+        qty_per = float(data.get("qty_per") or 0)
+        if qty_per <= 0:
+            raise ValueError("qty_per must be greater than zero")
+        try:
+            entry = BillOfMaterials(
+                user_id=user_id,
+                client_id=client_id,
+                parent_product_id=parent_product_id,
+                component_product_id=int(component_id),
+                qty_per=round(qty_per, 4),
+            )
+            self.db.add(entry)
+            await self.db.commit()
+            await self.db.refresh(entry)
+            logger.info(
+                f"Added BOM component {component_id} (x{qty_per}) to product {parent_product_id}"
+            )
+            return entry
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error creating BOM entry for product {parent_product_id}: {str(e)}")
+            raise
+
+    async def update_bom_entry(
+        self, bom_id: int, updates: Dict[str, Any], user_id: str
+    ) -> Optional[BillOfMaterials]:
+        entry = await self.get_bom_entry(bom_id, user_id)
+        if not entry:
+            return None
+        if "qty_per" in updates and updates["qty_per"] is not None:
+            qty_per = float(updates["qty_per"])
+            if qty_per <= 0:
+                raise ValueError("qty_per must be greater than zero")
+            entry.qty_per = round(qty_per, 4)
+        try:
+            await self.db.commit()
+            await self.db.refresh(entry)
+            return entry
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error updating BOM entry {bom_id}: {str(e)}")
+            raise
+
+    async def delete_bom_entry(self, bom_id: int, user_id: str) -> bool:
+        entry = await self.get_bom_entry(bom_id, user_id)
+        if not entry:
+            return False
+        try:
+            await self.db.delete(entry)
+            await self.db.commit()
+            return True
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deleting BOM entry {bom_id}: {str(e)}")
+            raise
+
+    async def parent_cogs(self, parent_product_id: int, user_id: str) -> float:
+        """Roll the component costs up to a cost-of-goods value on the parent (F-062).
+
+        Sum of each component's ``cost_price × qty_per``. This is the hook a margin
+        report (F-068) later consumes — no report is produced here.
+        """
+        total = 0.0
+        for entry in await self.list_bom(parent_product_id, user_id):
+            component = await self._owned_product(entry.component_product_id, user_id)
+            if component is not None:
+                total += float(component.cost_price or 0) * float(entry.qty_per or 0)
+        return round(total, 4)
+
+    async def expand_bom_deductions(
+        self, items: List[tuple], user_id: str
+    ) -> Dict[int, float]:
+        """Expand BOM-backed sold lines into per-component deduction quantities (F-062).
+
+        ``items`` is a list of ``(product_id, qty_sold)``. Each BOM-backed parent
+        contributes ``qty_per × qty_sold`` of every component; quantities for the
+        same component (across lines / shared recipes) are aggregated. A product
+        with no BOM contributes nothing — it is a finished good the standard sale
+        path deducts directly. Returns ``{component_product_id: total_qty}``.
+        """
+        deductions: Dict[int, float] = {}
+        for product_id, qty in items:
+            if product_id is None:
+                continue
+            for entry in await self.list_bom(int(product_id), user_id):
+                add = float(entry.qty_per or 0) * float(qty or 0)
+                cid = entry.component_product_id
+                deductions[cid] = deductions.get(cid, 0.0) + add
+        return deductions
+
+    async def deplete_ticket_stock(
+        self, ticket_id: int, user_id: str, allow_negative_stock: bool = False
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically deplete the BOM components of a ticket's sold lines (F-062).
+
+        The directly-testable depletion path this slice ships (the sale-core /
+        settle slices later call this hand-off at settle time). Every BOM-backed
+        line on the ticket expands into ``qty_per × qty_sold`` component deductions,
+        and they are applied and committed **together**: if any component is short
+        (and ``allow_negative_stock`` is false) a ``ValueError`` is raised and the
+        whole transaction rolls back, so a failed depletion never leaves a partial
+        component deduction. Returns ``None`` if the ticket isn't found.
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        items = await self.list_items(ticket_id, user_id)
+        line_items = [(i.product_id, float(i.qty or 0)) for i in items if i.product_id is not None]
+        deductions = await self.expand_bom_deductions(line_items, user_id)
+        depleted: List[Dict[str, Any]] = []
+        try:
+            for component_id, qty in deductions.items():
+                product = await self._owned_product(component_id, user_id)
+                if product is None:
+                    # Component product was deleted — skip (nothing to deduct).
+                    continue
+                available = float(product.quantity or 0)
+                if not allow_negative_stock and available < qty:
+                    # Raise before commit → the whole depletion rolls back, leaving
+                    # no partial deduction (atomic with the sale).
+                    raise ValueError(
+                        f"Insufficient stock for component '{product.name}': "
+                        f"requested {qty}, available {available}"
+                    )
+                new_qty = available - qty
+                if not allow_negative_stock:
+                    new_qty = max(0.0, new_qty)
+                product.quantity = new_qty
+                depleted.append({
+                    "component_product_id": component_id,
+                    "qty": round(qty, 4),
+                    "remaining": round(new_qty, 4),
+                })
+            await self.db.commit()
+            logger.info(
+                f"Depleted {len(depleted)} BOM component(s) for ticket {ticket_id}"
+            )
+            return {"ticket_id": ticket_id, "components_depleted": depleted}
+        except ValueError:
+            await self.db.rollback()
+            raise
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error depleting BOM stock for ticket {ticket_id}: {str(e)}")
+            raise
 
     # ----------------------------------------------------------------- helpers
     async def _resolve_modifiers(

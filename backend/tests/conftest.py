@@ -184,7 +184,14 @@ async def make_client_under_agent(client: AsyncClient, agent_id: int, is_active:
         return user, token, merchant.id
 
 
-async def add_product(client_id: int, user_id: str, name: str = "Widget", quantity: int = 5, price: float = 10.0):
+async def add_product(
+    client_id: int,
+    user_id: str,
+    name: str = "Widget",
+    quantity: int = 5,
+    price: float = 10.0,
+    cost_price: float | None = None,
+):
     async with db_manager.async_session_maker() as db:
         product = Products(
             user_id=user_id,
@@ -192,6 +199,7 @@ async def add_product(client_id: int, user_id: str, name: str = "Widget", quanti
             name=name,
             price=price,
             quantity=quantity,
+            cost_price=cost_price,
             is_active=True,
         )
         db.add(product)

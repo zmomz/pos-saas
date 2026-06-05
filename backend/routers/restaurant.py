@@ -342,6 +342,35 @@ class ComboResponse(BaseModel):
         from_attributes = True
 
 
+# ---------- Bill-of-materials schemas (F-062) ----------
+class BomEntryData(BaseModel):
+    component_product_id: int
+    qty_per: float = 1
+
+
+class BomEntryUpdateData(BaseModel):
+    qty_per: Optional[float] = None
+
+
+class BomEntryResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    parent_product_id: int
+    component_product_id: int
+    qty_per: float
+
+    class Config:
+        from_attributes = True
+
+
+class BomListResponse(BaseModel):
+    items: List[BomEntryResponse]
+    total: int
+    # Component costs rolled up to a parent cost-of-goods value (F-062 hook).
+    cost_of_goods: float
+
+
 # ---------- Zone routes ----------
 @router.get("/zones", response_model=List[ZoneResponse])
 async def list_zones(
@@ -791,6 +820,33 @@ async def get_ticket_check(
     return result
 
 
+@router.post("/order-tickets/{ticket_id}/deplete-stock")
+async def deplete_ticket_stock(
+    ticket_id: int,
+    allow_negative_stock: bool = Query(False),
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Atomically deplete the BOM components of a ticket's sold lines (F-062).
+
+    Every BOM-backed line expands into ``qty_per × qty_sold`` component deductions,
+    applied and committed together — a shortfall rolls the whole depletion back
+    (no partial deduction). The settle path (F-059) later calls this hand-off; it
+    is exposed here as the directly-testable depletion path the slice ships.
+    """
+    service = RestaurantService(db)
+    try:
+        result = await service.deplete_ticket_stock(
+            ticket_id, user_id=client.user_id, allow_negative_stock=allow_negative_stock
+        )
+    except ValueError as e:
+        # Insufficient component stock — sale would oversell.
+        raise HTTPException(status_code=400, detail=str(e))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return result
+
+
 @router.get("/all-day-count")
 async def all_day_fired_count(
     client: Clients = Depends(get_restaurant_client),
@@ -1054,3 +1110,70 @@ async def delete_combo(
     if not ok:
         raise HTTPException(status_code=404, detail="Combo not found")
     return {"message": "Combo deleted successfully", "id": combo_id}
+
+
+# ---------- Bill-of-materials routes (F-062) ----------
+@router.get("/products/{product_id}/bom", response_model=BomListResponse)
+async def list_product_bom(
+    product_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List a product's BOM components + its rolled-up cost-of-goods (F-062)."""
+    service = RestaurantService(db)
+    items = await service.list_bom(product_id, user_id=client.user_id)
+    cogs = await service.parent_cogs(product_id, user_id=client.user_id)
+    return {"items": items, "total": len(items), "cost_of_goods": cogs}
+
+
+@router.post("/products/{product_id}/bom", response_model=BomEntryResponse, status_code=201)
+async def add_product_bom(
+    product_id: int,
+    data: BomEntryData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a component (with a qty-per) to a product's BOM (F-062)."""
+    service = RestaurantService(db)
+    try:
+        entry = await service.create_bom_entry(
+            product_id, data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Parent or component product not found")
+    return entry
+
+
+@router.put("/bom/{bom_id}", response_model=BomEntryResponse)
+async def update_bom_entry(
+    bom_id: int,
+    data: BomEntryUpdateData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a BOM entry's qty-per (requires ownership, F-062)."""
+    service = RestaurantService(db)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    try:
+        entry = await service.update_bom_entry(bom_id, updates, user_id=client.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if entry is None:
+        raise HTTPException(status_code=404, detail="BOM entry not found")
+    return entry
+
+
+@router.delete("/bom/{bom_id}")
+async def delete_bom_entry(
+    bom_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a BOM entry (requires ownership, F-062)."""
+    service = RestaurantService(db)
+    ok = await service.delete_bom_entry(bom_id, user_id=client.user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="BOM entry not found")
+    return {"message": "BOM entry deleted successfully", "id": bom_id}

@@ -187,6 +187,34 @@ class Combos(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 
 
+class BillOfMaterials(Base):
+    """A recipe/BOM row: a component consumed when a parent product sells — F-062 (RST).
+
+    An inventory manager defines a parent product's bill of materials as a set of
+    ``component_product_id`` rows each carrying a ``qty_per`` (how much of the
+    component one unit of the parent consumes). When a BOM-backed line is sold the
+    parent expands into ``qty_per × qty_sold`` deductions of each component — inside
+    the same atomic stock transaction as the sale, so a failed sale never leaves a
+    partial component deduction. Component ``cost_price`` rolls up to a true
+    cost-of-goods value on the parent (the hook consumed later by margin reporting,
+    F-068). Owner-scoped like every other entity (SEC-02).
+    """
+
+    __tablename__ = "bill_of_materials"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    parent_product_id = Column(Integer, nullable=False, index=True)
+    component_product_id = Column(Integer, nullable=False, index=True)
+    # How much of the component one unit of the parent consumes (e.g. 0.2 kg of
+    # beef per burger). A Float so recipes can express fractional quantities.
+    qty_per = Column(Float, nullable=False, default=1, server_default="1")
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
 class OrderTicketItems(Base):
     """A single line on an order ticket — the heart of F-055 (RST-02).
 

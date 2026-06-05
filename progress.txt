@@ -78,3 +78,22 @@
   test_service_charge_excluded_from_vat_base_and_shown_on_invoice). Full backend
   suite 369 passed; frontend lint+tsc+build green.
   Commit: 2f95a69
+2026-06-05 · 05 / F-062 — Composite / recipe BOM depletion. Backend: new
+  BillOfMaterials model (parent_product_id, component_product_id, qty_per),
+  owner-scoped behind the restaurant double-gate. RestaurantService gained BOM CRUD
+  (list_bom/get/create/update/delete with self-component + non-positive-qty_per
+  guards), parent_cogs (rolls component cost_price × qty_per up to a parent
+  cost-of-goods value — the F-068 hook, no report), expand_bom_deductions (expands
+  sold lines into aggregated {component: qty_per × qty_sold}, shared components fold
+  together; non-BOM finished goods contribute nothing) and deplete_ticket_stock —
+  the directly-testable atomic depletion path the settle slice (F-059/06) will call:
+  all component deductions apply + commit together, a shortfall raises before commit
+  so the whole depletion rolls back leaving NO partial deduction (optional
+  allow_negative_stock overdraft). Routes under
+  /api/v1/restaurant/products/{id}/bom (GET list+cost_of_goods / POST add),
+  /bom/{id} (PUT/DELETE) and POST /order-tickets/{id}/deplete-stock. Test fixture
+  add_product gained an optional cost_price. Tests: test_phase5_rst_bom_depletion.py
+  (10 incl. named test_bom_sale_depletes_components + the atomic
+  no-partial-deduction and COGS-rollup catch-forever tests). Full backend suite 379
+  passed. Backend-only slice (no new screen per the F-062 acceptance criteria).
+  Commit: PENDING
