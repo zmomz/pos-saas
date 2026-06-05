@@ -49,14 +49,21 @@ _L = {
     "store": "المتجر",
     "vat_no": "الرقم الضريبي",
     "tax_invoice": "فاتورة ضريبية",
+    # F-059: a non-fiscal proforma ("check") the customer reviews BEFORE paying. It
+    # carries no QR and no stamp so it can never be mistaken for a tax invoice.
+    "proforma": "فاتورة مبدئية",
     "invoice_no": "رقم الفاتورة",
     "date": "التاريخ",
     "subtotal": "المجموع الفرعي",
     "discount": "الخصم",
     "vat": "ضريبة القيمة المضافة",
     "grand_total": "الإجمالي شامل الضريبة (ر.س)",
+    # F-061: service charge collected on top of the tax-invoice total, OUTSIDE the
+    # VAT base (exactly like a tip). Shown only when a service charge applies.
+    "service_charge": "رسوم الخدمة",
     # POS-13 (F-012): tip / gratuity collected on top of the tax-invoice total, and
-    # the amount the customer actually paid (total + tip). Shown only when tipped.
+    # the amount the customer actually paid (total + service charge + tip). Shown
+    # only when tipped / a service charge applies.
     "tip": "البقشيش",
     "total_paid": "المبلغ المدفوع (ر.س)",
     "thanks": "شكراً لزيارتكم",
@@ -221,8 +228,15 @@ def _render_receipt_image(
     vat_amount: float,
     total_amount: float,
     tip_amount: float = 0,
+    service_charge: float = 0,
+    proforma: bool = False,
 ):
-    """Render the always-Arabic receipt body to a 1-bit PIL image (RTL)."""
+    """Render the always-Arabic receipt body to a 1-bit PIL image (RTL).
+
+    When ``proforma`` (F-059) the header reads *فاتورة مبدئية* instead of *فاتورة
+    ضريبية* so the non-fiscal check the customer reviews before paying is never
+    mistaken for a tax invoice.
+    """
     from PIL import Image, ImageDraw, ImageFont
 
     f_title = ImageFont.truetype(_FONT_PATH, 40)
@@ -273,7 +287,7 @@ def _render_receipt_image(
     # ---- header ----
     center(seller_name or _L["store"], f_title)
     lr(_L["vat_no"], vat_number or "-", f_small)
-    center(_L["tax_invoice"], f_big)
+    center(_L["proforma"] if proforma else _L["tax_invoice"], f_big)
     rule()
     lr(_L["invoice_no"], invoice_number or "-", f_small)
     lr(_L["date"], issue_date or "-", f_small)
@@ -302,12 +316,20 @@ def _render_receipt_image(
         lr(_L["discount"], "-" + format_money_ar(discount), f_norm)
     lr(_L["vat"], format_money_ar(vat_amount), f_norm)
     lr(_L["grand_total"], format_money_ar(total_amount), f_big)
-    # POS-13 (F-012): a tip is outside the tax-invoice total above; show it plus the
-    # amount the customer actually paid so the printed receipt matches what was
-    # charged. Omitted entirely when no tip was taken.
+    # F-061/POS-13 (F-012): the service charge and the tip both sit OUTSIDE the
+    # tax-invoice total above; show each, plus the amount the customer actually paid
+    # (total + service charge + tip), so the printed document matches what was
+    # charged. Each line is omitted when its amount is zero.
+    if service_charge:
+        lr(_L["service_charge"], format_money_ar(service_charge), f_norm)
     if tip_amount:
         lr(_L["tip"], format_money_ar(tip_amount), f_norm)
-        lr(_L["total_paid"], format_money_ar(total_amount + tip_amount), f_big)
+    if service_charge or tip_amount:
+        lr(
+            _L["total_paid"],
+            format_money_ar(total_amount + service_charge + tip_amount),
+            f_big,
+        )
     rule()
 
     return img.crop((0, 0, _WIDTH_PX, min(y + margin, est_h)))
@@ -341,6 +363,8 @@ def _append_text_fallback(
     vat_amount,
     total_amount,
     tip_amount: float = 0,
+    service_charge: float = 0,
+    proforma: bool = False,
     width: int,
 ) -> None:  # pragma: no cover - only hit in a degraded environment
     """Degraded ASCII receipt body when Arabic rendering is unavailable.
@@ -351,6 +375,7 @@ def _append_text_fallback(
     b.align("center").bold(True).double_size(True)
     b.line(seller_name or "Store")
     b.double_size(False)
+    b.line("PROFORMA" if proforma else "TAX INVOICE")
     b.line(f"VAT: {vat_number or '-'}")
     b.bold(False)
     b.line("-" * width)
@@ -374,10 +399,16 @@ def _append_text_fallback(
     b.bold(True)
     b.line("TOTAL (SAR):".ljust(width - 12) + _money(total_amount).rjust(12))
     b.bold(False)
+    if service_charge:
+        b.line("Service:".ljust(width - 12) + _money(service_charge).rjust(12))
     if tip_amount:
         b.line("Tip:".ljust(width - 12) + _money(tip_amount).rjust(12))
+    if service_charge or tip_amount:
         b.bold(True)
-        b.line("PAID (SAR):".ljust(width - 12) + _money(total_amount + tip_amount).rjust(12))
+        b.line(
+            "PAID (SAR):".ljust(width - 12)
+            + _money(total_amount + service_charge + tip_amount).rjust(12)
+        )
         b.bold(False)
     b.line("-" * width)
 
@@ -394,7 +425,9 @@ def build_receipt(
     vat_amount: float,
     total_amount: float,
     tip_amount: float = 0,
-    zatca_qr: str,
+    service_charge: float = 0,
+    zatca_qr: str = "",
+    proforma: bool = False,
     width: int = 42,
     open_drawer: bool = False,
 ) -> bytes:
@@ -403,6 +436,10 @@ def build_receipt(
     The body is the always-Arabic raster receipt (SRS L10N-06 / PRN-01). When
     ``open_drawer`` is true (a cash sale) the stream carries a cash-drawer kick
     pulse (HW-04) so a connected till opens as the receipt prints.
+
+    When ``proforma`` (F-059) the body is headed *فاتورة مبدئية* and **no QR is
+    emitted regardless of ``zatca_qr``** — a check is non-fiscal and must carry no
+    QR and no stamp, so it can never be mistaken for a tax invoice.
     """
     b = EscPosBuilder()
 
@@ -424,6 +461,8 @@ def build_receipt(
                 vat_amount=vat_amount,
                 total_amount=total_amount,
                 tip_amount=tip_amount,
+                service_charge=service_charge,
+                proforma=proforma,
             )
             b.align("center").raster_image(body)
             rendered = True
@@ -443,10 +482,13 @@ def build_receipt(
             vat_amount=vat_amount,
             total_amount=total_amount,
             tip_amount=tip_amount,
+            service_charge=service_charge,
+            proforma=proforma,
             width=width,
         )
 
-    if zatca_qr:
+    # A proforma is non-fiscal: never emit a QR even if one was passed (F-059).
+    if zatca_qr and not proforma:
         b.align("center").qr(zatca_qr)
 
     # Footer (always Arabic when rendering is available).

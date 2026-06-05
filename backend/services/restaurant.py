@@ -9,6 +9,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +52,28 @@ PRINT_ROUTING = {
     "takeaway": ["kitchen", "takeaway_label", "customer_receipt"],
     "delivery": ["kitchen", "delivery_docket", "customer_receipt"],
 }
+
+
+class SettleLine(BaseModel):
+    """One normalized cart line the sale core mints a fiscal sale from (F-059).
+
+    A ticket line (with its modifiers already folded into ``line_total``) becomes
+    one of these. ``product_id`` is optional so a combo/ad-hoc line (no catalog
+    product) still settles — the sale core skips inventory for an unknown product
+    and the authoritative subtotal/VAT/total carried on the ``NormalizedCart`` (not
+    the per-line figures) drive the stamped invoice. Exposes ``model_dump()`` plus
+    ``product_id`` / ``quantity`` / ``variant_id`` — the contract ``execute_sale``
+    expects of a cart line.
+    """
+
+    product_id: Optional[int] = None
+    variant_id: Optional[int] = None
+    name: Optional[str] = None
+    name_ar: Optional[str] = None
+    price: float = 0.0
+    quantity: float = 1.0
+    discount: float = 0.0
+    modifiers: Optional[str] = None
 
 
 class RestaurantService:
@@ -771,6 +794,179 @@ class RestaurantService:
             "tip_amount": tip,
             "amount_due": amount_due,
         }
+
+    # --------------------------------------------------- check + settle (F-059)
+    def _cart_lines(self, items: List[OrderTicketItems]) -> List["SettleLine"]:
+        """Normalize a ticket's lines into the cart-line shape the sale core needs.
+
+        Each line's unit price is derived from its ``line_total`` (which already
+        folds in modifier/combo pricing) so the rung-up receipt lines re-sum to the
+        goods subtotal the invoice is stamped on.
+        """
+        lines: List[SettleLine] = []
+        for i in items:
+            qty = float(i.qty or 0)
+            line_total = float(i.line_total or 0)
+            unit = round(line_total / qty, 4) if qty else round(line_total, 4)
+            lines.append(
+                SettleLine(
+                    product_id=i.product_id,
+                    variant_id=i.variant_id,
+                    name=i.name,
+                    price=unit,
+                    quantity=qty,
+                    modifiers=i.modifiers,
+                )
+            )
+        return lines
+
+    async def build_proforma(
+        self,
+        ticket_id: int,
+        user_id: str,
+        client: Any,
+        vat_rate: float,
+        tip_amount: float = 0.0,
+    ) -> Optional[Dict[str, Any]]:
+        """Render an 80mm always-Arabic **proforma** check for a ticket (F-059).
+
+        The proforma (*فاتورة مبدئية*) is the bill the customer reviews BEFORE
+        paying: it carries the full check breakdown (goods, VAT, service charge,
+        tip, amount due) but **no QR and no stamp**, so it can never be mistaken
+        for a tax invoice. The body renders in Arabic regardless of UI language
+        (the fiscal-document invariant). Returns ``None`` if the ticket isn't found.
+        """
+        check = await self.compute_check(ticket_id, user_id, vat_rate, tip_amount)
+        if check is None:
+            return None
+
+        from datetime import datetime
+
+        from services.escpos import build_receipt_base64
+
+        items = await self.list_items(ticket_id, user_id)
+        line_items = [
+            {
+                "name": i.name,
+                "name_ar": None,
+                "quantity": float(i.qty or 0),
+                "price": (
+                    round(float(i.line_total or 0) / float(i.qty), 4)
+                    if i.qty
+                    else float(i.line_total or 0)
+                ),
+                "discount": 0,
+            }
+            for i in items
+        ]
+        sc_amount = check["service_charge"]["amount"]
+        proforma_base64 = build_receipt_base64(
+            seller_name=client.business_name or "Business",
+            vat_number=client.vat_number or "",
+            invoice_number=f"PRO-{ticket_id}",
+            issue_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+            line_items=line_items,
+            subtotal=check["subtotal"],
+            discount=0,
+            vat_amount=check["vat_amount"],
+            total_amount=check["total_amount"],
+            tip_amount=check["tip_amount"],
+            service_charge=sc_amount,
+            proforma=True,
+        )
+        return {
+            **check,
+            "document_type": "proforma",
+            "title_ar": "فاتورة مبدئية",
+            "is_fiscal": False,
+            "has_qr": False,
+            "has_stamp": False,
+            "proforma_base64": proforma_base64,
+        }
+
+    async def settle_ticket(
+        self,
+        ticket_id: int,
+        user_id: str,
+        client: Any,
+        vat_rate: float,
+        *,
+        tender_specs: List[Dict[str, Any]],
+        tip_amount: float = 0.0,
+        payment_method: str = "cash",
+        payment_breakdown_json: Optional[str] = None,
+        customer_name: Optional[str] = None,
+        customer_vat_number: Optional[str] = None,
+        allow_negative_stock: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Settle a ticket into a real ZATCA invoice via the shared sale core (F-059).
+
+        Builds the normalized cart from the ticket (lines + modifiers + combos +
+        service charge + BOM components) and mints a fiscal sale through the exact
+        same ``services.sale_core.execute_sale`` path the POS uses — tender capture,
+        inventory deduction (incl. BOM expansion), shift accumulation, ECDSA stamp.
+
+        **Atomic:** the ticket close (``settled``) and the table free are staged in
+        the same session, so ``execute_sale``'s single commit either persists the
+        invoice **and** the close together, or — on a declined card — raises before
+        commit, rolling back everything: the ticket stays ``open``, the table stays
+        occupied, and no invoice is minted.
+
+        Returns ``{"result": SaleResult, "check": dict}``, ``None`` if the ticket
+        isn't found, or raises ``ValueError`` for a closed/empty ticket.
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        if (ticket.status or "open") in CLOSED_TICKET_STATUSES:
+            raise ValueError("Ticket is already settled or voided")
+        items = await self.list_items(ticket_id, user_id)
+        if not items:
+            raise ValueError("Cannot settle an empty ticket")
+
+        check = await self.compute_check(ticket_id, user_id, vat_rate, tip_amount)
+        lines = self._cart_lines(items)
+
+        # Stage the ticket close + table free in THIS session so they commit
+        # atomically with the fiscal sale below. execute_sale commits once; a
+        # declined card raises before that commit, leaving the ticket open and the
+        # table occupied (nothing here is persisted).
+        ticket.status = "settled"
+        if ticket.table_id is not None:
+            table = await self.get_table(ticket.table_id, user_id)
+            if table is not None and table.current_ticket_id == ticket.id:
+                table.state = "free"
+                table.current_ticket_id = None
+
+        from services.sale_core import NormalizedCart, execute_sale
+
+        result = await execute_sale(
+            self.db,
+            NormalizedCart(
+                user_id=user_id,
+                client=client,
+                lines=lines,
+                subtotal=check["subtotal"],
+                discount_amount=0.0,
+                vat_rate=check["vat_rate"],
+                vat_amount=check["vat_amount"],
+                total_amount=check["total_amount"],
+                tender_specs=tender_specs,
+                payment_method=payment_method,
+                payment_breakdown_json=payment_breakdown_json,
+                tip_amount=check["tip_amount"],
+                service_charge=check["service_charge"]["amount"],
+                customer_name=customer_name or ticket.customer_name,
+                buyer_vat=customer_vat_number,
+                branch_id=ticket.branch_id,
+                allow_negative_stock=allow_negative_stock,
+                # F-062: deplete BOM-backed recipe components inside the same atomic
+                # stock transaction as the finished sale.
+                expand_bom=True,
+            ),
+        )
+        logger.info(f"Settled ticket {ticket_id} -> invoice {result.transaction.invoice_number}")
+        return {"result": result, "check": check, "ticket": ticket}
 
     async def all_day_fired_count(self, user_id: str) -> Dict[str, Any]:
         """All-day count of fired items the caller owns (RST-02).

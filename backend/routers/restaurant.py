@@ -13,10 +13,11 @@ A non-client account (master/agent/unknown) gets 403. Every read/write is scoped
 to the caller's ``user_id`` in the service layer so one client can never see
 another's floor (SEC-02).
 """
+import json
 import logging
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,9 @@ from dependencies.auth import get_current_user
 from dependencies.features import is_feature_enabled
 from models.clients import Clients
 from schemas.auth import UserResponse
+from services import zatca as zatca_service_mod
+from services import zatca_sale
+from services.escpos import build_receipt_base64
 from services.restaurant import (
     ORDER_TYPES,
     SPLIT_STRATEGIES,
@@ -248,6 +252,67 @@ class ServiceChargeRequest(BaseModel):
     """Apply (or clear) an optional service-charge % on a ticket (F-061)."""
 
     service_charge_pct: float = 0
+
+
+# ---------- Check + settle schemas (F-059) ----------
+class CheckRequest(BaseModel):
+    """Print a non-fiscal proforma check for a ticket (F-059)."""
+
+    tip_amount: float = 0
+
+
+class SettlePayment(BaseModel):
+    """One tender leg of a (possibly split) settlement, mirroring the POS payment."""
+
+    method: str  # cash / card / mada / applepay / stcpay / tabby / tamara / giftcard…
+    amount: float
+    tender_type: Optional[str] = None
+    token: Optional[str] = None
+    simulate: Optional[str] = None  # sandbox-only: "approve" / "decline"
+    terminal_id: Optional[int] = None
+    gift_card_code: Optional[str] = None
+
+
+class SettleRequest(BaseModel):
+    """Settle a ticket into a real ZATCA invoice via the shared sale core (F-059).
+
+    The tenders must cover the ticket's full ``amount_due`` (goods + VAT + service
+    charge + tip). Provide ``payments`` for a split settlement, or leave it unset
+    for a single-tender settlement driven by ``payment_method`` (+ the optional
+    single-tender capture hints).
+    """
+
+    payment_method: str = "cash"
+    payments: Optional[List[SettlePayment]] = None
+    tip_amount: float = 0
+    customer_name: Optional[str] = None
+    customer_vat_number: Optional[str] = None
+    allow_negative_stock: bool = False
+    payment_token: Optional[str] = None
+    payment_simulate: Optional[str] = None
+    payment_terminal_id: Optional[int] = None
+    payment_gift_card_code: Optional[str] = None
+
+
+class SettleResponse(BaseModel):
+    ticket_id: int
+    transaction_id: int
+    invoice_number: str
+    subtotal: float
+    vat_amount: float
+    total_amount: float
+    service_charge: float
+    tip_amount: float
+    amount_due: float
+    # Fiscal linkage (null when the client has ZATCA disabled, ZA-09).
+    zatca_document_id: Optional[int] = None
+    zatca_status: str
+    zatca_qr: Optional[str] = None
+    zatca_qr_base64: Optional[str] = None
+    # Always-Arabic 80mm receipt for the settled invoice (base64 ESC/POS).
+    receipt_base64: Optional[str] = None
+    ticket_status: str = "settled"
+    table_freed: bool = False
 
 
 # ---------- Modifier group / modifier / combo schemas (F-056) ----------
@@ -818,6 +883,200 @@ async def get_ticket_check(
     if result is None:
         raise HTTPException(status_code=404, detail="Order ticket not found")
     return result
+
+
+@router.post("/order-tickets/{ticket_id}/check")
+async def print_ticket_check(
+    ticket_id: int,
+    data: CheckRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Print an 80mm always-Arabic **proforma** check — *فاتورة مبدئية* (F-059).
+
+    The non-fiscal bill the customer reviews before paying: full breakdown (goods,
+    VAT, service charge, tip, amount due) but **no QR and no stamp**, so it can
+    never be mistaken for a tax invoice. Renders in Arabic regardless of UI
+    language.
+    """
+    service = RestaurantService(db)
+    vat_rate = await get_effective_tax_rate(db, 15.0)
+    tip = round(float(data.tip_amount or 0), 2)
+    if tip < 0:
+        raise HTTPException(status_code=400, detail="tip_amount cannot be negative")
+    proforma = await service.build_proforma(
+        ticket_id, user_id=client.user_id, client=client, vat_rate=vat_rate, tip_amount=tip
+    )
+    if proforma is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return proforma
+
+
+def _settle_tender_specs(data: "SettleRequest", amount_due: float) -> List[dict]:
+    """Derive the per-tender capture specs from a settle request (split or single)."""
+    if data.payments:
+        return [
+            {
+                "tender_type": p.tender_type or p.method,
+                "amount": p.amount,
+                "token": p.token,
+                "simulate": p.simulate,
+                "terminal_id": p.terminal_id,
+                "gift_card_code": p.gift_card_code,
+            }
+            for p in data.payments
+        ]
+    return [
+        {
+            "tender_type": data.payment_method,
+            "amount": amount_due,
+            "token": data.payment_token,
+            "simulate": data.payment_simulate,
+            "terminal_id": data.payment_terminal_id,
+            "gift_card_code": data.payment_gift_card_code,
+        }
+    ]
+
+
+@router.post("/order-tickets/{ticket_id}/settle", response_model=SettleResponse)
+async def settle_ticket_endpoint(
+    ticket_id: int,
+    data: SettleRequest,
+    background_tasks: BackgroundTasks,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Settle a ticket into a real ZATCA invoice via the shared sale core (F-059).
+
+    Builds the normalized cart from the ticket (lines + modifiers + combos +
+    service charge + BOM components) and mints a fiscal sale through the **same**
+    atomic path the POS uses. On success the ticket is ``settled`` and the table
+    freed; a declined card rolls the whole thing back (402) — ticket stays open,
+    table stays occupied, no invoice is minted.
+    """
+    service = RestaurantService(db)
+    vat_rate = await get_effective_tax_rate(db, 15.0)
+    tip = round(float(data.tip_amount or 0), 2)
+    if tip < 0:
+        raise HTTPException(status_code=400, detail="tip_amount cannot be negative")
+
+    # Compute the authoritative amount due so the tenders can be validated against
+    # it before any fiscal side effect runs.
+    check = await service.compute_check(
+        ticket_id, user_id=client.user_id, vat_rate=vat_rate, tip_amount=tip
+    )
+    if check is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    amount_due = check["amount_due"]
+
+    payment_breakdown_json: Optional[str] = None
+    payment_method = data.payment_method
+    if data.payments:
+        paid_total = round(sum(p.amount for p in data.payments), 2)
+        if abs(paid_total - amount_due) > 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Payment breakdown total {paid_total:.2f} does not match "
+                    f"amount due {amount_due:.2f}"
+                ),
+            )
+
+        def _redacted(p: "SettlePayment") -> dict:
+            d = p.model_dump()
+            if d.get("gift_card_code"):
+                d["gift_card_code"] = "****" + str(d["gift_card_code"])[-4:]
+            return d
+
+        payment_breakdown_json = json.dumps(
+            [_redacted(p) for p in data.payments], ensure_ascii=False
+        )
+        methods = [p.method for p in data.payments]
+        payment_method = "mixed" if len(set(methods)) > 1 else methods[0]
+
+    tender_specs = _settle_tender_specs(data, amount_due)
+    buyer_vat = (data.customer_vat_number or "").strip() or None
+
+    try:
+        settled = await service.settle_ticket(
+            ticket_id,
+            client.user_id,
+            client,
+            vat_rate,
+            tender_specs=tender_specs,
+            tip_amount=tip,
+            payment_method=payment_method,
+            payment_breakdown_json=payment_breakdown_json,
+            customer_name=data.customer_name,
+            customer_vat_number=buyer_vat,
+            allow_negative_stock=data.allow_negative_stock,
+        )
+    except ValueError as e:
+        # Already settled/void, or an empty ticket.
+        raise HTTPException(status_code=409, detail=str(e))
+    if settled is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+
+    result = settled["result"]
+    chk = settled["check"]
+    ticket = settled["ticket"]
+    txn = result.transaction
+
+    # Report the document out-of-band (never blocks the committed sale); skipped
+    # when the client has ZATCA disabled (no document to report).
+    if result.document_id is not None:
+        background_tasks.add_task(
+            zatca_sale.report_document_background, result.document_id, client.id
+        )
+
+    # Always-Arabic 80mm receipt for the settled invoice (service charge + tip both
+    # shown outside the VAT base, fiscal QR embedded).
+    receipt_base64 = build_receipt_base64(
+        seller_name=client.business_name or "Business",
+        vat_number=client.vat_number or "",
+        invoice_number=txn.invoice_number,
+        issue_date=(txn.created_at.strftime("%Y-%m-%d %H:%M") if txn.created_at else ""),
+        line_items=[
+            {
+                "name": ln["name"],
+                "name_ar": None,
+                "quantity": ln["qty"],
+                "price": ln["unit_price"],
+                "discount": 0,
+            }
+            for ln in chk["lines"]
+        ],
+        subtotal=chk["subtotal"],
+        discount=0,
+        vat_amount=chk["vat_amount"],
+        total_amount=chk["total_amount"],
+        tip_amount=chk["tip_amount"],
+        service_charge=chk["service_charge"]["amount"],
+        zatca_qr=result.stamped_qr or "",
+    )
+
+    return SettleResponse(
+        ticket_id=ticket_id,
+        transaction_id=txn.id,
+        invoice_number=txn.invoice_number,
+        subtotal=chk["subtotal"],
+        vat_amount=chk["vat_amount"],
+        total_amount=chk["total_amount"],
+        service_charge=chk["service_charge"]["amount"],
+        tip_amount=chk["tip_amount"],
+        amount_due=chk["amount_due"],
+        zatca_document_id=result.document_id,
+        zatca_status="signed" if result.document_id is not None else "disabled",
+        zatca_qr=result.stamped_qr,
+        zatca_qr_base64=(
+            zatca_service_mod.render_qr_png_base64(result.stamped_qr)
+            if result.stamped_qr
+            else None
+        ),
+        receipt_base64=receipt_base64,
+        ticket_status=ticket.status or "settled",
+        table_freed=ticket.table_id is not None,
+    )
 
 
 @router.post("/order-tickets/{ticket_id}/deplete-stock")

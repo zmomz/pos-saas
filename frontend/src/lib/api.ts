@@ -2010,6 +2010,82 @@ export async function getTicketCheck(
   return res.data;
 }
 
+// ---------- Check + settle (F-059) ----------
+// A proforma check (فاتورة مبدئية) the customer reviews BEFORE paying: full
+// breakdown but NO QR and NO stamp, so it can never be mistaken for a tax invoice.
+export interface ProformaCheck extends TicketCheck {
+  document_type: 'proforma';
+  title_ar: string;
+  is_fiscal: false;
+  has_qr: false;
+  has_stamp: false;
+  proforma_base64: string;
+}
+
+export async function printTicketCheck(
+  ticketId: number,
+  tipAmount = 0
+): Promise<ProformaCheck> {
+  const res = await client.apiCall.invoke<ProformaCheck>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/check`,
+    method: 'POST',
+    data: { tip_amount: tipAmount },
+  });
+  return res.data;
+}
+
+export interface SettleResult {
+  ticket_id: number;
+  transaction_id: number;
+  invoice_number: string;
+  subtotal: number;
+  vat_amount: number;
+  total_amount: number;
+  service_charge: number;
+  tip_amount: number;
+  amount_due: number;
+  zatca_document_id?: number | null;
+  zatca_status: string;
+  zatca_qr?: string | null;
+  zatca_qr_base64?: string | null;
+  receipt_base64?: string | null;
+  ticket_status: string;
+  table_freed: boolean;
+}
+
+// Settle a ticket into a real ZATCA invoice via the shared atomic sale core. A
+// declined card rolls the whole thing back (402) — ticket stays open, table stays
+// occupied, no invoice minted.
+export async function settleTicket(
+  ticketId: number,
+  data: {
+    payment_method?: string;
+    tip_amount?: number;
+    customer_name?: string;
+    customer_vat_number?: string;
+    payment_simulate?: string;
+    payment_token?: string;
+    payment_terminal_id?: number;
+    payment_gift_card_code?: string;
+    payments?: {
+      method: string;
+      amount: number;
+      tender_type?: string;
+      token?: string;
+      simulate?: string;
+      terminal_id?: number;
+      gift_card_code?: string;
+    }[];
+  }
+): Promise<SettleResult> {
+  const res = await client.apiCall.invoke<SettleResult>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/settle`,
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
 export async function getOrderTickets(params?: {
   status?: string;
   table_id?: number;

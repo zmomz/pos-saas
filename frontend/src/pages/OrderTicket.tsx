@@ -27,6 +27,8 @@ import {
   getPrintRouting,
   getTicketCheck,
   setServiceCharge,
+  printTicketCheck,
+  settleTicket,
   type OrderTicket as OrderTicketT,
   type TicketItem,
   type RestaurantTable,
@@ -35,6 +37,7 @@ import {
   type Combo,
   type PrintRouting,
   type TicketCheck,
+  type SettleResult,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import {
@@ -51,6 +54,8 @@ import {
   ArrowLeft,
   Printer,
   Percent,
+  Receipt,
+  CheckCircle2,
 } from 'lucide-react';
 
 const COURSES = ['starters', 'mains', 'dessert', 'drinks'];
@@ -120,6 +125,12 @@ export default function OrderTicket() {
   const [check, setCheck] = useState<TicketCheck | null>(null);
   const [scOpen, setScOpen] = useState(false);
   const [scPct, setScPct] = useState(0);
+
+  // Check + settle (F-059): turn the ticket into money and a compliant invoice.
+  const [settleOpen, setSettleOpen] = useState(false);
+  const [settleMethod, setSettleMethod] = useState('cash');
+  const [settled, setSettled] = useState<SettleResult | null>(null);
+  const [settleError, setSettleError] = useState<string | null>(null);
 
   // Connectivity badge (UX-02 offline state).
   useEffect(() => {
@@ -307,6 +318,38 @@ export default function OrderTicket() {
       await load();
     } catch (err) {
       console.error('Failed to set service charge:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // Print the non-fiscal proforma (فاتورة مبدئية) — no QR, no stamp (F-059).
+  async function handlePrintCheck() {
+    try {
+      const proforma = await printTicketCheck(ticketId);
+      // The always-Arabic 80mm proforma body is returned base64-encoded; a real
+      // terminal streams it to the thermal printer. Surface a confirmation here.
+      console.info('Proforma printed', proforma.invoice_number ?? proforma.ticket_id);
+      window.alert(t('check_printed'));
+    } catch (err) {
+      console.error('Failed to print check:', err);
+    }
+  }
+
+  // Settle the ticket into a real ZATCA invoice via the shared sale core (F-059).
+  async function handleSettle() {
+    setSubmitting(true);
+    setSettleError(null);
+    try {
+      const res = await settleTicket(ticketId, { payment_method: settleMethod });
+      setSettled(res);
+      setSettleOpen(false);
+      await load();
+    } catch (err: unknown) {
+      // A declined card returns 402 and rolls the whole settlement back: the
+      // ticket stays open and the table stays occupied (no invoice minted).
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      setSettleError(status === 402 ? t('settle_declined') : t('settle_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -539,6 +582,55 @@ export default function OrderTicket() {
           )}
         </CardContent>
       </Card>
+
+      {/* Settled invoice banner (F-059) — replaces the old browser-only flip */}
+      {settled && (
+        <Card className="bg-green-900/20 border-green-700/40">
+          <CardContent className="p-4 flex items-center gap-3">
+            <CheckCircle2 className="h-5 w-5 text-green-400 shrink-0" />
+            <div className="text-sm">
+              <p className="text-green-300 font-semibold">{t('settled_ok')}</p>
+              <p className="text-slate-400">
+                {t('invoice_no')}: {settled.invoice_number} ·{' '}
+                {t('amount_due')}: {settled.amount_due.toFixed(2)}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      {settleError && (
+        <div className="flex items-center gap-2 rounded-md border border-red-600/40 bg-red-500/10 px-4 py-2 text-red-300 text-sm">
+          <AlertTriangle className="h-4 w-4" />
+          <span>{settleError}</span>
+        </div>
+      )}
+
+      {/* Check + settle (F-059) */}
+      {(ticket.status || 'open') !== 'settled' && (ticket.status || 'open') !== 'void' && (
+        <Card className="bg-slate-800 border-slate-700">
+          <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handlePrintCheck}
+              className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            >
+              <Receipt className="h-4 w-4 mr-1" /> {t('print_check')}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setSettleError(null);
+                setSettleOpen(true);
+              }}
+              disabled={items.length === 0}
+              className="bg-green-600 hover:bg-green-700 text-white"
+            >
+              <CheckCircle2 className="h-4 w-4 mr-1" /> {t('settle')}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Split + service charge actions */}
       <Card className="bg-slate-800 border-slate-700">
@@ -801,6 +893,43 @@ export default function OrderTicket() {
               className="w-full bg-blue-600 hover:bg-blue-700 text-white"
             >
               {submitting ? t('loading') : t('apply')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Settle dialog (F-059) — mint a real ZATCA invoice via the sale core */}
+      <Dialog open={settleOpen} onOpenChange={setSettleOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">{t('settle')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-400">{t('settle_desc')}</p>
+            <div className="flex items-center justify-between text-white font-semibold">
+              <span>{t('amount_due')}</span>
+              <span>{(check?.amount_due ?? grandTotal).toFixed(2)}</span>
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('payment_method')}</label>
+              <select
+                value={settleMethod}
+                onChange={(e) => setSettleMethod(e.target.value)}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              >
+                <option value="cash">{t('pay_cash')}</option>
+                <option value="card">{t('pay_card')}</option>
+                <option value="mada">Mada</option>
+                <option value="applepay">Apple Pay</option>
+                <option value="stcpay">STC Pay</option>
+              </select>
+            </div>
+            <Button
+              onClick={handleSettle}
+              disabled={submitting}
+              className="w-full bg-green-600 hover:bg-green-700 text-white"
+            >
+              {submitting ? t('loading') : t('settle')}
             </Button>
           </div>
         </DialogContent>

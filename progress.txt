@@ -118,3 +118,29 @@
   the BOM-shortfall atomic-rollback catch-forever test). Full backend suite 382
   passed. Backend-only slice (architectural refactor; no new screen).
   Commit: 6bb7451
+2026-06-05 · 07 / F-059 — Check + settle-to-ZATCA. Backend: two restaurant
+  endpoints close the loop from order ticket to money + compliant invoice.
+  POST /order-tickets/{id}/check renders an 80mm ALWAYS-ARABIC proforma marked
+  فاتورة مبدئية with NO QR and NO stamp (non-fiscal; escpos gained a `proforma`
+  flag that swaps the header label and suppresses the QR, plus a `service_charge`
+  line outside the VAT base). POST /order-tickets/{id}/settle builds a
+  NormalizedCart from the ticket (lines+modifiers+combos folded into line_total,
+  service charge, BOM expand_bom=True) and mints a real ZATCA invoice through the
+  SHARED services.sale_core.execute_sale — the same tender-capture → counter →
+  inventory → shift → ECDSA-stamp path the POS uses, not a reimplementation.
+  RestaurantService gained SettleLine, _cart_lines, build_proforma, settle_ticket;
+  settle stages ticket.status=settled + table-free in the SAME session so
+  execute_sale's single commit persists them WITH the invoice — a declined card
+  raises 402 before commit, rolling the whole thing back (ticket stays open, table
+  occupied, no invoice). Settle response carries the stamped QR + PNG + an
+  always-Arabic 80mm receipt (service charge shown outside VAT). Frontend:
+  OrderTicket gained Print Check + Settle actions, a settle dialog (method +
+  amount due), a settled-invoice banner and a declined-card error; FloorMap's
+  browser-only bill_printed flip removed in favour of the real settle flow; typed
+  printTicketCheck/settleTicket + ProformaCheck/SettleResult in api.ts; i18n ×4
+  (print_check, settle, settle_desc, settle_declined, settled_ok, …) with RTL.
+  Tests: test_phase5_rst_check_and_settle.py (7 incl. named
+  test_check_is_non_fiscal_no_qr / test_settle_creates_zatca_invoice_and_frees_table
+  / test_settle_declined_card_rolls_back_no_invoice). Full backend suite 388
+  passed; frontend lint+tsc+build green.
+  Commit: PENDING

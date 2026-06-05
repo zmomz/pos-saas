@@ -18,7 +18,6 @@ import {
   createRestaurantTable,
   openTableOrder,
   createOrderTicket,
-  updateRestaurantTable,
   type FloorZone,
   type RestaurantTable,
 } from '@/lib/api';
@@ -191,19 +190,11 @@ export default function FloorMap() {
       setOrderTable(table);
       return;
     }
-    // An occupied/bill-printed table with an open ticket opens its order ticket
-    // (F-055): add/fire/transfer/merge/split lines from the ticket-edit surface.
+    // An occupied table with an open ticket opens its order ticket (F-055): add/
+    // fire/transfer/merge/split lines, then check → settle (F-059). The ticket is
+    // freed by a real settlement (mint a ZATCA invoice), never a browser-only flip.
     if (table.current_ticket_id) {
       navigate(`/floor/ticket/${table.current_ticket_id}`);
-      return;
-    }
-    // No linked ticket — advance the table state machine as a fallback.
-    const next = table.state === 'occupied' ? 'bill_printed' : 'free';
-    try {
-      await updateRestaurantTable(table.id, { state: next });
-      await load();
-    } catch (err) {
-      console.error('Failed to update table state:', err);
     }
   }
 
