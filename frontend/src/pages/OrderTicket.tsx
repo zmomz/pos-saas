@@ -24,12 +24,14 @@ import {
   getProducts,
   getProductModifierGroups,
   getCombos,
+  getPrintRouting,
   type OrderTicket as OrderTicketT,
   type TicketItem,
   type RestaurantTable,
   type SplitResult,
   type ProductModifierGroup,
   type Combo,
+  type PrintRouting,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import {
@@ -44,6 +46,7 @@ import {
   AlertTriangle,
   Lock,
   ArrowLeft,
+  Printer,
 } from 'lucide-react';
 
 const COURSES = ['starters', 'mains', 'dessert', 'drinks'];
@@ -84,6 +87,7 @@ export default function OrderTicket() {
   const [combos, setCombos] = useState<Combo[]>([]);
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [otherTickets, setOtherTickets] = useState<OrderTicketT[]>([]);
+  const [routing, setRouting] = useState<PrintRouting | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -125,13 +129,14 @@ export default function OrderTicket() {
     setError(false);
     setDenied(false);
     try {
-      const [tk, it, prods, tbls, tks, cmb] = await Promise.all([
+      const [tk, it, prods, tbls, tks, cmb, rt] = await Promise.all([
         getOrderTicket(ticketId),
         getTicketItems(ticketId),
         getProducts(),
         getRestaurantTables(),
         getOrderTickets({ status: 'open' }),
         getCombos().catch(() => [] as Combo[]),
+        getPrintRouting(ticketId).catch(() => null),
       ]);
       setTicket(tk);
       setItems(Array.isArray(it?.items) ? it.items : []);
@@ -139,6 +144,7 @@ export default function OrderTicket() {
       setCombos(Array.isArray(cmb) ? cmb : []);
       setTables(Array.isArray(tbls?.items) ? tbls.items : []);
       setOtherTickets((Array.isArray(tks?.items) ? tks.items : []).filter((o) => o.id !== ticketId));
+      setRouting(rt);
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       if (status === 403) {
@@ -372,6 +378,22 @@ export default function OrderTicket() {
           </Button>
         </div>
       </div>
+
+      {/* Print routing driven by order_type (F-058) */}
+      {routing && routing.targets.length > 0 && (
+        <Card className="bg-slate-800 border-slate-700">
+          <CardContent className="p-4 flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1 text-slate-400 text-sm">
+              <Printer className="h-4 w-4" /> {t('print_routing')}:
+            </span>
+            {routing.targets.map((target) => (
+              <Badge key={target} className="bg-slate-700 text-slate-200">
+                {t('print_target_' + target)}
+              </Badge>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Line items grouped by course */}
       {items.length === 0 ? (

@@ -38,6 +38,19 @@ SPLIT_STRATEGIES = ("seat", "amount", "item")
 # Statuses past which a ticket can no longer be edited from the floor.
 CLOSED_TICKET_STATUSES = ("settled", "void")
 
+# Print routing per order type (F-058). ``order_type`` stops being a dead label
+# and decides where the order's documents print: the kitchen always gets a KOT,
+# but the customer-facing copy differs — a dine-in table gets a table check, a
+# takeaway gets a counter label + receipt, a delivery gets a delivery docket +
+# receipt. The KDS station fan-out within the kitchen is F-057; this is the
+# coarser order-type-level routing the floor and the later aggregator slice rely
+# on. Each value is the ordered list of print targets.
+PRINT_ROUTING = {
+    "dine_in": ["kitchen", "table_check"],
+    "takeaway": ["kitchen", "takeaway_label", "customer_receipt"],
+    "delivery": ["kitchen", "delivery_docket", "customer_receipt"],
+}
+
 
 class RestaurantService:
     """Floor zones, tables, and order tickets for a single client merchant."""
@@ -229,6 +242,70 @@ class RestaurantService:
             await self.db.rollback()
             logger.error(f"Error opening order on table {table_id}: {str(e)}")
             raise
+
+    async def create_ticket(
+        self,
+        data: Dict[str, Any],
+        user_id: str,
+        client_id: Optional[int],
+    ) -> Optional[OrderTickets]:
+        """Open an order ticket whose flow is driven by ``order_type`` (F-058).
+
+        * ``dine_in`` still requires a table — it delegates to ``open_order`` so
+          the table flips ``free -> occupied`` exactly as before (existing
+          behavior preserved). Raises ``ValueError`` if no table is supplied.
+        * ``takeaway`` / ``delivery`` are **tableless** — the ticket is created
+          with ``table_id = None`` and no floor table is touched. This is the
+          path the aggregator-ingest slice (F-060) later builds on.
+
+        Returns the ticket, ``None`` if a dine-in table isn't found (caller maps
+        to 404), or raises ``ValueError`` (caller maps to 400/409).
+        """
+        order_type = data.get("order_type") or "dine_in"
+        if order_type == "dine_in":
+            table_id = data.get("table_id")
+            if table_id is None:
+                raise ValueError("A dine-in order requires a table")
+            return await self.open_order(table_id, data, user_id, client_id)
+
+        # Tableless takeaway / delivery — no floor table required (F-058).
+        try:
+            ticket = OrderTickets(
+                user_id=user_id,
+                client_id=client_id,
+                branch_id=data.get("branch_id"),
+                table_id=None,
+                order_type=order_type,
+                status="open",
+                customer_name=data.get("customer_name"),
+                party_size=data.get("party_size"),
+                notes=data.get("notes"),
+            )
+            self.db.add(ticket)
+            await self.db.commit()
+            await self.db.refresh(ticket)
+            logger.info(f"Opened tableless {order_type} ticket {ticket.id} for user {user_id}")
+            return ticket
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error creating {order_type} ticket: {str(e)}")
+            raise
+
+    @staticmethod
+    def print_routing(ticket: OrderTickets) -> Dict[str, Any]:
+        """Where a ticket's documents print, driven by ``order_type`` (F-058).
+
+        Returns ``{ticket_id, order_type, targets}`` where ``targets`` is the
+        ordered list of print destinations for that order type (see
+        ``PRINT_ROUTING``). Dine-in / takeaway / delivery route differently.
+        """
+        order_type = ticket.order_type or "dine_in"
+        targets = PRINT_ROUTING.get(order_type, PRINT_ROUTING["dine_in"])
+        return {
+            "ticket_id": ticket.id,
+            "order_type": order_type,
+            "targets": list(targets),
+        }
 
     async def list_tickets(
         self,

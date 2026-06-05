@@ -1973,6 +1973,39 @@ export async function getOrderTickets(params?: {
   return res.data;
 }
 
+// ---------- Order types drive behavior (F-058) ----------
+// Open a ticket whose flow follows order_type: dine_in requires (and occupies)
+// a table; takeaway/delivery are tableless. order_type also drives print routing.
+export async function createOrderTicket(data: {
+  order_type: string; // dine_in | takeaway | delivery
+  table_id?: number;
+  customer_name?: string;
+  party_size?: number;
+  notes?: string;
+}): Promise<OrderTicket> {
+  const res = await client.apiCall.invoke<OrderTicket>({
+    url: '/api/v1/restaurant/order-tickets',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export interface PrintRouting {
+  ticket_id: number;
+  order_type: string;
+  targets: string[]; // e.g. ['kitchen', 'table_check']
+}
+
+export async function getPrintRouting(ticketId: number): Promise<PrintRouting> {
+  const res = await client.apiCall.invoke<PrintRouting>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/print-routing`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
 // ---------- Modifiers, modifier groups & combos (F-056) ----------
 // The menu-builder surface: a manager defines modifier groups (required + min/
 // max), modifiers (bilingual name + price delta), attaches groups to products,

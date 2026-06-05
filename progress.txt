@@ -39,3 +39,22 @@
   test_required_modifier_group_enforced / test_combo_price_overrides_component_sum).
   Full backend suite 356 passed; frontend lint+tsc+build green.
   Commit: 6185146
+2026-06-05 · 03 / F-058 — Order types drive behavior (tableless takeaway/delivery
+  + print routing). Backend: order_type stops being a dead label — new
+  PRINT_ROUTING map (dine_in -> kitchen+table_check, takeaway ->
+  kitchen+takeaway_label+customer_receipt, delivery ->
+  kitchen+delivery_docket+customer_receipt) and two service methods:
+  create_ticket (dine_in still requires + occupies a table via open_order;
+  takeaway/delivery are tableless with table_id=None) and print_routing(ticket).
+  Routes added: POST /api/v1/restaurant/order-tickets (order-type-driven create,
+  ValueError -> 400 no-table / 409 occupied) and GET
+  /order-tickets/{id}/print-routing — both owner-scoped behind the restaurant
+  double-gate. Frontend: FloorMap "New Order" button + tableless dialog
+  (takeaway/delivery, customer name, notes) that creates the ticket and jumps to
+  /floor/ticket/:id; OrderTicket page shows a print-routing badge row;
+  createOrderTicket + getPrintRouting typed api.ts wrappers; i18n ×4 (ar/en/hi/
+  ur) for new_order/start_order/print_routing + the five print targets, RTL.
+  Tests: test_phase5_rst_order_types.py (6 incl. named
+  test_takeaway_order_needs_no_table / test_order_type_drives_print_routing).
+  Full backend suite 362 passed; frontend lint+tsc+build green.
+  Commit: <pending>

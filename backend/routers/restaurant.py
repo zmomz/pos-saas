@@ -135,6 +135,21 @@ class OpenOrderRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class CreateTicketRequest(BaseModel):
+    """Open an order ticket whose flow is driven by ``order_type`` (F-058).
+
+    ``dine_in`` requires ``table_id`` (the table flips to occupied);
+    ``takeaway`` / ``delivery`` are tableless and ignore ``table_id``.
+    """
+
+    order_type: Optional[str] = "dine_in"
+    table_id: Optional[int] = None
+    branch_id: Optional[int] = None
+    customer_name: Optional[str] = None
+    party_size: Optional[int] = None
+    notes: Optional[str] = None
+
+
 class OrderTicketResponse(BaseModel):
     id: int
     user_id: str
@@ -501,6 +516,39 @@ async def list_order_tickets(
     return {"items": items, "total": len(items)}
 
 
+@router.post("/order-tickets", response_model=OrderTicketResponse, status_code=201)
+async def create_order_ticket(
+    data: CreateTicketRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Open an order ticket — ``order_type`` drives the flow (F-058).
+
+    Dine-in requires a table (and occupies it); takeaway/delivery are tableless.
+    """
+    logger.debug(f"Creating {data.order_type} ticket for client {client.id}")
+    if data.order_type and data.order_type not in ORDER_TYPES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid order_type. Allowed: {', '.join(ORDER_TYPES)}"
+        )
+    service = RestaurantService(db)
+    try:
+        ticket = await service.create_ticket(
+            data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except ValueError as e:
+        # Dine-in with no table, or a dine-in table already occupied.
+        detail = str(e)
+        status = 409 if "occupied" in detail.lower() else 400
+        raise HTTPException(status_code=status, detail=detail)
+    except Exception as e:
+        logger.error(f"Error creating order ticket: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Table not found")
+    return ticket
+
+
 @router.get("/order-tickets/{ticket_id}", response_model=OrderTicketResponse)
 async def get_order_ticket(
     ticket_id: int,
@@ -513,6 +561,20 @@ async def get_order_ticket(
     if not ticket:
         raise HTTPException(status_code=404, detail="Order ticket not found")
     return ticket
+
+
+@router.get("/order-tickets/{ticket_id}/print-routing")
+async def get_print_routing(
+    ticket_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Where this ticket's documents print, driven by ``order_type`` (F-058)."""
+    service = RestaurantService(db)
+    ticket = await service.get_ticket(ticket_id, user_id=client.user_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return service.print_routing(ticket)
 
 
 # ---------- Order ticket line items (F-055) ----------

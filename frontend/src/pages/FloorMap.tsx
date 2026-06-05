@@ -17,12 +17,13 @@ import {
   getRestaurantTables,
   createRestaurantTable,
   openTableOrder,
+  createOrderTicket,
   updateRestaurantTable,
   type FloorZone,
   type RestaurantTable,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { UtensilsCrossed, Plus, Users, WifiOff, AlertTriangle, Lock } from 'lucide-react';
+import { UtensilsCrossed, Plus, Users, WifiOff, AlertTriangle, Lock, ShoppingBag } from 'lucide-react';
 
 // free | occupied | bill_printed — tile colours mirror the state machine.
 const STATE_STYLES: Record<string, string> = {
@@ -38,6 +39,8 @@ const STATE_BADGE: Record<string, string> = {
 };
 
 const ORDER_TYPES = ['dine_in', 'takeaway', 'delivery'];
+// Tableless order types (F-058) — started without selecting a floor table.
+const TABLELESS_ORDER_TYPES = ['takeaway', 'delivery'];
 
 export default function FloorMap() {
   const { t } = useLanguage();
@@ -55,6 +58,7 @@ export default function FloorMap() {
   const [addTableOpen, setAddTableOpen] = useState(false);
   const [addZoneOpen, setAddZoneOpen] = useState(false);
   const [orderTable, setOrderTable] = useState<RestaurantTable | null>(null);
+  const [newOrderOpen, setNewOrderOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const [tableForm, setTableForm] = useState<{ name: string; seats: number; zone_id?: number }>({
@@ -65,6 +69,12 @@ export default function FloorMap() {
   const [orderForm, setOrderForm] = useState<{ order_type: string; party_size?: number; customer_name: string }>({
     order_type: 'dine_in',
     customer_name: '',
+  });
+  // Tableless takeaway/delivery new-order form (F-058).
+  const [newOrderForm, setNewOrderForm] = useState<{ order_type: string; customer_name: string; notes: string }>({
+    order_type: 'takeaway',
+    customer_name: '',
+    notes: '',
   });
 
   // Connectivity badge (UX-02 offline state).
@@ -156,6 +166,25 @@ export default function FloorMap() {
     }
   }
 
+  // Start a tableless takeaway/delivery order and jump straight to its ticket (F-058).
+  async function handleNewOrder() {
+    setSubmitting(true);
+    try {
+      const ticket = await createOrderTicket({
+        order_type: newOrderForm.order_type,
+        customer_name: newOrderForm.customer_name || undefined,
+        notes: newOrderForm.notes || undefined,
+      });
+      setNewOrderOpen(false);
+      setNewOrderForm({ order_type: 'takeaway', customer_name: '', notes: '' });
+      navigate(`/floor/ticket/${ticket.id}`);
+    } catch (err) {
+      console.error('Failed to start order:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   async function handleTileClick(table: RestaurantTable) {
     if ((table.state || 'free') === 'free') {
       setOrderForm({ order_type: 'dine_in', customer_name: '' });
@@ -242,6 +271,13 @@ export default function FloorMap() {
           <p className="text-slate-400 text-sm mt-1">{t('floor_map_desc')}</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={() => setNewOrderOpen(true)}
+            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          >
+            <ShoppingBag className="h-4 w-4 mr-2" /> {t('new_order')}
+          </Button>
           <Dialog open={addZoneOpen} onOpenChange={setAddZoneOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
@@ -446,6 +482,55 @@ export default function FloorMap() {
               className="w-full bg-blue-600 hover:bg-blue-700 text-white"
             >
               {submitting ? t('loading') : t('open_order')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Tableless new-order dialog (F-058) — takeaway / delivery skip table selection */}
+      <Dialog open={newOrderOpen} onOpenChange={setNewOrderOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">{t('new_order')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-slate-400 text-sm">{t('new_order_desc')}</p>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('order_type')}</label>
+              <select
+                value={newOrderForm.order_type}
+                onChange={(e) => setNewOrderForm((f) => ({ ...f, order_type: e.target.value }))}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              >
+                {TABLELESS_ORDER_TYPES.map((ot) => (
+                  <option key={ot} value={ot}>
+                    {t(ot)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('customer_name')}</label>
+              <Input
+                value={newOrderForm.customer_name}
+                onChange={(e) => setNewOrderForm((f) => ({ ...f, customer_name: e.target.value }))}
+                className="bg-slate-700 border-slate-600 text-white"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('note')}</label>
+              <Input
+                value={newOrderForm.notes}
+                onChange={(e) => setNewOrderForm((f) => ({ ...f, notes: e.target.value }))}
+                className="bg-slate-700 border-slate-600 text-white"
+              />
+            </div>
+            <Button
+              onClick={handleNewOrder}
+              disabled={submitting}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {submitting ? t('loading') : t('start_order')}
             </Button>
           </div>
         </DialogContent>
