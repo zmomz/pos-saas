@@ -38,4 +38,4 @@
   ur). Tests: test_phase5_rst_modifiers.py (8 incl. named
   test_required_modifier_group_enforced / test_combo_price_overrides_component_sum).
   Full backend suite 356 passed; frontend lint+tsc+build green.
-  Commit: __PENDING__
+  Commit: 6185146
