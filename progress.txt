@@ -97,3 +97,24 @@
   no-partial-deduction and COGS-rollup catch-forever tests). Full backend suite 379
   passed. Backend-only slice (no new screen per the F-062 acceptance criteria).
   Commit: 7309d8a
+2026-06-05 · 06 / Sale-core extraction — one fiscal sale path, not three.
+  Backend: new services/sale_core.py owning the atomic sale sequence. The
+  inline POS atomic block moved out of routers/pos.py::create_transaction into
+  execute_sale(db, NormalizedCart) — tender capture (terminals/gift-cards/
+  gateway) → invoice counter → inventory deduction (variant/branch/client +
+  optional BOM expansion) → loyalty accrual → shift accumulation → ECDSA sign/
+  hash-chain/archive, all committed together; returns a SaleResult (persisted
+  transaction + fiscal document linkage). The six atomic-sale helpers
+  (_deduct_inventory, _apply_sale_to_open_shift, _capture_tenders,
+  _redeem_gift_cards, _attach_terminal_gateways, _persist_tenders) moved to the
+  core and are re-imported into pos.py under their historical names so the
+  offline-sync and refund paths are unchanged. NormalizedCart carries the F-061
+  service charge + F-062 expand_bom in its contract so F-059/F-060 reuse the
+  identical path; sale_core.deduct_bom_components owns BOM expansion inside the
+  atomic stock transaction (a shortfall raises before commit → whole sale rolls
+  back, no partial deduction). Behavior-preserving: test_pos_atomic.py and
+  test_phase2_zatca_sale.py pass UNCHANGED. Tests: test_phase5_rst_sale_core.py
+  (3 — core mints a signed sale + fiscal doc directly, owns BOM expansion, and
+  the BOM-shortfall atomic-rollback catch-forever test). Full backend suite 382
+  passed. Backend-only slice (architectural refactor; no new screen).
+  Commit: PENDING

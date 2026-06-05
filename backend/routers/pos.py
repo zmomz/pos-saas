@@ -23,7 +23,6 @@ from models.customers import Customers
 from models.products import Products
 from models.transactions import Transactions
 from models.payment_tenders import PaymentTenders
-from models.terminals import Terminals
 from models.zatca_documents import ZatcaDocuments
 # Imported so the per-branch stock table registers on Base.metadata at startup
 # (services.branch_stock is only imported lazily inside handlers).
@@ -37,18 +36,27 @@ from services.discounts import (
     DiscountValidationError,
     compute_discount_amount,
 )
-from services.gift_cards import GiftCardError, GiftCardsService
 from services.payment_gateway import (
     GatewayNotConfigured,
     PaymentDeclined,
-    get_gateway,
     get_gateway_for,
-    get_terminal_gateway,
     normalize_tender_type,
     requires_capture,
 )
 from services import zatca as zatca_service_mod
 from services import zatca_sale
+from services.sale_core import (
+    NormalizedCart,
+    execute_sale,
+    # The atomic-sale helpers now live in the sale core; re-imported under their
+    # historical private names so the offline-sync and refund paths are unchanged.
+    apply_sale_to_open_shift as _apply_sale_to_open_shift,
+    attach_terminal_gateways as _attach_terminal_gateways,
+    capture_tenders as _capture_tenders,
+    deduct_inventory as _deduct_inventory,
+    persist_tenders as _persist_tenders,
+    redeem_gift_cards as _redeem_gift_cards,
+)
 from services.escpos import build_receipt_base64
 from services.production import EmailService, LowStockChecker, PDFInvoiceService, fire_event_background
 from services.system_settings import get_effective_tax_rate
@@ -255,164 +263,12 @@ def generate_zatca_hash(invoice_data: dict) -> str:
     return hashlib.sha256(data_str.encode("utf-8")).hexdigest()
 
 
-# ---------- Helper: Atomic inventory deduction ----------
-async def _deduct_inventory(
-    db: AsyncSession,
-    client_id: int,
-    items: List["CartItem"],
-    allow_negative_stock: bool,
-) -> None:
-    """Decrement product stock for the sold items within the caller's transaction.
-
-    Does NOT commit — the caller commits the sale and the deductions together so
-    the whole sale is atomic. Raises HTTPException(400) on insufficient stock
-    (unless ``allow_negative_stock``), which rolls the sale back.
-
-    Lines whose ``product_id`` does not map to one of the client's products are
-    skipped (e.g. ad-hoc/custom line items), preserving prior behavior.
-    """
-    # Aggregate requested quantities per product (an item may appear twice).
-    # Float keys the value so weighted lines (fractional qty, POS-11/F-011) deduct
-    # the real amount sold.
-    requested: dict[int, float] = {}
-    for item in items:
-        requested[item.product_id] = requested.get(item.product_id, 0) + item.quantity
-
-    for product_id, qty in requested.items():
-        result = await db.execute(
-            select(Products).where(
-                Products.id == product_id,
-                Products.client_id == client_id,
-            )
-        )
-        product = result.scalar_one_or_none()
-        if not product:
-            # Unknown/ad-hoc line — nothing to deduct.
-            continue
-
-        available = product.quantity or 0
-        if not allow_negative_stock and available < qty:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Insufficient stock for '{product.name}': "
-                    f"requested {qty}, available {available}"
-                ),
-            )
-
-        new_qty = available - qty
-        if not allow_negative_stock:
-            new_qty = max(0, new_qty)
-
-        await db.execute(
-            update(Products)
-            .where(Products.id == product_id)
-            .values(quantity=new_qty)
-        )
-
-
-# ---------- Helper: accumulate a sale into the open shift ----------
-async def _apply_sale_to_open_shift(
-    db: AsyncSession, user_id: str, amount: float
-) -> Optional[int]:
-    """Add ``amount`` (and one transaction) to the user's open shift, if any.
-
-    Returns the shift id so the sale can be linked to it (``Transactions.shift_id``).
-    Runs inside the caller's transaction so the shift totals and the sale commit
-    together. Refunds pass a negative ``amount`` so reconciliation nets out. Returns
-    None when no shift is open (sales are still allowed without a shift).
-    """
-    from models.shifts import Shifts
-
-    result = await db.execute(
-        select(Shifts).where(Shifts.user_id == user_id, Shifts.status == "open")
-    )
-    shift = result.scalar_one_or_none()
-    if not shift:
-        return None
-    await db.execute(
-        update(Shifts)
-        .where(Shifts.id == shift.id)
-        .values(
-            total_sales=(shift.total_sales or 0) + amount,
-            total_transactions=(shift.total_transactions or 0) + 1,
-        )
-    )
-    return shift.id
-
-
 # ---------- Helper: Saudi-real tender capture (PAY-01/05) ----------
-async def _capture_tenders(specs: List[dict]) -> List[dict]:
-    """Capture each tender via the active gateway, returning persistable rows.
-
-    For a card-like tender (card/mada/applepay/stcpay/tabby/tamara) the gateway is
-    asked for a real approval; a decline (or an unconfigured real gateway) raises
-    ``HTTPException(402)``. Because the caller is mid-transaction and has not
-    committed, that raise rolls the whole sale back — a declined card never leaves
-    a persisted sale (F-001). Cash/transfer/loyalty settle internally and are
-    recorded without a gateway round-trip.
-
-    Each spec is ``{tender_type|method, amount, token, simulate, _gateway?}``. A
-    spec may carry a pre-resolved ``_gateway`` (an in-store SoftPOS terminal — set
-    by :func:`_attach_terminal_gateways`); otherwise the active online/sandbox
-    gateway captures it.
-    """
-    default_gateway = get_gateway()
-    captured: List[dict] = []
-    for spec in specs:
-        gateway = spec.get("_gateway") or default_gateway
-        ttype = normalize_tender_type(spec.get("tender_type") or spec.get("method"))
-        amount = round(float(spec.get("amount") or 0), 2)
-        # Gift-card legs settle against the card balance (a DB side effect), not a
-        # gateway — they are validated + decremented by ``_redeem_gift_cards`` which
-        # has the db session and owner scope. Skip them here to avoid a duplicate row.
-        if ttype == "giftcard":
-            continue
-        row = {
-            "tender_type": ttype,
-            "amount": amount,
-            "gateway": None,
-            "status": "captured",
-            "network": None,
-            "approval_code": None,
-            "rrn": None,
-            "gateway_ref": None,
-            "last4": None,
-            "token": None,
-            "decline_reason": None,
-        }
-        if requires_capture(ttype) and amount > 0:
-            try:
-                result = await gateway.charge(
-                    amount,
-                    ttype,
-                    token=spec.get("token"),
-                    simulate=spec.get("simulate"),
-                )
-            except GatewayNotConfigured as exc:
-                logger.warning("Tender capture not configured for %s: %s", ttype, exc)
-                raise HTTPException(status_code=402, detail=f"Payment not captured: {exc}")
-            except PaymentDeclined as exc:
-                logger.info("Tender %s declined by %s: %s", ttype, exc.gateway, exc.reason)
-                raise HTTPException(status_code=402, detail=f"Payment declined: {exc.reason}")
-            if not result.approved:
-                raise HTTPException(
-                    status_code=402,
-                    detail=f"Payment declined for {ttype}: {result.decline_reason or 'declined'}",
-                )
-            row.update(
-                gateway=result.gateway,
-                network=result.network,
-                approval_code=result.approval_code,
-                rrn=result.rrn,
-                gateway_ref=result.gateway_ref,
-                last4=result.last4,
-                token=result.token,
-            )
-        captured.append(row)
-    return captured
-
-
+# The atomic-sale helpers (_deduct_inventory, _apply_sale_to_open_shift,
+# _capture_tenders, _redeem_gift_cards, _attach_terminal_gateways, _persist_tenders)
+# now live in ``services.sale_core`` and are imported above under these names so the
+# offline-sync and refund paths below are unchanged. Only the request-shaped
+# ``_build_tender_specs`` (it reads a CreateTransactionRequest) stays here.
 def _build_tender_specs(data: "CreateTransactionRequest", total_amount: float) -> List[dict]:
     """Derive the per-tender capture specs from a sale request (split or single)."""
     if data.payments:
@@ -437,120 +293,6 @@ def _build_tender_specs(data: "CreateTransactionRequest", total_amount: float) -
             "gift_card_code": data.payment_gift_card_code,
         }
     ]
-
-
-async def _redeem_gift_cards(
-    db: AsyncSession, user_id: str, client_id: int, specs: List[dict]
-) -> List[dict]:
-    """Redeem every gift-card tender leg against its card balance (PRC-05, F-038).
-
-    For each spec whose tender is a gift card, the bearer code is validated
-    (exists in the caller's scope, active, unexpired, enough balance) and the
-    card's balance is **atomically decremented** in the caller's transaction — so a
-    later card decline (or any failure) rolls the decrement back with the sale, and
-    concurrent sales cannot overdraw a card. An invalid/insufficient card raises
-    ``HTTPException(400)`` *before* any card is charged (this runs ahead of the
-    gateway capture), so the sale fails closed with nothing committed.
-
-    Returns the persistable ``giftcard`` tender rows (linked to the sale by the
-    caller). The row carries ``gateway="giftcard"``, a ``giftcard:<id>`` reference
-    (for a future refund-to-card), and the code's last 4 — never the full code.
-    """
-    service = GiftCardsService(db)
-    rows: List[dict] = []
-    for spec in specs:
-        ttype = normalize_tender_type(spec.get("tender_type") or spec.get("method"))
-        if ttype != "giftcard":
-            continue
-        amount = round(float(spec.get("amount") or 0), 2)
-        if amount <= 0:
-            continue
-        code = (spec.get("gift_card_code") or "").strip()
-        if not code:
-            raise HTTPException(
-                status_code=400, detail="A gift card code is required for a gift-card tender"
-            )
-        try:
-            card = await service.validate(code, amount, user_id=user_id)
-        except GiftCardError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        if not await service.redeem(card.id, amount, user_id=user_id):
-            # Lost the balance race between validate and redeem — treat as exhausted.
-            raise HTTPException(
-                status_code=400, detail="This gift card has insufficient balance"
-            )
-        rows.append(
-            {
-                "tender_type": "giftcard",
-                "amount": amount,
-                "gateway": "giftcard",
-                "status": "captured",
-                "network": None,
-                "approval_code": None,
-                "rrn": None,
-                "gateway_ref": f"giftcard:{card.id}",
-                "last4": (card.code or "")[-4:],
-                "token": None,
-                "decline_reason": None,
-            }
-        )
-    return rows
-
-
-async def _attach_terminal_gateways(
-    db: AsyncSession, user_id: str, specs: List[dict]
-) -> None:
-    """Resolve an in-store SoftPOS terminal for any spec that names one (HW-03/F-005).
-
-    For each spec carrying a ``terminal_id``, verify the terminal belongs to the
-    caller (SEC-02) and is active, then attach its provider's gateway as
-    ``spec["_gateway"]`` so :func:`_capture_tenders` pushes that leg to the paired
-    terminal for a real approval. A card leg with no terminal still routes to the
-    active online/sandbox gateway. An unknown/foreign/inactive terminal is a 400 so
-    the sale fails closed rather than silently falling back to the online gateway.
-    """
-    for spec in specs:
-        terminal_id = spec.get("terminal_id")
-        if not terminal_id:
-            continue
-        terminal = (
-            await db.execute(
-                select(Terminals).where(
-                    Terminals.id == terminal_id,
-                    Terminals.user_id == user_id,
-                )
-            )
-        ).scalar_one_or_none()
-        if terminal is None:
-            raise HTTPException(status_code=400, detail=f"Terminal {terminal_id} not found")
-        if (terminal.status or "active") != "active":
-            raise HTTPException(status_code=400, detail=f"Terminal {terminal_id} is not active")
-        spec["_gateway"] = get_terminal_gateway(terminal.provider)
-
-
-def _persist_tenders(
-    db: AsyncSession, user_id: str, client_id: int, txn_id: int, captured: List[dict]
-) -> None:
-    """Write the captured tender rows for a sale (links them to the transaction)."""
-    for row in captured:
-        db.add(
-            PaymentTenders(
-                user_id=user_id,
-                client_id=client_id,
-                transaction_id=txn_id,
-                tender_type=row["tender_type"],
-                amount=row["amount"],
-                network=row["network"],
-                approval_code=row["approval_code"],
-                rrn=row["rrn"],
-                gateway_ref=row["gateway_ref"],
-                last4=row["last4"],
-                token=row["token"],
-                gateway=row["gateway"],
-                status=row["status"],
-                decline_reason=row["decline_reason"],
-            )
-        )
 
 
 # ---------- Helper: Saudi-real refund-to-origin (PAY-10, F-004) ----------
@@ -888,54 +630,12 @@ async def create_transaction(
         methods = [p.method for p in data.payments]
         payment_method = "mixed" if len(set(methods)) > 1 else methods[0]
 
-    # ---- Saudi-real tender capture (PAY-01/05) ----
-    # Push every card-like tender to the gateway for a real approval BEFORE the
-    # invoice counter is consumed or any row is written. A decline raises 402 here
-    # and, since nothing has committed, the whole sale rolls back — a "Mada"/card
-    # sale can no longer complete without proof it was charged (F-001). Cash and
-    # internal tenders pass through with no gateway round-trip. A leg may name an
-    # in-store SoftPOS terminal (HW-03/F-005) — resolved here to the paired device
-    # so the customer taps and the approval is captured before any row is written.
-    # The tenders must capture the full amount due (invoice total + tip, F-012).
-    tender_specs = _build_tender_specs(data, charge_total)
-    await _attach_terminal_gateways(db, str(current_user.id), tender_specs)
-    # Gift-card legs (PRC-05/F-038) are validated + atomically decremented FIRST,
-    # before any card is charged — so an invalid/insufficient card fails the sale
-    # before money moves, and a later card decline rolls the decrement back with the
-    # uncommitted sale. They settle internally (no gateway round-trip).
-    giftcard_tenders = await _redeem_gift_cards(
-        db, str(current_user.id), client.id, tender_specs
-    )
-    captured_tenders = await _capture_tenders(tender_specs)
-    captured_tenders.extend(giftcard_tenders)
-
-    # Increment invoice counter
-    current_counter = (client.invoice_counter or 0) + 1
-    await db.execute(
-        update(Clients)
-        .where(Clients.id == client.id)
-        .values(invoice_counter=current_counter)
-    )
-
-    # Generate invoice number
-    invoice_number = f"INV-{client.id:04d}-{current_counter:06d}"
-
-    # Generate timestamp
-    now = datetime.now(timezone.utc)
-    timestamp_iso = now.isoformat()
-
-    # Serialize items
-    items_json = json.dumps(
-        [item.model_dump() for item in data.items],
-        ensure_ascii=False,
-    )
-
     # ---- Buyer VAT capture (F-018 / ZA-06) ----
     # A VAT-registered buyer makes this a B2B supply. Prefer the explicit request
     # value (ad-hoc business walk-in); otherwise fall back to the saved customer's
     # VAT number (trusted record, scoped to this user). The captured number is
     # stamped onto the transaction so the invoice buyer block and the
-    # clearance/reporting routing are driven by it (see sign_transaction below).
+    # clearance/reporting routing are driven by it (see sign_transaction).
     buyer_vat = (data.customer_vat_number or "").strip() or None
     if not buyer_vat and data.customer_id:
         cust = (
@@ -949,114 +649,48 @@ async def create_transaction(
         if cust and (cust.vat_number or "").strip():
             buyer_vat = cust.vat_number.strip()
 
-    # Create transaction record. The fiscal QR/hash are populated by signing
-    # below (C-3) — never with the old unsigned Phase-1 TLV.
-    transaction = Transactions(
-        user_id=str(current_user.id),
-        client_id=client.id,
-        invoice_number=invoice_number,
-        subtotal=subtotal,
-        vat_amount=vat_amount,
-        discount_amount=discount_amount,
-        total_amount=total_amount,
-        tip_amount=tip_amount,
-        payment_method=payment_method,
-        payment_breakdown=payment_breakdown_json,
-        status="completed",
-        items_json=items_json,
-        customer_name=data.customer_name,
-        customer_phone=data.customer_phone,
-        customer_vat_number=buyer_vat,
-        branch_id=data.branch_id,
-    )
-    db.add(transaction)
-
-    # ---- Atomic inventory deduction (same transaction as the sale) ----
-    # The sale, the invoice-counter increment, and every stock decrement are
-    # committed together. If stock is insufficient (and overselling isn't
-    # allowed) we raise before commit, so nothing is persisted and the counter
-    # is not consumed — fixing the previous fire-and-forget deduction gap.
-    #
-    # Multi-branch (Phase 6): when the sale is tagged with a branch_id, deduct
-    # from that branch's stock ledger so a sale in branch A never touches branch
-    # B's stock. Otherwise fall back to client-level product quantity.
-    #
-    # INV-04 (F-033): variant lines decrement their *own* (client-level) variant
-    # stock independently of sibling variants, so they are routed to the variant
-    # ledger here and excluded from the product/branch deduction below.
-    variant_items = [it for it in data.items if it.variant_id]
-    product_items = [it for it in data.items if not it.variant_id]
-    if variant_items:
-        from services.product_variants import deduct_variant_inventory
-
-        await deduct_variant_inventory(
-            db, client.id, variant_items, bool(data.allow_negative_stock)
-        )
-    if data.branch_id:
-        from services.branch_stock import deduct_branch_inventory
-
-        await deduct_branch_inventory(
-            db,
-            str(current_user.id),
-            client.id,
-            int(data.branch_id),
-            product_items,
-            bool(data.allow_negative_stock),
-        )
-    else:
-        await _deduct_inventory(db, client.id, product_items, bool(data.allow_negative_stock))
-
-    # ---- Loyalty accrual (Phase E) ----
-    # Earn points for the identified customer on the final total, in the same
-    # transaction as the sale. Runs after any redemption so the returned balance
-    # reflects both movements.
-    loyalty_points_earned = 0
-    if data.customer_id and program:
-        accrual = await loyalty_service.accrue_points(
-            db,
+    # ---- The one fiscal sale path (sale-core extraction, slice 06) ----
+    # Hand the normalized cart to services.sale_core.execute_sale, which performs
+    # the full atomic sequence — tender capture (PAY-01/05; a card-like leg may
+    # name an in-store SoftPOS terminal, HW-03/F-005, and gift-card legs are
+    # validated + decremented first, PRC-05/F-038) → invoice counter → inventory
+    # deduction (variant/branch/client) → loyalty accrual → shift accumulation →
+    # ECDSA sign / hash-chain / archive (ZA-06/ZA-09) — committed together. A
+    # decline, short stock or signing failure raises before commit so nothing is
+    # persisted (F-001 / POS atomicity). The same core mints the restaurant settle
+    # invoice (F-059) and aggregator-ingest sale (F-060). The tenders must capture
+    # the full amount due (invoice total + tip, F-012).
+    result = await execute_sale(
+        db,
+        NormalizedCart(
             user_id=str(current_user.id),
-            client_id=client.id,
-            customer_id=data.customer_id,
+            client=client,
+            lines=data.items,
+            subtotal=subtotal,
+            discount_amount=discount_amount,
+            vat_rate=vat_rate,
+            vat_amount=vat_amount,
             total_amount=total_amount,
-            program=program,
-        )
-        if accrual:
-            loyalty_points_earned = accrual.points_earned
-            loyalty_balance = accrual.new_balance
-
-    # ---- Shift accumulation (POS shifts) ----
-    # Roll this sale into the cashier's open shift so close_shift reconciles cash
-    # against real sales. Linked via shift_id; committed atomically with the sale.
-    transaction.shift_id = await _apply_sale_to_open_shift(
-        db, str(current_user.id), total_amount
+            tender_specs=_build_tender_specs(data, charge_total),
+            payment_method=payment_method,
+            payment_breakdown_json=payment_breakdown_json,
+            tip_amount=tip_amount,
+            customer_name=data.customer_name,
+            customer_phone=data.customer_phone,
+            buyer_vat=buyer_vat,
+            branch_id=data.branch_id,
+            allow_negative_stock=bool(data.allow_negative_stock),
+            loyalty_customer_id=data.customer_id,
+            loyalty_program=program,
+            loyalty_balance=loyalty_balance,
+        ),
     )
-
-    # ---- ZATCA signing on the real sale path (C-3) ----
-    # Hash + ECDSA-stamp + hash-chain + archive the invoice inside this same
-    # transaction. A signing failure raises and rolls the sale back, so a
-    # completed sale is never silently left unsigned.
-    await db.flush()  # assign transaction.id before signing
-    # Persist the captured tenders against the now-known transaction id. These
-    # carry the real network/approval/RRN proof for card-like tenders (PAY-01).
-    _persist_tenders(db, str(current_user.id), client.id, transaction.id, captured_tenders)
-    # ZA-09: honor the per-client zatca_enabled opt-out. With ZATCA on (the Saudi
-    # default) the invoice is hashed/ECDSA-stamped/chained/archived inside this
-    # same transaction; with it off the sale completes as a simplified non-tax
-    # receipt — no stamp/QR, no zatca_documents row, nothing reported to Fatoora.
-    # ZA-06: a VAT-registered buyer on the transaction routes the invoice to B2B
-    # clearance; the captured buyer VAT (F-018) is rendered into the UBL buyer block.
-    if zatca_sale.is_zatca_enabled(client):
-        doc, stamped_qr = await zatca_sale.sign_transaction(
-            db, client, transaction,
-            buyer_vat=transaction.customer_vat_number,
-        )
-        document_id = doc.id
-    else:
-        stamped_qr = None
-        document_id = None
-
-    await db.commit()
-    await db.refresh(transaction)
+    transaction = result.transaction
+    captured_tenders = result.captured_tenders
+    document_id = result.document_id
+    stamped_qr = result.stamped_qr
+    loyalty_points_earned = result.loyalty_points_earned
+    loyalty_balance = result.loyalty_balance
 
     # Queue Fatoora reporting out-of-band (C-3): fails closed to "pending" when
     # the gateway/onboarding isn't configured; never blocks the committed sale.
