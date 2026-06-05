@@ -45,6 +45,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Windows consoles default to cp1252; Claude's output contains Arabic, arrows
+# (→) and box-drawing. Force UTF-8 so printing captured output can't crash.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 COMPLETE_SENTINEL = "<promise>COMPLETE</promise>"
 
 PRD_STUB = """# PRD
