@@ -165,7 +165,16 @@ def build_command(
 def run_iteration(cmd: list[str], *, capture: bool) -> str:
     """Run one Claude invocation. Returns captured stdout (or '' if streaming)."""
     if capture:
-        proc = subprocess.run(cmd, text=True, capture_output=True)
+        # Decode as UTF-8 (not the Windows cp1252 default) so Arabic / box-drawing
+        # / emoji in Claude's output don't crash the reader thread. stdin=DEVNULL
+        # stops `claude -p` from waiting on stdin it will never receive.
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            encoding="utf-8",
+            errors="replace",
+        )
         out = proc.stdout or ""
         if out:
             print(out)
