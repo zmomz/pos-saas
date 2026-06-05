@@ -58,3 +58,23 @@
   test_takeaway_order_needs_no_table / test_order_type_drives_print_routing).
   Full backend suite 362 passed; frontend lint+tsc+build green.
   Commit: 3c4256a
+2026-06-05 · 04 / F-061 — Service charge outside the VAT base. Backend: new
+  OrderTickets.service_charge_pct column (an optional %, like a tip it lives
+  OUTSIDE the VAT base). RestaurantService gained set_service_charge (validates
+  non-negative + open ticket) and compute_check — the normalized cart the settle
+  path (F-059) will mint a ZATCA invoice from: goods subtotal is the ONLY taxable
+  base, VAT is charged on goods only, the service charge is a % of the pre-VAT
+  subtotal added as its own non-taxable line, and amount_due = invoice total
+  (goods+VAT) + service charge + tip. Routes: PUT
+  /api/v1/restaurant/order-tickets/{id}/service-charge and GET
+  /order-tickets/{id}/check?tip_amount= — owner-scoped behind the restaurant
+  double-gate; service_charge_pct added to OrderTicketResponse. Frontend:
+  OrderTicket.tsx gained a service-charge dialog (% control) and a full check
+  breakdown card (subtotal / VAT / total / service-charge line marked
+  "outside VAT" / amount due); setServiceCharge + getTicketCheck typed api.ts
+  wrappers + TicketCheck type; i18n ×4 (service_charge=رسوم خدمة, service_charge_pct,
+  service_charge_desc, outside_vat, apply) with RTL. Tests:
+  test_phase5_rst_service_charge.py (7 incl. named
+  test_service_charge_excluded_from_vat_base_and_shown_on_invoice). Full backend
+  suite 369 passed; frontend lint+tsc+build green.
+  Commit: (pending)

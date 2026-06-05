@@ -25,6 +25,8 @@ import {
   getProductModifierGroups,
   getCombos,
   getPrintRouting,
+  getTicketCheck,
+  setServiceCharge,
   type OrderTicket as OrderTicketT,
   type TicketItem,
   type RestaurantTable,
@@ -32,6 +34,7 @@ import {
   type ProductModifierGroup,
   type Combo,
   type PrintRouting,
+  type TicketCheck,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import {
@@ -47,6 +50,7 @@ import {
   Lock,
   ArrowLeft,
   Printer,
+  Percent,
 } from 'lucide-react';
 
 const COURSES = ['starters', 'mains', 'dessert', 'drinks'];
@@ -112,6 +116,11 @@ export default function OrderTicket() {
   const [mergeOpen, setMergeOpen] = useState(false);
   const [split, setSplit] = useState<SplitResult | null>(null);
 
+  // Service charge (F-061) — % applied outside the VAT base, shown on the check.
+  const [check, setCheck] = useState<TicketCheck | null>(null);
+  const [scOpen, setScOpen] = useState(false);
+  const [scPct, setScPct] = useState(0);
+
   // Connectivity badge (UX-02 offline state).
   useEffect(() => {
     const on = () => setOnline(true);
@@ -129,7 +138,7 @@ export default function OrderTicket() {
     setError(false);
     setDenied(false);
     try {
-      const [tk, it, prods, tbls, tks, cmb, rt] = await Promise.all([
+      const [tk, it, prods, tbls, tks, cmb, rt, ck] = await Promise.all([
         getOrderTicket(ticketId),
         getTicketItems(ticketId),
         getProducts(),
@@ -137,6 +146,7 @@ export default function OrderTicket() {
         getOrderTickets({ status: 'open' }),
         getCombos().catch(() => [] as Combo[]),
         getPrintRouting(ticketId).catch(() => null),
+        getTicketCheck(ticketId).catch(() => null),
       ]);
       setTicket(tk);
       setItems(Array.isArray(it?.items) ? it.items : []);
@@ -145,6 +155,8 @@ export default function OrderTicket() {
       setTables(Array.isArray(tbls?.items) ? tbls.items : []);
       setOtherTickets((Array.isArray(tks?.items) ? tks.items : []).filter((o) => o.id !== ticketId));
       setRouting(rt);
+      setCheck(ck);
+      setScPct(tk?.service_charge_pct ?? 0);
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       if (status === 403) {
@@ -284,6 +296,19 @@ export default function OrderTicket() {
       setSplit(res);
     } catch (err) {
       console.error('Failed to split bill:', err);
+    }
+  }
+
+  async function handleSetServiceCharge() {
+    setSubmitting(true);
+    try {
+      await setServiceCharge(ticketId, scPct || 0);
+      setScOpen(false);
+      await load();
+    } catch (err) {
+      console.error('Failed to set service charge:', err);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -474,12 +499,58 @@ export default function OrderTicket() {
         </div>
       )}
 
-      {/* Total + split */}
+      {/* Check breakdown — VAT on goods only, service charge outside the VAT base (F-061) */}
+      <Card className="bg-slate-800 border-slate-700">
+        <CardContent className="p-4 space-y-2">
+          {check ? (
+            <div className="space-y-1.5 text-sm">
+              <div className="flex items-center justify-between text-slate-300">
+                <span>{t('subtotal')}</span>
+                <span>{check.subtotal.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <span>{t('vat')}</span>
+                <span>{check.vat_amount.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-slate-700 pt-1.5 text-slate-200">
+                <span>{t('total')}</span>
+                <span>{check.total_amount.toFixed(2)}</span>
+              </div>
+              {/* The service charge is its own line, OUTSIDE the VAT base. */}
+              <div className="flex items-center justify-between text-slate-300">
+                <span className="flex items-center gap-1">
+                  {t('service_charge')}
+                  {check.service_charge.pct > 0 && (
+                    <span className="text-xs text-slate-500">({check.service_charge.pct}%)</span>
+                  )}
+                  <Badge className="bg-slate-700 text-slate-400 text-[10px]">{t('outside_vat')}</Badge>
+                </span>
+                <span>{check.service_charge.amount.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-slate-700 pt-1.5 text-white font-semibold">
+                <span>{t('amount_due')}</span>
+                <span>{check.amount_due.toFixed(2)}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-white font-semibold">
+              {t('total')}: {grandTotal.toFixed(2)}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Split + service charge actions */}
       <Card className="bg-slate-800 border-slate-700">
         <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="text-white font-semibold">
-            {t('total')}: {grandTotal.toFixed(2)}
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setScOpen(true)}
+            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          >
+            <Percent className="h-4 w-4 mr-1" /> {t('service_charge')}
+          </Button>
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
@@ -703,6 +774,35 @@ export default function OrderTicket() {
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Service-charge dialog (F-061) */}
+      <Dialog open={scOpen} onOpenChange={setScOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-white">{t('service_charge')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-400">{t('service_charge_desc')}</p>
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('service_charge_pct')}</label>
+              <Input
+                type="number"
+                min={0}
+                value={scPct}
+                onChange={(e) => setScPct(parseFloat(e.target.value) || 0)}
+                className="bg-slate-700 border-slate-600 text-white"
+              />
+            </div>
+            <Button
+              onClick={handleSetServiceCharge}
+              disabled={submitting}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {submitting ? t('loading') : t('apply')}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 

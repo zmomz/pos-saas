@@ -678,6 +678,99 @@ class RestaurantService:
 
         return {"ticket_id": ticket_id, "strategy": strategy, "total": total, "shares": shares}
 
+    # ----------------------------------------------------- service charge (F-061)
+    async def set_service_charge(
+        self, ticket_id: int, pct: float, user_id: str
+    ) -> Optional[OrderTickets]:
+        """Apply (or clear) an optional service-charge % on a ticket (F-061).
+
+        The percentage lives on the ticket; it resolves to a separate, non-taxable
+        line at check/settle time (``compute_check``). Raises ``ValueError`` for a
+        negative percentage or a settled/void ticket. Returns ``None`` if the
+        ticket isn't found (caller maps to 404).
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        if (ticket.status or "open") in CLOSED_TICKET_STATUSES:
+            raise ValueError("Cannot change the service charge on a settled or voided ticket")
+        pct = float(pct or 0)
+        if pct < 0:
+            raise ValueError("Service charge percentage cannot be negative")
+        try:
+            ticket.service_charge_pct = round(pct, 4)
+            await self.db.commit()
+            await self.db.refresh(ticket)
+            logger.info(f"Set service charge {pct}% on ticket {ticket_id}")
+            return ticket
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error setting service charge on ticket {ticket_id}: {str(e)}")
+            raise
+
+    async def compute_check(
+        self, ticket_id: int, user_id: str, vat_rate: float, tip_amount: float = 0.0
+    ) -> Optional[Dict[str, Any]]:
+        """Compute a ticket's bill — the normalized cart the settle path consumes (F-061).
+
+        The goods (the ticket's line totals, modifiers already folded in) are the
+        ONLY taxable base: VAT is charged on the goods, never on the service charge
+        or the tip. The service charge is a percentage of the pre-VAT goods subtotal
+        and is added as its own non-taxable line **outside the VAT base** — exactly
+        like a tip (POS-13/F-012). ``amount_due`` is what the tenders must cover:
+        invoice total (goods + VAT) + service charge + tip.
+
+        Returns ``None`` if the ticket isn't found; raises ``ValueError`` on a
+        negative tip.
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        tip = round(float(tip_amount or 0), 2)
+        if tip < 0:
+            raise ValueError("tip_amount cannot be negative")
+
+        items = await self.list_items(ticket_id, user_id)
+        # Goods subtotal = the taxable base (modifier/combo pricing already folded
+        # into each line_total). Voided lines never reach here — they are deleted.
+        subtotal = round(sum(float(i.line_total or 0) for i in items), 2)
+        vat_amount = round(subtotal * (vat_rate / 100), 2)
+        total_amount = round(subtotal + vat_amount, 2)
+
+        # Service charge: a % of the pre-VAT goods subtotal, OUTSIDE the VAT base.
+        sc_pct = round(float(ticket.service_charge_pct or 0), 4)
+        service_charge_amount = round(subtotal * (sc_pct / 100), 2)
+
+        amount_due = round(total_amount + service_charge_amount + tip, 2)
+
+        return {
+            "ticket_id": ticket_id,
+            "lines": [
+                {
+                    "item_id": i.id,
+                    "name": i.name,
+                    "qty": float(i.qty or 0),
+                    "unit_price": float(i.unit_price or 0),
+                    "line_total": float(i.line_total or 0),
+                    "course": i.course,
+                    "taxable": True,
+                }
+                for i in items
+            ],
+            "subtotal": subtotal,
+            "vat_rate": round(float(vat_rate), 4),
+            "vat_amount": vat_amount,
+            "total_amount": total_amount,
+            # The service charge as its own non-taxable line (outside the VAT base).
+            "service_charge": {
+                "pct": sc_pct,
+                "amount": service_charge_amount,
+                "taxable": False,
+            },
+            "tip_amount": tip,
+            "amount_due": amount_due,
+        }
+
     async def all_day_fired_count(self, user_id: str) -> Dict[str, Any]:
         """All-day count of fired items the caller owns (RST-02).
 

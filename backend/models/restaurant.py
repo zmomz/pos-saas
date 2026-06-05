@@ -82,6 +82,11 @@ class OrderTickets(Base):
     order_type = Column(String, nullable=True, default="dine_in", server_default="dine_in")
     # open / held / fired / settled / void
     status = Column(String, nullable=True, default="open", server_default="open")
+    # Optional service-charge percentage applied to the bill (F-061). It is
+    # computed OUTSIDE the VAT base — exactly like a tip (POS-13/F-012) — so it
+    # never changes the taxable amount or VAT; at settle it resolves to a separate
+    # non-taxable line the tenders must also cover. Null/0 = no service charge.
+    service_charge_pct = Column(Float, nullable=True, default=0, server_default="0")
     # Serialized JSON map of course -> fire state (e.g. {"starters": "fired"}).
     # Only fired courses are recorded; absent courses are still held (RST-02). A
     # held course can be fired later — the all-day view reads from this + items.

@@ -1747,6 +1747,7 @@ export interface OrderTicket {
   customer_name?: string | null;
   party_size?: number | null;
   notes?: string | null;
+  service_charge_pct?: number | null; // optional service charge %, outside VAT (F-061)
 }
 
 export async function getFloorZones(): Promise<FloorZone[]> {
@@ -1957,6 +1958,54 @@ export async function splitTicket(
     url: `/api/v1/restaurant/order-tickets/${ticketId}/split`,
     method: 'POST',
     data: { strategy, n_ways: nWays },
+  });
+  return res.data;
+}
+
+// ---------- Service charge + check (F-061) ----------
+// An optional service-charge % lives on the ticket; the check resolves it to a
+// separate non-taxable line OUTSIDE the VAT base (mirrors tips). amount_due is
+// what the tenders must cover: invoice total + service charge + tip.
+export interface TicketCheck {
+  ticket_id: number;
+  lines: {
+    item_id: number;
+    name?: string | null;
+    qty: number;
+    unit_price: number;
+    line_total: number;
+    course?: string | null;
+    taxable: boolean;
+  }[];
+  subtotal: number;
+  vat_rate: number;
+  vat_amount: number;
+  total_amount: number;
+  service_charge: { pct: number; amount: number; taxable: boolean };
+  tip_amount: number;
+  amount_due: number;
+}
+
+export async function setServiceCharge(
+  ticketId: number,
+  serviceChargePct: number
+): Promise<OrderTicket> {
+  const res = await client.apiCall.invoke<OrderTicket>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/service-charge`,
+    method: 'PUT',
+    data: { service_charge_pct: serviceChargePct },
+  });
+  return res.data;
+}
+
+export async function getTicketCheck(
+  ticketId: number,
+  tipAmount = 0
+): Promise<TicketCheck> {
+  const res = await client.apiCall.invoke<TicketCheck>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/check`,
+    method: 'GET',
+    data: { tip_amount: tipAmount },
   });
   return res.data;
 }

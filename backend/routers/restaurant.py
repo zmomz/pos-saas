@@ -32,6 +32,7 @@ from services.restaurant import (
     TABLE_STATES,
     RestaurantService,
 )
+from services.system_settings import get_effective_tax_rate
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,8 @@ class OrderTicketResponse(BaseModel):
     customer_name: Optional[str] = None
     party_size: Optional[int] = None
     notes: Optional[str] = None
+    # Optional service-charge % applied to the bill, outside the VAT base (F-061).
+    service_charge_pct: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -239,6 +242,12 @@ class MergeRequest(BaseModel):
 class SplitRequest(BaseModel):
     strategy: str
     n_ways: Optional[int] = None
+
+
+class ServiceChargeRequest(BaseModel):
+    """Apply (or clear) an optional service-charge % on a ticket (F-061)."""
+
+    service_charge_pct: float = 0
 
 
 # ---------- Modifier group / modifier / combo schemas (F-056) ----------
@@ -726,6 +735,54 @@ async def split_ticket(
     try:
         result = await service.split_ticket(
             ticket_id, data.strategy, user_id=client.user_id, n_ways=data.n_ways
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if result is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return result
+
+
+# ---------- Service charge + check (F-061) ----------
+@router.put("/order-tickets/{ticket_id}/service-charge", response_model=OrderTicketResponse)
+async def set_service_charge(
+    ticket_id: int,
+    data: ServiceChargeRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply an optional service-charge % to a ticket, outside the VAT base (F-061)."""
+    service = RestaurantService(db)
+    try:
+        ticket = await service.set_service_charge(
+            ticket_id, data.service_charge_pct, user_id=client.user_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return ticket
+
+
+@router.get("/order-tickets/{ticket_id}/check")
+async def get_ticket_check(
+    ticket_id: int,
+    tip_amount: float = Query(0, ge=0),
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute a ticket's bill — VAT on goods only, service charge + tip outside it (F-061).
+
+    Returns the normalized cart the settle path consumes: goods subtotal, VAT,
+    invoice total, the service charge as its own non-taxable line, the tip, and the
+    ``amount_due`` the tenders must cover (total + service charge + tip).
+    """
+    service = RestaurantService(db)
+    # MA-05: the master's global VAT rate is authoritative (same as the POS path).
+    vat_rate = await get_effective_tax_rate(db, 15.0)
+    try:
+        result = await service.compute_check(
+            ticket_id, user_id=client.user_id, vat_rate=vat_rate, tip_amount=tip_amount
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

@@ -35,7 +35,7 @@ Rewaa / Marn, localized for Saudi.
 - [x] **01 · F-055 — Order-ticket line items** (add/qty/course/seat/note/void, fire, transfer, merge, split; ticket lifecycle) → `.scratch/restaurant-vertical/01-F055-order-ticket-line-items.md` · Blocked by: none
 - [x] **02 · F-056 — Modifiers, modifier groups & combos** → `.scratch/restaurant-vertical/02-F056-modifiers-and-combos.md` · Blocked by: 01
 - [x] **03 · F-058 — Order types drive behavior** (tableless takeaway/delivery, print routing) → `.scratch/restaurant-vertical/03-F058-order-types.md` · Blocked by: 01
-- [ ] **04 · F-061 — Service charge outside the VAT base** → `.scratch/restaurant-vertical/04-F061-service-charge.md` · Blocked by: 01
+- [x] **04 · F-061 — Service charge outside the VAT base** → `.scratch/restaurant-vertical/04-F061-service-charge.md` · Blocked by: 01
 - [ ] **05 · F-062 — Composite / recipe BOM depletion** → `.scratch/restaurant-vertical/05-F062-bom-depletion.md` · Blocked by: 01
 - [ ] **06 · Sale-core extraction** (one fiscal sale path; behavior-preserving refactor) → `.scratch/restaurant-vertical/06-sale-core-extraction.md` · Blocked by: 04, 05
 - [ ] **07 · F-059 — Check + settle-to-ZATCA** → `.scratch/restaurant-vertical/07-F059-check-and-settle.md` · Blocked by: 01, 04, 05, 06
