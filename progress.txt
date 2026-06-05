@@ -77,4 +77,4 @@
   test_phase5_rst_service_charge.py (7 incl. named
   test_service_charge_excluded_from_vat_base_and_shown_on_invoice). Full backend
   suite 369 passed; frontend lint+tsc+build green.
-  Commit: (pending)
+  Commit: 2f95a69
