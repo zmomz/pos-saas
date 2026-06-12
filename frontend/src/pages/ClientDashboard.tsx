@@ -3,11 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { client, getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
-import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
-import { useTheme } from '@/contexts/ThemeContext';
+import StatCard from '@/components/dashboard/StatCard';
+import { PageHeader, SectionHeading } from '@/components/dashboard/PageHeader';
 import { DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag, BarChart3, Users, Download, AlertTriangle } from 'lucide-react';
 
 interface DashboardStats {
@@ -34,8 +34,7 @@ export default function ClientDashboard() {
   const [paying, setPaying] = useState(false);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
-  const { t, language, setLanguage } = useLanguage();
-  const { isDark } = useTheme();
+  const { t, language } = useLanguage();
 
   useEffect(() => {
     loadData();
@@ -51,7 +50,7 @@ export default function ClientDashboard() {
       ]);
       setStats(dashData);
       setBrandName(brandData?.company_name || '');
-      setTransactions(txData?.transactions || txData || []);
+      setTransactions(Array.isArray(txData) ? txData : (txData?.items || txData?.transactions || []));
       setSubscription(subData);
     } catch (err) {
       console.error('Failed to load:', err);
@@ -80,95 +79,44 @@ export default function ClientDashboard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className={`animate-pulse ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('loading')}</div>
+        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Enhanced Stats Cards */}
+    <div className="space-y-6 animate-fade-up">
+      <PageHeader
+        title={brandName || t('dashboard')}
+        subtitle={t('recent_transactions')}
+        actions={
+          <Button onClick={() => navigate('/pos')} className="shadow-brand">
+            <Monitor className="h-4 w-4" />
+            {t('go_to_pos') || 'Open POS'}
+          </Button>
+        }
+      />
+
+      {/* Stats Cards */}
       <div data-tour="stats-section" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className={`${isDark ? 'bg-gradient-to-br from-green-900/40 to-slate-800 border-green-700/40' : 'bg-gradient-to-br from-green-50 to-white border-green-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-green-600/20' : 'bg-green-100'}`}>
-              <DollarSign className={`h-6 w-6 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-green-300' : 'text-green-600'}`}>{t('today_sales')}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats?.today_sales || 0, language)}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-blue-900/40 to-slate-800 border-blue-700/40' : 'bg-gradient-to-br from-blue-50 to-white border-blue-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-blue-600/20' : 'bg-blue-100'}`}>
-              <ShoppingCart className={`h-6 w-6 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-blue-300' : 'text-blue-600'}`}>{t('total_transactions')}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{stats?.total_transactions || 0}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-purple-900/40 to-slate-800 border-purple-700/40' : 'bg-gradient-to-br from-purple-50 to-white border-purple-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-purple-600/20' : 'bg-purple-100'}`}>
-              <TrendingUp className={`h-6 w-6 ${isDark ? 'text-purple-400' : 'text-purple-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-purple-300' : 'text-purple-600'}`}>{t('total_sales')}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(stats?.total_sales || 0, language)}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-amber-900/40 to-slate-800 border-amber-700/40' : 'bg-gradient-to-br from-amber-50 to-white border-amber-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-amber-600/20' : 'bg-amber-100'}`}>
-              <PackageIcon className={`h-6 w-6 ${isDark ? 'text-amber-400' : 'text-amber-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-amber-300' : 'text-amber-600'}`}>{t('products_count')}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{stats?.products_count || 0}</p>
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard icon={DollarSign} tone="emerald" label={t('today_sales')} value={formatMoney(stats?.today_sales || 0, language)} />
+        <StatCard icon={ShoppingCart} tone="sky" label={t('total_transactions')} value={stats?.total_transactions || 0} />
+        <StatCard icon={TrendingUp} tone="violet" label={t('total_sales')} value={formatMoney(stats?.total_sales || 0, language)} />
+        <StatCard icon={PackageIcon} tone="amber" label={t('products_count')} value={stats?.products_count || 0} />
       </div>
 
       {/* Quick Actions */}
       <div data-tour="quick-actions" className="flex flex-wrap gap-3">
-        <Button
-          onClick={() => navigate('/pos')}
-          className="bg-blue-600 hover:bg-blue-700 text-white"
-        >
-          <Monitor className="h-4 w-4 mr-2" />
-          {t('go_to_pos') || 'Open POS'}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/products')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <ShoppingBag className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/products')}>
+          <ShoppingBag className="h-4 w-4" />
           {t('manage_products') || 'Products'}
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/reports')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <BarChart3 className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/reports')}>
+          <BarChart3 className="h-4 w-4" />
           {t('reports_analytics') || 'Reports'}
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/staff')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <Users className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/staff')}>
+          <Users className="h-4 w-4" />
           {t('staff') || 'Staff'}
         </Button>
       </div>
@@ -176,19 +124,19 @@ export default function ClientDashboard() {
       {/* Subscription panel (CL-04) */}
       {subscription && (subscription.subscription_fee > 0 || subscription.payments.length > 0) && (
         <section>
-          <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('subscription')}</h2>
-          <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-            <CardContent className="p-4 space-y-3">
+          <SectionHeading title={t('subscription')} />
+          <Card className="rounded-2xl shadow-card">
+            <CardContent className="p-5 space-y-3">
               {/* Dunning notice (CL-06 / PRN-09): overdue amount + grace deadline + pay */}
               {(subscription.subscription_status === 'past_due' ||
                 subscription.subscription_status === 'dunning' ||
                 subscription.subscription_status === 'suspended') && (
                 <div
                   role="alert"
-                  className={`flex items-start gap-3 rounded-md border p-3 text-sm ${
+                  className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${
                     subscription.subscription_status === 'suspended'
-                      ? 'border-red-500/40 bg-red-500/10 text-red-300'
-                      : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                      ? 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-300'
+                      : 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300'
                   }`}
                 >
                   <AlertTriangle className="h-5 w-5 shrink-0" />
@@ -209,34 +157,34 @@ export default function ClientDashboard() {
               )}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('subscription_fee')}</p>
-                  <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                  <p className="text-sm text-muted-foreground">{t('subscription_fee')}</p>
+                  <p className="text-xl font-bold text-foreground">
                     {formatMoney(subscription.subscription_fee, language)} / {t(subscription.billing_cycle) || subscription.billing_cycle}
                   </p>
                 </div>
                 <div>
-                  <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('next_billing')}</p>
-                  <p className={isDark ? 'text-slate-200' : 'text-slate-800'}>{subscription.next_billing_date || '—'}</p>
+                  <p className="text-sm text-muted-foreground">{t('next_billing')}</p>
+                  <p className="text-foreground/80">{subscription.next_billing_date || '—'}</p>
                 </div>
                 <div>
-                  <Badge className={subscription.subscription_status === 'active' ? 'bg-green-600 text-white' : subscription.subscription_status === 'suspended' ? 'bg-red-600 text-white' : 'bg-amber-600 text-white'}>
+                  <Badge className={subscription.subscription_status === 'active' ? 'bg-emerald-600 text-white' : subscription.subscription_status === 'suspended' ? 'bg-red-600 text-white' : 'bg-amber-500 text-white'}>
                     {subscription.subscription_status}
                   </Badge>
                 </div>
                 <Button
                   onClick={handlePaySubscription}
                   disabled={paying || subscription.subscription_fee <= 0}
-                  className="bg-green-600 hover:bg-green-700 text-white"
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
                 >
                   {paying ? t('loading') : (t('pay_now') || 'Pay now')}
                 </Button>
               </div>
               {subscription.payments.length > 0 && (
-                <div className="border-t pt-3 border-slate-700/50">
-                  <p className={`text-sm mb-2 ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('payment_history')}</p>
+                <div className="border-t border-border pt-3">
+                  <p className="text-sm mb-2 text-muted-foreground">{t('payment_history')}</p>
                   <div className="space-y-1">
                     {subscription.payments.slice(0, 6).map((p) => (
-                      <div key={p.id} className={`flex items-center justify-between text-sm ${isDark ? 'text-slate-300' : 'text-gray-700'}`}>
+                      <div key={p.id} className="flex items-center justify-between text-sm text-foreground/80">
                         <span>{p.period_start || (p.created_at ? p.created_at.slice(0, 10) : '')}</span>
                         <div className="flex items-center gap-3">
                           <span>{formatMoney(p.amount, language)}</span>
@@ -264,34 +212,34 @@ export default function ClientDashboard() {
 
       {/* Recent Transactions */}
       <section>
-        <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('recent_transactions')}</h2>
-        <div className={`overflow-x-auto rounded-lg border ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+        <SectionHeading title={t('recent_transactions')} />
+        <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-card">
           <table className="w-full text-sm">
-            <thead className={isDark ? 'bg-slate-800' : 'bg-gray-50'}>
-              <tr className={isDark ? 'text-slate-400' : 'text-gray-500'}>
-                <th className="p-3 text-start">{t('invoice_number')}</th>
-                <th className="p-3 text-start">{t('total')}</th>
-                <th className="p-3 text-start">{t('payment_method')}</th>
-                <th className="p-3 text-start">{t('status')}</th>
+            <thead className="bg-muted/50 text-muted-foreground">
+              <tr>
+                <th className="p-3 text-start font-medium">{t('invoice_number')}</th>
+                <th className="p-3 text-start font-medium">{t('total')}</th>
+                <th className="p-3 text-start font-medium">{t('payment_method')}</th>
+                <th className="p-3 text-start font-medium">{t('status')}</th>
               </tr>
             </thead>
             <tbody>
               {transactions.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className={`p-6 text-center ${isDark ? 'text-slate-500' : 'text-gray-400'}`}>
+                  <td colSpan={4} className="p-6 text-center text-muted-foreground">
                     {t('empty_cart')}
                   </td>
                 </tr>
               ) : (
                 transactions.map((tx) => (
-                  <tr key={tx.id} className={`border-t ${isDark ? 'border-slate-700 text-slate-300' : 'border-gray-200 text-gray-700'}`}>
+                  <tr key={tx.id} className="border-t border-border text-foreground/80 transition-colors hover:bg-muted/40">
                     <td className="p-3 font-mono">{tx.invoice_number}</td>
                     <td className="p-3">{formatMoney(tx.total_amount || 0, language)}</td>
                     <td className="p-3">
-                      <Badge className={isDark ? 'bg-slate-700 text-slate-300' : 'bg-gray-200 text-gray-700'}>{tx.payment_method}</Badge>
+                      <Badge variant="secondary">{tx.payment_method}</Badge>
                     </td>
                     <td className="p-3">
-                      <Badge className="bg-green-600 text-white">✓</Badge>
+                      <Badge className="bg-emerald-600 text-white">✓</Badge>
                     </td>
                   </tr>
                 ))

@@ -7,9 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { client, getAgentClients, getAgentBranding, getAgentRevenue, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, type AgentRevenue } from '@/lib/api';
-import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
-import { useTheme } from '@/contexts/ThemeContext';
+import StatCard from '@/components/dashboard/StatCard';
+import { PageHeader, SectionHeading } from '@/components/dashboard/PageHeader';
 import { Users, DollarSign, CreditCard, Clock, UserPlus, Palette, ShoppingBag, BarChart3, TrendingUp } from 'lucide-react';
 
 interface ClientItem {
@@ -63,8 +64,7 @@ export default function AgentDashboard() {
   const [dunningBusy, setDunningBusy] = useState(false);
   const [dunningResult, setDunningResult] = useState<string | null>(null);
   const navigate = useNavigate();
-  const { t, language, setLanguage } = useLanguage();
-  const { isDark } = useTheme();
+  const { t, language } = useLanguage();
 
   useEffect(() => {
     loadData();
@@ -74,7 +74,8 @@ export default function AgentDashboard() {
   async function loadData() {
     try {
       const [clientData, brandData] = await Promise.all([getAgentClients(), getAgentBranding()]);
-      setClients(clientData?.clients || clientData || []);
+      // API returns { items, total, remaining_slots }; tolerate array/clients shapes too.
+      setClients(Array.isArray(clientData) ? clientData : (clientData?.items || clientData?.clients || []));
       setBranding(brandData);
     } catch (err) {
       console.error('Failed to load:', err);
@@ -221,81 +222,49 @@ export default function AgentDashboard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className={`animate-pulse ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('loading')}</div>
+        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Enhanced Stats Section */}
+    <div className="space-y-6 animate-fade-up">
+      <PageHeader
+        title={branding?.company_name || t('dashboard')}
+        subtitle={t('clients')}
+        actions={
+          <Button onClick={() => setDialogOpen(true)} className="shadow-brand">
+            <UserPlus className="h-4 w-4" />
+            {t('create_client') || 'Add Client'}
+          </Button>
+        }
+      />
+
+      {/* Stats */}
       <div data-tour="stats-section" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className={`${isDark ? 'bg-gradient-to-br from-blue-900/40 to-slate-800 border-blue-700/40' : 'bg-gradient-to-br from-blue-50 to-white border-blue-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-blue-600/20' : 'bg-blue-100'}`}>
-              <Users className={`h-6 w-6 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-blue-300' : 'text-blue-600'}`}>{t('total_clients') || 'Total Clients'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{clients.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-green-900/40 to-slate-800 border-green-700/40' : 'bg-gradient-to-br from-green-50 to-white border-green-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-green-600/20' : 'bg-green-100'}`}>
-              <DollarSign className={`h-6 w-6 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-green-300' : 'text-green-600'}`}>{t('total_monthly_revenue') || 'Monthly Revenue'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(totalMonthlyRevenue, language)}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-purple-900/40 to-slate-800 border-purple-700/40' : 'bg-gradient-to-br from-purple-50 to-white border-purple-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-purple-600/20' : 'bg-purple-100'}`}>
-              <CreditCard className={`h-6 w-6 ${isDark ? 'text-purple-400' : 'text-purple-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-purple-300' : 'text-purple-600'}`}>{t('active_subscriptions') || 'Active Subscriptions'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{activeClients.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-amber-900/40 to-slate-800 border-amber-700/40' : 'bg-gradient-to-br from-amber-50 to-white border-amber-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-amber-600/20' : 'bg-amber-100'}`}>
-              <Clock className={`h-6 w-6 ${isDark ? 'text-amber-400' : 'text-amber-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-amber-300' : 'text-amber-600'}`}>{t('remaining_slots') || 'Remaining Slots'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{remainingSlots}</p>
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard icon={Users} tone="brand" label={t('total_clients') || 'Total Clients'} value={clients.length} />
+        <StatCard icon={DollarSign} tone="emerald" label={t('total_monthly_revenue') || 'Monthly Revenue'} value={formatMoney(totalMonthlyRevenue, language)} />
+        <StatCard icon={CreditCard} tone="violet" label={t('active_subscriptions') || 'Active Subscriptions'} value={activeClients.length} />
+        <StatCard icon={Clock} tone="amber" label={t('remaining_slots') || 'Remaining Slots'} value={remainingSlots} />
       </div>
 
       {/* Revenue / commission panel (RSL-01, F-029): real settled-subscription
           economics from the split ledger — collected, owed to platform, net margin. */}
-      <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+      <Card className="rounded-2xl shadow-card">
         <CardHeader className="flex flex-row items-center gap-2">
-          <TrendingUp className={`h-5 w-5 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
-          <CardTitle className={isDark ? 'text-white' : 'text-slate-900'}>
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-500/15">
+            <TrendingUp className="h-5 w-5 text-emerald-600 dark:text-emerald-300" />
+          </span>
+          <CardTitle className="text-base text-foreground">
             {t('revenue_commission') || 'Revenue & Margin'}
           </CardTitle>
         </CardHeader>
         <CardContent>
           {revenueLoading ? (
-            <div className={`animate-pulse text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
-              {t('loading')}
-            </div>
+            <div className="animate-pulse text-sm text-muted-foreground">{t('loading')}</div>
           ) : revenueError ? (
             <div role="alert" className="flex flex-col items-start gap-2">
-              <p className={`text-sm ${isDark ? 'text-red-300' : 'text-red-600'}`}>
+              <p className="text-sm text-red-600 dark:text-red-300">
                 {t('revenue_load_error') || 'Could not load revenue.'}
               </p>
               <Button variant="outline" size="sm" onClick={loadRevenue}>
@@ -303,22 +272,22 @@ export default function AgentDashboard() {
               </Button>
             </div>
           ) : !revenue || revenue.payments === 0 ? (
-            <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+            <p className="text-sm text-muted-foreground">
               {t('revenue_empty') || 'No settled subscription payments yet.'}
             </p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t('revenue_collected') || 'Collected'}</p>
-                <p className={`text-xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(revenue.collected, language)}</p>
+              <div className="rounded-xl bg-muted/40 p-4">
+                <p className="text-sm text-muted-foreground">{t('revenue_collected') || 'Collected'}</p>
+                <p className="text-xl font-bold text-foreground">{formatMoney(revenue.collected, language)}</p>
               </div>
-              <div>
-                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t('revenue_platform_owed') || 'Owed to platform'}</p>
-                <p className={`text-xl font-bold ${isDark ? 'text-amber-400' : 'text-amber-600'}`}>{formatMoney(revenue.master_owed, language)}</p>
+              <div className="rounded-xl bg-muted/40 p-4">
+                <p className="text-sm text-muted-foreground">{t('revenue_platform_owed') || 'Owed to platform'}</p>
+                <p className="text-xl font-bold text-amber-600 dark:text-amber-400">{formatMoney(revenue.master_owed, language)}</p>
               </div>
-              <div>
-                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{t('revenue_net_margin') || 'Net margin'}</p>
-                <p className={`text-xl font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{formatMoney(revenue.net, language)}</p>
+              <div className="rounded-xl bg-muted/40 p-4">
+                <p className="text-sm text-muted-foreground">{t('revenue_net_margin') || 'Net margin'}</p>
+                <p className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{formatMoney(revenue.net, language)}</p>
               </div>
             </div>
           )}
@@ -327,236 +296,208 @@ export default function AgentDashboard() {
 
       {/* Quick Actions */}
       <div data-tour="quick-actions" className="flex flex-wrap gap-3">
-        <Button
-          onClick={() => setDialogOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white"
-        >
-          <UserPlus className="h-4 w-4 mr-2" />
-          {t('create_client') || 'Add Client'}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/branding')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <Palette className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/branding')}>
+          <Palette className="h-4 w-4" />
           {t('brand_editor') || 'Branding'}
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/products')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <ShoppingBag className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/products')}>
+          <ShoppingBag className="h-4 w-4" />
           {t('products') || 'Products'}
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/reports')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <BarChart3 className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/reports')}>
+          <BarChart3 className="h-4 w-4" />
           {t('reports') || 'Reports'}
         </Button>
       </div>
 
       {/* Clients */}
       <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('clients')} ({clients.length})</h2>
-          <div className="flex items-center gap-2">
-          {dunningResult && (
-            <span role="status" className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>{dunningResult}</span>
-          )}
-          <Button
-            variant="outline"
-            onClick={handleRunDunning}
-            disabled={dunningBusy}
-            title={t('run_billing_hint')}
-            className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-          >
-            {dunningBusy ? t('loading') : (t('run_billing_cycle') || 'Run billing')}
-          </Button>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white">{t('create_client')}</Button>
-            </DialogTrigger>
-            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-              <DialogHeader>
-                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>{t('create_client')}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <Input
-                  placeholder={t('business_name')}
-                  value={newClientForm.business_name}
-                  onChange={(e) => setNewClientForm({ ...newClientForm, business_name: e.target.value })}
-                  className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
-                />
-                <Input
-                  placeholder={t('email')}
-                  value={newClientForm.email}
-                  onChange={(e) => setNewClientForm({ ...newClientForm, email: e.target.value })}
-                  className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
-                />
-                <Input
-                  placeholder={t('phone')}
-                  value={newClientForm.phone}
-                  onChange={(e) => setNewClientForm({ ...newClientForm, phone: e.target.value })}
-                  className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
-                />
-                {/* CL-03: subscription fee + billing cycle */}
-                <div className="flex gap-2">
-                  <Input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder={t('subscription_fee')}
-                    value={newClientForm.subscription_fee}
-                    onChange={(e) => setNewClientForm({ ...newClientForm, subscription_fee: e.target.value })}
-                    className={isDark ? 'bg-slate-700 border-slate-600 text-white flex-1' : 'bg-white border-gray-300 text-slate-900 flex-1'}
-                  />
-                  <Select
-                    value={newClientForm.billing_cycle}
-                    onValueChange={(v) => setNewClientForm({ ...newClientForm, billing_cycle: v })}
-                  >
-                    <SelectTrigger className={isDark ? 'bg-slate-700 border-slate-600 text-white w-32' : 'bg-white border-gray-300 text-slate-900 w-32'}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className={isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-200'}>
-                      <SelectItem value="monthly" className={isDark ? 'text-white hover:bg-slate-700' : 'text-slate-900 hover:bg-gray-100'}>{t('monthly') || 'Monthly'}</SelectItem>
-                      <SelectItem value="yearly" className={isDark ? 'text-white hover:bg-slate-700' : 'text-slate-900 hover:bg-gray-100'}>{t('yearly') || 'Yearly'}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {createError && (
-                  <p className="text-sm text-red-500">{createError}</p>
-                )}
-                <div className="flex gap-2 justify-end">
-                  <Button variant="outline" onClick={() => setDialogOpen(false)} className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}>
-                    {t('cancel')}
-                  </Button>
-                  <Button onClick={handleCreateClient} className="bg-blue-600 hover:bg-blue-700 text-white">
-                    {t('save')}
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-          </div>
-
-          {/* One-time credentials for a newly provisioned client (C-1/CL-01) */}
-          <Dialog open={!!createdCreds} onOpenChange={(open) => !open && setCreatedCreds(null)}>
-            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-              <DialogHeader>
-                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
-                  {createdCreds?.reset
-                    ? (t('password_reset_done') || 'Password reset')
-                    : (t('client_created') || 'Client created')}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3">
-                <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
-                  {createdCreds?.email_delivered
-                    ? (createdCreds?.reset
-                      ? (t('new_password_emailed') || 'The new password was emailed to the client.')
-                      : (t('credentials_emailed') || 'Login credentials were emailed to the client.'))
-                    : (t('credentials_show_once') ||
-                      'Share these login credentials with the client now — they will not be shown again. They must change the password on first login.')}
-                </p>
-                <div className={`rounded-md p-3 font-mono text-sm ${isDark ? 'bg-slate-900 text-slate-200' : 'bg-gray-100 text-gray-800'}`}>
-                  <div>{t('email')}: {createdCreds?.email}</div>
-                  <div>{t('password') || 'Password'}: {createdCreds?.temp_password}</div>
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      if (createdCreds) {
-                        navigator.clipboard?.writeText(
-                          `Email: ${createdCreds.email}\nPassword: ${createdCreds.temp_password}`
-                        );
-                      }
-                    }}
-                    className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}
-                  >
-                    {t('copy') || 'Copy'}
-                  </Button>
-                  <Button onClick={() => setCreatedCreds(null)} className="bg-blue-600 hover:bg-blue-700 text-white">
-                    {t('done') || 'Done'}
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          {/* AG-03: per-client feature toggles */}
-          <Dialog open={!!featureClient} onOpenChange={(open) => !open && setFeatureClient(null)}>
-            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-              <DialogHeader>
-                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
-                  {t('features') || 'Features'} — {featureClient?.business_name}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3">
-                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                  {t('feature_toggle_hint') || 'Enable or disable capabilities for this client. Features are on by default.'}
-                </p>
-                {TOGGLEABLE_FEATURES.map((f) => (
-                  <div key={f} className="flex items-center justify-between gap-2">
-                    <span className={isDark ? 'text-slate-200' : 'text-slate-800'}>{t(f) || f}</span>
+        <SectionHeading
+          title={`${t('clients')} (${clients.length})`}
+          actions={
+            <>
+              {dunningResult && (
+                <span role="status" className="text-sm text-muted-foreground">{dunningResult}</span>
+              )}
+              <Button
+                variant="outline"
+                onClick={handleRunDunning}
+                disabled={dunningBusy}
+                title={t('run_billing_hint')}
+              >
+                {dunningBusy ? t('loading') : (t('run_billing_cycle') || 'Run billing')}
+              </Button>
+              <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="shadow-brand">{t('create_client')}</Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t('create_client')}</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <Input
+                      placeholder={t('business_name')}
+                      value={newClientForm.business_name}
+                      onChange={(e) => setNewClientForm({ ...newClientForm, business_name: e.target.value })}
+                    />
+                    <Input
+                      placeholder={t('email')}
+                      value={newClientForm.email}
+                      onChange={(e) => setNewClientForm({ ...newClientForm, email: e.target.value })}
+                    />
+                    <Input
+                      placeholder={t('phone')}
+                      value={newClientForm.phone}
+                      onChange={(e) => setNewClientForm({ ...newClientForm, phone: e.target.value })}
+                    />
+                    {/* CL-03: subscription fee + billing cycle */}
                     <div className="flex gap-2">
-                      <Button size="sm" disabled={featureBusy} onClick={() => handleSetFeature(f, true)} className="bg-green-600 hover:bg-green-700 text-white text-xs">
-                        {t('enable') || 'Enable'}
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder={t('subscription_fee')}
+                        value={newClientForm.subscription_fee}
+                        onChange={(e) => setNewClientForm({ ...newClientForm, subscription_fee: e.target.value })}
+                        className="flex-1"
+                      />
+                      <Select
+                        value={newClientForm.billing_cycle}
+                        onValueChange={(v) => setNewClientForm({ ...newClientForm, billing_cycle: v })}
+                      >
+                        <SelectTrigger className="w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="monthly">{t('monthly') || 'Monthly'}</SelectItem>
+                          <SelectItem value="yearly">{t('yearly') || 'Yearly'}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {createError && (
+                      <p className="text-sm text-red-500">{createError}</p>
+                    )}
+                    <div className="flex gap-2 justify-end">
+                      <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                        {t('cancel')}
                       </Button>
-                      <Button size="sm" disabled={featureBusy} variant="outline" onClick={() => handleSetFeature(f, false)} className={isDark ? 'border-red-600 text-red-400 hover:bg-red-600/10 text-xs' : 'border-red-300 text-red-700 hover:bg-red-50 text-xs'}>
-                        {t('disable') || 'Disable'}
+                      <Button onClick={handleCreateClient}>
+                        {t('save')}
                       </Button>
                     </div>
                   </div>
-                ))}
-                <div className="flex justify-end pt-2">
-                  <Button onClick={() => setFeatureClient(null)} className="bg-blue-600 hover:bg-blue-700 text-white">
-                    {t('done') || 'Done'}
-                  </Button>
-                </div>
+                </DialogContent>
+              </Dialog>
+            </>
+          }
+        />
+
+        {/* One-time credentials for a newly provisioned client (C-1/CL-01) */}
+        <Dialog open={!!createdCreds} onOpenChange={(open) => !open && setCreatedCreds(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {createdCreds?.reset
+                  ? (t('password_reset_done') || 'Password reset')
+                  : (t('client_created') || 'Client created')}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {createdCreds?.email_delivered
+                  ? (createdCreds?.reset
+                    ? (t('new_password_emailed') || 'The new password was emailed to the client.')
+                    : (t('credentials_emailed') || 'Login credentials were emailed to the client.'))
+                  : (t('credentials_show_once') ||
+                    'Share these login credentials with the client now — they will not be shown again. They must change the password on first login.')}
+              </p>
+              <div className="rounded-xl p-3 font-mono text-sm bg-muted text-foreground">
+                <div>{t('email')}: {createdCreds?.email}</div>
+                <div>{t('password') || 'Password'}: {createdCreds?.temp_password}</div>
               </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (createdCreds) {
+                      navigator.clipboard?.writeText(
+                        `Email: ${createdCreds.email}\nPassword: ${createdCreds.temp_password}`
+                      );
+                    }
+                  }}
+                >
+                  {t('copy') || 'Copy'}
+                </Button>
+                <Button onClick={() => setCreatedCreds(null)}>{t('done') || 'Done'}</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* AG-03: per-client feature toggles */}
+        <Dialog open={!!featureClient} onOpenChange={(open) => !open && setFeatureClient(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('features') || 'Features'} — {featureClient?.business_name}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {t('feature_toggle_hint') || 'Enable or disable capabilities for this client. Features are on by default.'}
+              </p>
+              {TOGGLEABLE_FEATURES.map((f) => (
+                <div key={f} className="flex items-center justify-between gap-2">
+                  <span className="text-foreground/90">{t(f) || f}</span>
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={featureBusy} onClick={() => handleSetFeature(f, true)} className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs">
+                      {t('enable') || 'Enable'}
+                    </Button>
+                    <Button size="sm" disabled={featureBusy} variant="outline" onClick={() => handleSetFeature(f, false)} className="border-red-300 text-red-600 hover:bg-red-50 text-xs dark:border-red-500/40 dark:text-red-300 dark:hover:bg-red-500/10">
+                      {t('disable') || 'Disable'}
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-end pt-2">
+                <Button onClick={() => setFeatureClient(null)}>{t('done') || 'Done'}</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {zatcaError && (
-          <div role="alert" className={`mb-3 rounded-md px-3 py-2 text-sm ${isDark ? 'bg-red-900/30 text-red-300 border border-red-700/40' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+          <div role="alert" className="mb-3 rounded-xl px-3 py-2 text-sm bg-red-50 text-red-700 border border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700/40">
             {zatcaError}
           </div>
         )}
 
-        <div className={`overflow-x-auto rounded-lg border ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+        <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-card">
           <table className="w-full text-sm">
-            <thead className={isDark ? 'bg-slate-800' : 'bg-gray-50'}>
-              <tr className={isDark ? 'text-slate-400' : 'text-gray-500'}>
-                <th className="p-3 text-start">{t('business_name')}</th>
-                <th className="p-3 text-start">{t('email')}</th>
-                <th className="p-3 text-start">{t('phone')}</th>
-                <th className="p-3 text-start">{t('subscription_fee')}</th>
-                <th className="p-3 text-start">{t('status')}</th>
-                <th className="p-3 text-start">{t('zatca_status')}</th>
-                <th className="p-3 text-start">{t('actions') || 'Actions'}</th>
+            <thead className="bg-muted/50 text-muted-foreground">
+              <tr>
+                <th className="p-3 text-start font-medium">{t('business_name')}</th>
+                <th className="p-3 text-start font-medium">{t('email')}</th>
+                <th className="p-3 text-start font-medium">{t('phone')}</th>
+                <th className="p-3 text-start font-medium">{t('subscription_fee')}</th>
+                <th className="p-3 text-start font-medium">{t('status')}</th>
+                <th className="p-3 text-start font-medium">{t('zatca_status')}</th>
+                <th className="p-3 text-start font-medium">{t('actions') || 'Actions'}</th>
               </tr>
             </thead>
             <tbody>
               {clients.map((c) => (
-                <tr key={c.id} className={`border-t ${isDark ? 'border-slate-700 text-slate-300' : 'border-gray-200 text-gray-700'}`}>
-                  <td className="p-3">{c.business_name}</td>
+                <tr key={c.id} className="border-t border-border text-foreground/80 transition-colors hover:bg-muted/40">
+                  <td className="p-3 font-medium text-foreground">{c.business_name}</td>
                   <td className="p-3">{c.email}</td>
                   <td className="p-3">{c.phone}</td>
                   <td className="p-3">{formatMoney(c.subscription_fee || 0, language)}</td>
                   <td className="p-3">
-                    <Badge className={c.is_active ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}>
+                    <Badge className={c.is_active ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}>
                       {c.is_active ? t('active') : t('inactive')}
                     </Badge>
                   </td>
                   <td className="p-3">
-                    <Badge className={c.zatca_enabled ? 'bg-emerald-600 text-white' : (isDark ? 'bg-slate-600 text-slate-200' : 'bg-gray-400 text-white')}>
+                    <Badge className={c.zatca_enabled ? 'bg-emerald-600 text-white' : 'bg-muted text-muted-foreground'}>
                       {c.zatca_enabled ? (t('zatca_on') || 'On') : (t('zatca_off') || 'Off')}
                     </Badge>
                   </td>
@@ -570,7 +511,7 @@ export default function AgentDashboard() {
                         className={
                           c.is_active
                             ? 'bg-red-600 hover:bg-red-700 text-white text-xs'
-                            : 'bg-green-600 hover:bg-green-700 text-white text-xs'
+                            : 'bg-emerald-600 hover:bg-emerald-700 text-white text-xs'
                         }
                       >
                         {togglingId === c.id
@@ -579,12 +520,7 @@ export default function AgentDashboard() {
                             ? (t('deactivate') || 'Deactivate')
                             : (t('activate') || 'Activate')}
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setFeatureClient(c)}
-                        className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700 text-xs' : 'border-gray-300 text-gray-700 hover:bg-gray-100 text-xs'}
-                      >
+                      <Button size="sm" variant="outline" onClick={() => setFeatureClient(c)} className="text-xs">
                         {t('features') || 'Features'}
                       </Button>
                       <Button
@@ -593,7 +529,7 @@ export default function AgentDashboard() {
                         onClick={() => handleResetPassword(c.id)}
                         disabled={resettingId === c.id}
                         title={t('reset_password') || 'Reset password'}
-                        className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700 text-xs' : 'border-gray-300 text-gray-700 hover:bg-gray-100 text-xs'}
+                        className="text-xs"
                       >
                         {resettingId === c.id ? '...' : (t('reset_password') || 'Reset Password')}
                       </Button>
@@ -603,7 +539,7 @@ export default function AgentDashboard() {
                         onClick={() => handleToggleZatca(c.id)}
                         disabled={zatcaTogglingId === c.id}
                         title={c.zatca_enabled ? (t('disable_zatca') || 'Disable ZATCA') : (t('enable_zatca') || 'Enable ZATCA')}
-                        className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700 text-xs' : 'border-gray-300 text-gray-700 hover:bg-gray-100 text-xs'}
+                        className="text-xs"
                       >
                         {zatcaTogglingId === c.id
                           ? '...'

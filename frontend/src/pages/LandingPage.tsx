@@ -262,7 +262,7 @@ function HeroIllustration({ isRTL }: { isRTL: boolean }) {
     <div className={`hidden lg:flex items-center justify-center ${isRTL ? 'lg:order-1' : ''}`}>
       <div className="relative w-80 h-80">
         {/* Outer ring */}
-        <div className="absolute inset-0 rounded-full border-2 border-[#C8A415]/30 animate-[spin_20s_linear_infinite]" />
+        <div className="absolute inset-0 rounded-full border-2 border-[#818cf8]/30 animate-[spin_20s_linear_infinite]" />
         {/* Inner decorative circles */}
         <div className="absolute inset-4 rounded-full border border-white/20" />
         <div className="absolute inset-8 rounded-full border border-white/10" />
@@ -273,8 +273,8 @@ function HeroIllustration({ isRTL }: { isRTL: boolean }) {
           </div>
         </div>
         {/* Floating icons */}
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-12 h-12 rounded-xl bg-[#C8A415]/20 backdrop-blur-sm flex items-center justify-center border border-[#C8A415]/30">
-          <CreditCard className="w-6 h-6 text-[#C8A415]" />
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 w-12 h-12 rounded-xl bg-[#818cf8]/20 backdrop-blur-sm flex items-center justify-center border border-[#818cf8]/30">
+          <CreditCard className="w-6 h-6 text-[#818cf8]" />
         </div>
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-12 h-12 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/20">
           <Receipt className="w-6 h-6 text-white" />
@@ -282,14 +282,14 @@ function HeroIllustration({ isRTL }: { isRTL: boolean }) {
         <div className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-xl bg-white/10 backdrop-blur-sm flex items-center justify-center border border-white/20">
           <Store className="w-6 h-6 text-white" />
         </div>
-        <div className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-xl bg-[#C8A415]/20 backdrop-blur-sm flex items-center justify-center border border-[#C8A415]/30">
-          <Smartphone className="w-6 h-6 text-[#C8A415]" />
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-xl bg-[#818cf8]/20 backdrop-blur-sm flex items-center justify-center border border-[#818cf8]/30">
+          <Smartphone className="w-6 h-6 text-[#818cf8]" />
         </div>
         {/* Corner dots */}
-        <div className="absolute top-12 left-12 w-3 h-3 rounded-full bg-[#C8A415]/60" />
+        <div className="absolute top-12 left-12 w-3 h-3 rounded-full bg-[#818cf8]/60" />
         <div className="absolute top-12 right-12 w-3 h-3 rounded-full bg-white/40" />
         <div className="absolute bottom-12 left-12 w-3 h-3 rounded-full bg-white/40" />
-        <div className="absolute bottom-12 right-12 w-3 h-3 rounded-full bg-[#C8A415]/60" />
+        <div className="absolute bottom-12 right-12 w-3 h-3 rounded-full bg-[#818cf8]/60" />
       </div>
     </div>
   );
@@ -323,10 +323,10 @@ export default function LandingPage() {
       <nav className="fixed top-0 w-full z-50 bg-white/95 backdrop-blur-md border-b border-slate-100 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-[#006C35] to-[#004d27] rounded-xl flex items-center justify-center">
+            <div className="w-10 h-10 bg-gradient-to-br from-[#4353e6] to-[#2f389e] rounded-xl flex items-center justify-center">
               <span className="text-white font-bold text-sm">POS</span>
             </div>
-            <span className="text-xl font-bold text-[#006C35]">{c.nav_brand}</span>
+            <span className="text-xl font-bold text-[#4353e6]">{c.nav_brand}</span>
           </div>
           <div className="flex items-center gap-4">
             <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
@@ -343,7 +343,7 @@ export default function LandingPage() {
             </Select>
             <Button
               onClick={() => navigate('/login')}
-              className="bg-[#006C35] hover:bg-[#005a2c] text-white font-semibold px-6"
+              className="bg-[#4353e6] hover:bg-[#3742c4] text-white font-semibold px-6"
             >
               {content[language]?.hero_cta || 'Get Started'}
             </Button>
@@ -354,21 +354,21 @@ export default function LandingPage() {
       {/* Hero Section */}
       <section className="relative pt-20 min-h-[90vh] flex items-center overflow-hidden">
         {/* Gradient Background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-[#004d27] via-[#006C35] to-[#008540]" />
+        <div className="absolute inset-0 bg-gradient-to-br from-[#2f389e] via-[#4353e6] to-[#5468f0]" />
         {/* Decorative geometric overlay */}
         <div className="absolute inset-0 text-white/[0.04]">
           <GeometricPattern />
         </div>
         {/* Decorative circles */}
-        <div className="absolute top-20 right-10 w-72 h-72 rounded-full bg-[#C8A415]/10 blur-3xl" />
-        <div className="absolute bottom-10 left-10 w-96 h-96 rounded-full bg-[#006C35]/30 blur-3xl" />
+        <div className="absolute top-20 right-10 w-72 h-72 rounded-full bg-[#818cf8]/10 blur-3xl" />
+        <div className="absolute bottom-10 left-10 w-96 h-96 rounded-full bg-[#4353e6]/30 blur-3xl" />
         <div className="absolute top-40 left-1/3 w-48 h-48 rounded-full bg-white/5 blur-2xl" />
         {/* Gold accent bar */}
-        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#C8A415] via-[#E8C840] to-[#C8A415]" />
+        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#818cf8] via-[#a5b4fc] to-[#818cf8]" />
 
         <div className="relative max-w-7xl mx-auto px-6 py-20 w-full grid lg:grid-cols-2 gap-12 items-center">
           <div className="max-w-2xl space-y-8">
-            <Badge className="bg-[#C8A415]/20 text-[#C8A415] border-[#C8A415]/40 px-4 py-2 text-sm font-medium backdrop-blur-sm">
+            <Badge className="bg-[#818cf8]/20 text-[#818cf8] border-[#818cf8]/40 px-4 py-2 text-sm font-medium backdrop-blur-sm">
               <Star className="w-4 h-4 mr-1 inline" />
               {c.hero_badge}
             </Badge>
@@ -376,7 +376,7 @@ export default function LandingPage() {
               <h1 className="text-4xl md:text-6xl font-bold text-white leading-tight">
                 {c.hero_title_1}
               </h1>
-              <h2 className="text-3xl md:text-5xl font-bold text-[#C8A415] leading-tight">
+              <h2 className="text-3xl md:text-5xl font-bold text-[#818cf8] leading-tight">
                 {c.hero_title_2}
               </h2>
             </div>
@@ -386,7 +386,7 @@ export default function LandingPage() {
             <div className="flex flex-wrap gap-4 pt-4">
               <Button
                 onClick={() => navigate('/login')}
-                className="bg-[#C8A415] hover:bg-[#b8940f] text-white px-8 py-6 text-lg font-bold shadow-xl shadow-[#C8A415]/30 transition-all hover:scale-105"
+                className="bg-white hover:bg-brand-50 text-brand-700 px-8 py-6 text-lg font-bold shadow-xl shadow-black/20 transition-all hover:scale-105"
               >
                 {c.hero_cta}
                 <ArrowRight className={`w-5 h-5 ${isRTL ? 'mr-2 rotate-180' : 'ml-2'}`} />
@@ -408,7 +408,7 @@ export default function LandingPage() {
       <section className="py-24 px-6 bg-slate-50">
         <div className="max-w-7xl mx-auto grid lg:grid-cols-2 gap-16 items-center">
           <div className={`space-y-6 ${isRTL ? 'lg:order-2' : ''}`}>
-            <Badge className="bg-[#006C35]/10 text-[#006C35] border-[#006C35]/20 px-3 py-1">
+            <Badge className="bg-[#4353e6]/10 text-[#4353e6] border-[#4353e6]/20 px-3 py-1">
               {c.partnership_badge}
             </Badge>
             <h2 className="text-3xl md:text-4xl font-bold text-slate-900 leading-tight">
@@ -419,34 +419,34 @@ export default function LandingPage() {
             </p>
             <div className="grid grid-cols-2 gap-4 pt-4">
               <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
-                <div className="text-3xl font-bold text-[#006C35]">500+</div>
+                <div className="text-3xl font-bold text-[#4353e6]">500+</div>
                 <div className="text-sm text-slate-500">{language === 'ar' || language === 'ur' ? 'موزع نشط' : 'Active Distributors'}</div>
               </div>
               <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
-                <div className="text-3xl font-bold text-[#C8A415]">12K+</div>
+                <div className="text-3xl font-bold text-[#818cf8]">12K+</div>
                 <div className="text-sm text-slate-500">{language === 'ar' || language === 'ur' ? 'تاجر' : 'Merchants'}</div>
               </div>
               <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
-                <div className="text-3xl font-bold text-[#006C35]">99.9%</div>
+                <div className="text-3xl font-bold text-[#4353e6]">99.9%</div>
                 <div className="text-sm text-slate-500">{language === 'ar' || language === 'ur' ? 'وقت التشغيل' : 'Uptime'}</div>
               </div>
               <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
-                <div className="text-3xl font-bold text-[#C8A415]">SAR 2M+</div>
+                <div className="text-3xl font-bold text-[#818cf8]">SAR 2M+</div>
                 <div className="text-sm text-slate-500">{language === 'ar' || language === 'ur' ? 'إيرادات الموزعين' : 'Distributor Revenue'}</div>
               </div>
             </div>
           </div>
           <div className={`relative ${isRTL ? 'lg:order-1' : ''}`}>
             {/* Abstract partnership illustration using icons and gradients */}
-            <div className="relative bg-gradient-to-br from-[#006C35]/5 to-[#C8A415]/5 rounded-3xl p-8 border border-slate-200">
+            <div className="relative bg-gradient-to-br from-[#4353e6]/5 to-[#818cf8]/5 rounded-3xl p-8 border border-slate-200">
               <div className="grid grid-cols-3 gap-4">
                 {[
-                  { icon: Building2, label: language === 'ar' || language === 'ur' ? 'علامتك' : 'Your Brand', color: '#006C35' },
-                  { icon: Layers, label: language === 'ar' || language === 'ur' ? 'منصتنا' : 'Our Platform', color: '#C8A415' },
-                  { icon: Users, label: language === 'ar' || language === 'ur' ? 'عملاؤك' : 'Your Clients', color: '#006C35' },
-                  { icon: Monitor, label: language === 'ar' || language === 'ur' ? 'لوحة تحكم' : 'Dashboard', color: '#C8A415' },
-                  { icon: ShieldCheck, label: 'ZATCA', color: '#006C35' },
-                  { icon: TrendingUp, label: language === 'ar' || language === 'ur' ? 'نمو' : 'Growth', color: '#C8A415' },
+                  { icon: Building2, label: language === 'ar' || language === 'ur' ? 'علامتك' : 'Your Brand', color: '#4353e6' },
+                  { icon: Layers, label: language === 'ar' || language === 'ur' ? 'منصتنا' : 'Our Platform', color: '#818cf8' },
+                  { icon: Users, label: language === 'ar' || language === 'ur' ? 'عملاؤك' : 'Your Clients', color: '#4353e6' },
+                  { icon: Monitor, label: language === 'ar' || language === 'ur' ? 'لوحة تحكم' : 'Dashboard', color: '#818cf8' },
+                  { icon: ShieldCheck, label: 'ZATCA', color: '#4353e6' },
+                  { icon: TrendingUp, label: language === 'ar' || language === 'ur' ? 'نمو' : 'Growth', color: '#818cf8' },
                 ].map((item, idx) => {
                   const Icon = item.icon;
                   return (
@@ -464,8 +464,8 @@ export default function LandingPage() {
                 <svg className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
                   <defs>
                     <linearGradient id="line-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="#006C35" stopOpacity="0.1" />
-                      <stop offset="100%" stopColor="#C8A415" stopOpacity="0.1" />
+                      <stop offset="0%" stopColor="#4353e6" stopOpacity="0.1" />
+                      <stop offset="100%" stopColor="#818cf8" stopOpacity="0.1" />
                     </linearGradient>
                   </defs>
                   <line x1="33%" y1="25%" x2="66%" y2="25%" stroke="url(#line-grad)" strokeWidth="2" strokeDasharray="4 4" />
@@ -480,7 +480,7 @@ export default function LandingPage() {
       {/* Features Section */}
       <section className="py-24 px-6 relative overflow-hidden">
         {/* Geometric pattern background */}
-        <div className="absolute inset-0 text-[#006C35]/[0.03]">
+        <div className="absolute inset-0 text-[#4353e6]/[0.03]">
           <GeometricPattern />
         </div>
         <div className="relative max-w-7xl mx-auto">
@@ -492,10 +492,10 @@ export default function LandingPage() {
             {featureTitles.map((title, idx) => {
               const Icon = featureIcons[idx];
               return (
-                <Card key={idx} className="bg-white border-slate-200 shadow-sm hover:shadow-lg hover:border-[#006C35]/30 transition-all duration-300 group">
+                <Card key={idx} className="bg-white border-slate-200 shadow-sm hover:shadow-lg hover:border-[#4353e6]/30 transition-all duration-300 group">
                   <CardContent className="p-8 space-y-4">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#006C35]/10 to-[#006C35]/5 flex items-center justify-center group-hover:from-[#006C35] group-hover:to-[#004d27] transition-all duration-300">
-                      <Icon className="w-7 h-7 text-[#006C35] group-hover:text-white transition-colors duration-300" />
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#4353e6]/10 to-[#4353e6]/5 flex items-center justify-center group-hover:from-[#4353e6] group-hover:to-[#2f389e] transition-all duration-300">
+                      <Icon className="w-7 h-7 text-[#4353e6] group-hover:text-white transition-colors duration-300" />
                     </div>
                     <h3 className="text-xl font-bold text-slate-900">{title}</h3>
                     <p className="text-slate-600 leading-relaxed">{featureDescs[idx]}</p>
@@ -508,9 +508,9 @@ export default function LandingPage() {
       </section>
 
       {/* How It Works */}
-      <section id="how-it-works" className="py-24 px-6 bg-gradient-to-b from-[#006C35] to-[#004d27] text-white relative overflow-hidden">
+      <section id="how-it-works" className="py-24 px-6 bg-gradient-to-b from-[#4353e6] to-[#2f389e] text-white relative overflow-hidden">
         {/* Decorative elements */}
-        <div className="absolute top-0 right-0 w-64 h-64 rounded-full bg-[#C8A415]/10 blur-3xl" />
+        <div className="absolute top-0 right-0 w-64 h-64 rounded-full bg-[#818cf8]/10 blur-3xl" />
         <div className="absolute bottom-0 left-0 w-80 h-80 rounded-full bg-white/5 blur-3xl" />
         <div className="relative max-w-7xl mx-auto">
           <div className="text-center mb-16 space-y-4">
@@ -521,9 +521,9 @@ export default function LandingPage() {
             {steps.map((step, idx) => (
               <div key={idx} className="text-center space-y-4 relative">
                 {idx < 3 && (
-                  <div className={`hidden md:block absolute top-8 ${isRTL ? 'right-full' : 'left-full'} w-full h-0.5 bg-[#C8A415]/40`} />
+                  <div className={`hidden md:block absolute top-8 ${isRTL ? 'right-full' : 'left-full'} w-full h-0.5 bg-[#818cf8]/40`} />
                 )}
-                <div className="w-16 h-16 mx-auto rounded-full bg-[#C8A415] flex items-center justify-center text-2xl font-bold text-white shadow-lg shadow-[#C8A415]/30">
+                <div className="w-16 h-16 mx-auto rounded-full bg-[#818cf8] flex items-center justify-center text-2xl font-bold text-white shadow-lg shadow-[#818cf8]/30">
                   {step.num}
                 </div>
                 <h3 className="text-xl font-bold">{step.title}</h3>
@@ -541,25 +541,25 @@ export default function LandingPage() {
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <div className={`${isRTL ? 'lg:order-2' : ''}`}>
               {/* Abstract testimonial illustration */}
-              <div className="relative bg-gradient-to-br from-[#006C35]/5 to-[#C8A415]/10 rounded-3xl p-12 border border-slate-200">
-                <div className="absolute top-6 left-6 w-16 h-16 rounded-full bg-[#C8A415]/20 flex items-center justify-center">
-                  <Star className="w-8 h-8 text-[#C8A415]" />
+              <div className="relative bg-gradient-to-br from-[#4353e6]/5 to-[#818cf8]/10 rounded-3xl p-12 border border-slate-200">
+                <div className="absolute top-6 left-6 w-16 h-16 rounded-full bg-[#818cf8]/20 flex items-center justify-center">
+                  <Star className="w-8 h-8 text-[#818cf8]" />
                 </div>
-                <div className="absolute bottom-6 right-6 w-12 h-12 rounded-full bg-[#006C35]/10 flex items-center justify-center">
-                  <TrendingUp className="w-6 h-6 text-[#006C35]" />
+                <div className="absolute bottom-6 right-6 w-12 h-12 rounded-full bg-[#4353e6]/10 flex items-center justify-center">
+                  <TrendingUp className="w-6 h-6 text-[#4353e6]" />
                 </div>
                 <div className="flex flex-col items-center justify-center py-8 space-y-6">
-                  <div className="w-24 h-24 rounded-full bg-gradient-to-br from-[#006C35] to-[#004d27] flex items-center justify-center shadow-xl">
+                  <div className="w-24 h-24 rounded-full bg-gradient-to-br from-[#4353e6] to-[#2f389e] flex items-center justify-center shadow-xl">
                     <Users className="w-12 h-12 text-white" />
                   </div>
                   <div className="text-center space-y-2">
-                    <div className="text-4xl font-bold text-[#006C35]">47</div>
+                    <div className="text-4xl font-bold text-[#4353e6]">47</div>
                     <div className="text-sm text-slate-500">{language === 'ar' || language === 'ur' ? 'تاجر نشط' : 'Active Merchants'}</div>
                   </div>
                   <div className="flex gap-2">
                     {[...Array(5)].map((_, i) => (
-                      <div key={i} className="w-8 h-8 rounded-lg bg-[#C8A415]/20 flex items-center justify-center">
-                        <Star className="w-4 h-4 text-[#C8A415] fill-[#C8A415]" />
+                      <div key={i} className="w-8 h-8 rounded-lg bg-[#818cf8]/20 flex items-center justify-center">
+                        <Star className="w-4 h-4 text-[#818cf8] fill-[#818cf8]" />
                       </div>
                     ))}
                   </div>
@@ -569,7 +569,7 @@ export default function LandingPage() {
             <div className={`space-y-6 ${isRTL ? 'lg:order-1' : ''}`}>
               <div className="flex gap-1">
                 {[...Array(5)].map((_, i) => (
-                  <Star key={i} className="w-6 h-6 fill-[#C8A415] text-[#C8A415]" />
+                  <Star key={i} className="w-6 h-6 fill-[#818cf8] text-[#818cf8]" />
                 ))}
               </div>
               <blockquote className="text-xl md:text-2xl text-slate-700 leading-relaxed italic">
@@ -577,7 +577,7 @@ export default function LandingPage() {
               </blockquote>
               <div>
                 <div className="font-bold text-lg text-slate-900">{c.testimonial_name}</div>
-                <div className="text-[#006C35] font-medium">{c.testimonial_role}</div>
+                <div className="text-[#4353e6] font-medium">{c.testimonial_role}</div>
               </div>
             </div>
           </div>
@@ -587,7 +587,7 @@ export default function LandingPage() {
       {/* Pricing Section */}
       <section className="py-24 px-6 relative overflow-hidden">
         {/* Subtle geometric pattern */}
-        <div className="absolute inset-0 text-[#006C35]/[0.02]">
+        <div className="absolute inset-0 text-[#4353e6]/[0.02]">
           <GeometricPattern />
         </div>
         <div className="relative max-w-7xl mx-auto">
@@ -601,15 +601,15 @@ export default function LandingPage() {
                 key={idx}
                 className={`relative overflow-hidden transition-all duration-300 hover:scale-105 ${
                   plan.highlight
-                    ? 'border-[#006C35] border-2 shadow-xl shadow-[#006C35]/10 bg-white'
+                    ? 'border-[#4353e6] border-2 shadow-xl shadow-[#4353e6]/10 bg-white'
                     : 'border-slate-200 bg-white shadow-sm'
                 }`}
               >
                 {plan.highlight && (
                   <>
-                    <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-[#006C35] via-[#C8A415] to-[#006C35]" />
+                    <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-[#4353e6] via-[#818cf8] to-[#4353e6]" />
                     <div className="absolute -top-0 -right-0">
-                      <Badge className="bg-[#C8A415] text-white border-0 rounded-none rounded-bl-lg px-3 py-1 text-xs font-bold">
+                      <Badge className="bg-[#818cf8] text-white border-0 rounded-none rounded-bl-lg px-3 py-1 text-xs font-bold">
                         {c.popular}
                       </Badge>
                     </div>
@@ -620,14 +620,14 @@ export default function LandingPage() {
                     <h3 className="text-xl font-bold text-slate-900">{plan.name}</h3>
                     <div className="mt-4 flex items-baseline gap-1">
                       <span className="text-sm text-slate-500">SAR</span>
-                      <span className="text-4xl font-bold text-[#006C35]">{plan.price}</span>
+                      <span className="text-4xl font-bold text-[#4353e6]">{plan.price}</span>
                       <span className="text-slate-500">{c.per_month}</span>
                     </div>
                   </div>
                   <ul className="space-y-3">
                     {plan.features.map((feature, fIdx) => (
                       <li key={fIdx} className="flex items-center gap-3 text-slate-700 text-sm">
-                        <CheckCircle2 className="w-5 h-5 text-[#006C35] flex-shrink-0" />
+                        <CheckCircle2 className="w-5 h-5 text-[#4353e6] flex-shrink-0" />
                         {feature}
                       </li>
                     ))}
@@ -635,7 +635,7 @@ export default function LandingPage() {
                   <Button
                     className={`w-full py-6 font-bold text-base ${
                       plan.highlight
-                        ? 'bg-[#006C35] hover:bg-[#005a2c] text-white shadow-lg'
+                        ? 'bg-[#4353e6] hover:bg-[#3742c4] text-white shadow-lg'
                         : 'bg-slate-100 hover:bg-slate-200 text-slate-900'
                     }`}
                     onClick={() => navigate('/login')}
@@ -650,19 +650,19 @@ export default function LandingPage() {
       </section>
 
       {/* Final CTA */}
-      <section className="py-20 px-6 bg-gradient-to-r from-[#006C35] to-[#004d27] relative overflow-hidden">
+      <section className="py-20 px-6 bg-gradient-to-r from-[#4353e6] to-[#2f389e] relative overflow-hidden">
         {/* Decorative elements instead of image */}
         <div className="absolute inset-0 text-white/[0.04]">
           <GeometricPattern />
         </div>
-        <div className="absolute top-0 right-0 w-96 h-96 rounded-full bg-[#C8A415]/10 blur-3xl" />
+        <div className="absolute top-0 right-0 w-96 h-96 rounded-full bg-[#818cf8]/10 blur-3xl" />
         <div className="absolute bottom-0 left-0 w-64 h-64 rounded-full bg-white/5 blur-3xl" />
         <div className="relative max-w-4xl mx-auto text-center space-y-8">
           <h2 className="text-3xl md:text-4xl font-bold text-white">{c.hero_title_1}</h2>
           <p className="text-xl text-white/80">{c.hero_subtitle}</p>
           <Button
             onClick={() => navigate('/login')}
-            className="bg-[#C8A415] hover:bg-[#b8940f] text-white px-10 py-6 text-lg font-bold shadow-xl shadow-[#C8A415]/30 transition-all hover:scale-105"
+            className="bg-white hover:bg-brand-50 text-brand-700 px-10 py-6 text-lg font-bold shadow-xl shadow-black/20 transition-all hover:scale-105"
           >
             {c.hero_cta}
             <ArrowRight className={`w-5 h-5 ${isRTL ? 'mr-2 rotate-180' : 'ml-2'}`} />
@@ -676,7 +676,7 @@ export default function LandingPage() {
           <div className="grid md:grid-cols-3 gap-12 mb-12">
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gradient-to-br from-[#006C35] to-[#004d27] rounded-xl flex items-center justify-center">
+                <div className="w-10 h-10 bg-gradient-to-br from-[#4353e6] to-[#2f389e] rounded-xl flex items-center justify-center">
                   <span className="text-white font-bold text-sm">POS</span>
                 </div>
                 <span className="text-xl font-bold">{c.footer_brand}</span>

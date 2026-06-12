@@ -106,11 +106,11 @@ const DashboardLayout: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-screen flex ${isDark ? 'bg-slate-800' : 'bg-gray-100'} ${isRTL ? 'flex-row-reverse' : ''}`}>
+    <div className={`min-h-screen flex bg-background ${isRTL ? 'flex-row-reverse' : ''}`}>
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -118,27 +118,32 @@ const DashboardLayout: React.FC = () => {
       {/* Sidebar */}
       <aside
         data-tour="sidebar-nav"
-        className={`fixed lg:static inset-y-0 ${isRTL ? 'right-0' : 'left-0'} z-50 w-64 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'} transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
+        className={`fixed lg:static inset-y-0 ${isRTL ? 'right-0' : 'left-0'} z-50 w-64 bg-sidebar text-sidebar-foreground transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
           sidebarOpen
             ? 'translate-x-0'
             : isRTL
             ? 'translate-x-full lg:translate-x-0'
             : '-translate-x-full lg:translate-x-0'
-        } ${isRTL ? 'border-l' : 'border-r'}`}
+        } ${isRTL ? 'border-l border-sidebar-border' : 'border-r border-sidebar-border'}`}
       >
         {/* Sidebar header */}
-        <div className={`h-16 flex items-center justify-between px-4 border-b ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
-          <h1 className={`text-lg font-bold truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('app_name')}</h1>
+        <div className="h-16 flex items-center justify-between px-4 border-b border-sidebar-border">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl brand-gradient text-white font-bold shadow-brand">
+              {(t('app_name') || 'P').charAt(0).toUpperCase()}
+            </span>
+            <h1 className="text-lg font-bold tracking-tight truncate text-foreground">{t('app_name')}</h1>
+          </div>
           <button
             onClick={() => setSidebarOpen(false)}
-            className={`lg:hidden ${isDark ? 'text-slate-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`}
+            className="lg:hidden text-muted-foreground hover:text-foreground"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Nav links */}
-        <nav className="p-4 space-y-1">
+        <nav className="p-3 space-y-1 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 8rem)' }}>
           {navItems.map((item, index) => {
             const Icon = item.icon;
             return (
@@ -148,31 +153,29 @@ const DashboardLayout: React.FC = () => {
                 end={item.path === '/master' || item.path === '/agent' || item.path === '/client'}
                 onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  `group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     isActive
-                      ? 'bg-blue-600/20 text-blue-600 border border-blue-500/30'
-                      : isDark
-                        ? 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                      ? 'brand-gradient text-white shadow-brand'
+                      : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                   }`
                 }
               >
                 <Icon className="h-5 w-5 flex-shrink-0" />
-                <span>{t(item.label)}</span>
+                <span className="truncate">{t(item.label)}</span>
               </NavLink>
             );
           })}
         </nav>
 
         {/* User info at bottom */}
-        <div className={`absolute bottom-0 left-0 right-0 p-4 border-t ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-sidebar-border bg-sidebar">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-sm font-medium">
+            <div className="w-9 h-9 rounded-full brand-gradient flex items-center justify-center text-white text-sm font-semibold shadow-brand">
               {user?.email?.charAt(0).toUpperCase() || 'U'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className={`text-sm truncate ${isDark ? 'text-white' : 'text-slate-900'}`}>{user?.email || 'User'}</p>
-              <p className={`text-xs capitalize ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{userRole}</p>
+              <p className="text-sm font-medium truncate text-foreground">{user?.email || 'User'}</p>
+              <p className="text-xs capitalize text-muted-foreground">{userRole}</p>
             </div>
           </div>
         </div>
@@ -181,33 +184,33 @@ const DashboardLayout: React.FC = () => {
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-h-screen">
         {/* Header */}
-        <header className={`h-16 ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'} border-b flex items-center justify-between px-4 sticky top-0 z-30`}>
+        <header className="h-16 bg-card/80 backdrop-blur-md border-b border-border flex items-center justify-between px-4 sticky top-0 z-30">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(true)}
-              className={`lg:hidden ${isDark ? 'text-slate-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`}
+              className="lg:hidden text-muted-foreground hover:text-foreground"
             >
               <Menu className="h-6 w-6" />
             </button>
-            <h2 data-tour="dashboard-title" className={`font-semibold hidden sm:block ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('dashboard')}</h2>
+            <h2 data-tour="dashboard-title" className="font-semibold hidden sm:block text-foreground">{t('dashboard')}</h2>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Theme toggle */}
             <button
               data-tour="theme-toggle"
               onClick={toggleTheme}
-              className={`p-2 rounded-lg transition-colors ${isDark ? 'bg-slate-800 text-yellow-400 hover:bg-slate-700' : 'bg-gray-100 text-slate-700 hover:bg-gray-200'}`}
+              className="p-2 rounded-lg transition-colors bg-muted text-foreground hover:bg-accent"
               title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             >
-              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              {isDark ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4" />}
             </button>
 
             {/* Language switcher */}
             <div className="relative">
               <button
                 onClick={() => setLangDropdownOpen(!langDropdownOpen)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm ${isDark ? 'bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700' : 'bg-gray-100 text-gray-600 hover:text-gray-900 hover:bg-gray-200'}`}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm bg-muted text-muted-foreground hover:text-foreground hover:bg-accent"
               >
                 <Globe className="h-4 w-4" />
                 <span className="hidden sm:inline">
@@ -222,18 +225,16 @@ const DashboardLayout: React.FC = () => {
                     onClick={() => setLangDropdownOpen(false)}
                   />
                   <div
-                    className={`absolute top-full mt-1 ${isRTL ? 'left-0' : 'right-0'} z-50 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'} border rounded-lg shadow-lg py-1 min-w-[140px]`}
+                    className={`absolute top-full mt-1 ${isRTL ? 'left-0' : 'right-0'} z-50 bg-popover text-popover-foreground border border-border rounded-xl shadow-lg py-1 min-w-[140px]`}
                   >
                     {languageOptions.map((option) => (
                       <button
                         key={option.value}
                         onClick={() => handleLanguageChange(option.value)}
-                        className={`w-full text-left px-4 py-2 text-sm transition-colors ${
+                        className={`w-full text-start px-4 py-2 text-sm transition-colors ${
                           language === option.value
-                            ? 'bg-blue-600/20 text-blue-400'
-                            : isDark
-                              ? 'text-slate-300 hover:bg-slate-700 hover:text-white'
-                              : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                            ? 'bg-accent text-accent-foreground font-medium'
+                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
                         }`}
                       >
                         {option.label}
@@ -247,7 +248,7 @@ const DashboardLayout: React.FC = () => {
             {/* Logout button */}
             <button
               onClick={handleLogout}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm ${isDark ? 'text-slate-300 hover:text-red-400 hover:bg-slate-800' : 'text-gray-600 hover:text-red-500 hover:bg-gray-100'}`}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm text-muted-foreground hover:text-red-500 hover:bg-muted"
             >
               <LogOut className="h-4 w-4" />
               <span className="hidden sm:inline">{t('logout')}</span>

@@ -7,10 +7,11 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { client, getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, type MasterEconomics } from '@/lib/api';
-import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
-import { useTheme } from '@/contexts/ThemeContext';
 import ErrorState from '@/components/states/ErrorState';
+import StatCard from '@/components/dashboard/StatCard';
+import { PageHeader, SectionHeading } from '@/components/dashboard/PageHeader';
 import { Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Settings, Shield, TrendingUp, TrendingDown, Store } from 'lucide-react';
 
 interface Agent {
@@ -62,8 +63,7 @@ export default function MasterDashboard() {
     { email: string; temp_password: string } | null
   >(null);
   const navigate = useNavigate();
-  const { t, language, setLanguage } = useLanguage();
-  const { isDark } = useTheme();
+  const { t, language } = useLanguage();
 
   useEffect(() => {
     loadData();
@@ -73,8 +73,9 @@ export default function MasterDashboard() {
   async function loadData() {
     try {
       const [agentData, pkgData] = await Promise.all([getMasterAgents(), getPackages()]);
-      setAgents(agentData?.agents || agentData || []);
-      setPackages(pkgData?.items || pkgData || []);
+      // API returns { items, total }; tolerate array/agents shapes too.
+      setAgents(Array.isArray(agentData) ? agentData : (agentData?.items || agentData?.agents || []));
+      setPackages(Array.isArray(pkgData) ? pkgData : (pkgData?.items || []));
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
@@ -177,106 +178,71 @@ export default function MasterDashboard() {
   const totalAgents = agents.length;
   const activeAgents = agents.filter((a) => a.is_active).length;
 
+  // Compact economics figures rendered as a uniform mini-stat row.
+  const ecoCards = economics
+    ? [
+        { icon: TrendingUp, tone: 'emerald', label: t('mrr'), value: formatMoney(economics.mrr, language) },
+        { icon: DollarSign, tone: 'brand', label: t('arr'), value: formatMoney(economics.arr, language) },
+        { icon: Store, tone: 'sky', label: t('active_merchants'), value: `${economics.active_clients}/${economics.total_clients}` },
+        { icon: TrendingDown, tone: 'rose', label: t('churn_rate'), value: `${(economics.churn_rate * 100).toFixed(1)}%` },
+        { icon: DollarSign, tone: 'violet', label: t('platform_revenue'), value: formatMoney(economics.platform_revenue, language) },
+        { icon: DollarSign, tone: 'emerald', label: t('collected'), value: formatMoney(economics.collected, language) },
+      ]
+    : [];
+
+  const toneIcon: Record<string, string> = {
+    emerald: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300',
+    brand: 'bg-brand-500/15 text-brand-600 dark:text-brand-300',
+    sky: 'bg-sky-500/15 text-sky-600 dark:text-sky-300',
+    rose: 'bg-rose-500/15 text-rose-600 dark:text-rose-300',
+    violet: 'bg-violet-500/15 text-violet-600 dark:text-violet-300',
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className={`animate-pulse ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('loading')}</div>
+        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Enhanced Stats Section */}
+    <div className="space-y-6 animate-fade-up">
+      <PageHeader
+        title={t('dashboard')}
+        subtitle={t('platform_economics')}
+        actions={
+          <Button onClick={() => setCreateDialogOpen(true)} className="shadow-brand">
+            <UserPlus className="h-4 w-4" />
+            {t('create_agent') || 'Add Agent'}
+          </Button>
+        }
+      />
+
+      {/* Stats */}
       <div data-tour="stats-section" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card className={`${isDark ? 'bg-gradient-to-br from-blue-900/40 to-slate-800 border-blue-700/40' : 'bg-gradient-to-br from-blue-50 to-white border-blue-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-blue-600/20' : 'bg-blue-100'}`}>
-              <Users className={`h-6 w-6 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-blue-300' : 'text-blue-600'}`}>{t('total_agents') || 'Total Agents'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{totalAgents}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-green-900/40 to-slate-800 border-green-700/40' : 'bg-gradient-to-br from-green-50 to-white border-green-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-green-600/20' : 'bg-green-100'}`}>
-              <DollarSign className={`h-6 w-6 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-green-300' : 'text-green-600'}`}>{t('mrr')}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics?.mrr ?? 0, language)}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-purple-900/40 to-slate-800 border-purple-700/40' : 'bg-gradient-to-br from-purple-50 to-white border-purple-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-purple-600/20' : 'bg-purple-100'}`}>
-              <PackageIcon className={`h-6 w-6 ${isDark ? 'text-purple-400' : 'text-purple-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-purple-300' : 'text-purple-600'}`}>{t('active_packages') || 'Active Packages'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{packages.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className={`${isDark ? 'bg-gradient-to-br from-emerald-900/40 to-slate-800 border-emerald-700/40' : 'bg-gradient-to-br from-emerald-50 to-white border-emerald-200'}`}>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className={`p-3 rounded-xl ${isDark ? 'bg-emerald-600/20' : 'bg-emerald-100'}`}>
-              <Activity className={`h-6 w-6 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
-            </div>
-            <div>
-              <p className={`text-sm ${isDark ? 'text-emerald-300' : 'text-emerald-600'}`}>{t('system_health') || 'System Health'}</p>
-              <p className={`text-2xl font-bold ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{activeAgents}/{totalAgents} {t('active') || 'Active'}</p>
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard icon={Users} tone="brand" label={t('total_agents') || 'Total Agents'} value={totalAgents} />
+        <StatCard icon={DollarSign} tone="emerald" label={t('mrr')} value={formatMoney(economics?.mrr ?? 0, language)} />
+        <StatCard icon={PackageIcon} tone="violet" label={t('active_packages') || 'Active Packages'} value={packages.length} />
+        <StatCard icon={Activity} tone="sky" label={t('system_health') || 'System Health'} value={`${activeAgents}/${totalAgents} ${t('active') || 'Active'}`} />
       </div>
 
       {/* Quick Actions */}
       <div data-tour="quick-actions" className="flex flex-wrap gap-3">
-        <Button
-          onClick={() => setCreateDialogOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 text-white"
-        >
-          <UserPlus className="h-4 w-4 mr-2" />
-          {t('create_agent') || 'Add Agent'}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/packages')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <Settings className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/packages')}>
+          <Settings className="h-4 w-4" />
           {t('package_management') || 'Manage Packages'}
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/audit')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <Shield className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/audit')}>
+          <Shield className="h-4 w-4" />
           {t('audit_log') || 'Audit Log'}
         </Button>
-        <Button
-          variant="outline"
-          onClick={() => navigate('/notifications')}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <BarChart3 className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={() => navigate('/notifications')}>
+          <BarChart3 className="h-4 w-4" />
           {t('notifications') || 'Notifications'}
         </Button>
-        <Button
-          variant="outline"
-          onClick={openTaxDialog}
-          className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-        >
-          <DollarSign className="h-4 w-4 mr-2" />
+        <Button variant="outline" onClick={openTaxDialog}>
+          <DollarSign className="h-4 w-4" />
           {t('tax_rate') || 'Tax Rate'}
         </Button>
       </div>
@@ -284,93 +250,55 @@ export default function MasterDashboard() {
       {/* MA-08 / RSL-08: platform economics — MRR, ARR, active merchants, churn,
           platform revenue, and the revenue-by-agent leaderboard. */}
       <section>
-        <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('platform_economics')}</h2>
+        <SectionHeading title={t('platform_economics')} />
         {ecoLoading ? (
-          <div className={`animate-pulse py-8 text-center ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('loading')}</div>
+          <div className="animate-pulse py-8 text-center text-muted-foreground">{t('loading')}</div>
         ) : ecoError ? (
           <ErrorState onRetry={loadEconomics} />
         ) : economics && economics.total_clients === 0 && economics.collected === 0 ? (
-          <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-            <CardContent className={`py-10 text-center text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+          <Card className="rounded-2xl shadow-card">
+            <CardContent className="py-10 text-center text-sm text-muted-foreground">
               {t('economics_empty')}
             </CardContent>
           </Card>
         ) : economics ? (
           <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-4">
-              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <TrendingUp className={`h-4 w-4 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
-                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('mrr')}</p>
-                  </div>
-                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics.mrr, language)}</p>
-                </CardContent>
-              </Card>
-              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <DollarSign className={`h-4 w-4 ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`} />
-                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('arr')}</p>
-                  </div>
-                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics.arr, language)}</p>
-                </CardContent>
-              </Card>
-              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Store className={`h-4 w-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('active_merchants')}</p>
-                  </div>
-                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{economics.active_clients}/{economics.total_clients}</p>
-                </CardContent>
-              </Card>
-              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <TrendingDown className={`h-4 w-4 ${isDark ? 'text-red-400' : 'text-red-600'}`} />
-                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('churn_rate')}</p>
-                  </div>
-                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{(economics.churn_rate * 100).toFixed(1)}%</p>
-                </CardContent>
-              </Card>
-              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <DollarSign className={`h-4 w-4 ${isDark ? 'text-purple-400' : 'text-purple-600'}`} />
-                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('platform_revenue')}</p>
-                  </div>
-                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics.platform_revenue, language)}</p>
-                </CardContent>
-              </Card>
-              <Card className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <DollarSign className={`h-4 w-4 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
-                    <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('collected')}</p>
-                  </div>
-                  <p className={`text-lg font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>{formatMoney(economics.collected, language)}</p>
-                </CardContent>
-              </Card>
+              {ecoCards.map((card, i) => {
+                const Icon = card.icon;
+                return (
+                  <Card key={i} className="rounded-2xl shadow-card">
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${toneIcon[card.tone]}`}>
+                          <Icon className="h-4 w-4" />
+                        </span>
+                        <p className="text-xs text-muted-foreground">{card.label}</p>
+                      </div>
+                      <p className="text-lg font-bold text-foreground">{card.value}</p>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
 
             {/* RSL-08: revenue-by-agent leaderboard */}
-            <div className={`overflow-x-auto rounded-lg border ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+            <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-card">
               <table className="w-full text-sm">
-                <thead className={isDark ? 'bg-slate-800' : 'bg-gray-50'}>
-                  <tr className={isDark ? 'text-slate-400' : 'text-gray-500'}>
-                    <th className="p-3 text-start">{t('company_name')}</th>
-                    <th className="p-3 text-start">{t('active_merchants')}</th>
-                    <th className="p-3 text-start">{t('mrr')}</th>
-                    <th className="p-3 text-start">{t('collected')}</th>
-                    <th className="p-3 text-start">{t('platform_revenue')}</th>
-                    <th className="p-3 text-start">{t('revenue_net_margin')}</th>
+                <thead className="bg-muted/50 text-muted-foreground">
+                  <tr>
+                    <th className="p-3 text-start font-medium">{t('company_name')}</th>
+                    <th className="p-3 text-start font-medium">{t('active_merchants')}</th>
+                    <th className="p-3 text-start font-medium">{t('mrr')}</th>
+                    <th className="p-3 text-start font-medium">{t('collected')}</th>
+                    <th className="p-3 text-start font-medium">{t('platform_revenue')}</th>
+                    <th className="p-3 text-start font-medium">{t('revenue_net_margin')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {economics.by_agent.map((a) => (
-                    <tr key={a.agent_id} className={`border-t ${isDark ? 'border-slate-700 text-slate-300' : 'border-gray-200 text-gray-700'}`}>
-                      <td className="p-3">{a.company_name}</td>
+                    <tr key={a.agent_id} className="border-t border-border text-foreground/80 transition-colors hover:bg-muted/40">
+                      <td className="p-3 font-medium text-foreground">{a.company_name}</td>
                       <td className="p-3">{a.active_clients}/{a.total_clients}</td>
                       <td className="p-3">{formatMoney(a.mrr, language)}</td>
                       <td className="p-3">{formatMoney(a.collected, language)}</td>
@@ -387,17 +315,17 @@ export default function MasterDashboard() {
 
       {/* Package Overview */}
       <section>
-        <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('packages')}</h2>
+        <SectionHeading title={t('packages')} />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {packages.map((pkg) => (
-            <Card key={pkg.id} className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
+            <Card key={pkg.id} className="rounded-2xl shadow-card transition-all hover:-translate-y-0.5 hover:shadow-brand">
               <CardHeader>
-                <CardTitle className={isDark ? 'text-white' : 'text-slate-900'}>{pkg.name}</CardTitle>
+                <CardTitle className="text-base text-foreground">{pkg.name}</CardTitle>
               </CardHeader>
-              <CardContent className={`space-y-2 text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
-                <p>{t('client_slots')}: {pkg.client_slots}</p>
-                <p>{t('wholesale_price')}: {formatMoney(pkg.wholesale_price || 0, language)}</p>
-                <p>{t('retail_price')}: {formatMoney(pkg.retail_price_per_client || 0, language)}</p>
+              <CardContent className="space-y-2 text-sm text-muted-foreground">
+                <p>{t('client_slots')}: <span className="font-medium text-foreground">{pkg.client_slots}</span></p>
+                <p>{t('wholesale_price')}: <span className="font-medium text-foreground">{formatMoney(pkg.wholesale_price || 0, language)}</span></p>
+                <p>{t('retail_price')}: <span className="font-medium text-foreground">{formatMoney(pkg.retail_price_per_client || 0, language)}</span></p>
               </CardContent>
             </Card>
           ))}
@@ -406,236 +334,201 @@ export default function MasterDashboard() {
 
       {/* Agents Table */}
       <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>{t('agents')} ({agents.length})</h2>
-          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="bg-green-600 hover:bg-green-700 text-white font-semibold">
-                + {t('create_agent') || 'Create Agent'}
-              </Button>
-            </DialogTrigger>
-            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-              <DialogHeader>
-                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>{t('create_agent') || 'Create Agent'}</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <label className={`text-sm mb-1 block ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('company_name')}</label>
-                  <Input
-                    placeholder={t('company_name')}
-                    value={newAgentForm.company_name}
-                    onChange={(e) => setNewAgentForm({ ...newAgentForm, company_name: e.target.value })}
-                    className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
-                  />
+        <SectionHeading
+          title={`${t('agents')} (${agents.length})`}
+          actions={
+            <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="shadow-brand">
+                  <UserPlus className="h-4 w-4" />
+                  {t('create_agent') || 'Create Agent'}
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t('create_agent') || 'Create Agent'}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-sm mb-1 block text-muted-foreground">{t('company_name')}</label>
+                    <Input
+                      placeholder={t('company_name')}
+                      value={newAgentForm.company_name}
+                      onChange={(e) => setNewAgentForm({ ...newAgentForm, company_name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm mb-1 block text-muted-foreground">{t('email')}</label>
+                    <Input
+                      placeholder={t('email')}
+                      type="email"
+                      value={newAgentForm.email}
+                      onChange={(e) => setNewAgentForm({ ...newAgentForm, email: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm mb-1 block text-muted-foreground">{t('phone')}</label>
+                    <Input
+                      placeholder={t('phone')}
+                      value={newAgentForm.phone}
+                      onChange={(e) => setNewAgentForm({ ...newAgentForm, phone: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm mb-1 block text-muted-foreground">{t('package')}</label>
+                    <Select
+                      value={newAgentForm.package_id}
+                      onValueChange={(v) => setNewAgentForm({ ...newAgentForm, package_id: v })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder={t('select_package') || 'Select Package'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {packages.map((pkg) => (
+                          <SelectItem key={pkg.id} value={String(pkg.id)}>
+                            {pkg.name} ({pkg.client_slots} {t('slots')})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex gap-2 justify-end pt-2">
+                    <Button variant="outline" onClick={() => setCreateDialogOpen(false)}>
+                      {t('cancel')}
+                    </Button>
+                    <Button
+                      onClick={handleCreateAgent}
+                      disabled={creating || !newAgentForm.company_name || !newAgentForm.email}
+                    >
+                      {creating ? t('loading') : (t('create_agent') || 'Create Agent')}
+                    </Button>
+                  </div>
                 </div>
-                <div>
-                  <label className={`text-sm mb-1 block ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('email')}</label>
-                  <Input
-                    placeholder={t('email')}
-                    type="email"
-                    value={newAgentForm.email}
-                    onChange={(e) => setNewAgentForm({ ...newAgentForm, email: e.target.value })}
-                    className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
-                  />
-                </div>
-                <div>
-                  <label className={`text-sm mb-1 block ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('phone')}</label>
-                  <Input
-                    placeholder={t('phone')}
-                    value={newAgentForm.phone}
-                    onChange={(e) => setNewAgentForm({ ...newAgentForm, phone: e.target.value })}
-                    className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
-                  />
-                </div>
-                <div>
-                  <label className={`text-sm mb-1 block ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>{t('package')}</label>
-                  <Select
-                    value={newAgentForm.package_id}
-                    onValueChange={(v) => setNewAgentForm({ ...newAgentForm, package_id: v })}
-                  >
-                    <SelectTrigger className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}>
-                      <SelectValue placeholder={t('select_package') || 'Select Package'} />
-                    </SelectTrigger>
-                    <SelectContent className={isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-200'}>
-                      {packages.map((pkg) => (
-                        <SelectItem
-                          key={pkg.id}
-                          value={String(pkg.id)}
-                          className={isDark ? 'text-white hover:bg-slate-700' : 'text-slate-900 hover:bg-gray-100'}
-                        >
-                          {pkg.name} ({pkg.client_slots} {t('slots')})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex gap-2 justify-end pt-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => setCreateDialogOpen(false)}
-                    className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}
-                  >
-                    {t('cancel')}
-                  </Button>
-                  <Button
-                    onClick={handleCreateAgent}
-                    disabled={creating || !newAgentForm.company_name || !newAgentForm.email}
-                    className="bg-green-600 hover:bg-green-700 text-white"
-                  >
-                    {creating ? t('loading') : (t('create_agent') || 'Create Agent')}
-                  </Button>
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+              </DialogContent>
+            </Dialog>
+          }
+        />
 
-          {/* One-time credentials for a newly created agent (MA-01) */}
-          <Dialog open={!!createdCreds} onOpenChange={(open) => !open && setCreatedCreds(null)}>
-            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-              <DialogHeader>
-                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
-                  {t('agent_created') || 'Agent created'}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3">
-                <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-gray-600'}`}>
-                  {t('credentials_show_once') ||
-                    'Share these login credentials with the agent now — they will not be shown again. They must change the password on first login.'}
-                </p>
-                <div className={`rounded-md p-3 font-mono text-sm ${isDark ? 'bg-slate-900 text-slate-200' : 'bg-gray-100 text-gray-800'}`}>
-                  <div>{t('email')}: {createdCreds?.email}</div>
-                  <div>{t('password') || 'Password'}: {createdCreds?.temp_password}</div>
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      if (createdCreds) {
-                        navigator.clipboard?.writeText(
-                          `Email: ${createdCreds.email}\nPassword: ${createdCreds.temp_password}`
-                        );
-                      }
-                    }}
-                    className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}
-                  >
-                    {t('copy') || 'Copy'}
-                  </Button>
-                  <Button onClick={() => setCreatedCreds(null)} className="bg-blue-600 hover:bg-blue-700 text-white">
-                    {t('done') || 'Done'}
-                  </Button>
-                </div>
+        {/* One-time credentials for a newly created agent (MA-01) */}
+        <Dialog open={!!createdCreds} onOpenChange={(open) => !open && setCreatedCreds(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('agent_created') || 'Agent created'}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {t('credentials_show_once') ||
+                  'Share these login credentials with the agent now — they will not be shown again. They must change the password on first login.'}
+              </p>
+              <div className="rounded-xl p-3 font-mono text-sm bg-muted text-foreground">
+                <div>{t('email')}: {createdCreds?.email}</div>
+                <div>{t('password') || 'Password'}: {createdCreds?.temp_password}</div>
               </div>
-            </DialogContent>
-          </Dialog>
-
-          {/* MA-04: add client slots to an agent's package */}
-          <Dialog open={!!slotDialog} onOpenChange={(open) => !open && setSlotDialog(null)}>
-            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-              <DialogHeader>
-                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
-                  {t('add_slots') || 'Add Slots'} — {slotDialog?.company}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <label className={`text-sm mb-1 block ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                    {t('slots') || 'Slots'}
-                  </label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={slotAmount}
-                    onChange={(e) => setSlotAmount(e.target.value)}
-                    className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
-                  />
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <Button variant="outline" onClick={() => setSlotDialog(null)} className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}>
-                    {t('cancel')}
-                  </Button>
-                  <Button onClick={handleAddSlots} className="bg-blue-600 hover:bg-blue-700 text-white">
-                    {t('add_slots') || 'Add Slots'}
-                  </Button>
-                </div>
+              <div className="flex gap-2 justify-end">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (createdCreds) {
+                      navigator.clipboard?.writeText(
+                        `Email: ${createdCreds.email}\nPassword: ${createdCreds.temp_password}`
+                      );
+                    }
+                  }}
+                >
+                  {t('copy') || 'Copy'}
+                </Button>
+                <Button onClick={() => setCreatedCreds(null)}>{t('done') || 'Done'}</Button>
               </div>
-            </DialogContent>
-          </Dialog>
+            </div>
+          </DialogContent>
+        </Dialog>
 
-          {/* MA-05: master global VAT/tax-rate setting */}
-          <Dialog open={taxDialogOpen} onOpenChange={setTaxDialogOpen}>
-            <DialogContent className={isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-gray-200'}>
-              <DialogHeader>
-                <DialogTitle className={isDark ? 'text-white' : 'text-slate-900'}>
-                  {t('tax_rate') || 'Global Tax Rate'}
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div>
-                  <label className={`text-sm mb-1 block ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
-                    {t('tax_rate') || 'Tax Rate'} (%)
-                  </label>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step="0.1"
-                    value={taxInput}
-                    onChange={(e) => setTaxInput(e.target.value)}
-                    className={isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-gray-300 text-slate-900'}
-                  />
-                </div>
-                <div className="flex gap-2 justify-end">
-                  <Button variant="outline" onClick={() => setTaxDialogOpen(false)} className={isDark ? 'border-slate-600 text-slate-300' : 'border-gray-300 text-gray-700'}>
-                    {t('cancel')}
-                  </Button>
-                  <Button onClick={handleSaveTax} disabled={savingTax} className="bg-green-600 hover:bg-green-700 text-white">
-                    {savingTax ? t('loading') : (t('save') || 'Save')}
-                  </Button>
-                </div>
+        {/* MA-04: add client slots to an agent's package */}
+        <Dialog open={!!slotDialog} onOpenChange={(open) => !open && setSlotDialog(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('add_slots') || 'Add Slots'} — {slotDialog?.company}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm mb-1 block text-muted-foreground">{t('slots') || 'Slots'}</label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={slotAmount}
+                  onChange={(e) => setSlotAmount(e.target.value)}
+                />
               </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setSlotDialog(null)}>{t('cancel')}</Button>
+                <Button onClick={handleAddSlots}>{t('add_slots') || 'Add Slots'}</Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
-        <div className={`overflow-x-auto rounded-lg border ${isDark ? 'border-slate-700' : 'border-gray-200'}`}>
+        {/* MA-05: master global VAT/tax-rate setting */}
+        <Dialog open={taxDialogOpen} onOpenChange={setTaxDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('tax_rate') || 'Global Tax Rate'}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm mb-1 block text-muted-foreground">{t('tax_rate') || 'Tax Rate'} (%)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.1"
+                  value={taxInput}
+                  onChange={(e) => setTaxInput(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setTaxDialogOpen(false)}>{t('cancel')}</Button>
+                <Button onClick={handleSaveTax} disabled={savingTax}>
+                  {savingTax ? t('loading') : (t('save') || 'Save')}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-card">
           <table className="w-full text-sm">
-            <thead className={isDark ? 'bg-slate-800' : 'bg-gray-50'}>
-              <tr className={isDark ? 'text-slate-400' : 'text-gray-500'}>
-                <th className="p-3 text-start">{t('company_name')}</th>
-                <th className="p-3 text-start">{t('email')}</th>
-                <th className="p-3 text-start">{t('package')}</th>
-                <th className="p-3 text-start">{t('slots')}</th>
-                <th className="p-3 text-start">{t('status')}</th>
-                <th className="p-3 text-start">{t('toggle')}</th>
+            <thead className="bg-muted/50 text-muted-foreground">
+              <tr>
+                <th className="p-3 text-start font-medium">{t('company_name')}</th>
+                <th className="p-3 text-start font-medium">{t('email')}</th>
+                <th className="p-3 text-start font-medium">{t('package')}</th>
+                <th className="p-3 text-start font-medium">{t('slots')}</th>
+                <th className="p-3 text-start font-medium">{t('status')}</th>
+                <th className="p-3 text-start font-medium">{t('toggle')}</th>
               </tr>
             </thead>
             <tbody>
               {agents.map((agent) => (
-                <tr key={agent.id} className={`border-t ${isDark ? 'border-slate-700 text-slate-300' : 'border-gray-200 text-gray-700'}`}>
-                  <td className="p-3">{agent.company_name}</td>
+                <tr key={agent.id} className="border-t border-border text-foreground/80 transition-colors hover:bg-muted/40">
+                  <td className="p-3 font-medium text-foreground">{agent.company_name}</td>
                   <td className="p-3">{agent.email}</td>
                   <td className="p-3">{agent.package_type}</td>
                   <td className="p-3">{agent.used_slots ?? 0}/{agent.package_type ?? 0}</td>
                   <td className="p-3">
-                    <Badge className={agent.is_active ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}>
+                    <Badge className={agent.is_active ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}>
                       {agent.is_active ? t('active') : t('inactive')}
                     </Badge>
                   </td>
                   <td className="p-3">
                     <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleToggle(agent.id)}
-                        className={isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}
-                      >
+                      <Button size="sm" variant="outline" onClick={() => handleToggle(agent.id)}>
                         {t('toggle')}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => { setSlotDialog({ agentId: agent.id, company: agent.company_name }); setSlotAmount('1'); }}
-                        className={isDark ? 'border-blue-600 text-blue-400 hover:bg-blue-600/10' : 'border-blue-300 text-blue-700 hover:bg-blue-50'}
+                        className="border-brand-300 text-brand-600 hover:bg-brand-50 dark:border-brand-500/40 dark:text-brand-300 dark:hover:bg-brand-500/10"
                       >
                         + {t('slots') || 'Slots'}
                       </Button>
