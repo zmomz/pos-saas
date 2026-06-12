@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "defaultProvider": "vps-ollama",
+  "providers": {
+    "vps-ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama on VPS",
+      "options": {
+        "baseURL": "http://194.163.171.86:11434/v1"
+      },
+      "models": {
+        "qwen2.5-coder:7b": {
+          "name": "Qwen2.5 Coder 7B"
+        }
+      }
+    }
+  }
+}

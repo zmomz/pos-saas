@@ -246,14 +246,55 @@ async def general_exception_handler(request: Request, exc: Exception):
         )
 
 
-@app.get("/")
-def root():
-    return {"message": "FastAPI Modular Template is running"}
-
-
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+# --- Single-process frontend serving ---------------------------------------
+# When a production frontend build exists (frontend/dist), serve it from this
+# same uvicorn process so `run.ps1` can run the whole app on one port. If there
+# is no build (pure API/dev use), `/` falls back to the original JSON banner.
+_FRONTEND_DIST = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist"
+)
+_FRONTEND_INDEX = os.path.join(_FRONTEND_DIST, "index.html")
+
+if os.path.isfile(_FRONTEND_INDEX):
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    # Same-origin API base: the SPA fetches /api/config at boot (see
+    # frontend/src/lib/config.ts); an empty base makes it issue relative
+    # requests against whatever host/port is serving the page, so the bundle
+    # works on localhost, a LAN IP, or behind a domain with no rebuild.
+    @app.get("/api/config")
+    def _frontend_runtime_config():
+        return {"API_BASE_URL": ""}
+
+    # Vite emits hashed bundles under dist/assets.
+    _ASSETS_DIR = os.path.join(_FRONTEND_DIST, "assets")
+    if os.path.isdir(_ASSETS_DIR):
+        app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="assets")
+
+    # SPA fallback (registered last so every real API/route above wins): serve
+    # index.html for client-side routes so deep links survive a refresh, and
+    # serve any real root-level static file (favicon, robots.txt, …) directly.
+    # API/uploads/docs paths fall through to a genuine 404 instead of HTML.
+    @app.get("/{full_path:path}")
+    def _spa_fallback(full_path: str):
+        if full_path.startswith(("api/", "uploads/", "docs", "redoc", "openapi.json", "health")):
+            return JSONResponse({"detail": "Not Found"}, status_code=status.HTTP_404_NOT_FOUND)
+        candidate = os.path.join(_FRONTEND_DIST, full_path)
+        if full_path and os.path.isfile(candidate) and os.path.commonpath([_FRONTEND_DIST, os.path.abspath(candidate)]) == _FRONTEND_DIST:
+            return FileResponse(candidate)
+        return FileResponse(_FRONTEND_INDEX)
+
+else:
+
+    @app.get("/")
+    def root():
+        return {"message": "FastAPI Modular Template is running"}
 
 
 def run_in_debug_mode(app: FastAPI):
