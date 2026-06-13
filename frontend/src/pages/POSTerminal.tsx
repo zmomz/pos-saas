@@ -13,7 +13,7 @@ import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQu
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import ErrorState from '@/components/states/ErrorState';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play, WifiOff } from 'lucide-react';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon } from 'lucide-react';
 
 interface Product {
   id: number;
@@ -123,6 +123,8 @@ export default function POSTerminal() {
 
   // POS-06: free-text product name search (complements barcode/SKU lookup).
   const [searchQuery, setSearchQuery] = useState('');
+  // Category filter chips (handoff). 'all' shows everything.
+  const [activeCat, setActiveCat] = useState('all');
 
   // Loyalty checkout (Phase 4): pick the customer to accrue/redeem points and
   // optionally spend points as a discount at checkout.
@@ -535,17 +537,49 @@ export default function POSTerminal() {
   const tip = Math.max(0, Number(tipAmount) || 0);
   const amountDue = total + tip;
 
-  // POS-06: products filtered by the name-search box (Arabic name included).
-  const filteredProducts = searchQuery.trim()
-    ? products.filter((p) => {
-        const q = searchQuery.trim().toLowerCase();
-        return (
-          p.name.toLowerCase().includes(q) ||
-          (p.name_ar || '').toLowerCase().includes(q) ||
-          (p.sku || '').toLowerCase().includes(q)
-        );
-      })
-    : products;
+  // POS-06: products filtered by the name-search box (Arabic name included) and
+  // the active category chip (handoff).
+  const q = searchQuery.trim().toLowerCase();
+  const filteredProducts = products.filter((p) => {
+    if (activeCat !== 'all' && (p.category || t('uncategorized') || 'Other') !== activeCat) return false;
+    if (!q) return true;
+    return (
+      p.name.toLowerCase().includes(q) ||
+      (p.name_ar || '').toLowerCase().includes(q) ||
+      (p.sku || '').toLowerCase().includes(q)
+    );
+  });
+
+  // Distinct category chips, in first-seen order, with an "All" leader.
+  const categories = ['all', ...Array.from(new Set(products.map((p) => p.category || t('uncategorized') || 'Other')))];
+
+  // Deterministic tint per category (handoff product-thumbnail palette).
+  const TINTS = [
+    'bg-warning/12 text-warning',
+    'bg-sky/12 text-sky',
+    'bg-gold-50 text-gold-600',
+    'bg-success/12 text-success',
+    'bg-violet/12 text-violet',
+    'bg-brand-50 text-brand-700',
+    'bg-danger/12 text-danger',
+  ];
+  function tintFor(cat?: string): string {
+    const key = cat || 'Other';
+    let h = 0;
+    for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    return TINTS[h % TINTS.length];
+  }
+
+  // SAR currency display for the sale screen (matches the handoff "SAR 0.00").
+  const SAR = (n: number) =>
+    'SAR ' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  // Per-product quantity already in the cart (drives the tile qty badge).
+  const cartQtyByProduct = cart.reduce<Record<number, number>>((acc, it) => {
+    acc[it.product.id] = (acc[it.product.id] || 0) + it.quantity;
+    return acc;
+  }, {});
+  const cartCount = cart.reduce((s, it) => s + it.quantity, 0);
 
   // POS-02: split tenders must add up to the amount due (invoice total + tip,
   // POS-13) before checkout.
@@ -1028,7 +1062,7 @@ export default function POSTerminal() {
                   variant="outline"
                   onClick={handleThermalPrint}
                   className="border-border text-foreground hover:bg-muted"
-                  title="Thermal print"
+                  title={t('thermal_print')}
                 >
                   <Printer className="w-4 h-4" />
                 </Button>
@@ -1055,7 +1089,7 @@ export default function POSTerminal() {
         <div className="bg-card border-b border-border p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <RotateCcw className="w-5 h-5 text-orange-400" />
-            <h2 className="text-lg font-bold text-foreground">Refund Mode</h2>
+            <h2 className="text-lg font-bold text-foreground">{t('refund_mode')}</h2>
           </div>
           <div className="flex items-center gap-2">
             <Button
@@ -1082,7 +1116,7 @@ export default function POSTerminal() {
             {loadingTransactions ? (
               <div className="text-muted-foreground text-center py-8">{t('loading')}</div>
             ) : recentTransactions.length === 0 ? (
-              <div className="text-muted-foreground text-center py-8">No transactions found</div>
+              <div className="text-muted-foreground text-center py-8">{t('no_transactions')}</div>
             ) : (
               <div className="space-y-2">
                 {recentTransactions.map((txn, idx) => (
@@ -1303,7 +1337,7 @@ export default function POSTerminal() {
                 className="border-orange-600 text-orange-400 hover:bg-orange-600/10"
               >
                 <RotateCcw className="w-4 h-4 me-2" />
-                Refund
+                {t('refund')}
               </Button>
             )}
             <Button
@@ -1325,7 +1359,7 @@ export default function POSTerminal() {
                 value={barcodeInput}
                 onChange={(e) => setBarcodeInput(e.target.value)}
                 onKeyDown={handleBarcodeScan}
-                placeholder="Scan barcode or enter SKU..."
+                placeholder={t('scan_barcode')}
                 className="ps-10 bg-card border-border text-foreground placeholder:text-muted-foreground focus:border-brand-500"
               />
             </div>
@@ -1396,48 +1430,100 @@ export default function POSTerminal() {
           )}
         </div>
 
+        {/* Category chips (handoff). */}
+        {categories.length > 1 && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setActiveCat(cat)}
+                className={
+                  activeCat === cat
+                    ? 'inline-flex items-center rounded-full border border-brand bg-brand px-[15px] py-2 text-[13.5px] font-semibold text-white'
+                    : 'chip-link'
+                }
+              >
+                {cat === 'all' ? (t('all') || 'All') : cat}
+              </button>
+            ))}
+          </div>
+        )}
+
         {productsError ? (
           // F-015 (UX-02): error state distinct from the empty state, with retry.
           <ErrorState message={t('products_load_error')} onRetry={loadProducts} />
         ) : filteredProducts.length === 0 ? (
           <div className="text-center text-muted-foreground py-12">{t('no_products')}</div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-            {filteredProducts.map((product) => (
-              <Card
-                key={product.id}
-                className="bg-card border-border cursor-pointer hover:border-brand-500 transition-colors"
-                onClick={() => addToCart(product)}
-              >
-                <CardContent className="p-4 text-center">
-                  <p className="text-foreground font-medium text-sm truncate">{product.name}</p>
-                  {product.category && (
-                    <p className="text-muted-foreground text-xs mt-1">{product.category}</p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+            {filteredProducts.map((product) => {
+              const inCart = cartQtyByProduct[product.id] || 0;
+              return (
+                <button
+                  key={product.id}
+                  type="button"
+                  onClick={() => addToCart(product)}
+                  className={`group relative flex flex-col gap-2.5 rounded-2xl border bg-card p-3 text-start shadow-card transition-all hover:-translate-y-0.5 hover:border-brand hover:shadow-brand ${inCart ? 'border-brand ring-1 ring-brand/40' : 'border-border'}`}
+                >
+                  {inCart > 0 && (
+                    <span className="absolute end-2 top-2 z-10 flex h-6 min-w-6 items-center justify-center rounded-full bg-brand px-1.5 text-xs font-bold text-white shadow">
+                      {inCart}
+                    </span>
                   )}
-                  {product.barcode && (
-                    <p className="text-muted-foreground text-xs mt-0.5 font-mono">{product.barcode}</p>
-                  )}
-                  <p className="text-brand-400 font-bold mt-2">${product.price?.toFixed(2)}</p>
-                  <Button size="sm" className="mt-2 w-full bg-brand-600 hover:bg-brand-700 text-white text-xs">
-                    {t('add_to_cart')}
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
+                  <div className={`flex h-20 items-center justify-center rounded-xl text-2xl font-extrabold ${tintFor(product.category)}`}>
+                    {product.name?.charAt(0)?.toUpperCase() || '?'}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-foreground">{product.name}</div>
+                    <div className="mt-0.5 font-bold tabular-nums text-brand-700">
+                      {product.price?.toFixed(2)} <small className="text-[11px] font-semibold text-muted-foreground">SAR</small>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
 
       {/* Cart Sidebar */}
-      <div className="w-full lg:w-96 bg-card border-t lg:border-t-0 lg:border-s border-border p-4 flex flex-col">
-        <h2 className="text-lg font-bold text-foreground mb-4">{t('cart')}</h2>
+      <div className="flex w-full flex-col border-t border-border bg-card p-4 lg:w-[400px] lg:border-s lg:border-t-0">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
+            <ShoppingCart className="h-[18px] w-[18px]" /> {t('current_sale') || 'Current Sale'}
+            <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-brand-50 px-1.5 text-xs font-bold text-brand-700">{cartCount}</span>
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleHold}
+              disabled={cart.length === 0 || holding || processing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-input px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-brand hover:text-brand-700 disabled:opacity-50"
+            >
+              <Pause className="h-3.5 w-3.5" /> {holding ? t('loading') : t('hold_sale')}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setCart([]); setAppliedDiscount(null); setDiscountCode(''); setTipAmount(0); }}
+              disabled={cart.length === 0}
+              title={t('clear') || 'Clear'}
+              className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
 
         <div className="flex-1 overflow-y-auto space-y-2">
           {cart.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8">{t('empty_cart')}</p>
+            <div className="flex flex-col items-center gap-3 py-12 text-center text-muted-foreground">
+              <ShoppingCart className="h-10 w-10 opacity-30" />
+              <p className="text-sm">{t('empty_cart')}</p>
+            </div>
           ) : (
             cart.map((item) => (
-              <div key={item.key} className="bg-muted rounded-lg p-3">
+              <div key={item.key} className="rounded-xl border border-border bg-card p-3 shadow-card">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <p className="text-foreground text-sm font-medium">
@@ -1474,7 +1560,7 @@ export default function POSTerminal() {
                       </div>
                     ) : (
                       <p className="text-muted-foreground text-xs">
-                        ${lineUnitPrice(item).toFixed(2)}
+                        {SAR(lineUnitPrice(item))}
                         {item.product.is_weighted && item.product.unit_label
                           ? ` / ${item.product.unit_label}`
                           : ` ${t('each')}`}
@@ -1528,8 +1614,8 @@ export default function POSTerminal() {
                       </Button>
                     </>
                   )}
-                  <span className="text-brand-400 font-medium text-sm ms-auto">
-                    ${(lineUnitPrice(item) * item.quantity).toFixed(2)}
+                  <span className="ms-auto text-sm font-bold tabular-nums text-brand-700">
+                    {SAR(lineUnitPrice(item) * item.quantity)}
                   </span>
                 </div>
               </div>
@@ -1543,13 +1629,13 @@ export default function POSTerminal() {
           <div>
             <label className="text-muted-foreground text-sm block mb-1">
               <Tag className="w-3 h-3 inline me-1" />
-              Discount Code
+              {t('discount_code')}
             </label>
             {appliedDiscount ? (
-              <div className="flex items-center gap-2 bg-green-900/30 border border-green-700 rounded-md px-3 py-2">
-                <Check className="w-4 h-4 text-green-400" />
-                <span className="text-green-400 text-sm flex-1">
-                  {appliedDiscount.code} ({appliedDiscount.type === 'percentage' ? `${appliedDiscount.value}%` : `$${appliedDiscount.value}`} off)
+              <div className="flex items-center gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2">
+                <Check className="w-4 h-4 text-success" />
+                <span className="text-success text-sm flex-1">
+                  {appliedDiscount.code} · {appliedDiscount.type === 'percentage' ? `${appliedDiscount.value}%` : SAR(appliedDiscount.value)}
                 </span>
                 <Button
                   size="sm"
@@ -1566,7 +1652,7 @@ export default function POSTerminal() {
                   value={discountCode}
                   onChange={(e) => { setDiscountCode(e.target.value); setDiscountError(''); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleApplyDiscount(); }}
-                  placeholder="Enter code..."
+                  placeholder={t('enter_code')}
                   className="bg-muted border-border text-foreground placeholder:text-muted-foreground text-sm"
                 />
                 <Button
@@ -1575,7 +1661,7 @@ export default function POSTerminal() {
                   disabled={!discountCode.trim() || applyingDiscount}
                   className="bg-brand-600 hover:bg-brand-700 text-white px-3 whitespace-nowrap"
                 >
-                  {applyingDiscount ? '...' : 'Apply'}
+                  {applyingDiscount ? '...' : t('apply')}
                 </Button>
               </div>
             )}
@@ -1584,23 +1670,23 @@ export default function POSTerminal() {
             )}
           </div>
 
-          <div className="flex justify-between text-muted-foreground text-sm">
+          <div className="flex justify-between text-sm text-muted-foreground">
             <span>{t('subtotal')}</span>
-            <span>${subtotal.toFixed(2)}</span>
+            <span className="tabular-nums">{SAR(subtotal)}</span>
           </div>
           {discountAmount > 0 && (
-            <div className="flex justify-between text-green-400 text-sm">
-              <span>Discount</span>
-              <span>-${discountAmount.toFixed(2)}</span>
+            <div className="flex justify-between text-sm text-success">
+              <span>{t('discount') || 'Discount'}</span>
+              <span className="tabular-nums">−{SAR(discountAmount)}</span>
             </div>
           )}
-          <div className="flex justify-between text-muted-foreground text-sm">
+          <div className="flex justify-between text-sm text-muted-foreground">
             <span>{t('vat')}</span>
-            <span>${vatAmount.toFixed(2)}</span>
+            <span className="tabular-nums">{SAR(vatAmount)}</span>
           </div>
-          <div className="flex justify-between text-foreground font-bold text-lg">
+          <div className="flex justify-between border-t border-border pt-2 text-lg font-bold text-foreground">
             <span>{t('total')}</span>
-            <span>${total.toFixed(2)}</span>
+            <span className="tabular-nums">{SAR(total)}</span>
           </div>
 
           {/* POS-13 (F-012): tip / gratuity on top of the invoice total. Outside the
@@ -1648,9 +1734,9 @@ export default function POSTerminal() {
           </div>
 
           {tip > 0 && (
-            <div className="flex justify-between text-emerald-300 font-bold text-lg border-t border-border pt-2">
+            <div className="flex justify-between border-t border-border pt-2 text-lg font-bold text-success">
               <span>{t('amount_due')}</span>
-              <span>${amountDue.toFixed(2)}</span>
+              <span className="tabular-nums">{SAR(amountDue)}</span>
             </div>
           )}
 
@@ -1660,33 +1746,47 @@ export default function POSTerminal() {
               <button
                 type="button"
                 onClick={() => setSplitMode((v) => !v)}
-                className={`text-xs px-2 py-0.5 rounded border ${
+                className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
                   splitMode
-                    ? 'bg-brand-600 border-brand-500 text-white'
-                    : 'border-border text-foreground hover:bg-muted'
+                    ? 'border-brand bg-brand text-white'
+                    : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
                 }`}
               >
-                {t('split_payment')}
+                <SplitIcon className="h-3.5 w-3.5" /> {t('split_payment')}
               </button>
             </div>
             {!splitMode ? (
               <>
-                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                  <SelectTrigger className="bg-muted border-border text-foreground">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent className="bg-muted border-border">
-                    <SelectItem value="cash" className="text-foreground hover:bg-muted">{t('cash')}</SelectItem>
-                    <SelectItem value="mada" className="text-foreground hover:bg-muted">{t('tender_mada')}</SelectItem>
-                    <SelectItem value="card" className="text-foreground hover:bg-muted">{t('card')}</SelectItem>
-                    <SelectItem value="applepay" className="text-foreground hover:bg-muted">{t('tender_applepay')}</SelectItem>
-                    <SelectItem value="stcpay" className="text-foreground hover:bg-muted">{t('tender_stcpay')}</SelectItem>
-                    <SelectItem value="tabby" className="text-foreground hover:bg-muted">{t('tender_tabby')}</SelectItem>
-                    <SelectItem value="tamara" className="text-foreground hover:bg-muted">{t('tender_tamara')}</SelectItem>
-                    <SelectItem value="giftcard" className="text-foreground hover:bg-muted">{t('tender_gift_card')}</SelectItem>
-                    <SelectItem value="bank_transfer" className="text-foreground hover:bg-muted">{t('bank_transfer')}</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { v: 'cash', label: t('cash'), icon: Banknote },
+                    { v: 'mada', label: t('tender_mada') },
+                    { v: 'card', label: t('card'), icon: CreditCard },
+                    { v: 'applepay', label: t('tender_applepay') },
+                    { v: 'stcpay', label: t('tender_stcpay') },
+                    { v: 'tabby', label: t('tender_tabby') },
+                    { v: 'tamara', label: t('tender_tamara') },
+                    { v: 'giftcard', label: t('tender_gift_card') },
+                    { v: 'bank_transfer', label: t('bank_transfer') },
+                  ].map((m) => {
+                    const Icon = m.icon;
+                    const active = paymentMethod === m.v;
+                    return (
+                      <button
+                        key={m.v}
+                        type="button"
+                        onClick={() => setPaymentMethod(m.v)}
+                        className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[13px] font-semibold transition-colors ${
+                          active
+                            ? 'border-brand bg-brand-50 text-brand-700'
+                            : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
+                        }`}
+                      >
+                        {Icon ? <Icon className="h-4 w-4" /> : null} {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
                 {paymentMethod === 'giftcard' && (
                   <Input
                     value={giftCardCode}
@@ -1737,32 +1837,30 @@ export default function POSTerminal() {
                     )}
                   </div>
                 ))}
-                <div className={`flex justify-between text-xs ${splitBalanced ? 'text-green-400' : 'text-orange-400'}`}>
-                  <span>{t('allocated')}: ${splitTotal.toFixed(2)}</span>
-                  <span>{t('remaining')}: ${(amountDue - splitTotal).toFixed(2)}</span>
+                <div className={`flex justify-between text-xs ${splitBalanced ? 'text-success' : 'text-warning'}`}>
+                  <span>{t('allocated')}: {SAR(splitTotal)}</span>
+                  <span>{t('remaining')}: {SAR(amountDue - splitTotal)}</span>
                 </div>
               </div>
             )}
           </div>
 
-          <div className="flex gap-2">
-            <Button
-              onClick={handleHold}
-              disabled={cart.length === 0 || holding || processing}
-              variant="outline"
-              className="flex-1 border-border text-foreground hover:bg-muted py-6 text-base disabled:opacity-50"
-            >
-              <Pause className="w-4 h-4 me-2" />
-              {holding ? t('loading') : t('hold_sale')}
-            </Button>
-            <Button
-              onClick={handleCheckout}
-              disabled={cart.length === 0 || processing}
-              className="flex-[2] bg-green-600 hover:bg-green-700 text-white py-6 text-lg disabled:opacity-50"
-            >
-              {processing ? t('loading') : t('checkout')}
-            </Button>
-          </div>
+          <button
+            onClick={handleCheckout}
+            disabled={cart.length === 0 || processing || (splitMode && !splitBalanced)}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-4 text-base font-bold text-white shadow-brand transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {cart.length === 0 ? (
+              <>
+                <Lock className="h-5 w-5" /> {t('add_items_to_pay') || 'Add items to pay'}
+              </>
+            ) : (
+              <>
+                <ShoppingCart className="h-5 w-5" />
+                {processing ? t('loading') : `${t('pay') || 'Pay'} ${SAR(amountDue)}`}
+              </>
+            )}
+          </button>
         </div>
       </div>
 

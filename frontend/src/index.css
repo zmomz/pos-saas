@@ -155,6 +155,27 @@
   .surface-panel {
     @apply rounded-2xl border bg-card shadow-sm;
   }
+
+  /* Handoff chips/pills — shared by the master & agent dashboards so status
+     badges and quick-action chips match design_handoff_cloud_pos exactly. */
+  .chip-link {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-input bg-card px-[15px] py-[9px] text-[13.5px] font-semibold text-muted-foreground transition-colors hover:border-brand hover:text-brand-700;
+  }
+
+  .pill-success,
+  .pill-danger,
+  .pill-warning,
+  .pill-violet,
+  .pill-sky,
+  .pill-muted {
+    @apply inline-flex items-center gap-1.5 rounded-full px-3 py-[5px] text-[12.5px] font-semibold;
+  }
+  .pill-success { @apply bg-success/10 text-success; }
+  .pill-danger { @apply bg-danger/10 text-danger; }
+  .pill-warning { @apply bg-warning/15 text-warning; }
+  .pill-violet { @apply bg-violet/10 text-violet; }
+  .pill-sky { @apply bg-sky/10 text-sky; }
+  .pill-muted { @apply bg-muted text-muted-foreground; }
 }
 
 /* Quiet, modern scrollbars to match the polished surfaces. */

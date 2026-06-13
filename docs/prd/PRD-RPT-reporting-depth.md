@@ -1,6 +1,6 @@
 # PRD — Reporting Depth (RPT core, F-068–F-072)
 
-> **Status:** ready-for-agent · **Source:** `COMPLETENESS_REVIEW.md` §R2 (F-068–F-072, RPT-04/05/07/08/10) · **Bar:** Foodics / Rewaa / Marn parity, localized for Saudi · **Spec authority:** `srs.md` v2.0 + `INTENDED_BEHAVIOR.md` (when code and SRS disagree, SRS wins).
+> **Scope:** F-068–F-072 (RPT-04/05/07/08/10) · **Bar:** Foodics / Rewaa / Marn parity, localized for Saudi. This PRD is self-contained — acceptance criteria are below.
 >
 > Covers the five open reporting findings: F-068 (profit/COGS/margin + dead-stock), F-069 (VAT report by rate), F-070 (inventory valuation at cost + movements), F-071 (refund/void + discount reports), F-072 (PDF export for every report).
 
@@ -28,7 +28,7 @@ Add a reporting layer over the data the system already captures, matching what F
 - **Refund/void** and **discount** reports list each event over a window with actor, reason, and amount.
 - **Every report exports to PDF** (RTL-aware) as well as CSV.
 
-Every new screen renders its loading / empty / error / permission / offline states (per `INTENDED_BEHAVIOR.md`), uses brand tokens, is translated across all four languages with RTL verified, and is owner-scoped in the service layer (SEC-02).
+Every new screen renders its loading / empty / error / permission / offline states, uses brand tokens, is translated across all four languages with RTL verified, and is owner-scoped in the service layer (SEC-02).
 
 ---
 

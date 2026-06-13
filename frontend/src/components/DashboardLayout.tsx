@@ -106,7 +106,7 @@ const DashboardLayout: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-screen flex bg-background ${isRTL ? 'flex-row-reverse' : ''}`}>
+    <div className={`flex h-screen overflow-hidden bg-background ${isRTL ? 'flex-row-reverse' : ''}`}>
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -118,7 +118,7 @@ const DashboardLayout: React.FC = () => {
       {/* Sidebar */}
       <aside
         data-tour="sidebar-nav"
-        className={`fixed lg:static inset-y-0 ${isRTL ? 'right-0' : 'left-0'} z-50 w-64 bg-sidebar text-sidebar-foreground transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
+        className={`fixed lg:relative lg:h-screen inset-y-0 ${isRTL ? 'right-0' : 'left-0'} z-50 w-64 bg-sidebar text-sidebar-foreground transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
           sidebarOpen
             ? 'translate-x-0'
             : isRTL
@@ -181,8 +181,8 @@ const DashboardLayout: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main content area */}
-      <div className="flex-1 flex flex-col min-h-screen">
+      {/* Main content area — own scroll container so the sidebar stays put. */}
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {/* Header */}
         <header className="h-16 bg-card/80 backdrop-blur-md border-b border-border flex items-center justify-between px-4 sticky top-0 z-30">
           <div className="flex items-center gap-3">

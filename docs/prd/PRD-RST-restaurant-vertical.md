@@ -1,6 +1,6 @@
 # PRD — Restaurant Vertical (RST core, F-055–F-062)
 
-> **Status:** ready-for-agent · **Source:** `COMPLETENESS_REVIEW.md` §R2 (F-055–F-062) · **Bar:** Foodics / Rewaa / Marn parity, localized for Saudi · **Spec authority:** `srs.md` v2.0 + `INTENDED_BEHAVIOR.md` §4.5 (when code and SRS disagree, SRS wins).
+> **Scope:** F-055–F-062 · **Status:** COMPLETE (see git history) · **Bar:** Foodics / Rewaa / Marn parity, localized for Saudi. This PRD is self-contained — acceptance criteria are below.
 >
 > Covers the eight open restaurant findings: F-055 (order-ticket line items + course/transfer/merge/split), F-056 (modifiers/combos), F-057 (KDS/KOT), F-058 (order types drive behavior), F-059 (check → settle-to-ZATCA), F-060 (aggregator ingest), F-061 (service charge), F-062 (composite/BOM depletion).
 
@@ -35,7 +35,7 @@ From the user's perspective, after this ships:
 - A restaurant can add an **optional service charge** that sits outside the VAT base and renders correctly on the ZATCA invoice.
 - Selling a dish or a bundle SKU **depletes its recipe/BOM components** from stock inside the same atomic transaction.
 
-Every new screen renders its loading / empty / error / permission / offline states (per `INTENDED_BEHAVIOR.md`), uses brand tokens (never hardcoded styling), is translated across all four languages with RTL verified, and **every fiscal/kitchen printable renders in Arabic regardless of UI language.**
+Every new screen renders its loading / empty / error / permission / offline states, uses brand tokens (never hardcoded styling), is translated across all four languages with RTL verified, and **every fiscal/kitchen printable renders in Arabic regardless of UI language.**
 
 ---
 
@@ -105,7 +105,7 @@ Every new screen renders its loading / empty / error / permission / offline stat
 47. As a manager, I want component costs to roll up, so that margin reporting (future F-068) can use true cost of goods.
 
 ### Cross-cutting
-48. As any user, I want every new restaurant screen to render loading, empty, error, permission-denied, and offline states, so that no screen is a dead end (`INTENDED_BEHAVIOR.md`).
+48. As any user, I want every new restaurant screen to render loading, empty, error, permission-denied, and offline states, so that no screen is a dead end.
 49. As an Arabic user, I want every new screen to render correctly in RTL with brand tokens, so that the experience is first-class in Arabic.
 50. As an operator, I want every kitchen and fiscal printable to render in Arabic regardless of UI language, so that compliance and kitchen operations are consistent.
 
@@ -192,7 +192,7 @@ Follow the per-entity triad convention (`routers/<entity>.py`, `services/<entity
 
 ## Out of Scope
 
-- **Other COMPLETENESS_REVIEW families** (F-063+): payments breadth, inventory sessions, pricing/promotions, reporting, finance/AP, white-label depth, billing, reseller economics, CRM campaigns, omnichannel (Zid/C&C), ZATCA C14N, hardware drivers, L10N cleanup. Each is its own PRD.
+- **Other feature families** (F-063+): payments breadth, inventory sessions, pricing/promotions, reporting, finance/AP, white-label depth, billing, reseller economics, CRM campaigns, omnichannel (Zid/C&C), ZATCA C14N, hardware drivers, L10N cleanup. Each is its own PRD.
 - **Direct aggregator APIs.** The SRS explicitly forbids them; only a Deliverect-class / Delivery-Hero-POS-partner middleware adapter is in scope.
 - **Card PANs on our servers.** Settlement reuses the existing tokenized, no-PAN tender capture; no new card-data handling.
 - **Advanced KDS analytics** (speed-of-service dashboards, course-pacing AI) beyond timers + all-day counts.

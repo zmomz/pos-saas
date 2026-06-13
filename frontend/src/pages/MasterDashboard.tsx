@@ -6,13 +6,25 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, type MasterEconomics } from '@/lib/api';
+import { client, getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, getAuditLogs, type MasterEconomics } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
-import StatCard from '@/components/dashboard/StatCard';
+import StatTile, { StatBar } from '@/components/dashboard/StatTile';
 import { PageHeader, SectionHeading } from '@/components/dashboard/PageHeader';
-import { Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Settings, Shield, TrendingUp, TrendingDown, Store } from 'lucide-react';
+import { Avatar } from '@/components/dashboard/Avatar';
+import { ActivityFeed } from '@/components/dashboard/ActivityFeed';
+import { MrrTrendChart } from '@/components/dashboard/MrrTrendChart';
+import { Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Shield, TrendingUp, ArrowRight, Percent } from 'lucide-react';
+
+// Audit row shape (mirrors AuditLog.tsx) for the activity feed + audit preview.
+interface AuditEntry {
+  id: string;
+  user_email?: string;
+  action: string;
+  details?: string;
+  created_at?: string;
+}
 
 interface Agent {
   id: number;
@@ -43,6 +55,9 @@ export default function MasterDashboard() {
   const [economics, setEconomics] = useState<MasterEconomics | null>(null);
   const [ecoLoading, setEcoLoading] = useState(true);
   const [ecoError, setEcoError] = useState(false);
+  // Recent-activity + audit-preview cards (handoff). Best-effort; absent data
+  // just renders the empty state.
+  const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newAgentForm, setNewAgentForm] = useState({
     company_name: '',
@@ -68,6 +83,9 @@ export default function MasterDashboard() {
   useEffect(() => {
     loadData();
     loadEconomics();
+    getAuditLogs()
+      .then((d) => setAuditEntries(Array.isArray(d?.items) ? d.items : Array.isArray(d) ? d : []))
+      .catch(() => setAuditEntries([]));
   }, []);
 
   async function loadData() {
@@ -177,26 +195,42 @@ export default function MasterDashboard() {
 
   const totalAgents = agents.length;
   const activeAgents = agents.filter((a) => a.is_active).length;
+  // Slot-fill across the platform (handoff "Active Packages" bar): used vs total
+  // client slots summed over every agent.
+  const totalSlots = agents.reduce((s, a) => s + (a.package_type || 0), 0);
+  const usedSlots = agents.reduce((s, a) => s + (a.used_slots || 0), 0);
+  const slotPct = totalSlots > 0 ? Math.round((usedSlots / totalSlots) * 100) : 0;
 
-  // Compact economics figures rendered as a uniform mini-stat row.
-  const ecoCards = economics
+  // Compact economics figures for the mini-grid inside the Platform Economics card.
+  const ecoCells = economics
     ? [
-        { icon: TrendingUp, tone: 'emerald', label: t('mrr'), value: formatMoney(economics.mrr, language) },
-        { icon: DollarSign, tone: 'brand', label: t('arr'), value: formatMoney(economics.arr, language) },
-        { icon: Store, tone: 'sky', label: t('active_merchants'), value: `${economics.active_clients}/${economics.total_clients}` },
-        { icon: TrendingDown, tone: 'rose', label: t('churn_rate'), value: `${(economics.churn_rate * 100).toFixed(1)}%` },
-        { icon: DollarSign, tone: 'violet', label: t('platform_revenue'), value: formatMoney(economics.platform_revenue, language) },
-        { icon: DollarSign, tone: 'emerald', label: t('collected'), value: formatMoney(economics.collected, language) },
+        { k: t('mrr'), v: formatMoney(economics.mrr, language) },
+        { k: t('arr'), v: formatMoney(economics.arr, language) },
+        { k: t('active_merchants'), v: `${economics.active_clients}`, small: ` / ${economics.total_clients}` },
+        { k: t('churn_rate'), v: `${(economics.churn_rate * 100).toFixed(1)}%` },
+        { k: t('platform_revenue'), v: formatMoney(economics.platform_revenue, language) },
+        { k: t('collected'), v: formatMoney(economics.collected, language) },
       ]
     : [];
 
-  const toneIcon: Record<string, string> = {
-    emerald: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-300',
-    brand: 'bg-brand-500/15 text-brand-600 dark:text-brand-300',
-    sky: 'bg-sky-500/15 text-sky-600 dark:text-sky-300',
-    rose: 'bg-rose-500/15 text-rose-600 dark:text-rose-300',
-    violet: 'bg-violet-500/15 text-violet-600 dark:text-violet-300',
-  };
+  // Revenue-by-agent leaderboard, ranked by MRR, with each agent's share of the
+  // total MRR driving the progress bar.
+  const leaderboard = economics ? [...economics.by_agent].sort((a, b) => b.mrr - a.mrr) : [];
+  const topMrr = leaderboard.reduce((m, a) => Math.max(m, a.mrr), 0);
+
+  // Recent activity + audit preview from the audit log.
+  const activityItems = auditEntries.slice(0, 5).map((e) => ({
+    id: e.id,
+    action: e.action,
+    at: e.created_at,
+    text: (
+      <>
+        {e.user_email ? <b className="font-semibold">{e.user_email}</b> : null}
+        {e.user_email ? ' ' : ''}
+        {e.details || e.action}
+      </>
+    ),
+  }));
 
   if (loading) {
     return (
@@ -219,99 +253,197 @@ export default function MasterDashboard() {
         }
       />
 
-      {/* Stats */}
-      <div data-tour="stats-section" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Users} tone="brand" label={t('total_agents') || 'Total Agents'} value={totalAgents} />
-        <StatCard icon={DollarSign} tone="emerald" label={t('mrr')} value={formatMoney(economics?.mrr ?? 0, language)} />
-        <StatCard icon={PackageIcon} tone="violet" label={t('active_packages') || 'Active Packages'} value={packages.length} />
-        <StatCard icon={Activity} tone="sky" label={t('system_health') || 'System Health'} value={`${activeAgents}/${totalAgents} ${t('active') || 'Active'}`} />
+      {/* Stats — handoff stat tiles (swatch + big value + footer). */}
+      <div data-tour="stats-section" className="grid grid-cols-1 gap-[18px] sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile
+          icon={Users}
+          tone="brand"
+          label={t('total_agents') || 'Total Agents'}
+          value={totalAgents}
+          footer={
+            <span className="inline-flex items-center gap-1.5 text-success">
+              <span className="h-[7px] w-[7px] rounded-full bg-success" /> {activeAgents} {t('active') || 'active'}
+            </span>
+          }
+        />
+        <StatTile
+          icon={DollarSign}
+          tone="success"
+          label={t('mrr')}
+          value={formatMoney(economics?.mrr ?? 0, language)}
+          footer={<span className="text-muted-foreground">{t('arr')} {formatMoney(economics?.arr ?? 0, language)}</span>}
+        />
+        <StatTile
+          icon={PackageIcon}
+          tone="violet"
+          label={t('active_packages') || 'Active Packages'}
+          value={packages.length}
+          valueSmall={totalSlots > 0 ? `· ${usedSlots}/${totalSlots} ${t('slots') || 'slots'}` : undefined}
+          footer={totalSlots > 0 ? <StatBar pct={slotPct} /> : <span className="text-muted-foreground">{t('packages')}</span>}
+        />
+        <StatTile
+          icon={Activity}
+          tone="sky"
+          label={t('system_health') || 'System Health'}
+          value={`${activeAgents}/${totalAgents}`}
+          valueSmall={t('active') || 'active'}
+          footer={
+            <span className="inline-flex items-center gap-1.5 text-success">
+              <span className="h-[7px] w-[7px] rounded-full bg-success" /> {t('all_systems_operational') || 'All systems operational'}
+            </span>
+          }
+        />
       </div>
 
-      {/* Quick Actions */}
-      <div data-tour="quick-actions" className="flex flex-wrap gap-3">
-        <Button variant="outline" onClick={() => navigate('/packages')}>
-          <Settings className="h-4 w-4" />
-          {t('package_management') || 'Manage Packages'}
-        </Button>
-        <Button variant="outline" onClick={() => navigate('/audit')}>
-          <Shield className="h-4 w-4" />
-          {t('audit_log') || 'Audit Log'}
-        </Button>
-        <Button variant="outline" onClick={() => navigate('/notifications')}>
-          <BarChart3 className="h-4 w-4" />
-          {t('notifications') || 'Notifications'}
-        </Button>
-        <Button variant="outline" onClick={openTaxDialog}>
-          <DollarSign className="h-4 w-4" />
-          {t('tax_rate') || 'Tax Rate'}
-        </Button>
+      {/* Quick Actions — handoff chips. */}
+      <div data-tour="quick-actions" className="flex flex-wrap gap-2.5">
+        <button onClick={() => navigate('/packages')} className="chip-link">
+          <PackageIcon className="h-4 w-4" /> {t('packages') || 'Packages'}
+        </button>
+        <button onClick={() => navigate('/audit')} className="chip-link">
+          <Shield className="h-4 w-4" /> {t('audit_log') || 'Audit Log'}
+        </button>
+        <button onClick={() => navigate('/notifications')} className="chip-link">
+          <BarChart3 className="h-4 w-4" /> {t('notifications') || 'Notifications'}
+        </button>
+        <button onClick={openTaxDialog} className="chip-link">
+          <Percent className="h-4 w-4" /> {t('tax_rate') || 'Tax settings'}
+        </button>
       </div>
 
-      {/* MA-08 / RSL-08: platform economics — MRR, ARR, active merchants, churn,
-          platform revenue, and the revenue-by-agent leaderboard. */}
-      <section>
-        <SectionHeading title={t('platform_economics')} />
-        {ecoLoading ? (
-          <div className="animate-pulse py-8 text-center text-muted-foreground">{t('loading')}</div>
-        ) : ecoError ? (
-          <ErrorState onRetry={loadEconomics} />
-        ) : economics && economics.total_clients === 0 && economics.collected === 0 ? (
-          <Card className="rounded-2xl shadow-card">
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              {t('economics_empty')}
-            </CardContent>
-          </Card>
-        ) : economics ? (
-          <>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-4">
-              {ecoCards.map((card, i) => {
-                const Icon = card.icon;
-                return (
-                  <Card key={i} className="rounded-2xl shadow-card">
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${toneIcon[card.tone]}`}>
-                          <Icon className="h-4 w-4" />
-                        </span>
-                        <p className="text-xs text-muted-foreground">{card.label}</p>
-                      </div>
-                      <p className="text-lg font-bold text-foreground">{card.value}</p>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
+      {/* MA-08 / RSL-08: Platform Economics — mini-grid + revenue-by-agent leaderboard. */}
+      <Card className="rounded-2xl border-border shadow-card">
+        <CardContent className="p-6">
+          <div className="mb-3.5 flex items-center justify-between">
+            <h2 className="text-base font-bold tracking-tight text-foreground">{t('platform_economics')}</h2>
+            <span className="pill-success">
+              <span className="h-[7px] w-[7px] rounded-full bg-current" /> {t('healthy') || 'Healthy'}
+            </span>
+          </div>
 
-            {/* RSL-08: revenue-by-agent leaderboard */}
-            <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-card">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-muted-foreground">
-                  <tr>
-                    <th className="p-3 text-start font-medium">{t('company_name')}</th>
-                    <th className="p-3 text-start font-medium">{t('active_merchants')}</th>
-                    <th className="p-3 text-start font-medium">{t('mrr')}</th>
-                    <th className="p-3 text-start font-medium">{t('collected')}</th>
-                    <th className="p-3 text-start font-medium">{t('platform_revenue')}</th>
-                    <th className="p-3 text-start font-medium">{t('revenue_net_margin')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {economics.by_agent.map((a) => (
-                    <tr key={a.agent_id} className="border-t border-border text-foreground/80 transition-colors hover:bg-muted/40">
-                      <td className="p-3 font-medium text-foreground">{a.company_name}</td>
-                      <td className="p-3">{a.active_clients}/{a.total_clients}</td>
-                      <td className="p-3">{formatMoney(a.mrr, language)}</td>
-                      <td className="p-3">{formatMoney(a.collected, language)}</td>
-                      <td className="p-3">{formatMoney(a.master_owed, language)}</td>
-                      <td className="p-3">{formatMoney(a.net, language)}</td>
+          {ecoLoading ? (
+            <div className="animate-pulse py-8 text-center text-muted-foreground">{t('loading')}</div>
+          ) : ecoError ? (
+            <ErrorState onRetry={loadEconomics} />
+          ) : economics && economics.total_clients === 0 && economics.collected === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">{t('economics_empty')}</p>
+          ) : economics ? (
+            <>
+              {/* Mini-grid: hairline-separated cells (handoff `.mini-grid`). */}
+              <div className="mb-[22px] grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-border md:grid-cols-3">
+                {ecoCells.map((c, i) => (
+                  <div key={i} className="bg-card p-4">
+                    <div className="text-xs font-medium text-muted-foreground">{c.k}</div>
+                    <div className="mt-1.5 text-[20px] font-extrabold tracking-tight tabular-nums text-foreground">
+                      {c.v}
+                      {c.small ? <small className="text-[13px] font-semibold text-muted-foreground">{c.small}</small> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mb-3.5 flex items-center justify-between">
+                <h3 className="text-sm font-bold tracking-tight text-foreground">{t('revenue_by_agent') || 'Revenue by Agent'}</h3>
+              </div>
+
+              {/* Revenue-by-agent leaderboard. */}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-border text-[11.5px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                      <th className="w-9 py-2.5 pe-2 text-start" />
+                      <th className="py-2.5 pe-3 text-start font-bold">{t('company_name') || 'Agent'}</th>
+                      <th className="py-2.5 pe-3 text-start font-bold">{t('active_merchants') || 'Merchants'}</th>
+                      <th className="py-2.5 pe-3 text-start font-bold">{t('mrr')}</th>
+                      <th className="py-2.5 pe-3 text-start font-bold">{t('share') || 'Share'}</th>
+                      <th className="py-2.5 text-start font-bold">{t('status')}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {leaderboard.map((a, i) => (
+                      <tr key={a.agent_id} className="border-b border-border last:border-b-0 hover:bg-muted/40">
+                        <td className={`py-3.5 pe-2 font-mono text-xs ${i < 5 ? 'font-bold text-gold-600' : 'text-muted-foreground'}`}>
+                          {String(i + 1).padStart(2, '0')}
+                        </td>
+                        <td className="py-3.5 pe-3">
+                          <div className="flex items-center gap-2.5">
+                            <Avatar name={a.company_name} size={32} />
+                            <span className="font-semibold text-foreground">{a.company_name}</span>
+                          </div>
+                        </td>
+                        <td className="py-3.5 pe-3 tabular-nums text-foreground/80">{a.active_clients}/{a.total_clients}</td>
+                        <td className="py-3.5 pe-3 font-bold tabular-nums text-foreground">{formatMoney(a.mrr, language)}</td>
+                        <td className="py-3.5 pe-3">
+                          <div className="h-[7px] w-[90px] overflow-hidden rounded bg-brand-100">
+                            <span className="block h-full rounded bg-brand" style={{ width: `${topMrr > 0 ? Math.round((a.mrr / topMrr) * 100) : 0}%` }} />
+                          </div>
+                        </td>
+                        <td className="py-3.5">
+                          <span className={a.is_active ? 'pill-success' : 'pill-danger'}>
+                            <span className="h-[7px] w-[7px] rounded-full bg-current" /> {a.is_active ? t('active') : t('inactive')}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      {/* Split: MRR trend chart + Recent Activity (handoff `.layout-split`). */}
+      <div className="grid gap-[18px] lg:grid-cols-[1.55fr_1fr]">
+        <Card className="rounded-2xl border-border shadow-card">
+          <CardContent className="p-6">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-base font-bold tracking-tight text-foreground">{t('platform_mrr_trend') || 'Platform MRR · last 12 months'}</h2>
+              <span className="pill-success">
+                <TrendingUp className="h-[13px] w-[13px]" /> {t('trend') || 'Trend'}
+              </span>
             </div>
-          </>
-        ) : null}
-      </section>
+            <MrrTrendChart current={economics?.mrr ?? 0} format={(n) => formatMoney(n, language)} />
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl border-border shadow-card">
+          <CardContent className="p-6">
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-base font-bold tracking-tight text-foreground">{t('recent_activity') || 'Recent Activity'}</h2>
+              <button onClick={() => navigate('/audit')} className="inline-flex items-center gap-1 text-[13px] font-semibold text-brand-700">
+                {t('view_all') || 'View all'} <ArrowRight className="h-[15px] w-[15px]" />
+              </button>
+            </div>
+            <ActivityFeed items={activityItems} empty={t('no_recent_activity') || 'No recent activity.'} />
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Audit Log preview (handoff bottom card). */}
+      <Card className="rounded-2xl border-border shadow-card">
+        <CardContent className="p-6">
+          <div className="mb-3.5 flex items-center justify-between">
+            <h2 className="text-base font-bold tracking-tight text-foreground">{t('audit_log') || 'Audit Log'}</h2>
+            <button onClick={() => navigate('/audit')} className="inline-flex items-center gap-1 text-[13px] font-semibold text-brand-700">
+              {t('view_all') || 'View all entries'} <ArrowRight className="h-[15px] w-[15px]" />
+            </button>
+          </div>
+          {auditEntries.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">{t('no_audit_entries') || 'No audit entries yet.'}</p>
+          ) : (
+            auditEntries.slice(0, 5).map((e) => (
+              <div key={e.id} className="flex items-center gap-3 border-b border-dashed border-border py-3 text-[13px] last:border-b-0">
+                <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
+                  {e.created_at ? new Date(e.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                </span>
+                {e.user_email ? <b className="font-semibold text-foreground">{e.user_email}</b> : null}
+                <span className="text-foreground/80">{e.details || e.action}</span>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
 
       {/* Package Overview */}
       <section>
