@@ -574,6 +574,31 @@ export async function getStockAdjustments(params?: {
   return response.data;
 }
 
+// ISSUE-060: inter-branch stock-transfer history (the audit rows F-032 writes).
+export interface BranchTransfer {
+  id: number;
+  from_branch_id: number;
+  to_branch_id: number;
+  product_id: number;
+  product_name?: string | null;
+  quantity: number;
+  status: string;
+  created_at?: string | null;
+}
+
+export async function getBranchTransfers(params?: {
+  branch_id?: number;
+  product_id?: number;
+  status?: string;
+}): Promise<{ items: BranchTransfer[]; total: number }> {
+  const response = await client.apiCall.invoke<{ items: BranchTransfer[]; total: number }>({
+    url: '/api/v1/production/branches/transfers',
+    method: 'GET',
+    data: params || {},
+  });
+  return response.data;
+}
+
 // Phase 3: the caller's effective permission grants/denies, so the UI can
 // hide/disable actions (e.g. refund) the staff member lacks. Master accounts
 // come back with is_master=true and gate nothing.

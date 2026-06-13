@@ -1425,6 +1425,60 @@ async def transfer_branch_stock(
     }
 
 
+@router.get("/branches/transfers")
+async def list_branch_transfers(
+    branch_id: Optional[int] = None,
+    product_id: Optional[int] = None,
+    status: Optional[str] = None,
+    limit: int = 100,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's inter-branch transfer history (ISSUE-060, INV-05).
+
+    The Branch Management "Transfer Stock" dialog wrote ``stock_transfers`` audit
+    rows (F-032) but nothing read them back. Owner-scoped to the caller's login
+    account (SEC-02), newest first. ``branch_id`` matches either leg (source OR
+    destination); ``product_id`` and ``status`` filter further when given.
+    """
+    from sqlalchemy import or_
+
+    from models.stock_transfers import Stock_transfers as StockTransfers
+
+    query = select(StockTransfers).where(StockTransfers.user_id == owner_id)
+    if branch_id is not None:
+        query = query.where(
+            or_(
+                StockTransfers.from_branch_id == int(branch_id),
+                StockTransfers.to_branch_id == int(branch_id),
+            )
+        )
+    if product_id is not None:
+        query = query.where(StockTransfers.product_id == int(product_id))
+    if (status or "").strip():
+        query = query.where(StockTransfers.status == status.strip())
+    query = query.order_by(StockTransfers.id.desc()).limit(max(1, min(int(limit), 500)))
+
+    rows = (await db.execute(query)).scalars().all()
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "from_branch_id": r.from_branch_id,
+                "to_branch_id": r.to_branch_id,
+                "product_id": r.product_id,
+                "product_name": r.product_name,
+                "quantity": r.quantity,
+                "status": r.status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
 @router.post("/stock-adjustments")
 async def create_stock_adjustment(
     data: StockAdjustmentRequest,

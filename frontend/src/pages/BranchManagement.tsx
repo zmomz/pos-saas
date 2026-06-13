@@ -10,9 +10,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { client, createStockAdjustment, setMainBranch, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
+import { client, createStockAdjustment, getBranchTransfers, setMainBranch, type BranchTransfer, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star } from 'lucide-react';
+import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star, History } from 'lucide-react';
 
 const ADJUSTMENT_REASONS: StockAdjustmentReason[] = [
   'count',
@@ -86,6 +86,11 @@ export default function BranchManagement() {
   const [adjustResult, setAdjustResult] = useState<StockAdjustment | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [inventoryLoading, setInventoryLoading] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [transfers, setTransfers] = useState<BranchTransfer[]>([]);
+  const [transfersLoading, setTransfersLoading] = useState(false);
+  const [transfersError, setTransfersError] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState('');
 
   const { t } = useLanguage();
 
@@ -260,6 +265,36 @@ export default function BranchManagement() {
     }
   }
 
+  async function loadTransfers(branchId: string) {
+    setTransfersLoading(true);
+    setTransfersError(null);
+    try {
+      const res = await getBranchTransfers(branchId ? { branch_id: Number(branchId) } : undefined);
+      setTransfers(res.items);
+    } catch (err) {
+      console.error('Failed to load transfer history:', err);
+      setTransfersError(t('transfer_load_failed'));
+      setTransfers([]);
+    } finally {
+      setTransfersLoading(false);
+    }
+  }
+
+  function openHistory() {
+    setHistoryFilter('');
+    setHistoryOpen(true);
+    loadTransfers('');
+  }
+
+  function handleHistoryFilter(branchId: string) {
+    setHistoryFilter(branchId);
+    loadTransfers(branchId);
+  }
+
+  function branchName(id: number) {
+    return branches.find((b) => String(b.id) === String(id))?.name ?? `#${id}`;
+  }
+
   function openEdit(branch: Branch) {
     setSelectedBranch(branch);
     setFormData({
@@ -328,6 +363,9 @@ export default function BranchManagement() {
           </Button>
           <Button onClick={() => { setTransferError(null); setTransferOpen(true); }} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
             <ArrowRightLeft className="h-4 w-4 mr-2" /> {t('transfer_stock')}
+          </Button>
+          <Button onClick={openHistory} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
+            <History className="h-4 w-4 mr-2" /> {t('transfer_history')}
           </Button>
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
@@ -514,6 +552,64 @@ export default function BranchManagement() {
             >
               {submitting ? t('loading') : t('transfer_stock')}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer History Dialog (ISSUE-060) */}
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-white">{t('transfer_history')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm text-slate-400 mb-1 block">{t('branch')}</label>
+              <select
+                value={historyFilter}
+                onChange={(e) => handleHistoryFilter(e.target.value)}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              >
+                <option value="">{t('all_branches')}</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            {transfersError ? (
+              <p role="alert" className="text-sm text-red-400">{transfersError}</p>
+            ) : transfersLoading ? (
+              <div className="text-center py-8 text-slate-400">{t('loading')}</div>
+            ) : transfers.length === 0 ? (
+              <div className="text-center py-8 text-slate-500">{t('transfer_history_empty')}</div>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-slate-700">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-700/50">
+                    <tr className="text-slate-400">
+                      <th className="p-2 text-start">{t('date')}</th>
+                      <th className="p-2 text-start">{t('from_branch')}</th>
+                      <th className="p-2 text-start">{t('to_branch')}</th>
+                      <th className="p-2 text-start">{t('product')}</th>
+                      <th className="p-2 text-start">{t('quantity')}</th>
+                      <th className="p-2 text-start">{t('status')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {transfers.map((tr) => (
+                      <tr key={tr.id} className="border-t border-slate-700 text-slate-300">
+                        <td className="p-2 whitespace-nowrap">{tr.created_at ? new Date(tr.created_at).toLocaleDateString() : '—'}</td>
+                        <td className="p-2">{branchName(tr.from_branch_id)}</td>
+                        <td className="p-2">{branchName(tr.to_branch_id)}</td>
+                        <td className="p-2 text-white">{tr.product_name ?? `#${tr.product_id}`}</td>
+                        <td className="p-2">{tr.quantity}</td>
+                        <td className="p-2"><Badge className="bg-brand-500/20 text-brand-300">{tr.status}</Badge></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
