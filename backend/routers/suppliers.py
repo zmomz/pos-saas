@@ -5,10 +5,11 @@ from typing import List, Optional
 from datetime import datetime, date
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from core.saudi_vat import validate_saudi_vat
 from services.suppliers import SuppliersService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
@@ -33,6 +34,11 @@ class SuppliersData(BaseModel):
     payment_terms: str = None
     is_active: bool = None
 
+    @field_validator("vat_number")
+    @classmethod
+    def _check_vat(cls, v):
+        return validate_saudi_vat(v)
+
 
 class SuppliersUpdateData(BaseModel):
     """Update entity data (partial updates allowed)"""
@@ -45,6 +51,11 @@ class SuppliersUpdateData(BaseModel):
     vat_number: Optional[str] = None
     payment_terms: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("vat_number")
+    @classmethod
+    def _check_vat(cls, v):
+        return validate_saudi_vat(v)
 
 
 class SuppliersResponse(BaseModel):

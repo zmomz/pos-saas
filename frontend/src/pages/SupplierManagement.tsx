@@ -21,6 +21,7 @@ interface Supplier {
   email?: string;
   phone?: string;
   payment_terms?: string;
+  vat_number?: string;
   status?: string;
   address?: string;
   created_at?: string;
@@ -44,6 +45,7 @@ interface SupplierFormData {
   email: string;
   phone: string;
   payment_terms: string;
+  vat_number: string;
   address: string;
 }
 
@@ -58,6 +60,7 @@ const emptySupplierForm: SupplierFormData = {
   email: '',
   phone: '',
   payment_terms: 'Net 30',
+  vat_number: '',
   address: '',
 };
 
@@ -125,6 +128,7 @@ export default function SupplierManagement() {
           email: formData.email || undefined,
           phone: formData.phone || undefined,
           payment_terms: formData.payment_terms || 'Net 30',
+          vat_number: formData.vat_number || undefined,
           address: formData.address || undefined,
           status: 'active',
         },
@@ -151,6 +155,7 @@ export default function SupplierManagement() {
           email: formData.email || undefined,
           phone: formData.phone || undefined,
           payment_terms: formData.payment_terms || undefined,
+          vat_number: formData.vat_number || undefined,
           address: formData.address || undefined,
         },
       });
@@ -188,6 +193,7 @@ export default function SupplierManagement() {
       email: supplier.email || '',
       phone: supplier.phone || '',
       payment_terms: supplier.payment_terms || 'Net 30',
+      vat_number: supplier.vat_number || '',
       address: supplier.address || '',
     });
     setEditOpen(true);
@@ -294,6 +300,10 @@ export default function SupplierManagement() {
           <Input value={formData.payment_terms} onChange={(e) => handleFormChange('payment_terms', e.target.value)} placeholder="Net 30" className="bg-slate-700 border-slate-600 text-white" />
         </div>
         <div>
+          <label className="text-sm text-slate-400 mb-1 block">{t('vat_number')}</label>
+          <Input value={formData.vat_number} onChange={(e) => handleFormChange('vat_number', e.target.value)} placeholder="300000000000003" className="bg-slate-700 border-slate-600 text-white" />
+        </div>
+        <div>
           <label className="text-sm text-slate-400 mb-1 block">Address</label>
           <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder="Full address" className="bg-slate-700 border-slate-600 text-white" />
         </div>
@@ -396,6 +406,7 @@ export default function SupplierManagement() {
                   <th className="p-3 text-start">Contact</th>
                   <th className="p-3 text-start">Email</th>
                   <th className="p-3 text-start">Phone</th>
+                  <th className="p-3 text-start">{t('vat_number')}</th>
                   <th className="p-3 text-start">Terms</th>
                   <th className="p-3 text-start">Status</th>
                   <th className="p-3 text-start">Actions</th>
@@ -404,7 +415,7 @@ export default function SupplierManagement() {
               <tbody>
                 {filteredSuppliers.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-6 text-center text-slate-500">No suppliers found</td>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">No suppliers found</td>
                   </tr>
                 ) : (
                   filteredSuppliers.map((supplier) => (
@@ -413,6 +424,7 @@ export default function SupplierManagement() {
                       <td className="p-3">{supplier.contact_person || '—'}</td>
                       <td className="p-3">{supplier.email || '—'}</td>
                       <td className="p-3">{supplier.phone || '—'}</td>
+                      <td className="p-3 font-mono text-xs">{supplier.vat_number || '—'}</td>
                       <td className="p-3">{supplier.payment_terms || '—'}</td>
                       <td className="p-3">{getStatusBadge(supplier.status || 'active')}</td>
                       <td className="p-3">
