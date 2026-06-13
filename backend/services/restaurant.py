@@ -865,6 +865,21 @@ class RestaurantService:
         if check is None:
             return None
 
+        # Reflect on the floor that a bill is out (U4.1): flip the dine-in table
+        # occupied -> bill_printed and persist it, so the state is real across
+        # sessions/devices rather than a browser-only tile flip. Non-fiscal — the
+        # ticket stays open and nothing is minted. Takeaway/delivery have no table.
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if ticket is not None and ticket.table_id is not None:
+            table = await self.get_table(ticket.table_id, user_id)
+            if (
+                table is not None
+                and table.current_ticket_id == ticket.id
+                and (table.state or "free") == "occupied"
+            ):
+                table.state = "bill_printed"
+                await self.db.commit()
+
         from datetime import datetime
 
         from services.escpos import build_receipt_base64

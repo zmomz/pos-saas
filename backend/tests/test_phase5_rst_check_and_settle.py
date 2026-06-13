@@ -140,11 +140,48 @@ async def test_check_is_non_fiscal_no_qr(client):
     # An 80mm proforma was rendered (base64 ESC/POS body).
     assert body["proforma_base64"]
 
-    # Printing a check has NO fiscal side effects: nothing is minted, the ticket
-    # stays open and the table stays occupied.
+    # Printing a check has NO fiscal side effects: nothing is minted and the
+    # ticket stays open. The floor reflects that a bill is out (bill_printed),
+    # but no invoice/transaction exists yet.
     assert await _doc_count(client_id) == 0
     assert await _txn_count(client_id) == 0
+    assert await _table_state(client, token, table_id) == "bill_printed"
+
+
+# ---------------------------------------------------------------------------
+# Named slice test: printing the check persists the bill_printed table state.
+# ---------------------------------------------------------------------------
+async def test_printing_check_sets_table_bill_printed(client):
+    """Printing the proforma flips the dine-in table occupied -> bill_printed (U4.1).
+
+    The floor's ``bill_printed`` state was rendered/translated but never assigned
+    server-side, so the tile only flipped in the browser — another device or a
+    page reload still saw ``occupied``. Printing the check must persist the state
+    so every session sees the real floor.
+    """
+    user, token, client_id = await make_client_account(client, business_type="restaurant")
+    headers = auth_headers(token)
+    table_id = await _make_table(client, token, name="BP1")
+    ticket_id = await _open_dine_in(client, token, table_id)
+    pid = await add_product(client_id, user["id"], name="Mandi", quantity=30, price=55.0)
+    await _add_line(client, token, ticket_id, pid, qty=1)
+
     assert await _table_state(client, token, table_id) == "occupied"
+
+    resp = await client.post(
+        f"/api/v1/restaurant/order-tickets/{ticket_id}/check",
+        json={},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Persisted server-side: a FRESH read (another device/session) sees it.
+    assert await _table_state(client, token, table_id) == "bill_printed"
+    # The ticket itself stays open — printing a check is not settling.
+    tk = await client.get(
+        f"/api/v1/restaurant/order-tickets/{ticket_id}", headers=headers
+    )
+    assert tk.json()["status"] == "open"
 
 
 # ---------------------------------------------------------------------------
