@@ -129,14 +129,14 @@ const DashboardLayout: React.FC = () => {
         {/* Sidebar header */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-sidebar-border">
           <div className="flex items-center gap-2.5 min-w-0">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl brand-gradient text-white font-bold shadow-brand">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 text-white font-bold">
               {(t('app_name') || 'P').charAt(0).toUpperCase()}
             </span>
-            <h1 className="text-lg font-bold tracking-tight truncate text-foreground">{t('app_name')}</h1>
+            <h1 className="text-lg font-bold tracking-tight truncate text-white">{t('app_name')}</h1>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-muted-foreground hover:text-foreground"
+            className="lg:hidden text-sidebar-foreground hover:text-white"
           >
             <X className="h-5 w-5" />
           </button>
@@ -153,10 +153,10 @@ const DashboardLayout: React.FC = () => {
                 end={item.path === '/master' || item.path === '/agent' || item.path === '/client'}
                 onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) =>
-                  `group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  `group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
                     isActive
-                      ? 'brand-gradient text-white shadow-brand'
-                      : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
+                      ? 'bg-white/10 text-white font-semibold before:absolute before:inset-y-1.5 before:start-0 before:w-1 before:rounded-full before:bg-sidebar-primary'
+                      : 'text-sidebar-foreground hover:bg-white/5 hover:text-white'
                   }`
                 }
               >
@@ -170,12 +170,12 @@ const DashboardLayout: React.FC = () => {
         {/* User info at bottom */}
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-sidebar-border bg-sidebar">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full brand-gradient flex items-center justify-center text-white text-sm font-semibold shadow-brand">
+            <div className="w-9 h-9 rounded-full bg-sidebar-primary flex items-center justify-center text-sidebar-primary-foreground text-sm font-bold">
               {user?.email?.charAt(0).toUpperCase() || 'U'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate text-foreground">{user?.email || 'User'}</p>
-              <p className="text-xs capitalize text-muted-foreground">{userRole}</p>
+              <p className="text-sm font-medium truncate text-white">{user?.email || 'User'}</p>
+              <p className="text-xs capitalize text-sidebar-foreground">{userRole}</p>
             </div>
           </div>
         </div>

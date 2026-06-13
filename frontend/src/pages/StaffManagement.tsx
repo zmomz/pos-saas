@@ -213,7 +213,7 @@ export default function StaffManagement() {
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.name || !formData.role}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -236,7 +236,7 @@ export default function StaffManagement() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
-            <Users className="h-8 w-8 text-blue-400" />
+            <Users className="h-8 w-8 text-brand-400" />
             <div>
               <p className="text-slate-400 text-sm">Total Staff</p>
               <p className="text-2xl font-bold text-white">{staff.length}</p>
@@ -269,7 +269,7 @@ export default function StaffManagement() {
           <DialogTrigger asChild>
             <Button
               onClick={() => setFormData(emptyForm)}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               + Add Staff
             </Button>

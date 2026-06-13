@@ -915,7 +915,7 @@ export default function ReportsAnalytics() {
           <Button
             onClick={handleExportCSV}
             disabled={exporting}
-            className="bg-blue-600 hover:bg-blue-700 text-white"
+            className="bg-brand-600 hover:bg-brand-700 text-white"
           >
             {exporting ? '...' : tr('export_csv')}
           </Button>
@@ -930,7 +930,7 @@ export default function ReportsAnalytics() {
             variant={period === p ? 'default' : 'outline'}
             className={
               period === p
-                ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                ? 'bg-brand-600 hover:bg-brand-700 text-white'
                 : 'border-slate-700 text-slate-300 hover:bg-slate-800'
             }
             onClick={() => setPeriod(p)}
@@ -1021,7 +1021,7 @@ export default function ReportsAnalytics() {
                     </span>
                     <div className="flex-1 bg-slate-700 rounded-full h-7 relative overflow-hidden">
                       <div
-                        className="bg-blue-600 h-full rounded-full transition-all duration-500 flex items-center justify-end px-2"
+                        className="bg-brand-600 h-full rounded-full transition-all duration-500 flex items-center justify-end px-2"
                         style={{ width: `${Math.max(barWidth, 5)}%` }}
                       >
                         <span className="text-xs text-white font-medium whitespace-nowrap">
@@ -1136,7 +1136,7 @@ export default function ReportsAnalytics() {
             <Button
               onClick={handleExportJournal}
               disabled={exportingJournal || !journal || journal.lines.length === 0}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {exportingJournal ? '...' : tr('download_journal')}
             </Button>
@@ -1248,7 +1248,7 @@ export default function ReportsAnalytics() {
             <Button
               onClick={handleExportMargin}
               disabled={exportingMargin || !margin || margin.by_item.length === 0}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {exportingMargin ? '...' : tr('download_margin')}
             </Button>
@@ -1429,7 +1429,7 @@ export default function ReportsAnalytics() {
             <Button
               onClick={handleExportVat}
               disabled={exportingVat || !vat}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {exportingVat ? '...' : tr('download_vat')}
             </Button>
@@ -1535,7 +1535,7 @@ export default function ReportsAnalytics() {
             <Button
               onClick={handleExportInventory}
               disabled={exportingInventory || !inventory}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {exportingInventory ? '...' : tr('download_inventory')}
             </Button>
@@ -1698,7 +1698,7 @@ export default function ReportsAnalytics() {
             <Button
               onClick={handleExportRefundsVoids}
               disabled={exportingRefundsVoids || !refundsVoids}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {exportingRefundsVoids ? '...' : tr('download_refunds_voids')}
             </Button>
@@ -1819,7 +1819,7 @@ export default function ReportsAnalytics() {
             <Button
               onClick={handleExportDiscounts}
               disabled={exportingDiscounts || !discounts}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {exportingDiscounts ? '...' : tr('download_discounts')}
             </Button>

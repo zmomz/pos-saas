@@ -1870,7 +1870,7 @@ async def get_agent_public_profile(
     features_result = await db.execute(
         select(Agent_features).where(
             Agent_features.agent_id == agent_id,
-            Agent_features.is_enabled == True,
+            Agent_features.is_enabled_default == True,
         )
     )
     features = features_result.scalars().all()

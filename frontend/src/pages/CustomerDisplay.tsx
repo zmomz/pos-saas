@@ -87,7 +87,7 @@ export default function CustomerDisplay() {
             {display.items.map((item, idx) => (
               <div key={idx} className="flex items-center justify-between bg-slate-800/60 rounded-xl p-4 border border-slate-700/50">
                 <div className="flex items-center gap-4">
-                  <span className="text-2xl font-bold text-blue-400 w-10 text-center">{item.quantity}×</span>
+                  <span className="text-2xl font-bold text-brand-400 w-10 text-center">{item.quantity}×</span>
                   <div>
                     <p className="text-xl text-white font-medium">{item.name_ar || item.name}</p>
                     {item.name_ar && <p className="text-sm text-slate-400">{item.name}</p>}

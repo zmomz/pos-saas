@@ -167,7 +167,7 @@ export default function ForceResetPassword() {
             <Button
               onClick={handleSubmit}
               disabled={submitting}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? (t('saving') || 'Saving...') : (t('save') || 'Save')}
             </Button>

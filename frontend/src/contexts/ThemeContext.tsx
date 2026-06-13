@@ -25,7 +25,8 @@ interface ThemeProviderProps {
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
   const [theme, setTheme] = useState<Theme>(() => {
     const stored = localStorage.getItem('pos_theme');
-    return (stored === 'light' || stored === 'dark') ? stored : 'dark';
+    // Light is the canonical brand theme (matches the design system); dark is opt-in.
+    return (stored === 'light' || stored === 'dark') ? stored : 'light';
   });
 
   useEffect(() => {

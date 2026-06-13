@@ -152,7 +152,7 @@ export default function ChannelOrders() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Globe className="h-6 w-6 text-blue-400" />
+            <Globe className="h-6 w-6 text-brand-400" />
             {t('online_orders')}
           </h2>
           <p className="text-slate-400 text-sm mt-1">{t('online_orders_desc')}</p>
@@ -170,7 +170,7 @@ export default function ChannelOrders() {
       <Card className="bg-slate-800 border-slate-700">
         <CardContent className="p-4 space-y-3">
           <div className="flex items-center gap-2 text-white font-semibold">
-            <Link2 className="h-5 w-5 text-blue-400" />
+            <Link2 className="h-5 w-5 text-brand-400" />
             {t('salla_connection')}
             {connection?.connected && (
               <Badge className="bg-green-500/20 text-green-400">
@@ -202,7 +202,7 @@ export default function ChannelOrders() {
             <Button
               onClick={handleConnect}
               disabled={saving || !storeId.trim()}
-              className="bg-blue-600 hover:bg-blue-700 text-white shrink-0"
+              className="bg-brand-600 hover:bg-brand-700 text-white shrink-0"
             >
               {saving ? t('loading') : t('connect')}
             </Button>

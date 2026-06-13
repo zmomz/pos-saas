@@ -213,7 +213,7 @@ export default function ExpenseTracking() {
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.amount || !formData.category}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -269,7 +269,7 @@ export default function ExpenseTracking() {
       <Card className="bg-slate-800 border-slate-700">
         <CardContent className="p-4">
           <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-            <Receipt className="h-5 w-5 text-blue-400" />
+            <Receipt className="h-5 w-5 text-brand-400" />
             Category Breakdown
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -295,7 +295,7 @@ export default function ExpenseTracking() {
           <DialogTrigger asChild>
             <Button
               onClick={() => setFormData(emptyForm)}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               + Add Expense
             </Button>

@@ -25,7 +25,7 @@ import {
 // Status → tile/badge styling. The fiscal-document state machine is
 // signed → reported | cleared, with pending/failed the stuck states (ZA-08).
 const STATUS_BADGE: Record<string, string> = {
-  signed: 'bg-blue-500/20 text-blue-400',
+  signed: 'bg-brand-500/20 text-brand-400',
   reported: 'bg-green-500/20 text-green-400',
   cleared: 'bg-emerald-500/20 text-emerald-400',
   pending: 'bg-amber-500/20 text-amber-400',
@@ -134,7 +134,7 @@ export default function ZatcaStatus() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <ShieldCheck className="h-6 w-6 text-blue-400" />
+            <ShieldCheck className="h-6 w-6 text-brand-400" />
             {t('zatca_status')}
           </h2>
           <p className="text-slate-400 text-sm mt-1">{t('zatca_status_desc')}</p>

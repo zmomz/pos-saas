@@ -138,7 +138,7 @@ export default function QuotationManagement() {
       <div className="max-w-5xl mx-auto">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <FileText className="w-6 h-6 text-blue-400" />
+            <FileText className="w-6 h-6 text-brand-400" />
             <h1 className="text-2xl font-bold text-white">{t('quotations')}</h1>
           </div>
           <div className="flex gap-2">
@@ -151,7 +151,7 @@ export default function QuotationManagement() {
             </Button>
             <Dialog open={open} onOpenChange={setOpen}>
               <DialogTrigger asChild>
-                <Button className="bg-blue-600 hover:bg-blue-700 text-white">
+                <Button className="bg-brand-600 hover:bg-brand-700 text-white">
                   <Plus className="w-4 h-4 me-2" />
                   {t('new_quotation')}
                 </Button>
@@ -249,7 +249,7 @@ export default function QuotationManagement() {
                   </div>
                   <div className="flex items-center gap-3">
                     <Badge className="bg-slate-600 text-white">{q.status || 'draft'}</Badge>
-                    <span className="text-blue-400 font-bold">{formatMoney(q.total_amount || 0, language)}</span>
+                    <span className="text-brand-400 font-bold">{formatMoney(q.total_amount || 0, language)}</span>
                     <Button size="sm" variant="outline" onClick={() => openDocument(q.id)}
                       className="border-slate-600 text-slate-300 hover:bg-slate-700">
                       <Eye className="w-4 h-4" />

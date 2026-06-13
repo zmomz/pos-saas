@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloud POS — Design Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/system.css">
+<style>
+  body { background: var(--bg); }
+  .topband {
+    background: linear-gradient(160deg, var(--brand-800), var(--brand-700) 55%, var(--brand-600));
+    color: var(--on-brand); position: relative; overflow: hidden;
+  }
+  .topband::after {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(900px 380px at 88% -10%, oklch(1 0 0 / .14), transparent 60%);
+  }
+  .topband .wrap-wide { position: relative; padding-top: 56px; padding-bottom: 60px; }
+  .brandmark { display: flex; align-items: center; gap: 12px; margin-bottom: 40px; }
+  .brandmark .logo { width: 38px; height: 38px; border-radius: 10px; background: oklch(1 0 0 / .14); border: 1px solid oklch(1 0 0 / .2); display: grid; place-items: center; color: #fff; }
+  .brandmark .logo svg { width: 21px; height: 21px; }
+  .brandmark b { font-size: 17px; letter-spacing: -0.01em; }
+  .brandmark span { font-family: var(--ff-mono); font-size: 11px; color: oklch(0.9 0.03 222); opacity: .85; }
+  .topband h1, .topband b { color: #fff; }
+  .hero-h { font-size: 44px; line-height: 1.05; max-width: 720px; }
+  .hero-sub { font-size: 17px; color: oklch(0.93 0.02 222); max-width: 600px; margin-top: 18px; line-height: 1.55; }
+  .meta-row { display: flex; gap: 28px; flex-wrap: wrap; margin-top: 34px; }
+  .meta-row .m { }
+  .meta-row .m .k { font-family: var(--ff-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: oklch(0.85 0.04 222); opacity: .8; }
+  .meta-row .m .v { font-size: 15px; font-weight: 600; margin-top: 5px; }
+
+  .section-title { display: flex; align-items: baseline; gap: 14px; margin: 0 0 22px; }
+  .section-title h2 { font-size: 22px; }
+  .section-title .line { flex: 1; height: 1px; background: var(--line); }
+
+  .screens { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
+  .screen-card {
+    display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r-card); overflow: hidden; box-shadow: var(--sh-sm); transition: all .2s ease; text-decoration: none;
+  }
+  .screen-card:hover { box-shadow: var(--sh-md); transform: translateY(-3px); border-color: var(--line-strong); }
+  .screen-thumb { height: 168px; border-bottom: 1px solid var(--line); position: relative; overflow: hidden; }
+  .screen-body { padding: 20px 22px 22px; }
+  .screen-body .idx { font-family: var(--ff-mono); font-size: 12px; color: var(--brand); font-weight: 600; }
+  .screen-body h3 { font-size: 18px; margin: 7px 0 8px; }
+  .screen-body p { font-size: 14px; color: var(--muted); line-height: 1.5; }
+  .screen-body .go { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; font-size: 13.5px; font-weight: 600; color: var(--brand-700); }
+  .screen-card:hover .go svg { transform: translateX(3px); }
+  .screen-body .go svg { width: 16px; height: 16px; transition: transform .2s; }
+  .route { font-family: var(--ff-mono); font-size: 11px; color: var(--faint); background: var(--bg-2); padding: 3px 8px; border-radius: 5px; }
+
+  .sys-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
+  .swatch-chip { display: flex; flex-direction: column; gap: 8px; }
+  .swatch-chip .sw { width: 62px; height: 50px; border-radius: 10px; box-shadow: var(--sh-sm); border: 1px solid oklch(0 0 0 / .06); }
+  .swatch-chip .n { font-size: 11.5px; font-weight: 600; }
+  .swatch-chip .h { font-family: var(--ff-mono); font-size: 10px; color: var(--faint); }
+  .type-row { padding: 14px 0; border-bottom: 1px dashed var(--line); }
+  .type-row:last-child { border-bottom: 0; }
+  .type-row .lbl { font-family: var(--ff-mono); font-size: 11px; color: var(--faint); }
+
+  .note { display: flex; gap: 13px; padding: 16px 18px; background: var(--brand-50); border: 1px solid var(--brand-100); border-radius: var(--r-md); }
+  .note .swatch { background: var(--surface); }
+  .note p { font-size: 13.5px; color: var(--brand-800); line-height: 1.55; }
+
+  /* thumbnails: tiny abstract reps */
+  .tb { position: absolute; inset: 0; padding: 16px; display: flex; gap: 8px; }
+  .tb-sidebar { width: 22%; background: var(--brand-800); border-radius: 8px; display: flex; flex-direction: column; gap: 6px; padding: 10px 8px; }
+  .tb-sidebar i { height: 6px; border-radius: 3px; background: oklch(1 0 0 / .18); }
+  .tb-sidebar i:first-child { background: var(--gold); width: 60%; }
+  .tb-main { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+  .tb-cards { display: flex; gap: 8px; }
+  .tb-cards i { flex: 1; height: 34px; background: var(--surface); border: 1px solid var(--line); border-radius: 7px; }
+  .tb-block { flex: 1; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+  @media (max-width: 920px) { .screens, .sys-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <header class="topband">
+    <div class="wrap-wide">
+      <div class="brandmark">
+        <div class="logo" data-icon="store"></div>
+        <div>
+          <b>Cloud POS</b><br>
+          <span>WHITE-LABEL · ZATCA-COMPLIANT · KSA</span>
+        </div>
+      </div>
+      <div class="badge gold" style="margin-bottom:20px;">Hi-fi prototype · 5 screens</div>
+      <h1 class="hero-h">A multi-tenant POS platform, designed end to end.</h1>
+      <p class="hero-sub">From the partner marketing site down to the cashier's checkout screen — one coherent system across four personas, ready for Arabic RTL and agent white-labelling.</p>
+      <div class="meta-row">
+        <div class="m"><div class="k">Personas</div><div class="v">Master · Agent · Client · Staff</div></div>
+        <div class="m"><div class="k">Languages</div><div class="v">AR · EN · HI · UR (RTL-ready)</div></div>
+        <div class="m"><div class="k">Type</div><div class="v">Hanken Grotesk</div></div>
+        <div class="m"><div class="k">Theme</div><div class="v">Petrol + Gold (themeable)</div></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap-wide" style="padding-top:48px; padding-bottom:72px;">
+
+    <!-- Design reasoning -->
+    <div class="note" style="margin-bottom:40px;">
+      <div class="swatch sw-brand" data-icon="sparkle"></div>
+      <p><b>Design reasoning.</b> The brief specified an indigo system — I shifted the platform default to a <b>petrol teal-blue + warm gold</b> palette so it reads as premium and distinct from the Saudi-green and indigo that agents themselves pick. Every screen pulls from one token set, so flipping the theme to green or indigo (try the toolbar) re-skins the whole app. Semantic colors (emerald / amber / violet / sky) are preserved for stats. Agent-facing screens default to a green white-label theme to demonstrate the contrast.</p>
+    </div>
+
+    <!-- Screens -->
+    <div class="section-title"><h2>The five screens</h2><div class="line"></div></div>
+    <div class="screens" style="margin-bottom:56px;">
+
+      <a class="screen-card" href="Master Landing.html">
+        <div class="screen-thumb" style="background:linear-gradient(150deg,var(--brand-50),var(--bg-2));">
+          <div class="tb">
+            <div class="tb-main">
+              <div class="tb-cards"><i style="background:var(--brand);border:0;width:30%;"></i><i style="height:34px;background:transparent;border:0;"></i></div>
+              <div class="tb-block" style="flex:2;"></div>
+              <div class="tb-cards"><i></i><i></i><i></i></div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-body">
+          <div class="between"><span class="idx">SCREEN 01</span><span class="route">/</span></div>
+          <h3>Master Landing — Partner</h3>
+          <p>Recruits resellers. Sells the opportunity, not the product: partnership model, distributor packages, success stories.</p>
+          <span class="go">Open screen <span data-icon="arrowRight"></span></span>
+        </div>
+      </a>
+
+      <a class="screen-card" href="Agent Landing.html">
+        <div class="screen-thumb" style="background:linear-gradient(150deg,oklch(0.95 0.03 158),var(--bg-2));">
+          <div class="tb">
+            <div class="tb-main">
+              <div class="tb-cards"><i style="background:oklch(0.50 0.105 158);border:0;width:24%;"></i><i style="height:34px;background:transparent;border:0;"></i><i style="background:var(--gold);border:0;width:18%;"></i></div>
+              <div class="tb-block" style="flex:2;"></div>
+              <div class="tb-cards"><i></i><i></i><i></i></div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-body">
+          <div class="between"><span class="idx">SCREEN 02</span><span class="route">/d/:agentId</span></div>
+          <h3>Agent Landing — Merchant</h3>
+          <p>The reseller's white-label site. Themed green + gold here. Sells the product: easy checkout, ZATCA invoicing, pricing.</p>
+          <span class="go">Open screen <span data-icon="arrowRight"></span></span>
+        </div>
+      </a>
+
+      <a class="screen-card" href="Master Dashboard.html">
+        <div class="screen-thumb" style="background:linear-gradient(150deg,var(--bg-2),var(--brand-50));">
+          <div class="tb">
+            <div class="tb-sidebar"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="tb-main">
+              <div class="tb-cards"><i></i><i></i><i></i><i></i></div>
+              <div class="tb-block"></div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-body">
+          <div class="between"><span class="idx">SCREEN 03</span><span class="route">/master</span></div>
+          <h3>Master Dashboard — Platform</h3>
+          <p>Command-center for the platform owner. MRR, agent leaderboard, platform economics, audit log.</p>
+          <span class="go">Open screen <span data-icon="arrowRight"></span></span>
+        </div>
+      </a>
+
+      <a class="screen-card" href="Agent Dashboard.html">
+        <div class="screen-thumb" style="background:linear-gradient(150deg,oklch(0.96 0.02 158),var(--bg-2));">
+          <div class="tb">
+            <div class="tb-sidebar" style="background:oklch(0.31 0.075 160);"><i></i><i></i><i></i><i></i><i></i></div>
+            <div class="tb-main">
+              <div class="tb-cards"><i></i><i></i><i></i><i></i></div>
+              <div class="tb-block"></div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-body">
+          <div class="between"><span class="idx">SCREEN 04</span><span class="route">/agent</span></div>
+          <h3>Agent Dashboard — Reseller</h3>
+          <p>Reseller back-office. Client list, revenue & margin, per-client feature toggles, branding editor.</p>
+          <span class="go">Open screen <span data-icon="arrowRight"></span></span>
+        </div>
+      </a>
+
+      <a class="screen-card" href="POS Terminal.html" style="grid-column:1 / -1;">
+        <div class="screen-thumb" style="height:150px; background:linear-gradient(120deg,var(--brand-700),var(--brand-800));">
+          <div class="tb" style="padding:18px 22px;">
+            <div class="tb-main" style="flex:1.5;">
+              <div class="tb-cards"><i style="height:24px;background:oklch(1 0 0 / .14);border:0;"></i></div>
+              <div class="tb-cards">
+                <i style="height:42px;background:oklch(1 0 0 / .9);border:0;"></i><i style="height:42px;background:oklch(1 0 0 / .9);border:0;"></i><i style="height:42px;background:oklch(1 0 0 / .9);border:0;"></i><i style="height:42px;background:oklch(1 0 0 / .9);border:0;"></i>
+              </div>
+              <div class="tb-cards">
+                <i style="height:42px;background:oklch(1 0 0 / .9);border:0;"></i><i style="height:42px;background:oklch(1 0 0 / .9);border:0;"></i><i style="height:42px;background:oklch(1 0 0 / .9);border:0;"></i><i style="height:42px;background:oklch(1 0 0 / .9);border:0;"></i>
+              </div>
+            </div>
+            <div style="width:30%; background:oklch(1 0 0 / .95); border-radius:8px; display:flex; flex-direction:column; gap:6px; padding:10px;">
+              <i style="height:8px;background:var(--line);border-radius:3px;"></i><i style="height:8px;width:70%;background:var(--line);border-radius:3px;"></i><i style="flex:1;"></i><i style="height:18px;background:var(--gold);border-radius:5px;"></i>
+            </div>
+          </div>
+        </div>
+        <div class="screen-body">
+          <div class="between"><span class="idx">SCREEN 05 · FLAGSHIP</span><span class="route">/pos</span></div>
+          <h3>POS Terminal — Cashier</h3>
+          <p>Touch-optimized checkout for tablet. Product grid + live cart with working add / quantity / discount / VAT math, ZATCA QR receipt, and three layout variations.</p>
+          <span class="go">Open screen <span data-icon="arrowRight"></span></span>
+        </div>
+      </a>
+    </div>
+
+    <!-- System -->
+    <div class="section-title"><h2>The system</h2><div class="line"></div></div>
+    <div class="sys-grid">
+      <div class="card card-p">
+        <div class="eyebrow" style="margin-bottom:14px;">Color tokens</div>
+        <div class="swatches">
+          <div class="swatch-chip"><div class="sw" style="background:var(--brand);"></div><div class="n">Brand / Petrol</div><div class="h">platform</div></div>
+          <div class="swatch-chip"><div class="sw" style="background:var(--brand-800);"></div><div class="n">Brand 800</div><div class="h">deep</div></div>
+          <div class="swatch-chip"><div class="sw" style="background:var(--gold);"></div><div class="n">Gold</div><div class="h">accent</div></div>
+          <div class="swatch-chip"><div class="sw" style="background:var(--success);"></div><div class="n">Emerald</div><div class="h">positive</div></div>
+          <div class="swatch-chip"><div class="sw" style="background:var(--warning);"></div><div class="n">Amber</div><div class="h">warning</div></div>
+          <div class="swatch-chip"><div class="sw" style="background:var(--violet);"></div><div class="n">Violet</div><div class="h">neutral</div></div>
+          <div class="swatch-chip"><div class="sw" style="background:var(--sky);"></div><div class="n">Sky</div><div class="h">health</div></div>
+        </div>
+        <div class="eyebrow" style="margin:24px 0 6px;">Themeable</div>
+        <p class="muted" style="font-size:13.5px;">Agents swap the brand token only — neutrals & semantics stay fixed. Use the toolbar on any screen to preview <b style="color:var(--text)">Petrol / Green / Indigo</b>.</p>
+      </div>
+      <div class="card card-p">
+        <div class="eyebrow" style="margin-bottom:6px;">Typography</div>
+        <div class="type-row"><div class="lbl">Display / 800</div><div style="font-size:26px; font-weight:800; letter-spacing:-0.02em;">Fast checkout, every time</div></div>
+        <div class="type-row"><div class="lbl">UI / 600</div><div style="font-size:16px; font-weight:600;">Monthly Recurring Revenue</div></div>
+        <div class="type-row"><div class="lbl">Body / 400</div><div style="font-size:14px; color:var(--text-2);">Generous spacing on an 8px grid.</div></div>
+        <div class="type-row"><div class="lbl">Mono / data</div><div class="mono num" style="font-size:15px;">SAR 24,580.00 · INV-001847</div></div>
+        <div class="type-row"><div class="lbl">Arabic / RTL</div><div style="font-family:var(--ff-ar); font-size:18px; font-weight:600;">نقاط البيع السحابية</div></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="assets/icons.js"></script>
+  <script src="assets/proto.js"></script>
+</body>
+</html>

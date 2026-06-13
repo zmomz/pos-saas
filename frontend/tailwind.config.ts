@@ -22,8 +22,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        arabic: ['Tajawal', 'Inter', 'system-ui', 'sans-serif'],
+        sans: ['Hanken Grotesk', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        arabic: ['IBM Plex Sans Arabic', 'Hanken Grotesk', 'system-ui', 'sans-serif'],
       },
       colors: {
         border: 'hsl(var(--border))',
@@ -31,20 +32,32 @@ export default {
         ring: 'hsl(var(--ring))',
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
-        // Brand indigo-blue scale — the single accent across all surfaces.
+        // Brand petrol teal-blue scale — the single primary across all surfaces.
         brand: {
-          50: '#eef2ff',
-          100: '#e0e7ff',
-          200: '#c7d2fe',
-          300: '#a5b4fc',
-          400: '#818cf8',
-          500: '#5468f0',
-          600: '#4353e6',
-          700: '#3742c4',
-          800: '#2f389e',
-          900: '#2b327d',
-          DEFAULT: '#4353e6',
+          50: '#eaf5f8',
+          100: '#d7ebf1',
+          200: '#b3d9e5',
+          300: '#84c2d4',
+          400: '#45a6bf',
+          500: '#1488a6',
+          600: '#0e7693',
+          700: '#0d6079',
+          800: '#143c4c',
+          900: '#0e2c38',
+          DEFAULT: '#1488a6',
         },
+        // Warm gold accent (fixed across themes).
+        gold: {
+          50: '#faf1df',
+          600: '#cd9a40',
+          DEFAULT: '#e6b45c',
+        },
+        // Semantic stat colors (fixed across themes).
+        success: '#23a06b',
+        warning: '#d6a33a',
+        violet: '#7b57c9',
+        sky: '#3d9ad1',
+        danger: '#d14a3a',
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
@@ -92,8 +105,8 @@ export default {
         sm: 'calc(var(--radius) - 4px)',
       },
       boxShadow: {
-        brand: '0 18px 40px -18px hsl(231 84% 50% / 0.45)',
-        card: '0 1px 2px hsl(224 47% 14% / 0.04), 0 8px 24px -12px hsl(224 47% 14% / 0.10)',
+        brand: '0 18px 40px -18px hsl(194 80% 30% / 0.45)',
+        card: '0 1px 2px hsl(214 40% 18% / 0.05), 0 8px 24px -12px hsl(214 40% 18% / 0.10)',
       },
       keyframes: {
         'accordion-down': {

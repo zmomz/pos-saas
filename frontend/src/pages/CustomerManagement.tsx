@@ -395,7 +395,7 @@ export default function CustomerManagement() {
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.name}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -418,7 +418,7 @@ export default function CustomerManagement() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
-            <Users className="h-8 w-8 text-blue-400" />
+            <Users className="h-8 w-8 text-brand-400" />
             <div>
               <p className="text-slate-400 text-sm">Total Customers</p>
               <p className="text-2xl font-bold text-white">{customers.length}</p>
@@ -469,7 +469,7 @@ export default function CustomerManagement() {
           <DialogTrigger asChild>
             <Button
               onClick={() => setFormData(emptyForm)}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               + Add Customer
             </Button>
@@ -494,7 +494,7 @@ export default function CustomerManagement() {
             type="button"
             onClick={() => setTagFilter('')}
             className={`rounded-full px-3 py-1 text-xs ${
-              tagFilter === '' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'
+              tagFilter === '' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300'
             }`}
           >
             {t('all_tags')}
@@ -505,7 +505,7 @@ export default function CustomerManagement() {
               type="button"
               onClick={() => setTagFilter(tag)}
               className={`rounded-full px-3 py-1 text-xs ${
-                tagFilter === tag ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300'
+                tagFilter === tag ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300'
               }`}
             >
               {tag}
@@ -565,7 +565,7 @@ export default function CustomerManagement() {
                           <Badge
                             key={tag}
                             variant="outline"
-                            className="border-blue-600/40 text-blue-300 text-xs"
+                            className="border-brand-600/40 text-brand-300 text-xs"
                           >
                             {tag}
                           </Badge>
@@ -606,7 +606,7 @@ export default function CustomerManagement() {
                         size="sm"
                         variant="outline"
                         onClick={() => handleExportData(customer)}
-                        className="border-blue-600/50 text-blue-400 hover:bg-blue-600/20 text-xs"
+                        className="border-brand-600/50 text-brand-400 hover:bg-brand-600/20 text-xs"
                       >
                         <Download className="h-3 w-3 me-1" />
                         {t('export_data')}

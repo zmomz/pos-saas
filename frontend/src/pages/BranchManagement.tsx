@@ -286,7 +286,7 @@ export default function BranchManagement() {
           <label className="text-sm text-slate-400 mb-1 block">Phone</label>
           <Input value={formData.phone} onChange={(e) => handleFormChange('phone', e.target.value)} placeholder="+966 xxx xxxx" className="bg-slate-700 border-slate-600 text-white" />
         </div>
-        <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+        <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
           {submitting ? t('loading') : submitLabel}
         </Button>
       </div>
@@ -307,7 +307,7 @@ export default function BranchManagement() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Building2 className="h-6 w-6 text-blue-400" />
+            <Building2 className="h-6 w-6 text-brand-400" />
             Branch Management
           </h2>
           <p className="text-slate-400 text-sm mt-1">Manage your business locations and inventory</p>
@@ -321,7 +321,7 @@ export default function BranchManagement() {
           </Button>
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
-              <Button onClick={() => setFormData(emptyForm)} className="bg-blue-600 hover:bg-blue-700 text-white">
+              <Button onClick={() => setFormData(emptyForm)} className="bg-brand-600 hover:bg-brand-700 text-white">
                 <Plus className="h-4 w-4 mr-2" /> Add Branch
               </Button>
             </DialogTrigger>
@@ -488,7 +488,7 @@ export default function BranchManagement() {
             <Button
               onClick={handleTransferStock}
               disabled={submitting || !transferData.from_branch_id || !transferData.to_branch_id || !transferData.product_id || transferData.quantity <= 0}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('transfer_stock')}
             </Button>
@@ -567,7 +567,7 @@ export default function BranchManagement() {
             <Button
               onClick={handleStockAdjust}
               disabled={submitting || !adjustData.product_id}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('adjust_stock')}
             </Button>

@@ -247,7 +247,7 @@ export default function ShiftManagement() {
       <Card className="bg-slate-800 border-slate-700">
         <CardHeader>
           <CardTitle className="text-white flex items-center gap-2">
-            <Clock className="h-5 w-5 text-blue-400" />
+            <Clock className="h-5 w-5 text-brand-400" />
             Current Shift
           </CardTitle>
         </CardHeader>
@@ -402,7 +402,7 @@ export default function ShiftManagement() {
                           variant="ghost"
                           size="sm"
                           onClick={() => printZReport(Number(shift.id))}
-                          className="text-blue-400 hover:bg-slate-700"
+                          className="text-brand-400 hover:bg-slate-700"
                         >
                           <Receipt className="h-4 w-4 mr-1" /> {t('z_report')}
                         </Button>
@@ -513,7 +513,7 @@ export default function ShiftManagement() {
                     onClick={() => setMovementType(type)}
                     className={
                       movementType === type
-                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        ? 'bg-brand-600 hover:bg-brand-700 text-white'
                         : 'border-slate-600 text-slate-200 hover:bg-slate-700'
                     }
                   >
@@ -549,7 +549,7 @@ export default function ShiftManagement() {
             <Button
               onClick={handleRecordMovement}
               disabled={submitting}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('record_cash_movement')}
             </Button>

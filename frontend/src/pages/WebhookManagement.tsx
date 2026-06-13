@@ -255,7 +255,7 @@ export default function WebhookManagement() {
             ))}
           </div>
         </div>
-        <Button onClick={onSubmit} disabled={submitting || !formData.name || !formData.url || formData.events.length === 0} className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+        <Button onClick={onSubmit} disabled={submitting || !formData.name || !formData.url || formData.events.length === 0} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
           {submitting ? t('loading') : submitLabel}
         </Button>
       </div>
@@ -276,7 +276,7 @@ export default function WebhookManagement() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
-            <Webhook className="h-8 w-8 text-blue-400" />
+            <Webhook className="h-8 w-8 text-brand-400" />
             <div>
               <p className="text-slate-400 text-sm">Total Webhooks</p>
               <p className="text-2xl font-bold text-white">{webhooks.length}</p>
@@ -311,10 +311,10 @@ export default function WebhookManagement() {
 
       {/* Tabs */}
       <div className="flex gap-2">
-        <Button variant={activeTab === 'webhooks' ? 'default' : 'outline'} onClick={() => setActiveTab('webhooks')} className={activeTab === 'webhooks' ? 'bg-blue-600 text-white' : 'border-slate-600 text-slate-300'}>
+        <Button variant={activeTab === 'webhooks' ? 'default' : 'outline'} onClick={() => setActiveTab('webhooks')} className={activeTab === 'webhooks' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
           Webhooks
         </Button>
-        <Button variant={activeTab === 'logs' ? 'default' : 'outline'} onClick={() => setActiveTab('logs')} className={activeTab === 'logs' ? 'bg-blue-600 text-white' : 'border-slate-600 text-slate-300'}>
+        <Button variant={activeTab === 'logs' ? 'default' : 'outline'} onClick={() => setActiveTab('logs')} className={activeTab === 'logs' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
           Delivery Logs
         </Button>
       </div>
@@ -324,7 +324,7 @@ export default function WebhookManagement() {
           <div className="flex justify-end">
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger asChild>
-                <Button onClick={() => setFormData({ ...emptyForm, secret_key: generateSecret() })} className="bg-blue-600 hover:bg-blue-700 text-white">
+                <Button onClick={() => setFormData({ ...emptyForm, secret_key: generateSecret() })} className="bg-brand-600 hover:bg-brand-700 text-white">
                   <Plus className="h-4 w-4 mr-2" /> Add Webhook
                 </Button>
               </DialogTrigger>

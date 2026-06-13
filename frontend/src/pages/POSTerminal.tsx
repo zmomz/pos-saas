@@ -852,8 +852,8 @@ export default function POSTerminal() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -890,27 +890,27 @@ export default function POSTerminal() {
       transfer: 'تحويل',
     };
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <Card className="w-full max-w-md bg-slate-800 border-slate-700">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Card className="w-full max-w-md bg-card border-border">
           <CardContent dir="rtl" lang="ar" className="p-6 space-y-4 text-right">
             <div className="text-center">
               <h2 className={`text-xl font-bold ${isRefund ? 'text-orange-400' : 'text-green-400'}`}>
                 {isRefund ? '↩ تمت معالجة الاسترجاع' : '✓ تمت العملية بنجاح'}
               </h2>
-              <p className="text-slate-400 mt-1">رقم الفاتورة: {receipt.invoice_number}</p>
+              <p className="text-muted-foreground mt-1">رقم الفاتورة: {receipt.invoice_number}</p>
             </div>
 
-            <div className="border-t border-slate-700 pt-4 space-y-2">
+            <div className="border-t border-border pt-4 space-y-2">
               {receipt.items.map((item, idx) => (
-                <div key={idx} className="flex justify-between text-slate-300 text-sm">
+                <div key={idx} className="flex justify-between text-foreground text-sm">
                   <span>{item.name} ×{toArabicDigits(item.quantity)}</span>
                   <span>{formatMoneyAr(item.price * item.quantity)}</span>
                 </div>
               ))}
             </div>
 
-            <div className="border-t border-slate-700 pt-3 space-y-1">
-              <div className="flex justify-between text-slate-400 text-sm">
+            <div className="border-t border-border pt-3 space-y-1">
+              <div className="flex justify-between text-muted-foreground text-sm">
                 <span>المجموع الفرعي</span>
                 <span>{formatMoneyAr(receipt.subtotal || 0)}</span>
               </div>
@@ -920,18 +920,18 @@ export default function POSTerminal() {
                   <span>-{formatMoneyAr(receipt.discount_amount)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-slate-400 text-sm">
+              <div className="flex justify-between text-muted-foreground text-sm">
                 <span>ضريبة القيمة المضافة</span>
                 <span>{formatMoneyAr(receipt.vat_amount || 0)}</span>
               </div>
-              <div className="flex justify-between text-white font-bold">
+              <div className="flex justify-between text-foreground font-bold">
                 <span>الإجمالي</span>
                 <span>{formatMoneyAr(receipt.total_amount || 0)}</span>
               </div>
               {/* POS-13 (F-012): tip + the amount actually paid (total + tip). */}
               {receipt.tip_amount && receipt.tip_amount > 0 && (
                 <>
-                  <div className="flex justify-between text-slate-400 text-sm">
+                  <div className="flex justify-between text-muted-foreground text-sm">
                     <span>البقشيش</span>
                     <span>{formatMoneyAr(receipt.tip_amount)}</span>
                   </div>
@@ -943,9 +943,9 @@ export default function POSTerminal() {
               )}
             </div>
 
-            <div className="flex justify-between text-slate-300 text-sm">
+            <div className="flex justify-between text-foreground text-sm">
               <span>طريقة الدفع</span>
-              <Badge className={`${isRefund ? 'bg-orange-600' : 'bg-blue-600'} text-white`}>
+              <Badge className={`${isRefund ? 'bg-orange-600' : 'bg-brand-600'} text-white`}>
                 {paymentAr[receipt.payment_method] || receipt.payment_method}
               </Badge>
             </div>
@@ -953,11 +953,11 @@ export default function POSTerminal() {
             {/* PAY-01: captured tender approval (network + auth code) for card-like
                 tenders, so the receipt proves the card was actually charged. */}
             {receipt.tenders && receipt.tenders.some((tn) => tn.approval_code) && (
-              <div className="border-t border-slate-700 pt-3 space-y-1">
+              <div className="border-t border-border pt-3 space-y-1">
                 {receipt.tenders
                   .filter((tn) => tn.approval_code)
                   .map((tn, idx) => (
-                    <div key={idx} className="flex justify-between text-slate-400 text-xs">
+                    <div key={idx} className="flex justify-between text-muted-foreground text-xs">
                       <span>
                         {tenderAr[tn.tender_type] || tn.tender_type}
                         {tn.last4 ? ` ••${toArabicDigits(tn.last4)}` : ''}
@@ -973,8 +973,8 @@ export default function POSTerminal() {
 
             {/* ZATCA QR Code */}
             {receipt.zatca_qr_base64 && (
-              <div className="border-t border-slate-700 pt-4">
-                <p className="text-sm text-slate-400 mb-2 text-center">رمز الاستجابة السريعة (ZATCA)</p>
+              <div className="border-t border-border pt-4">
+                <p className="text-sm text-muted-foreground mb-2 text-center">رمز الاستجابة السريعة (ZATCA)</p>
                 <div className="flex justify-center">
                   <div className="bg-white p-3 rounded-lg">
                     <img
@@ -990,7 +990,7 @@ export default function POSTerminal() {
                   </div>
                 </div>
                 {receipt.zatca_status && (
-                  <p className="text-xs text-slate-500 mt-2 text-center">
+                  <p className="text-xs text-muted-foreground mt-2 text-center">
                     حالة الفاتورة الإلكترونية: {{
                       signed: 'موقعة',
                       pending: 'بانتظار الإبلاغ',
@@ -1010,14 +1010,14 @@ export default function POSTerminal() {
             )}
 
             <div className="flex gap-3 pt-2">
-              <Button onClick={handleNewSale} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
+              <Button onClick={handleNewSale} className="flex-1 bg-brand-600 hover:bg-brand-700 text-white">
                 {t('new_sale')}
               </Button>
               {receipt.id && (
                 <Button
                   variant="outline"
                   onClick={() => downloadInvoicePdf(receipt.id!, receipt.invoice_number)}
-                  className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                  className="border-border text-foreground hover:bg-muted"
                   title={t('download_pdf') || 'Download PDF'}
                 >
                   <FileDown className="w-4 h-4" />
@@ -1027,7 +1027,7 @@ export default function POSTerminal() {
                 <Button
                   variant="outline"
                   onClick={handleThermalPrint}
-                  className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                  className="border-border text-foreground hover:bg-muted"
                   title="Thermal print"
                 >
                   <Printer className="w-4 h-4" />
@@ -1036,7 +1036,7 @@ export default function POSTerminal() {
               <Button
                 variant="outline"
                 onClick={() => navigate('/client')}
-                className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+                className="flex-1 border-border text-foreground hover:bg-muted"
               >
                 {t('back')}
               </Button>
@@ -1050,17 +1050,17 @@ export default function POSTerminal() {
   // Refund Mode View
   if (mode === 'refund') {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col">
+      <div className="min-h-screen bg-background flex flex-col">
         {/* Header */}
-        <div className="bg-slate-800 border-b border-slate-700 p-4 flex items-center justify-between">
+        <div className="bg-card border-b border-border p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <RotateCcw className="w-5 h-5 text-orange-400" />
-            <h2 className="text-lg font-bold text-white">Refund Mode</h2>
+            <h2 className="text-lg font-bold text-foreground">Refund Mode</h2>
           </div>
           <div className="flex items-center gap-2">
             <Button
               onClick={() => { setMode('sale'); setSelectedTransaction(null); setRefundQty({}); }}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               <ShoppingCart className="w-4 h-4 me-2" />
               {t('new_sale')}
@@ -1068,7 +1068,7 @@ export default function POSTerminal() {
             <Button
               variant="outline"
               onClick={() => navigate('/client')}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="border-border text-foreground hover:bg-muted"
             >
               {t('back')}
             </Button>
@@ -1078,34 +1078,34 @@ export default function POSTerminal() {
         <div className="flex-1 flex flex-col lg:flex-row">
           {/* Transaction List */}
           <div className="flex-1 p-4 overflow-y-auto">
-            <h3 className="text-white font-semibold mb-3">{t('recent_transactions')}</h3>
+            <h3 className="text-foreground font-semibold mb-3">{t('recent_transactions')}</h3>
             {loadingTransactions ? (
-              <div className="text-slate-400 text-center py-8">{t('loading')}</div>
+              <div className="text-muted-foreground text-center py-8">{t('loading')}</div>
             ) : recentTransactions.length === 0 ? (
-              <div className="text-slate-500 text-center py-8">No transactions found</div>
+              <div className="text-muted-foreground text-center py-8">No transactions found</div>
             ) : (
               <div className="space-y-2">
                 {recentTransactions.map((txn, idx) => (
                   <Card
                     key={txn.id || idx}
-                    className={`bg-slate-800 border-slate-700 cursor-pointer transition-colors ${
+                    className={`bg-card border-border cursor-pointer transition-colors ${
                       selectedTransaction?.invoice_number === txn.invoice_number
                         ? 'border-orange-500 ring-1 ring-orange-500'
-                        : 'hover:border-slate-500'
+                        : 'hover:border-input'
                     }`}
                     onClick={() => selectTransactionForRefund(txn)}
                   >
                     <CardContent className="p-4">
                       <div className="flex justify-between items-center">
                         <div>
-                          <p className="text-white font-medium text-sm">{txn.invoice_number}</p>
-                          <p className="text-slate-400 text-xs mt-1">
+                          <p className="text-foreground font-medium text-sm">{txn.invoice_number}</p>
+                          <p className="text-muted-foreground text-xs mt-1">
                             {txn.created_at ? new Date(txn.created_at).toLocaleString() : 'N/A'}
                           </p>
                         </div>
                         <div className="text-end">
-                          <p className="text-blue-400 font-bold">${txn.total_amount?.toFixed(2)}</p>
-                          <Badge className="bg-slate-600 text-slate-300 text-xs mt-1">
+                          <p className="text-brand-400 font-bold">${txn.total_amount?.toFixed(2)}</p>
+                          <Badge className="bg-muted text-foreground text-xs mt-1">
                             {txn.payment_method}
                           </Badge>
                         </div>
@@ -1118,38 +1118,38 @@ export default function POSTerminal() {
           </div>
 
           {/* Selected Transaction Detail */}
-          <div className="w-full lg:w-96 bg-slate-800 border-t lg:border-t-0 lg:border-s border-slate-700 p-4">
+          <div className="w-full lg:w-96 bg-card border-t lg:border-t-0 lg:border-s border-border p-4">
             {selectedTransaction ? (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-white font-semibold">{t('refund_details')}</h3>
+                  <h3 className="text-foreground font-semibold">{t('refund_details')}</h3>
                   {selectedTransaction.status === 'partial_refunded' && (
                     <Badge className="bg-orange-900 text-orange-300 text-xs">
                       {t('already_partially_refunded')}
                     </Badge>
                   )}
                 </div>
-                <div className="bg-slate-700 rounded-lg p-4 space-y-2">
-                  <div className="flex justify-between text-slate-300 text-sm">
+                <div className="bg-muted rounded-lg p-4 space-y-2">
+                  <div className="flex justify-between text-foreground text-sm">
                     <span>{t('invoice')}</span>
                     <span>{selectedTransaction.invoice_number}</span>
                   </div>
-                  <div className="flex justify-between text-slate-300 text-sm">
+                  <div className="flex justify-between text-foreground text-sm">
                     <span>{t('payment_method')}</span>
                     <span>{selectedTransaction.payment_method}</span>
                   </div>
 
                   {refundHasLineItems ? (
-                    <div className="border-t border-slate-600 pt-2 mt-2 space-y-2">
+                    <div className="border-t border-border pt-2 mt-2 space-y-2">
                       {/* POS-07: choose how many of each line to return. */}
-                      <p className="text-slate-400 text-xs">{t('select_return_qty')}</p>
+                      <p className="text-muted-foreground text-xs">{t('select_return_qty')}</p>
                       {selectedTransaction.items!.map((item, idx) => {
                         const qty = refundQty[idx] ?? 0;
                         return (
                           <div key={idx} className="flex items-center justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <p className="text-slate-200 text-xs truncate">{item.name}</p>
-                              <p className="text-slate-500 text-[11px]">
+                              <p className="text-foreground text-xs truncate">{item.name}</p>
+                              <p className="text-muted-foreground text-[11px]">
                                 ${Math.abs(item.price).toFixed(2)} · {item.quantity} {t('sold')}
                               </p>
                             </div>
@@ -1158,7 +1158,7 @@ export default function POSTerminal() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                className="h-7 w-7 p-0 border-slate-500 text-slate-200"
+                                className="h-7 w-7 p-0 border-input text-foreground"
                                 onClick={() => setLineRefundQty(idx, qty - 1, item.quantity)}
                                 disabled={qty <= 0}
                               >
@@ -1172,13 +1172,13 @@ export default function POSTerminal() {
                                 onChange={(e) =>
                                   setLineRefundQty(idx, Number(e.target.value), item.quantity)
                                 }
-                                className="h-7 w-12 text-center bg-slate-800 border-slate-500 text-white text-xs"
+                                className="h-7 w-12 text-center bg-card border-input text-foreground text-xs"
                               />
                               <Button
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                className="h-7 w-7 p-0 border-slate-500 text-slate-200"
+                                className="h-7 w-7 p-0 border-input text-foreground"
                                 onClick={() => setLineRefundQty(idx, qty + 1, item.quantity)}
                                 disabled={qty >= item.quantity}
                               >
@@ -1191,8 +1191,8 @@ export default function POSTerminal() {
                     </div>
                   ) : null}
 
-                  <div className="border-t border-slate-600 pt-2 mt-2">
-                    <div className="flex justify-between text-white font-bold mt-1">
+                  <div className="border-t border-border pt-2 mt-2">
+                    <div className="flex justify-between text-foreground font-bold mt-1">
                       <span>
                         {t('refund_amount')}
                         {refundHasLineItems && refundIsPartial && (
@@ -1232,7 +1232,7 @@ export default function POSTerminal() {
                   ['completed', '', null, undefined].includes(
                     selectedTransaction.status as string,
                   ) && (
-                    <div className="border-t border-slate-600 pt-3 mt-3">
+                    <div className="border-t border-border pt-3 mt-3">
                       <Button
                         onClick={handleVoid}
                         disabled={voidProcessing}
@@ -1241,7 +1241,7 @@ export default function POSTerminal() {
                       >
                         {voidProcessing ? t('loading') : `✕ ${t('void_sale')}`}
                       </Button>
-                      <p className="text-center text-xs text-slate-500 mt-2">
+                      <p className="text-center text-xs text-muted-foreground mt-2">
                         {t('void_sale_hint')}
                       </p>
                       {voidError && (
@@ -1253,7 +1253,7 @@ export default function POSTerminal() {
                   )}
               </div>
             ) : (
-              <div className="flex items-center justify-center h-full text-slate-500">
+              <div className="flex items-center justify-center h-full text-muted-foreground">
                 <p className="text-center">{t('select_transaction_refund')}</p>
               </div>
             )}
@@ -1265,12 +1265,12 @@ export default function POSTerminal() {
 
   // Sale Mode View (default)
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col lg:flex-row">
+    <div className="min-h-screen bg-background flex flex-col lg:flex-row">
       {/* Product Grid */}
       <div className="flex-1 p-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
-            <h2 className="text-lg font-bold text-white">{t('products')}</h2>
+            <h2 className="text-lg font-bold text-foreground">{t('products')}</h2>
             {/* F-015 (UX-02): persistent offline indicator inside the POS chrome. */}
             {!online && (
               <span
@@ -1286,12 +1286,12 @@ export default function POSTerminal() {
             <Button
               onClick={() => { setShowHeld(true); loadHeld(); }}
               variant="outline"
-              className="relative border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="relative border-border text-foreground hover:bg-muted"
             >
               <Pause className="w-4 h-4 me-2" />
               {t('held_tickets')}
               {heldTickets.length > 0 && (
-                <span className="ms-2 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-blue-600 text-white text-xs">
+                <span className="ms-2 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-brand-600 text-white text-xs">
                   {heldTickets.length}
                 </span>
               )}
@@ -1309,7 +1309,7 @@ export default function POSTerminal() {
             <Button
               variant="outline"
               onClick={() => navigate('/client')}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="border-border text-foreground hover:bg-muted"
             >
               {t('back')}
             </Button>
@@ -1320,26 +1320,26 @@ export default function POSTerminal() {
         <div className="mb-4 relative">
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
-              <ScanBarcode className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <ScanBarcode className="absolute start-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 value={barcodeInput}
                 onChange={(e) => setBarcodeInput(e.target.value)}
                 onKeyDown={handleBarcodeScan}
                 placeholder="Scan barcode or enter SKU..."
-                className="ps-10 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500 focus:border-blue-500"
+                className="ps-10 bg-card border-border text-foreground placeholder:text-muted-foreground focus:border-brand-500"
               />
             </div>
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('search_products')}
-              className="flex-1 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500 focus:border-blue-500"
+              className="flex-1 bg-card border-border text-foreground placeholder:text-muted-foreground focus:border-brand-500"
             />
             <Button
               type="button"
               variant={cameraScanning ? 'default' : 'outline'}
               onClick={toggleCameraScan}
-              className="shrink-0 border-slate-600"
+              className="shrink-0 border-border"
               title={t('scan_camera')}
             >
               <Camera className="w-4 h-4" />
@@ -1360,7 +1360,7 @@ export default function POSTerminal() {
         <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
           {customers.length > 0 && (
             <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
-              <SelectTrigger className="bg-slate-800 border-slate-600 text-white">
+              <SelectTrigger className="bg-card border-border text-foreground">
                 <SelectValue placeholder={t('select_customer')} />
               </SelectTrigger>
               <SelectContent>
@@ -1378,12 +1378,12 @@ export default function POSTerminal() {
               value={redeemPoints}
               onChange={(e) => setRedeemPoints(e.target.value)}
               placeholder={t('redeem_points')}
-              className="bg-slate-800 border-slate-600 text-white placeholder:text-slate-500"
+              className="bg-card border-border text-foreground placeholder:text-muted-foreground"
             />
           )}
           {branches.length > 0 && (
             <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
-              <SelectTrigger className="bg-slate-800 border-slate-600 text-white">
+              <SelectTrigger className="bg-card border-border text-foreground">
                 <SelectValue placeholder={t('select_branch')} />
               </SelectTrigger>
               <SelectContent>
@@ -1400,25 +1400,25 @@ export default function POSTerminal() {
           // F-015 (UX-02): error state distinct from the empty state, with retry.
           <ErrorState message={t('products_load_error')} onRetry={loadProducts} />
         ) : filteredProducts.length === 0 ? (
-          <div className="text-center text-slate-500 py-12">{t('no_products')}</div>
+          <div className="text-center text-muted-foreground py-12">{t('no_products')}</div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
             {filteredProducts.map((product) => (
               <Card
                 key={product.id}
-                className="bg-slate-800 border-slate-700 cursor-pointer hover:border-blue-500 transition-colors"
+                className="bg-card border-border cursor-pointer hover:border-brand-500 transition-colors"
                 onClick={() => addToCart(product)}
               >
                 <CardContent className="p-4 text-center">
-                  <p className="text-white font-medium text-sm truncate">{product.name}</p>
+                  <p className="text-foreground font-medium text-sm truncate">{product.name}</p>
                   {product.category && (
-                    <p className="text-slate-500 text-xs mt-1">{product.category}</p>
+                    <p className="text-muted-foreground text-xs mt-1">{product.category}</p>
                   )}
                   {product.barcode && (
-                    <p className="text-slate-600 text-xs mt-0.5 font-mono">{product.barcode}</p>
+                    <p className="text-muted-foreground text-xs mt-0.5 font-mono">{product.barcode}</p>
                   )}
-                  <p className="text-blue-400 font-bold mt-2">${product.price?.toFixed(2)}</p>
-                  <Button size="sm" className="mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white text-xs">
+                  <p className="text-brand-400 font-bold mt-2">${product.price?.toFixed(2)}</p>
+                  <Button size="sm" className="mt-2 w-full bg-brand-600 hover:bg-brand-700 text-white text-xs">
                     {t('add_to_cart')}
                   </Button>
                 </CardContent>
@@ -1429,21 +1429,21 @@ export default function POSTerminal() {
       </div>
 
       {/* Cart Sidebar */}
-      <div className="w-full lg:w-96 bg-slate-800 border-t lg:border-t-0 lg:border-s border-slate-700 p-4 flex flex-col">
-        <h2 className="text-lg font-bold text-white mb-4">{t('cart')}</h2>
+      <div className="w-full lg:w-96 bg-card border-t lg:border-t-0 lg:border-s border-border p-4 flex flex-col">
+        <h2 className="text-lg font-bold text-foreground mb-4">{t('cart')}</h2>
 
         <div className="flex-1 overflow-y-auto space-y-2">
           {cart.length === 0 ? (
-            <p className="text-slate-500 text-center py-8">{t('empty_cart')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('empty_cart')}</p>
           ) : (
             cart.map((item) => (
-              <div key={item.key} className="bg-slate-700 rounded-lg p-3">
+              <div key={item.key} className="bg-muted rounded-lg p-3">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <p className="text-white text-sm font-medium">
+                    <p className="text-foreground text-sm font-medium">
                       {item.product.name}
                       {item.variantId && (
-                        <span className="ms-1 text-[10px] uppercase tracking-wide text-blue-300">
+                        <span className="ms-1 text-[10px] uppercase tracking-wide text-brand-300">
                           {t('variant')}
                         </span>
                       )}
@@ -1461,7 +1461,7 @@ export default function POSTerminal() {
                     {/* POS-11: open-price lines show an editable sale-time unit price */}
                     {item.product.is_open_price ? (
                       <div className="flex items-center gap-1 mt-1">
-                        <span className="text-slate-400 text-xs">{t('unit_price')}</span>
+                        <span className="text-muted-foreground text-xs">{t('unit_price')}</span>
                         <Input
                           type="number"
                           min="0"
@@ -1469,11 +1469,11 @@ export default function POSTerminal() {
                           value={lineUnitPrice(item)}
                           onChange={(e) => setLineUnitPrice(item.key, e.target.value)}
                           dir="ltr"
-                          className="h-6 w-20 bg-slate-800 border-slate-600 text-white text-xs"
+                          className="h-6 w-20 bg-card border-border text-foreground text-xs"
                         />
                       </div>
                     ) : (
-                      <p className="text-slate-400 text-xs">
+                      <p className="text-muted-foreground text-xs">
                         ${lineUnitPrice(item).toFixed(2)}
                         {item.product.is_weighted && item.product.unit_label
                           ? ` / ${item.product.unit_label}`
@@ -1485,7 +1485,7 @@ export default function POSTerminal() {
                     size="sm"
                     variant="ghost"
                     onClick={() => removeFromCart(item.key)}
-                    className="text-red-400 hover:text-red-300 hover:bg-slate-600 h-6 w-6 p-0"
+                    className="text-red-400 hover:text-red-300 hover:bg-muted h-6 w-6 p-0"
                   >
                     ✕
                   </Button>
@@ -1501,10 +1501,10 @@ export default function POSTerminal() {
                         value={item.quantity}
                         onChange={(e) => setLineQuantity(item.key, e.target.value)}
                         dir="ltr"
-                        className="h-7 w-24 bg-slate-800 border-slate-600 text-white text-xs"
+                        className="h-7 w-24 bg-card border-border text-foreground text-xs"
                       />
                       {item.product.unit_label && (
-                        <span className="text-slate-400 text-xs">{item.product.unit_label}</span>
+                        <span className="text-muted-foreground text-xs">{item.product.unit_label}</span>
                       )}
                     </div>
                   ) : (
@@ -1513,22 +1513,22 @@ export default function POSTerminal() {
                         size="sm"
                         variant="outline"
                         onClick={() => updateQuantity(item.key, -1)}
-                        className="h-7 w-7 p-0 border-slate-600 text-white hover:bg-slate-600"
+                        className="h-7 w-7 p-0 border-border text-foreground hover:bg-muted"
                       >
                         -
                       </Button>
-                      <span className="text-white text-sm w-8 text-center">{item.quantity}</span>
+                      <span className="text-foreground text-sm w-8 text-center">{item.quantity}</span>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => updateQuantity(item.key, 1)}
-                        className="h-7 w-7 p-0 border-slate-600 text-white hover:bg-slate-600"
+                        className="h-7 w-7 p-0 border-border text-foreground hover:bg-muted"
                       >
                         +
                       </Button>
                     </>
                   )}
-                  <span className="text-blue-400 font-medium text-sm ms-auto">
+                  <span className="text-brand-400 font-medium text-sm ms-auto">
                     ${(lineUnitPrice(item) * item.quantity).toFixed(2)}
                   </span>
                 </div>
@@ -1538,10 +1538,10 @@ export default function POSTerminal() {
         </div>
 
         {/* Totals & Checkout */}
-        <div className="border-t border-slate-700 pt-4 mt-4 space-y-3">
+        <div className="border-t border-border pt-4 mt-4 space-y-3">
           {/* Discount Code Input */}
           <div>
-            <label className="text-slate-400 text-sm block mb-1">
+            <label className="text-muted-foreground text-sm block mb-1">
               <Tag className="w-3 h-3 inline me-1" />
               Discount Code
             </label>
@@ -1567,13 +1567,13 @@ export default function POSTerminal() {
                   onChange={(e) => { setDiscountCode(e.target.value); setDiscountError(''); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleApplyDiscount(); }}
                   placeholder="Enter code..."
-                  className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500 text-sm"
+                  className="bg-muted border-border text-foreground placeholder:text-muted-foreground text-sm"
                 />
                 <Button
                   size="sm"
                   onClick={handleApplyDiscount}
                   disabled={!discountCode.trim() || applyingDiscount}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 whitespace-nowrap"
+                  className="bg-brand-600 hover:bg-brand-700 text-white px-3 whitespace-nowrap"
                 >
                   {applyingDiscount ? '...' : 'Apply'}
                 </Button>
@@ -1584,7 +1584,7 @@ export default function POSTerminal() {
             )}
           </div>
 
-          <div className="flex justify-between text-slate-400 text-sm">
+          <div className="flex justify-between text-muted-foreground text-sm">
             <span>{t('subtotal')}</span>
             <span>${subtotal.toFixed(2)}</span>
           </div>
@@ -1594,11 +1594,11 @@ export default function POSTerminal() {
               <span>-${discountAmount.toFixed(2)}</span>
             </div>
           )}
-          <div className="flex justify-between text-slate-400 text-sm">
+          <div className="flex justify-between text-muted-foreground text-sm">
             <span>{t('vat')}</span>
             <span>${vatAmount.toFixed(2)}</span>
           </div>
-          <div className="flex justify-between text-white font-bold text-lg">
+          <div className="flex justify-between text-foreground font-bold text-lg">
             <span>{t('total')}</span>
             <span>${total.toFixed(2)}</span>
           </div>
@@ -1607,7 +1607,7 @@ export default function POSTerminal() {
               VAT base; quick-percent buttons compute off the total, or enter a custom
               amount. The amount due (total + tip) is what the tenders must cover. */}
           <div>
-            <label className="text-slate-400 text-sm block mb-1">{t('tip')}</label>
+            <label className="text-muted-foreground text-sm block mb-1">{t('tip')}</label>
             <div className="flex gap-2">
               <Input
                 type="number"
@@ -1618,7 +1618,7 @@ export default function POSTerminal() {
                 onChange={(e) => setTipAmount(Math.max(0, Number(e.target.value) || 0))}
                 placeholder="0.00"
                 dir="ltr"
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500 text-sm"
+                className="bg-muted border-border text-foreground placeholder:text-muted-foreground text-sm"
               />
               {[10, 15, 20].map((pct) => (
                 <Button
@@ -1627,7 +1627,7 @@ export default function POSTerminal() {
                   type="button"
                   variant="ghost"
                   onClick={() => setTipAmount(Number(((total * pct) / 100).toFixed(2)))}
-                  className="border border-slate-600 text-slate-300 hover:bg-slate-700 px-2 whitespace-nowrap"
+                  className="border border-border text-foreground hover:bg-muted px-2 whitespace-nowrap"
                 >
                   {pct}%
                 </Button>
@@ -1648,7 +1648,7 @@ export default function POSTerminal() {
           </div>
 
           {tip > 0 && (
-            <div className="flex justify-between text-emerald-300 font-bold text-lg border-t border-slate-700 pt-2">
+            <div className="flex justify-between text-emerald-300 font-bold text-lg border-t border-border pt-2">
               <span>{t('amount_due')}</span>
               <span>${amountDue.toFixed(2)}</span>
             </div>
@@ -1656,14 +1656,14 @@ export default function POSTerminal() {
 
           <div>
             <div className="flex items-center justify-between mb-1">
-              <label className="text-slate-400 text-sm">{t('payment_method')}</label>
+              <label className="text-muted-foreground text-sm">{t('payment_method')}</label>
               <button
                 type="button"
                 onClick={() => setSplitMode((v) => !v)}
                 className={`text-xs px-2 py-0.5 rounded border ${
                   splitMode
-                    ? 'bg-blue-600 border-blue-500 text-white'
-                    : 'border-slate-600 text-slate-300 hover:bg-slate-700'
+                    ? 'bg-brand-600 border-brand-500 text-white'
+                    : 'border-border text-foreground hover:bg-muted'
                 }`}
               >
                 {t('split_payment')}
@@ -1672,19 +1672,19 @@ export default function POSTerminal() {
             {!splitMode ? (
               <>
                 <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                  <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                  <SelectTrigger className="bg-muted border-border text-foreground">
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent className="bg-slate-700 border-slate-600">
-                    <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
-                    <SelectItem value="mada" className="text-white hover:bg-slate-600">{t('tender_mada')}</SelectItem>
-                    <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
-                    <SelectItem value="applepay" className="text-white hover:bg-slate-600">{t('tender_applepay')}</SelectItem>
-                    <SelectItem value="stcpay" className="text-white hover:bg-slate-600">{t('tender_stcpay')}</SelectItem>
-                    <SelectItem value="tabby" className="text-white hover:bg-slate-600">{t('tender_tabby')}</SelectItem>
-                    <SelectItem value="tamara" className="text-white hover:bg-slate-600">{t('tender_tamara')}</SelectItem>
-                    <SelectItem value="giftcard" className="text-white hover:bg-slate-600">{t('tender_gift_card')}</SelectItem>
-                    <SelectItem value="bank_transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
+                  <SelectContent className="bg-muted border-border">
+                    <SelectItem value="cash" className="text-foreground hover:bg-muted">{t('cash')}</SelectItem>
+                    <SelectItem value="mada" className="text-foreground hover:bg-muted">{t('tender_mada')}</SelectItem>
+                    <SelectItem value="card" className="text-foreground hover:bg-muted">{t('card')}</SelectItem>
+                    <SelectItem value="applepay" className="text-foreground hover:bg-muted">{t('tender_applepay')}</SelectItem>
+                    <SelectItem value="stcpay" className="text-foreground hover:bg-muted">{t('tender_stcpay')}</SelectItem>
+                    <SelectItem value="tabby" className="text-foreground hover:bg-muted">{t('tender_tabby')}</SelectItem>
+                    <SelectItem value="tamara" className="text-foreground hover:bg-muted">{t('tender_tamara')}</SelectItem>
+                    <SelectItem value="giftcard" className="text-foreground hover:bg-muted">{t('tender_gift_card')}</SelectItem>
+                    <SelectItem value="bank_transfer" className="text-foreground hover:bg-muted">{t('bank_transfer')}</SelectItem>
                   </SelectContent>
                 </Select>
                 {paymentMethod === 'giftcard' && (
@@ -1693,7 +1693,7 @@ export default function POSTerminal() {
                     onChange={(e) => setGiftCardCode(e.target.value)}
                     placeholder={t('gift_card_code_placeholder')}
                     dir="ltr"
-                    className="mt-2 bg-slate-700 border-slate-600 text-white"
+                    className="mt-2 bg-muted border-border text-foreground"
                   />
                 )}
               </>
@@ -1703,19 +1703,19 @@ export default function POSTerminal() {
                   <div key={idx} className="space-y-2">
                     <div className="flex gap-2">
                       <Select value={p.method} onValueChange={(v) => updateSplitPayment(idx, 'method', v)}>
-                        <SelectTrigger className="bg-slate-700 border-slate-600 text-white flex-1">
+                        <SelectTrigger className="bg-muted border-border text-foreground flex-1">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent className="bg-slate-700 border-slate-600">
-                          <SelectItem value="cash" className="text-white hover:bg-slate-600">{t('cash')}</SelectItem>
-                          <SelectItem value="mada" className="text-white hover:bg-slate-600">{t('tender_mada')}</SelectItem>
-                          <SelectItem value="card" className="text-white hover:bg-slate-600">{t('card')}</SelectItem>
-                          <SelectItem value="applepay" className="text-white hover:bg-slate-600">{t('tender_applepay')}</SelectItem>
-                          <SelectItem value="stcpay" className="text-white hover:bg-slate-600">{t('tender_stcpay')}</SelectItem>
-                          <SelectItem value="tabby" className="text-white hover:bg-slate-600">{t('tender_tabby')}</SelectItem>
-                          <SelectItem value="tamara" className="text-white hover:bg-slate-600">{t('tender_tamara')}</SelectItem>
-                          <SelectItem value="giftcard" className="text-white hover:bg-slate-600">{t('tender_gift_card')}</SelectItem>
-                          <SelectItem value="transfer" className="text-white hover:bg-slate-600">{t('bank_transfer')}</SelectItem>
+                        <SelectContent className="bg-muted border-border">
+                          <SelectItem value="cash" className="text-foreground hover:bg-muted">{t('cash')}</SelectItem>
+                          <SelectItem value="mada" className="text-foreground hover:bg-muted">{t('tender_mada')}</SelectItem>
+                          <SelectItem value="card" className="text-foreground hover:bg-muted">{t('card')}</SelectItem>
+                          <SelectItem value="applepay" className="text-foreground hover:bg-muted">{t('tender_applepay')}</SelectItem>
+                          <SelectItem value="stcpay" className="text-foreground hover:bg-muted">{t('tender_stcpay')}</SelectItem>
+                          <SelectItem value="tabby" className="text-foreground hover:bg-muted">{t('tender_tabby')}</SelectItem>
+                          <SelectItem value="tamara" className="text-foreground hover:bg-muted">{t('tender_tamara')}</SelectItem>
+                          <SelectItem value="giftcard" className="text-foreground hover:bg-muted">{t('tender_gift_card')}</SelectItem>
+                          <SelectItem value="transfer" className="text-foreground hover:bg-muted">{t('bank_transfer')}</SelectItem>
                         </SelectContent>
                       </Select>
                       <Input
@@ -1723,7 +1723,7 @@ export default function POSTerminal() {
                         value={p.amount || ''}
                         onChange={(e) => updateSplitPayment(idx, 'amount', e.target.value)}
                         placeholder="0.00"
-                        className="w-24 bg-slate-700 border-slate-600 text-white"
+                        className="w-24 bg-muted border-border text-foreground"
                       />
                     </div>
                     {p.method === 'giftcard' && (
@@ -1732,7 +1732,7 @@ export default function POSTerminal() {
                         onChange={(e) => updateSplitPayment(idx, 'gift_card_code', e.target.value)}
                         placeholder={t('gift_card_code_placeholder')}
                         dir="ltr"
-                        className="bg-slate-700 border-slate-600 text-white"
+                        className="bg-muted border-border text-foreground"
                       />
                     )}
                   </div>
@@ -1750,7 +1750,7 @@ export default function POSTerminal() {
               onClick={handleHold}
               disabled={cart.length === 0 || holding || processing}
               variant="outline"
-              className="flex-1 border-slate-600 text-slate-200 hover:bg-slate-700 py-6 text-base disabled:opacity-50"
+              className="flex-1 border-border text-foreground hover:bg-muted py-6 text-base disabled:opacity-50"
             >
               <Pause className="w-4 h-4 me-2" />
               {holding ? t('loading') : t('hold_sale')}
@@ -1773,11 +1773,11 @@ export default function POSTerminal() {
           onClick={() => setShowHeld(false)}
         >
           <div
-            className="bg-slate-800 border border-slate-700 rounded-lg w-full max-w-lg max-h-[80vh] flex flex-col"
+            className="bg-card border border-border rounded-lg w-full max-w-lg max-h-[80vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between p-4 border-b border-slate-700">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+            <div className="flex items-center justify-between p-4 border-b border-border">
+              <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
                 <Pause className="w-5 h-5" />
                 {t('held_tickets')}
               </h3>
@@ -1785,7 +1785,7 @@ export default function POSTerminal() {
                 size="sm"
                 variant="ghost"
                 onClick={() => setShowHeld(false)}
-                className="text-slate-400 hover:text-white h-7 w-7 p-0"
+                className="text-muted-foreground hover:text-foreground h-7 w-7 p-0"
               >
                 <X className="w-5 h-5" />
               </Button>
@@ -1798,31 +1798,31 @@ export default function POSTerminal() {
                     size="sm"
                     variant="outline"
                     onClick={loadHeld}
-                    className="mt-3 border-slate-600 text-slate-200 hover:bg-slate-700"
+                    className="mt-3 border-border text-foreground hover:bg-muted"
                   >
                     {t('retry')}
                   </Button>
                 </div>
               ) : heldTickets.length === 0 ? (
-                <p className="text-slate-500 text-center py-8">{t('no_held_tickets')}</p>
+                <p className="text-muted-foreground text-center py-8">{t('no_held_tickets')}</p>
               ) : (
                 heldTickets.map((ticket) => (
                   <div
                     key={ticket.id}
-                    className="bg-slate-700 rounded-lg p-3 flex items-center justify-between gap-3"
+                    className="bg-muted rounded-lg p-3 flex items-center justify-between gap-3"
                   >
                     <div className="min-w-0">
-                      <p className="text-white text-sm font-medium truncate">
+                      <p className="text-foreground text-sm font-medium truncate">
                         {ticket.label || ticket.customer_name || `#${ticket.id}`}
                       </p>
-                      <p className="text-slate-400 text-xs">
+                      <p className="text-muted-foreground text-xs">
                         {ticket.item_count} {t('items')} · {ticket.total_amount?.toFixed(2)}
                       </p>
                     </div>
                     <Button
                       size="sm"
                       onClick={() => handleRecall(ticket.id)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white whitespace-nowrap"
+                      className="bg-brand-600 hover:bg-brand-700 text-white whitespace-nowrap"
                     >
                       <Play className="w-4 h-4 me-1" />
                       {t('recall')}

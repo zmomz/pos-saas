@@ -77,7 +77,7 @@ export default function AuditLog() {
       {/* Header Card */}
       <Card className="bg-slate-800 border-slate-700">
         <CardContent className="p-4 flex items-center gap-3">
-          <Shield className="h-8 w-8 text-blue-400" />
+          <Shield className="h-8 w-8 text-brand-400" />
           <div>
             <h2 className="text-lg font-bold text-white">Audit Log</h2>
             <p className="text-slate-400 text-sm">{logs.length} total entries</p>
@@ -159,7 +159,7 @@ export default function AuditLog() {
                           : log.action === 'update'
                           ? 'bg-yellow-600/20 text-yellow-400'
                           : log.action === 'login'
-                          ? 'bg-blue-600/20 text-blue-400'
+                          ? 'bg-brand-600/20 text-brand-400'
                           : 'bg-slate-600/20 text-slate-400'
                       }`}
                     >

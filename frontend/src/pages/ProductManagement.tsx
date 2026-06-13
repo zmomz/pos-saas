@@ -496,7 +496,7 @@ export default function ProductManagement() {
               type="checkbox"
               checked={formData.is_weighted}
               onChange={(e) => handleFormToggle('is_weighted', e.target.checked)}
-              className="h-4 w-4 accent-blue-600"
+              className="h-4 w-4 accent-brand-600"
             />
             {t('weighted_item')}
           </label>
@@ -505,7 +505,7 @@ export default function ProductManagement() {
               type="checkbox"
               checked={formData.is_open_price}
               onChange={(e) => handleFormToggle('is_open_price', e.target.checked)}
-              className="h-4 w-4 accent-blue-600"
+              className="h-4 w-4 accent-brand-600"
             />
             {t('open_price_item')}
           </label>
@@ -541,7 +541,7 @@ export default function ProductManagement() {
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.name || !formData.price || !formData.quantity}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -659,7 +659,7 @@ export default function ProductManagement() {
                           </Badge>
                         </td>
                         <td className="p-2">{s.reorder_point}</td>
-                        <td className="p-2 font-semibold text-blue-300">
+                        <td className="p-2 font-semibold text-brand-300">
                           {s.suggested_order_quantity}
                         </td>
                       </tr>
@@ -700,7 +700,7 @@ export default function ProductManagement() {
             <DialogTrigger asChild>
               <Button
                 onClick={() => setFormData(emptyForm)}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+                className="bg-brand-600 hover:bg-brand-700 text-white"
               >
                 + Add Product
               </Button>
@@ -999,7 +999,7 @@ export default function ProductManagement() {
               <Button
                 onClick={handleSaveVariant}
                 disabled={variantSubmitting || !variantForm.name}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+                className="bg-brand-600 hover:bg-brand-700 text-white"
               >
                 {variantSubmitting ? t('loading') : editingVariantId ? t('save') : t('add_variant')}
               </Button>

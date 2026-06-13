@@ -2,88 +2,96 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   Cloud POS — Design System (petrol teal-blue + warm gold)
+   shadcn tokens are tuned to the design handoff; the whole app
+   re-skins from these. White-label swaps --primary at runtime.
+   ============================================================ */
+
 @layer base {
   :root {
-    /* Soft lavender-blue page wash (matches the TAQREER reference). */
-    --background: 222 50% 98%;
-    --foreground: 224 47% 14%;
+    /* Cool-slate page wash, faint petrol tint. */
+    --background: 210 22% 96%;
+    --foreground: 214 13% 24%;
 
     --card: 0 0% 100%;
-    --card-foreground: 224 47% 14%;
+    --card-foreground: 214 13% 24%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 224 47% 14%;
+    --popover-foreground: 214 13% 24%;
 
-    /* Brand: royal indigo-blue. Drives every primary Button + accent. */
-    --primary: 231 84% 60%;
+    /* Brand: petrol teal-blue. Drives every primary Button + accent. */
+    --primary: 192 78% 37%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 226 60% 96%;
-    --secondary-foreground: 231 60% 30%;
+    --secondary: 192 48% 95%;
+    --secondary-foreground: 194 80% 26%;
 
-    --muted: 222 40% 96%;
-    --muted-foreground: 222 16% 46%;
+    --muted: 204 14% 94%;
+    --muted-foreground: 214 9% 45%;
 
-    --accent: 226 100% 96%;
-    --accent-foreground: 231 70% 40%;
+    --accent: 192 48% 95%;
+    --accent-foreground: 194 80% 26%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 6 60% 52%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 222 30% 90%;
-    --input: 222 30% 88%;
-    --ring: 231 84% 60%;
+    --border: 206 14% 91%;
+    --input: 204 14% 85%;
+    --ring: 192 78% 37%;
 
     --radius: 0.75rem;
 
-    --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 222 20% 35%;
-    --sidebar-primary: 231 84% 60%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 226 100% 96%;
-    --sidebar-accent-foreground: 231 70% 40%;
-    --sidebar-border: 222 30% 91%;
-    --sidebar-ring: 231 84% 60%;
+    /* Sidebar: deep petrol with a warm-gold active indicator. */
+    --sidebar-background: 197 58% 19%;
+    --sidebar-foreground: 197 22% 78%;
+    --sidebar-primary: 38 72% 63%;
+    --sidebar-primary-foreground: 30 45% 18%;
+    --sidebar-accent: 197 50% 26%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 197 45% 26%;
+    --sidebar-ring: 38 72% 63%;
   }
 
   .dark {
-    /* Deep navy canvas + raised navy panels (the reference dashboard look). */
-    --background: 226 43% 9%;
-    --foreground: 220 30% 96%;
+    /* Deep petrol-navy canvas + raised teal panels. */
+    --background: 200 40% 9%;
+    --foreground: 200 20% 96%;
 
-    --card: 225 36% 14%;
-    --card-foreground: 220 30% 96%;
+    --card: 200 30% 13%;
+    --card-foreground: 200 20% 96%;
 
-    --popover: 225 36% 14%;
-    --popover-foreground: 220 30% 96%;
+    --popover: 200 30% 13%;
+    --popover-foreground: 200 20% 96%;
 
-    --primary: 231 90% 66%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 192 70% 50%;
+    --primary-foreground: 200 40% 9%;
 
-    --secondary: 225 30% 20%;
-    --secondary-foreground: 220 30% 96%;
+    --secondary: 200 24% 20%;
+    --secondary-foreground: 200 20% 96%;
 
-    --muted: 225 28% 18%;
-    --muted-foreground: 220 16% 65%;
+    --muted: 200 22% 17%;
+    --muted-foreground: 200 14% 64%;
 
-    --accent: 225 32% 22%;
-    --accent-foreground: 220 30% 96%;
+    --accent: 200 26% 22%;
+    --accent-foreground: 200 20% 96%;
 
-    --destructive: 0 62.8% 45%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 6 55% 48%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 225 26% 22%;
-    --input: 225 26% 24%;
-    --ring: 231 90% 66%;
+    --border: 200 24% 22%;
+    --input: 200 24% 24%;
+    --ring: 192 70% 50%;
 
-    --sidebar-background: 226 40% 11%;
-    --sidebar-foreground: 220 22% 72%;
-    --sidebar-primary: 231 90% 66%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 225 32% 18%;
-    --sidebar-accent-foreground: 220 30% 96%;
-    --sidebar-border: 225 26% 20%;
-    --sidebar-ring: 231 90% 66%;
+    /* Sidebar stays deep teal in both modes (matches the handoff). */
+    --sidebar-background: 197 58% 16%;
+    --sidebar-foreground: 197 22% 76%;
+    --sidebar-primary: 38 72% 63%;
+    --sidebar-primary-foreground: 30 45% 18%;
+    --sidebar-accent: 197 48% 24%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 197 42% 24%;
+    --sidebar-ring: 38 72% 63%;
   }
 }
 
@@ -93,32 +101,39 @@
   }
 
   html {
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    font-family: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
 
   body {
     @apply bg-background text-foreground antialiased;
-    /* Subtle brand glow on the light canvas, echoing the reference artwork. */
+    font-feature-settings: 'cv05' 1, 'ss03' 1;
+    /* Soft petrol glow on the light canvas. */
     background-image:
-      radial-gradient(60rem 60rem at 110% -10%, hsl(231 84% 60% / 0.06), transparent 60%),
-      radial-gradient(50rem 50rem at -10% 110%, hsl(231 84% 60% / 0.05), transparent 60%);
+      radial-gradient(60rem 60rem at 110% -10%, hsl(192 78% 45% / 0.06), transparent 60%),
+      radial-gradient(50rem 50rem at -10% 110%, hsl(192 78% 45% / 0.05), transparent 60%);
     background-attachment: fixed;
   }
 
   .dark body {
     background-image:
-      radial-gradient(60rem 60rem at 110% -10%, hsl(231 90% 60% / 0.10), transparent 60%),
-      radial-gradient(50rem 50rem at -10% 110%, hsl(260 80% 55% / 0.08), transparent 60%);
+      radial-gradient(60rem 60rem at 110% -10%, hsl(192 70% 50% / 0.10), transparent 60%),
+      radial-gradient(50rem 50rem at -10% 110%, hsl(228 60% 45% / 0.08), transparent 60%);
   }
 
-  /* Arabic / Urdu use Tajawal; applied via the `font-arabic` helper in RTL. */
+  /* Arabic / Urdu use IBM Plex Sans Arabic; applied via `font-arabic` in RTL. */
   .font-arabic,
   [dir='rtl'] {
-    font-family: 'Tajawal', 'Inter', system-ui, sans-serif;
+    font-family: 'IBM Plex Sans Arabic', 'Hanken Grotesk', system-ui, sans-serif;
   }
 
   h1, h2, h3, h4 {
     @apply tracking-tight;
+  }
+
+  /* Tabular figures for all currency / numeric data. */
+  .tabular-nums,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
   }
 }
 
@@ -126,17 +141,17 @@
   /* Brand gradient — shared by hero panels, CTAs and the logo mark so the
      four surfaces (landing, master, agent, client) read as one product. */
   .brand-gradient {
-    background-image: linear-gradient(135deg, hsl(231 84% 62%) 0%, hsl(245 70% 56%) 100%);
+    background-image: linear-gradient(135deg, hsl(192 78% 40%) 0%, hsl(194 80% 26%) 100%);
   }
 
   .brand-text-gradient {
-    background-image: linear-gradient(135deg, hsl(231 84% 60%), hsl(255 75% 60%));
+    background-image: linear-gradient(135deg, hsl(192 78% 40%), hsl(194 76% 32%));
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
 
-  /* Frosted navy panel used to group dashboard sections. */
+  /* Frosted panel used to group dashboard sections. */
   .surface-panel {
     @apply rounded-2xl border bg-card shadow-sm;
   }

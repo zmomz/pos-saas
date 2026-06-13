@@ -291,7 +291,7 @@ export default function KDS() {
           <CardContent className="p-8 text-center">
             <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-3" />
             <p className="text-slate-300 mb-4">{t('kds_load_error')}</p>
-            <Button onClick={load} className="bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={load} className="bg-brand-600 hover:bg-brand-700 text-white">
               {t('retry')}
             </Button>
           </CardContent>
@@ -314,7 +314,7 @@ export default function KDS() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <ChefHat className="h-6 w-6 text-blue-400" />
+            <ChefHat className="h-6 w-6 text-brand-400" />
             {t('kds')}
           </h2>
           <p className="text-slate-400 text-sm mt-1">{t('kds_desc')}</p>
@@ -336,7 +336,7 @@ export default function KDS() {
           </Badge>
           <Dialog open={addStationOpen} onOpenChange={setAddStationOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white">
+              <Button className="bg-brand-600 hover:bg-brand-700 text-white">
                 <Plus className="h-4 w-4 mr-2" /> {t('add_station')}
               </Button>
             </DialogTrigger>
@@ -369,7 +369,7 @@ export default function KDS() {
                 <Button
                   onClick={handleAddStation}
                   disabled={submitting || !stationForm.name}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  className="w-full bg-brand-600 hover:bg-brand-700 text-white"
                 >
                   {submitting ? t('loading') : t('create_station')}
                 </Button>
@@ -384,7 +384,7 @@ export default function KDS() {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setActiveStation('all')}
-            className={`px-3 py-1 rounded-md text-sm ${activeStation === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+            className={`px-3 py-1 rounded-md text-sm ${activeStation === 'all' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
           >
             {t('all_stations')}
           </button>
@@ -392,7 +392,7 @@ export default function KDS() {
             <button
               key={s.id}
               onClick={() => setActiveStation(s.id)}
-              className={`px-3 py-1 rounded-md text-sm ${activeStation === s.id ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+              className={`px-3 py-1 rounded-md text-sm ${activeStation === s.id ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
             >
               {s.name}
             </button>
@@ -454,7 +454,7 @@ export default function KDS() {
                             </span>
                           </div>
                           {card.course && (
-                            <Badge className="bg-blue-500/20 text-blue-300">{card.course}</Badge>
+                            <Badge className="bg-brand-500/20 text-brand-300">{card.course}</Badge>
                           )}
                           <ul className="space-y-1">
                             {card.items.map((it) => (

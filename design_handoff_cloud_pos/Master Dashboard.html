@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Master Dashboard — Cloud POS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/system.css">
+<link rel="stylesheet" href="assets/dashboard.css">
+<style>
+  .quickrow { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+  .layout-split { display: grid; grid-template-columns: 1.55fr 1fr; gap: 18px; }
+  [data-var-layout="stacked"] .layout-split { grid-template-columns: 1fr; }
+  .leader-row td .ag { display: flex; align-items: center; gap: 11px; }
+  .leader-row td .ag .avatar { width: 32px; height: 32px; font-size: 12px; }
+  .rank { font-family: var(--ff-mono); font-size: 12px; color: var(--faint); width: 22px; }
+  .top5 { position: relative; }
+  .top5 .rank { color: var(--gold-600); font-weight: 700; }
+  .bar { height: 7px; border-radius: 4px; background: var(--brand-100); overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--brand); border-radius: 4px; }
+  .act-item { display: flex; gap: 13px; padding: 13px 0; border-bottom: 1px dashed var(--line); }
+  .act-item:last-child { border-bottom: 0; }
+  .act-item .ic { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; flex: none; }
+  .act-item .ic svg { width: 17px; height: 17px; }
+  .act-item p { font-size: 13.5px; line-height: 1.4; }
+  .act-item .t { font-size: 11.5px; color: var(--faint); font-family: var(--ff-mono); margin-top: 3px; }
+  .chart-wrap { position: relative; height: 200px; margin-top: 8px; }
+  .chart-wrap svg { width: 100%; height: 100%; overflow: visible; }
+  .chart-x { display: flex; justify-content: space-between; font-family: var(--ff-mono); font-size: 10.5px; color: var(--faint); margin-top: 8px; }
+  .audit-row { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
+  .audit-row:last-child { border-bottom: 0; }
+  .audit-row .tag { font-family: var(--ff-mono); font-size: 10.5px; padding: 2px 7px; border-radius: 5px; background: var(--bg-2); color: var(--muted); flex: none; }
+  @media (max-width: 1080px) { .layout-split { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="app" data-screen-label="Master Dashboard">
+  <!-- Sidebar -->
+  <aside class="side ui">
+    <div class="brand">
+      <div class="logo" data-icon="store"></div>
+      <div><b>Cloud POS</b><span>MASTER CONSOLE</span></div>
+    </div>
+    <div class="navlabel">Platform</div>
+    <a class="nav active"><span data-icon="dashboard"></span> Dashboard</a>
+    <a class="nav" href="Agent Dashboard.html"><span data-icon="users"></span> Agents <span style="margin-inline-start:auto" class="pill pill-muted">18</span></a>
+    <a class="nav"><span data-icon="package"></span> Packages</a>
+    <div class="navlabel">Operations</div>
+    <a class="nav"><span data-icon="scroll"></span> Audit Log</a>
+    <a class="nav"><span data-icon="bell"></span> Notifications <span style="margin-inline-start:auto" class="pill pill-danger">3</span></a>
+    <a class="nav"><span data-icon="percent"></span> Tax Settings</a>
+    <a class="nav"><span data-icon="user"></span> Profile</a>
+    <div class="spacer"></div>
+    <div class="userbox">
+      <div class="avatar">FA</div>
+      <div style="min-width:0"><b>Faisal Al-Otaibi</b><span>Platform Owner</span></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div class="main">
+    <header class="topbar ui">
+      <div class="title">
+        <h1>Platform Overview</h1>
+        <p>All agents and revenue · June 2026</p>
+      </div>
+      <div class="actions">
+        <button class="icon-btn" title="Search"><span data-icon="search"></span></button>
+        <button class="icon-btn" title="Notifications"><span data-icon="bell"></span><span class="badge-dot"></span></button>
+        <button class="btn btn-primary"><span data-icon="plus"></span> Create Agent</button>
+      </div>
+    </header>
+
+    <div class="content ui">
+      <!-- Stat cards -->
+      <div class="stat-row">
+        <div class="stat">
+          <div class="top"><span class="label">Total Agents</span><div class="swatch sw-brand" data-icon="users"></div></div>
+          <div class="value num">18</div>
+          <div class="delta up"><span data-icon="trendingUp"></span> +2 this month</div>
+        </div>
+        <div class="stat">
+          <div class="top"><span class="label">MRR</span><div class="swatch sw-success" data-icon="sar"></div></div>
+          <div class="value num">SAR 248,600</div>
+          <div class="delta up"><span data-icon="trendingUp"></span> +11.4% vs May</div>
+        </div>
+        <div class="stat">
+          <div class="top"><span class="label">Active Packages</span><div class="swatch sw-violet" data-icon="package"></div></div>
+          <div class="value num">12<small> / 18 slots filled</small></div>
+          <div class="bar" style="margin-top:2px"><i style="width:67%"></i></div>
+        </div>
+        <div class="stat">
+          <div class="top"><span class="label">System Health</span><div class="swatch sw-sky" data-icon="activity"></div></div>
+          <div class="value num">16<small> / 18 active</small></div>
+          <div class="delta up"><span class="dot" style="color:var(--success)"></span> All systems operational</div>
+        </div>
+      </div>
+
+      <!-- Quick actions -->
+      <div class="quickrow">
+        <span class="chip"><span data-icon="package"></span> Packages</span>
+        <span class="chip"><span data-icon="scroll"></span> Audit Log</span>
+        <span class="chip"><span data-icon="bell"></span> Notifications</span>
+        <span class="chip"><span data-icon="percent"></span> Tax settings</span>
+      </div>
+
+      <!-- Platform economics -->
+      <div class="card card-p" style="margin-bottom:18px;">
+        <div class="section-h">
+          <h2>Platform Economics</h2>
+          <span class="pill pill-success"><span class="dot"></span> Healthy</span>
+        </div>
+        <div class="mini-grid" style="margin-bottom:22px;">
+          <div class="mini"><div class="k">MRR</div><div class="v num">SAR 248,600</div></div>
+          <div class="mini"><div class="k">ARR</div><div class="v num">SAR 2.98M</div></div>
+          <div class="mini"><div class="k">Active Merchants</div><div class="v num">1,284<small> / 1,410</small></div></div>
+          <div class="mini"><div class="k">Churn Rate</div><div class="v num">2.1%</div></div>
+          <div class="mini"><div class="k">Platform Revenue</div><div class="v num">SAR 74,580</div></div>
+          <div class="mini"><div class="k">Collected YTD</div><div class="v num">SAR 1.34M</div></div>
+        </div>
+
+        <div class="section-h"><h2 style="font-size:14px;">Revenue by Agent</h2><a>View all agents <span data-icon="arrowRight"></span></a></div>
+        <table class="tbl">
+          <thead><tr><th style="width:36px;"></th><th>Agent</th><th>Merchants</th><th>MRR (SAR)</th><th>Share</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr class="leader-row top5"><td class="rank">01</td><td><div class="ag"><div class="avatar">NS</div><div><b style="font-weight:600">Najd Systems</b><div class="muted" style="font-size:11.5px">najdpos.sa</div></div></div></td><td class="num">214</td><td class="num" style="font-weight:700">48,200</td><td><div class="bar" style="width:90px"><i style="width:100%"></i></div></td><td><span class="pill pill-success"><span class="dot"></span> Active</span></td></tr>
+            <tr class="leader-row top5"><td class="rank">02</td><td><div class="ag"><div class="avatar">TT</div><div><b style="font-weight:600">Tamkeen Tech</b><div class="muted" style="font-size:11.5px">tamkeen.pos.sa</div></div></div></td><td class="num">186</td><td class="num" style="font-weight:700">41,750</td><td><div class="bar" style="width:90px"><i style="width:86%"></i></div></td><td><span class="pill pill-success"><span class="dot"></span> Active</span></td></tr>
+            <tr class="leader-row top5"><td class="rank">03</td><td><div class="ag"><div class="avatar">BS</div><div><b style="font-weight:600">Bayan Solutions</b><div class="muted" style="font-size:11.5px">bayan.com.sa</div></div></div></td><td class="num">158</td><td class="num" style="font-weight:700">35,400</td><td><div class="bar" style="width:90px"><i style="width:73%"></i></div></td><td><span class="pill pill-success"><span class="dot"></span> Active</span></td></tr>
+            <tr class="leader-row top5"><td class="rank">04</td><td><div class="ag"><div class="avatar">QD</div><div><b style="font-weight:600">Qimam Digital</b><div class="muted" style="font-size:11.5px">qimam.io</div></div></div></td><td class="num">132</td><td class="num" style="font-weight:700">29,600</td><td><div class="bar" style="width:90px"><i style="width:61%"></i></div></td><td><span class="pill pill-warning"><span class="dot"></span> Trial</span></td></tr>
+            <tr class="leader-row top5"><td class="rank">05</td><td><div class="ag"><div class="avatar">RP</div><div><b style="font-weight:600">Riyali POS</b><div class="muted" style="font-size:11.5px">riyali.sa</div></div></div></td><td class="num">119</td><td class="num" style="font-weight:700">26,800</td><td><div class="bar" style="width:90px"><i style="width:55%"></i></div></td><td><span class="pill pill-success"><span class="dot"></span> Active</span></td></tr>
+            <tr class="leader-row"><td class="rank">06</td><td><div class="ag"><div class="avatar">MK</div><div><b style="font-weight:600">Mubasher KSA</b><div class="muted" style="font-size:11.5px">mubasher.sa</div></div></div></td><td class="num">88</td><td class="num" style="font-weight:700">19,400</td><td><div class="bar" style="width:90px"><i style="width:40%"></i></div></td><td><span class="pill pill-danger"><span class="dot"></span> Suspended</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Split: chart + activity -->
+      <div class="layout-split">
+        <div class="card card-p">
+          <div class="section-h"><h2>Platform MRR · last 12 months</h2><span class="pill pill-success"><span data-icon="trendingUp" style="width:13px;height:13px"></span> +38% YoY</span></div>
+          <div class="chart-wrap"><svg id="mrrChart" viewBox="0 0 720 200" preserveAspectRatio="none"></svg></div>
+          <div class="chart-x"><span>JUL</span><span>AUG</span><span>SEP</span><span>OCT</span><span>NOV</span><span>DEC</span><span>JAN</span><span>FEB</span><span>MAR</span><span>APR</span><span>MAY</span><span>JUN</span></div>
+        </div>
+
+        <div class="card card-p">
+          <div class="section-h"><h2>Recent Activity</h2><a>View all <span data-icon="arrowRight"></span></a></div>
+          <div class="act-item"><div class="ic sw-success" data-icon="users"></div><div><p><b>Najd Systems</b> onboarded 3 new merchants</p><div class="t">12 MIN AGO</div></div></div>
+          <div class="act-item"><div class="ic sw-brand" data-icon="package"></div><div><p><b>Tamkeen Tech</b> upgraded to Enterprise package</p><div class="t">1 HOUR AGO</div></div></div>
+          <div class="act-item"><div class="ic sw-warning" data-icon="bell"></div><div><p><b>Qimam Digital</b> trial ends in 4 days</p><div class="t">3 HOURS AGO</div></div></div>
+          <div class="act-item"><div class="ic sw-danger" style="background:var(--danger-50);color:var(--danger)" data-icon="shield"></div><div><p><b>Mubasher KSA</b> suspended — payment overdue</p><div class="t">YESTERDAY</div></div></div>
+          <div class="act-item"><div class="ic sw-violet" data-icon="sar"></div><div><p>Monthly platform fees collected — <b>SAR 74,580</b></p><div class="t">2 DAYS AGO</div></div></div>
+        </div>
+      </div>
+
+      <!-- Audit quick link -->
+      <div class="card card-p" style="margin-top:18px;">
+        <div class="section-h"><h2>Audit Log</h2><a>View all entries <span data-icon="arrowRight"></span></a></div>
+        <div class="audit-row"><span class="tag">14:02</span> <b>faisal@cloudpos.sa</b> created agent <span class="mono" style="color:var(--brand-700)">Najd Systems</span></div>
+        <div class="audit-row"><span class="tag">13:47</span> Package limit raised for <b>Tamkeen Tech</b> → 250 slots</div>
+        <div class="audit-row"><span class="tag">11:20</span> Tax rate confirmed at <b>15% VAT</b> (ZATCA) for all tenants</div>
+        <div class="audit-row"><span class="tag">09:55</span> <b>Mubasher KSA</b> auto-suspended by billing engine</div>
+        <div class="audit-row"><span class="tag">08:30</span> Nightly backup completed — <span class="mono" style="color:var(--success)">OK · 1.34 TB</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="assets/icons.js"></script>
+<script src="assets/proto.js"></script>
+<script>
+  // MRR area+line chart
+  (function () {
+    const data = [180, 188, 195, 202, 199, 212, 221, 228, 233, 240, 244, 248.6];
+    const w = 720, h = 200, pad = 8;
+    const max = 260, min = 160;
+    const x = i => (i / (data.length - 1)) * w;
+    const y = v => h - pad - ((v - min) / (max - min)) * (h - pad * 2);
+    let line = '', area = `M ${x(0)} ${y(data[0])} `;
+    data.forEach((v, i) => { line += (i ? 'L' : 'M') + ` ${x(i).toFixed(1)} ${y(v).toFixed(1)} `; });
+    data.forEach((v, i) => { if (i) area += `L ${x(i).toFixed(1)} ${y(v).toFixed(1)} `; });
+    area += `L ${w} ${h} L 0 ${h} Z`;
+    const dots = data.map((v, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${i === data.length - 1 ? 5 : 0}" fill="var(--brand)" stroke="#fff" stroke-width="2"/>`).join('');
+    document.getElementById('mrrChart').innerHTML = `
+      <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="var(--brand)" stop-opacity="0.22"/><stop offset="1" stop-color="var(--brand)" stop-opacity="0"/>
+      </linearGradient></defs>
+      <path d="${area}" fill="url(#g)"/>
+      <path d="${line}" fill="none" stroke="var(--brand)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      ${dots}`;
+  })();
+
+  protoBar({
+    title: 'Dashboard',
+    variations: [
+      { key: 'layout', options: [
+        { val: 'split', label: 'Split', icon: 'grid' },
+        { val: 'stacked', label: 'Stacked', icon: 'layers' },
+      ]},
+      { key: 'density', options: [
+        { val: 'comfy', label: 'Comfortable' },
+        { val: 'compact', label: 'Compact' },
+      ]},
+    ],
+    themes: true,
+    rtl: true,
+  });
+</script>
+</body>
+</html>

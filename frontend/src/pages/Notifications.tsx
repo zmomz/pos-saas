@@ -74,7 +74,7 @@ export default function Notifications() {
     if (type === 'low_stock') {
       return <AlertTriangle className="h-5 w-5 text-amber-400" />;
     }
-    return <Bell className="h-5 w-5 text-blue-400" />;
+    return <Bell className="h-5 w-5 text-brand-400" />;
   }
 
   function formatTime(dateStr: string) {
@@ -109,7 +109,7 @@ export default function Notifications() {
               {language === 'ar' ? 'الإشعارات' : language === 'hi' ? 'सूचनाएं' : language === 'ur' ? 'اطلاعات' : 'Notifications'}
             </h1>
             {unreadCount > 0 && (
-              <Badge className="bg-blue-600 text-white">{unreadCount}</Badge>
+              <Badge className="bg-brand-600 text-white">{unreadCount}</Badge>
             )}
           </div>
           <Select value={language} onValueChange={(val) => setLanguage(val as Language)}>
@@ -147,7 +147,7 @@ export default function Notifications() {
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-600 border-t-transparent" />
             <span className="ml-3 text-slate-400">{t('loading')}</span>
           </div>
         )}
@@ -175,7 +175,7 @@ export default function Notifications() {
               <Card
                 key={notification.id}
                 className={`cursor-pointer border-slate-700 bg-slate-800 transition-colors hover:bg-slate-750 ${
-                  !notification.is_read ? 'border-l-4 border-l-blue-500' : 'opacity-70'
+                  !notification.is_read ? 'border-l-4 border-l-brand-500' : 'opacity-70'
                 }`}
                 onClick={() => !notification.is_read && handleMarkRead(notification.id)}
               >
@@ -193,7 +193,7 @@ export default function Notifications() {
                   </div>
                   {!notification.is_read && (
                     <div className="flex-shrink-0">
-                      <div className="h-2.5 w-2.5 rounded-full bg-blue-500" />
+                      <div className="h-2.5 w-2.5 rounded-full bg-brand-500" />
                     </div>
                   )}
                 </CardContent>

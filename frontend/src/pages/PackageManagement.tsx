@@ -192,7 +192,7 @@ export default function PackageManagement() {
             </Select>
             <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
               <DialogTrigger asChild>
-                <Button onClick={openAddDialog} className="bg-blue-600 text-white hover:bg-blue-700">
+                <Button onClick={openAddDialog} className="bg-brand-600 text-white hover:bg-brand-700">
                   <Plus className="mr-2 h-4 w-4" />
                   {labels.addPackage}
                 </Button>
@@ -275,7 +275,7 @@ export default function PackageManagement() {
                     <Button
                       onClick={handleSubmit}
                       disabled={saving || !form.name.trim()}
-                      className="bg-blue-600 text-white hover:bg-blue-700"
+                      className="bg-brand-600 text-white hover:bg-brand-700"
                     >
                       {saving ? t('loading') : t('save')}
                     </Button>
@@ -292,7 +292,7 @@ export default function PackageManagement() {
         {/* Loading */}
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-600 border-t-transparent" />
             <span className="ml-3 text-slate-400">{t('loading')}</span>
           </div>
         )}
@@ -340,7 +340,7 @@ export default function PackageManagement() {
                     {pkg.features && pkg.features.length > 0 ? (
                       <div className="flex flex-wrap gap-1">
                         {pkg.features.map((f) => (
-                          <Badge key={f} className="bg-blue-900/40 text-blue-200">
+                          <Badge key={f} className="bg-brand-900/40 text-brand-200">
                             {t(`feat_${f}`)}
                           </Badge>
                         ))}

@@ -61,14 +61,14 @@ export default function UserProfile() {
       <Card className="bg-slate-800 border-slate-700">
         <CardHeader>
           <CardTitle className="text-white flex items-center gap-2">
-            <User className="h-5 w-5 text-blue-400" />
+            <User className="h-5 w-5 text-brand-400" />
             Profile
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-4">
-            <div className="h-16 w-16 rounded-full bg-blue-600/30 flex items-center justify-center">
-              <User className="h-8 w-8 text-blue-400" />
+            <div className="h-16 w-16 rounded-full bg-brand-600/30 flex items-center justify-center">
+              <User className="h-8 w-8 text-brand-400" />
             </div>
             <div className="flex-1">
               <label className="text-sm text-slate-400 mb-1 block">Display Name</label>
@@ -98,7 +98,7 @@ export default function UserProfile() {
                 key={opt.value}
                 onClick={() => setLanguage(opt.value as Language)}
                 className={language === opt.value
-                  ? 'bg-blue-600 text-white border-blue-500'
+                  ? 'bg-brand-600 text-white border-brand-500'
                   : 'bg-slate-700 text-slate-300 border-slate-600 hover:bg-slate-600'
                 }
                 variant="outline"
@@ -123,7 +123,7 @@ export default function UserProfile() {
             <Button
               onClick={() => { if (isDark) toggleTheme(); }}
               className={!isDark
-                ? 'bg-blue-600 text-white'
+                ? 'bg-brand-600 text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
               }
               variant="outline"
@@ -133,7 +133,7 @@ export default function UserProfile() {
             <Button
               onClick={() => { if (!isDark) toggleTheme(); }}
               className={isDark
-                ? 'bg-blue-600 text-white'
+                ? 'bg-brand-600 text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
               }
               variant="outline"
@@ -209,7 +209,7 @@ export default function UserProfile() {
 
       {/* Save Button */}
       <div className="flex gap-3">
-        <Button onClick={handleSaveProfile} disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white">
+        <Button onClick={handleSaveProfile} disabled={saving} className="bg-brand-600 hover:bg-brand-700 text-white">
           {saving ? t('loading') : saved ? '✓ Saved!' : t('save_changes')}
         </Button>
       </div>

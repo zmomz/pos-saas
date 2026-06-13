@@ -304,7 +304,7 @@ export default function DiscountManagement() {
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.code || !formData.value}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -327,7 +327,7 @@ export default function DiscountManagement() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
-            <Tag className="h-8 w-8 text-blue-400" />
+            <Tag className="h-8 w-8 text-brand-400" />
             <div>
               <p className="text-slate-400 text-sm">Total Discounts</p>
               <p className="text-2xl font-bold text-white">{discounts.length}</p>
@@ -362,7 +362,7 @@ export default function DiscountManagement() {
           <DialogTrigger asChild>
             <Button
               onClick={() => setFormData(emptyForm)}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
+              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               + Create Discount
             </Button>
@@ -402,7 +402,7 @@ export default function DiscountManagement() {
               discounts.map((discount) => (
                 <tr key={discount.id} className="border-t border-slate-700 text-slate-300">
                   <td className="p-3">
-                    <code className="bg-slate-700 px-2 py-0.5 rounded text-blue-300 font-mono text-xs">
+                    <code className="bg-slate-700 px-2 py-0.5 rounded text-brand-300 font-mono text-xs">
                       {discount.code}
                     </code>
                   </td>

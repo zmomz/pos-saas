@@ -205,7 +205,7 @@ const OnboardingTour: React.FC = () => {
             <div
               key={i}
               className={`h-1.5 rounded-full flex-1 transition-colors ${
-                i <= currentStep ? 'bg-blue-500' : 'bg-slate-300 dark:bg-slate-600'
+                i <= currentStep ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-600'
               }`}
             />
           ))}
@@ -230,7 +230,7 @@ const OnboardingTour: React.FC = () => {
           </button>
           <button
             onClick={handleNext}
-            className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {isLastStep ? (t('finish') || 'Finish') : (t('next') || 'Next')}
             {!isLastStep && <ChevronRight className="h-3.5 w-3.5" />}

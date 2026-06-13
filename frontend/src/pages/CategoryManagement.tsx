@@ -205,7 +205,7 @@ export default function CategoryManagement() {
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.name}
-            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -226,7 +226,7 @@ export default function CategoryManagement() {
               <div className="flex items-center justify-between p-3">
                 <div className="flex items-center gap-2">
                   {children.length > 0 ? (
-                    <FolderOpen className="h-4 w-4 text-blue-400" />
+                    <FolderOpen className="h-4 w-4 text-brand-400" />
                   ) : (
                     <Folder className="h-4 w-4 text-slate-400" />
                   )}
@@ -314,7 +314,7 @@ export default function CategoryManagement() {
       <Card className="bg-slate-800 border-slate-700">
         <CardContent className="p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <FolderTree className="h-8 w-8 text-blue-400" />
+            <FolderTree className="h-8 w-8 text-brand-400" />
             <div>
               <h2 className="text-lg font-bold text-white">Categories</h2>
               <p className="text-slate-400 text-sm">
@@ -326,7 +326,7 @@ export default function CategoryManagement() {
             <DialogTrigger asChild>
               <Button
                 onClick={() => setFormData(emptyForm)}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+                className="bg-brand-600 hover:bg-brand-700 text-white"
               >
                 + Add Category
               </Button>

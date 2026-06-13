@@ -124,7 +124,7 @@ export default function Index() {
               <Button
                 type="submit"
                 disabled={submitting}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                className="w-full bg-brand-600 hover:bg-brand-700 text-white"
               >
                 {submitting ? t('loading') : mode === 'login' ? t('login') : 'Create account'}
               </Button>

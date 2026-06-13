@@ -28,13 +28,13 @@ import { UtensilsCrossed, Plus, Users, WifiOff, AlertTriangle, Lock, ShoppingBag
 const STATE_STYLES: Record<string, string> = {
   free: 'border-green-600/40 bg-green-500/10 hover:bg-green-500/20',
   occupied: 'border-amber-600/40 bg-amber-500/10 hover:bg-amber-500/20',
-  bill_printed: 'border-blue-600/40 bg-blue-500/10 hover:bg-blue-500/20',
+  bill_printed: 'border-brand-600/40 bg-brand-500/10 hover:bg-brand-500/20',
 };
 
 const STATE_BADGE: Record<string, string> = {
   free: 'bg-green-500/20 text-green-400',
   occupied: 'bg-amber-500/20 text-amber-400',
-  bill_printed: 'bg-blue-500/20 text-blue-400',
+  bill_printed: 'bg-brand-500/20 text-brand-400',
 };
 
 const ORDER_TYPES = ['dine_in', 'takeaway', 'delivery'];
@@ -233,7 +233,7 @@ export default function FloorMap() {
           <CardContent className="p-8 text-center">
             <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-3" />
             <p className="text-slate-300 mb-4">{t('floor_load_error')}</p>
-            <Button onClick={load} className="bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={load} className="bg-brand-600 hover:bg-brand-700 text-white">
               {t('retry')}
             </Button>
           </CardContent>
@@ -256,7 +256,7 @@ export default function FloorMap() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <UtensilsCrossed className="h-6 w-6 text-blue-400" />
+            <UtensilsCrossed className="h-6 w-6 text-brand-400" />
             {t('floor_map')}
           </h2>
           <p className="text-slate-400 text-sm mt-1">{t('floor_map_desc')}</p>
@@ -291,7 +291,7 @@ export default function FloorMap() {
                 <Button
                   onClick={handleAddZone}
                   disabled={submitting || !zoneForm.name}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  className="w-full bg-brand-600 hover:bg-brand-700 text-white"
                 >
                   {submitting ? t('loading') : t('create_zone')}
                 </Button>
@@ -301,7 +301,7 @@ export default function FloorMap() {
 
           <Dialog open={addTableOpen} onOpenChange={setAddTableOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white">
+              <Button className="bg-brand-600 hover:bg-brand-700 text-white">
                 <Plus className="h-4 w-4 mr-2" /> {t('add_table')}
               </Button>
             </DialogTrigger>
@@ -353,7 +353,7 @@ export default function FloorMap() {
                 <Button
                   onClick={handleAddTable}
                   disabled={submitting || !tableForm.name}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                  className="w-full bg-brand-600 hover:bg-brand-700 text-white"
                 >
                   {submitting ? t('loading') : t('create_table')}
                 </Button>
@@ -368,7 +368,7 @@ export default function FloorMap() {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setActiveZone('all')}
-            className={`px-3 py-1 rounded-md text-sm ${activeZone === 'all' ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+            className={`px-3 py-1 rounded-md text-sm ${activeZone === 'all' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
           >
             {t('all_zones')}
           </button>
@@ -376,7 +376,7 @@ export default function FloorMap() {
             <button
               key={z.id}
               onClick={() => setActiveZone(z.id)}
-              className={`px-3 py-1 rounded-md text-sm ${activeZone === z.id ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+              className={`px-3 py-1 rounded-md text-sm ${activeZone === z.id ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
             >
               {z.name}
             </button>
@@ -470,7 +470,7 @@ export default function FloorMap() {
             <Button
               onClick={handleOpenOrder}
               disabled={submitting}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('open_order')}
             </Button>
@@ -519,7 +519,7 @@ export default function FloorMap() {
             <Button
               onClick={handleNewOrder}
               disabled={submitting}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('start_order')}
             </Button>

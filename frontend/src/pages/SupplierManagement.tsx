@@ -259,8 +259,8 @@ export default function SupplierManagement() {
   function getStatusBadge(status: string) {
     const colors: Record<string, string> = {
       draft: 'bg-gray-500/20 text-gray-400',
-      sent: 'bg-blue-500/20 text-blue-400',
-      ordered: 'bg-blue-500/20 text-blue-400',
+      sent: 'bg-brand-500/20 text-brand-400',
+      ordered: 'bg-brand-500/20 text-brand-400',
       partially_received: 'bg-amber-500/20 text-amber-400',
       received: 'bg-green-500/20 text-green-400',
       cancelled: 'bg-red-500/20 text-red-400',
@@ -297,7 +297,7 @@ export default function SupplierManagement() {
           <label className="text-sm text-slate-400 mb-1 block">Address</label>
           <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder="Full address" className="bg-slate-700 border-slate-600 text-white" />
         </div>
-        <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+        <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
           {submitting ? t('loading') : submitLabel}
         </Button>
       </div>
@@ -318,7 +318,7 @@ export default function SupplierManagement() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
-            <Truck className="h-8 w-8 text-blue-400" />
+            <Truck className="h-8 w-8 text-brand-400" />
             <div>
               <p className="text-slate-400 text-sm">Total Suppliers</p>
               <p className="text-2xl font-bold text-white">{suppliers.length}</p>
@@ -356,10 +356,10 @@ export default function SupplierManagement() {
 
       {/* Tabs */}
       <div className="flex gap-2">
-        <Button variant={activeTab === 'suppliers' ? 'default' : 'outline'} onClick={() => setActiveTab('suppliers')} className={activeTab === 'suppliers' ? 'bg-blue-600 text-white' : 'border-slate-600 text-slate-300'}>
+        <Button variant={activeTab === 'suppliers' ? 'default' : 'outline'} onClick={() => setActiveTab('suppliers')} className={activeTab === 'suppliers' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
           Suppliers
         </Button>
-        <Button variant={activeTab === 'orders' ? 'default' : 'outline'} onClick={() => setActiveTab('orders')} className={activeTab === 'orders' ? 'bg-blue-600 text-white' : 'border-slate-600 text-slate-300'}>
+        <Button variant={activeTab === 'orders' ? 'default' : 'outline'} onClick={() => setActiveTab('orders')} className={activeTab === 'orders' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
           Purchase Orders
         </Button>
       </div>
@@ -374,7 +374,7 @@ export default function SupplierManagement() {
             </div>
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger asChild>
-                <Button onClick={() => setFormData(emptySupplierForm)} className="bg-blue-600 hover:bg-blue-700 text-white">
+                <Button onClick={() => setFormData(emptySupplierForm)} className="bg-brand-600 hover:bg-brand-700 text-white">
                   <Plus className="h-4 w-4 mr-2" /> Add Supplier
                 </Button>
               </DialogTrigger>
@@ -418,7 +418,7 @@ export default function SupplierManagement() {
                       <td className="p-3">
                         <div className="flex gap-2">
                           <Button size="sm" variant="outline" onClick={() => openEdit(supplier)} className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs">Edit</Button>
-                          <Button size="sm" variant="outline" onClick={() => openCreatePO(supplier)} className="border-blue-600/50 text-blue-400 hover:bg-blue-600/20 text-xs">
+                          <Button size="sm" variant="outline" onClick={() => openCreatePO(supplier)} className="border-brand-600/50 text-brand-400 hover:bg-brand-600/20 text-xs">
                             <Package className="h-3 w-3 mr-1" /> PO
                           </Button>
                           <Button size="sm" variant="outline" onClick={() => { setSelectedSupplier(supplier); setDeleteOpen(true); }} className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs">Delete</Button>
@@ -519,7 +519,7 @@ export default function SupplierManagement() {
             <div className="border-t border-slate-700 pt-3">
               <p className="text-slate-400 text-sm">Total: <span className="text-white font-bold">SAR {poForm.items.reduce((s, i) => s + i.quantity * i.unit_price, 0).toFixed(2)}</span></p>
             </div>
-            <Button onClick={handleCreatePO} disabled={submitting || poForm.items.some((i) => !i.product_name)} className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={handleCreatePO} disabled={submitting || poForm.items.some((i) => !i.product_name)} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
               {submitting ? t('loading') : 'Create Purchase Order'}
             </Button>
           </div>

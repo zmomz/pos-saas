@@ -18,6 +18,7 @@ import { config } from '@/lib/config';
 import { toast } from 'sonner';
 
 const fontOptions = [
+  { value: 'Hanken Grotesk', label: 'Hanken Grotesk' },
   { value: 'Inter', label: 'Inter' },
   { value: 'Roboto', label: 'Roboto' },
   { value: 'Poppins', label: 'Poppins' },
@@ -38,9 +39,9 @@ export default function BrandingEditor() {
   const { language, setLanguage, t, isRTL } = useLanguage();
 
   const [logoUrl, setLogoUrl] = useState('');
-  const [primaryColor, setPrimaryColor] = useState('#2563eb');
-  const [secondaryColor, setSecondaryColor] = useState('#1e40af');
-  const [fontFamily, setFontFamily] = useState('Inter');
+  const [primaryColor, setPrimaryColor] = useState('#1488a6');
+  const [secondaryColor, setSecondaryColor] = useState('#0d6079');
+  const [fontFamily, setFontFamily] = useState('Hanken Grotesk');
   const [buttonRadius, setButtonRadius] = useState('8px');
   const [companyName, setCompanyName] = useState('My Company');
   const [defaultLanguage, setDefaultLanguage] = useState('en');
@@ -80,9 +81,9 @@ export default function BrandingEditor() {
       const data = await getAgentBranding();
       if (data) {
         setLogoUrl(data.logo_url || '');
-        setPrimaryColor(data.primary_color || '#2563eb');
-        setSecondaryColor(data.secondary_color || '#1e40af');
-        setFontFamily(data.font_family || 'Inter');
+        setPrimaryColor(data.primary_color || '#1488a6');
+        setSecondaryColor(data.secondary_color || '#0d6079');
+        setFontFamily(data.font_family || 'Hanken Grotesk');
         setButtonRadius(data.button_radius || '8px');
         setCompanyName(data.company_name || 'My Company');
         setDefaultLanguage(data.default_language || 'en');
@@ -193,7 +194,7 @@ export default function BrandingEditor() {
                       onChange={handleLogoUpload}
                       className="hidden"
                     />
-                    <span className="inline-block px-3 py-2 rounded-md bg-blue-600 hover:bg-blue-700 text-white text-sm">
+                    <span className="inline-block px-3 py-2 rounded-md bg-brand-600 hover:bg-brand-700 text-white text-sm">
                       {uploading ? (t('loading') || '...') : (t('upload_logo') || 'Upload logo')}
                     </span>
                   </label>
@@ -341,7 +342,7 @@ export default function BrandingEditor() {
               <Button
                 onClick={handleSave}
                 disabled={saving}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white mt-4"
+                className="w-full bg-brand-600 hover:bg-brand-700 text-white mt-4"
               >
                 {saving ? t('loading') : t('save')}
               </Button>

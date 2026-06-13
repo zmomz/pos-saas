@@ -194,7 +194,7 @@ export default function MenuBuilder() {
           <CardContent className="p-8 text-center">
             <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-3" />
             <p className="text-slate-300 mb-4">{t('menu_load_error')}</p>
-            <Button onClick={load} className="bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={load} className="bg-brand-600 hover:bg-brand-700 text-white">
               {t('retry')}
             </Button>
           </CardContent>
@@ -214,11 +214,11 @@ export default function MenuBuilder() {
 
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <h2 className="text-xl font-bold text-white flex items-center gap-2">
-          <UtensilsCrossed className="h-6 w-6 text-blue-400" />
+          <UtensilsCrossed className="h-6 w-6 text-brand-400" />
           {t('menu_builder')}
         </h2>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => setGroupOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white">
+          <Button onClick={() => setGroupOpen(true)} className="bg-brand-600 hover:bg-brand-700 text-white">
             <Plus className="h-4 w-4 mr-2" /> {t('add_modifier_group')}
           </Button>
           <Button
@@ -408,7 +408,7 @@ export default function MenuBuilder() {
             <Button
               onClick={handleCreateGroup}
               disabled={submitting || !groupForm.name.trim()}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('save')}
             </Button>
@@ -454,7 +454,7 @@ export default function MenuBuilder() {
             <Button
               onClick={handleCreateModifier}
               disabled={submitting || !modForm.name.trim()}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('save')}
             </Button>
@@ -536,7 +536,7 @@ export default function MenuBuilder() {
             <Button
               onClick={handleCreateCombo}
               disabled={submitting || !comboForm.name.trim()}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('save')}
             </Button>

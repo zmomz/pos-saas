@@ -387,7 +387,7 @@ export default function OrderTicket() {
           <CardContent className="p-8 text-center">
             <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-3" />
             <p className="text-slate-300 mb-4">{t('ticket_load_error')}</p>
-            <Button onClick={load} className="bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={load} className="bg-brand-600 hover:bg-brand-700 text-white">
               {t('retry')}
             </Button>
           </CardContent>
@@ -419,7 +419,7 @@ export default function OrderTicket() {
             <ArrowLeft className="h-4 w-4 rtl:rotate-180" /> {t('floor_map')}
           </button>
           <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <ClipboardList className="h-6 w-6 text-blue-400" />
+            <ClipboardList className="h-6 w-6 text-brand-400" />
             {t('order_ticket')} #{ticket.id}
           </h2>
           <p className="text-slate-400 text-sm mt-1">
@@ -427,7 +427,7 @@ export default function OrderTicket() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => setAddOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white">
+          <Button onClick={() => setAddOpen(true)} className="bg-brand-600 hover:bg-brand-700 text-white">
             <Plus className="h-4 w-4 mr-2" /> {t('add_item')}
           </Button>
           <Button
@@ -515,7 +515,7 @@ export default function OrderTicket() {
                               )}
                             </div>
                             {modifierLabel(item.modifiers) && (
-                              <p className="text-xs text-blue-300 mt-0.5">+ {modifierLabel(item.modifiers)}</p>
+                              <p className="text-xs text-brand-300 mt-0.5">+ {modifierLabel(item.modifiers)}</p>
                             )}
                             {item.notes && <p className="text-xs text-slate-400 mt-0.5">{item.notes}</p>}
                           </div>
@@ -809,7 +809,7 @@ export default function OrderTicket() {
             <Button
               onClick={handleAdd}
               disabled={submitting || !canAdd}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('add_item')}
             </Button>
@@ -890,7 +890,7 @@ export default function OrderTicket() {
             <Button
               onClick={handleSetServiceCharge}
               disabled={submitting}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('loading') : t('apply')}
             </Button>

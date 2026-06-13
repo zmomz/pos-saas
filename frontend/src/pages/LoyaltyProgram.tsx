@@ -161,7 +161,7 @@ export default function LoyaltyProgram() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
-            <Users className="h-8 w-8 text-blue-400" />
+            <Users className="h-8 w-8 text-brand-400" />
             <div>
               <p className="text-slate-400 text-sm">Members</p>
               <p className="text-2xl font-bold text-white">{customerBalances.length}</p>
@@ -252,7 +252,7 @@ export default function LoyaltyProgram() {
             </div>
           </div>
           {configEditing && (
-            <Button onClick={handleSaveConfig} disabled={submitting} className="mt-4 bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={handleSaveConfig} disabled={submitting} className="mt-4 bg-brand-600 hover:bg-brand-700 text-white">
               {submitting ? t('loading') : t('save_changes')}
             </Button>
           )}
@@ -261,10 +261,10 @@ export default function LoyaltyProgram() {
 
       {/* Tabs */}
       <div className="flex gap-2">
-        <Button variant={activeTab === 'balances' ? 'default' : 'outline'} onClick={() => setActiveTab('balances')} className={activeTab === 'balances' ? 'bg-blue-600 text-white' : 'border-slate-600 text-slate-300'}>
+        <Button variant={activeTab === 'balances' ? 'default' : 'outline'} onClick={() => setActiveTab('balances')} className={activeTab === 'balances' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
           Customer Balances
         </Button>
-        <Button variant={activeTab === 'history' ? 'default' : 'outline'} onClick={() => setActiveTab('history')} className={activeTab === 'history' ? 'bg-blue-600 text-white' : 'border-slate-600 text-slate-300'}>
+        <Button variant={activeTab === 'history' ? 'default' : 'outline'} onClick={() => setActiveTab('history')} className={activeTab === 'history' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
           Points History
         </Button>
       </div>
@@ -385,7 +385,7 @@ export default function LoyaltyProgram() {
               <label className="text-sm text-slate-400 mb-1 block">Reason</label>
               <Input value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder="Manual adjustment reason" className="bg-slate-700 border-slate-600 text-white" />
             </div>
-            <Button onClick={handleAdjustPoints} disabled={submitting || !adjustPoints} className="w-full bg-blue-600 hover:bg-blue-700 text-white">
+            <Button onClick={handleAdjustPoints} disabled={submitting || !adjustPoints} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
               {submitting ? t('loading') : 'Confirm Adjustment'}
             </Button>
           </div>

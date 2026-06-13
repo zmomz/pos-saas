@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloud POS — Build Your POS Business</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/system.css">
+<link rel="stylesheet" href="assets/marketing.css">
+<style>
+  .hero::before { content: ""; position: absolute; inset: 0; background: radial-gradient(780px 460px at 78% 8%, var(--brand-50), transparent 62%); z-index: 0; }
+  .hero-in { position: relative; z-index: 1; }
+  /* revenue mockup card */
+  .rev-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 22px; box-shadow: var(--sh-lg); }
+  .rev-card .rc-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+  .rev-card .rc-top .k { font-size: 13px; color: var(--muted); font-weight: 500; }
+  .rev-card .rc-top .badge { font-size: 11px; }
+  .rev-card .big { font-size: 34px; font-weight: 800; letter-spacing: -.02em; }
+  .rev-card .big .up { font-size: 14px; color: oklch(0.46 0.12 158); font-weight: 700; margin-inline-start: 8px; }
+  .rev-card .chart { height: 120px; margin: 14px 0 6px; }
+  .rev-card .chart svg { width: 100%; height: 100%; overflow: visible; }
+  .rev-foot { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border-radius: var(--r-md); overflow: hidden; margin-top: 16px; }
+  .rev-foot .rf { background: var(--surface); padding: 13px 15px; }
+  .rev-foot .rf .k { font-size: 11.5px; color: var(--muted); }
+  .rev-foot .rf .v { font-size: 18px; font-weight: 800; margin-top: 3px; }
+  .handshake-chip { position: absolute; inset-inline-end: -14px; bottom: -16px; background: var(--gold); color: oklch(0.30 0.06 70); width: 64px; height: 64px; border-radius: 18px; display: grid; place-items: center; box-shadow: var(--sh-lg); transform: rotate(-6deg); }
+  .handshake-chip svg { width: 32px; height: 32px; }
+  .float-stat { position: absolute; inset-inline-start: -26px; top: 36px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); padding: 12px 16px; box-shadow: var(--sh-md); display: flex; align-items: center; gap: 11px; }
+  .float-stat .fi { width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; }
+  .float-stat b { font-size: 16px; display: block; line-height: 1.1; } .float-stat span { font-size: 11px; color: var(--muted); }
+  [data-var-hero="center"] .float-stat, [data-var-hero="center"] .handshake-chip { display: none; }
+  /* brand mockup for partnership section */
+  .brandmock { border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--line); box-shadow: var(--sh-md); }
+  .brandmock .bm-bar { height: 46px; display: flex; align-items: center; gap: 8px; padding: 0 16px; }
+  .brandmock .bm-bar .d { width: 24px; height: 24px; border-radius: 7px; background: oklch(1 0 0 / .25); }
+  .brandmock .bm-bar b { color: #fff; font-size: 13px; } .brandmock .bm-bar .nl { margin-inline-start: auto; display: flex; gap: 14px; }
+  .brandmock .bm-bar .nl i { width: 34px; height: 7px; border-radius: 4px; background: oklch(1 0 0 / .3); }
+  .brandmock .bm-body { padding: 26px; background: var(--surface); display: flex; flex-direction: column; gap: 12px; }
+  .brandmock .bm-body .h { height: 16px; width: 60%; background: var(--bg-2); border-radius: 6px; }
+  .brandmock .bm-body .h2 { height: 11px; width: 80%; background: var(--bg-2); border-radius: 6px; }
+  .brandmock .bm-body .cta { height: 36px; width: 140px; border-radius: 8px; margin-top: 6px; }
+  .partner-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+  @media (max-width: 940px){ .partner-grid { grid-template-columns: 1fr; } .float-stat { display:none; } }
+</style>
+</head>
+<body class="mkt" data-screen-label="Master Landing">
+
+  <!-- Nav -->
+  <nav class="nav-bar ui">
+    <div class="nav-in">
+      <a class="nav-logo" href="index.html"><span class="l" data-icon="store"></span><b>Cloud POS<small>PARTNER PROGRAM</small></b></a>
+      <div class="nav-links">
+        <a class="l" href="#">Program</a>
+        <a class="l" href="#">Packages</a>
+        <a class="l" href="#">Success stories</a>
+        <a class="l" href="Master Dashboard.html">Login</a>
+        <a class="btn btn-primary btn-sm" href="#">Start Your Business</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="hero-in">
+      <div>
+        <span class="badge gold" style="margin-bottom:22px;"><span class="dot"></span> Saudi Vision 2030 Partner</span>
+        <h1>Start your own<br>software company.</h1>
+        <p class="sub">Launch a white-label POS platform under <b>your</b> brand. We handle the tech, compliance and uptime — you keep 100% of your client relationships and recurring revenue.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary btn-lg" href="#packages">Start Your Business Today <span data-icon="arrowRight"></span></a>
+          <a class="btn btn-outline btn-lg" href="#"><span data-icon="headset"></span> Talk to Sales</a>
+        </div>
+        <div class="trust">
+          <div class="t"><span data-icon="checkCircle"></span> No code required</div>
+          <div class="t"><span data-icon="checkCircle"></span> Recurring revenue</div>
+          <div class="t"><span data-icon="checkCircle"></span> 24/7 partner support</div>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <div class="rev-card">
+          <div class="rc-top"><span class="k">Your monthly recurring revenue</span><span class="badge"><span class="dot" style="color:var(--success)"></span> Live</span></div>
+          <div class="big num">SAR 48,200<span class="up">↑ 38%</span></div>
+          <div class="chart"><svg id="revChart" viewBox="0 0 440 120" preserveAspectRatio="none"></svg></div>
+          <div class="rev-foot">
+            <div class="rf"><div class="k">Active merchants</div><div class="v num">214</div></div>
+            <div class="rf"><div class="k">Net margin</div><div class="v num" style="color:oklch(0.46 0.12 158)">71%</div></div>
+          </div>
+        </div>
+        <div class="float-stat"><div class="fi sw-success" data-icon="users"></div><div><b class="num">+9</b><span>new clients / mo</span></div></div>
+        <div class="handshake-chip" data-icon="handshake"></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Partnership model -->
+  <section class="sec">
+    <div class="partner-grid">
+      <div>
+        <span class="eyebrow">The model</span>
+        <h2 style="font-size:38px; margin:14px 0 18px;">Your brand.<br>Our technology.</h2>
+        <p style="font-size:17px; color:var(--muted); line-height:1.6; margin-bottom:26px;">You get a branded landing page, your own domain and full control of pricing and client relationships. We run the ZATCA-compliant POS engine, payments and infrastructure behind the scenes.</p>
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div class="center gap-12"><div class="swatch sw-brand" data-icon="palette"></div><div><b style="font-weight:600">White-label POS</b><div class="muted" style="font-size:13.5px">Your logo, colors and domain — not ours.</div></div></div>
+          <div class="center gap-12"><div class="swatch sw-success" data-icon="headset"></div><div><b style="font-weight:600">Full technical support</b><div class="muted" style="font-size:13.5px">We handle updates, uptime and compliance.</div></div></div>
+          <div class="center gap-12"><div class="swatch sw-gold" data-icon="users"></div><div><b style="font-weight:600">Keep 100% of client relationships</b><div class="muted" style="font-size:13.5px">You own the merchants and the billing.</div></div></div>
+        </div>
+      </div>
+      <div style="position:relative;">
+        <div class="brandmock">
+          <div class="bm-bar" style="background:linear-gradient(135deg,var(--brand-700),var(--brand));"><span class="d"></span><b>Your Brand POS</b><span class="nl"><i></i><i></i><i></i></span></div>
+          <div class="bm-body"><div class="h"></div><div class="h2"></div><div class="h2" style="width:65%"></div><div class="cta" style="background:var(--brand)"></div></div>
+        </div>
+        <div style="margin-top:18px; margin-inline-start:46px;" class="brandmock">
+          <div class="bm-bar" style="background:linear-gradient(135deg,oklch(0.38 0.095 159),oklch(0.50 0.105 158));"><span class="d"></span><b>Another Agent</b><span class="nl"><i></i><i></i></span></div>
+          <div class="bm-body" style="padding:18px 26px;"><div class="h"></div><div class="cta" style="background:oklch(0.50 0.105 158); width:120px; height:30px;"></div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Why partner -->
+  <section class="alt-bg"><div class="sec">
+    <div class="sec-head"><span class="eyebrow">Why partner with us</span><h2>A business that pays you every month.</h2></div>
+    <div class="cols-4">
+      <div class="fcard"><div class="fi sw-success" data-icon="repeat"></div><h3>Recurring revenue</h3><p>Earn a margin on every merchant subscription, every single month.</p></div>
+      <div class="fcard"><div class="fi sw-brand" data-icon="zap"></div><h3>Zero coding</h3><p>Brand and launch in days. No engineers, no servers, no DevOps.</p></div>
+      <div class="fcard"><div class="fi sw-gold" data-icon="mapPin"></div><h3>Saudi market expertise</h3><p>Built for KSA — ZATCA, Arabic RTL and local payment rails.</p></div>
+      <div class="fcard"><div class="fi sw-violet" data-icon="headset"></div><h3>24/7 partner support</h3><p>A dedicated team behind you, in Arabic and English, around the clock.</p></div>
+    </div>
+  </div></section>
+
+  <!-- How it works -->
+  <section class="sec">
+    <div class="sec-head"><span class="eyebrow">How it works</span><h2>From sign-up to monthly income in four steps.</h2></div>
+    <div class="steps">
+      <div class="step"><div class="circ">1</div><h3>Brand it</h3><p>Add your logo, colors and domain in the branding editor.</p></div>
+      <div class="step"><div class="circ">2</div><h3>Sell it</h3><p>Share your landing page and close shop &amp; restaurant owners.</p></div>
+      <div class="step"><div class="circ">3</div><h3>Onboard merchants</h3><p>Spin up each client in minutes — packages, features, done.</p></div>
+      <div class="step"><div class="circ">4</div><h3>Collect monthly fees</h3><p>We bill, you keep the margin. Watch your MRR compound.</p></div>
+    </div>
+  </section>
+
+  <!-- Packages -->
+  <section class="alt-bg" id="packages"><div class="sec">
+    <div class="sec-head"><span class="eyebrow">Distributor packages</span><h2>Choose your slot capacity.</h2><p>Pick a package by how many merchants you plan to serve. Upgrade anytime.</p></div>
+    <div class="price-grid">
+      <div class="plan">
+        <div class="pn">Starter</div>
+        <div class="pd">For new resellers testing the market.</div>
+        <div class="pp"><span class="cur">SAR</span>1,490<small>/mo</small></div>
+        <ul>
+          <li><span data-icon="check"></span> Up to <b>25 merchant slots</b></li>
+          <li><span data-icon="check"></span> White-label landing page</li>
+          <li><span data-icon="check"></span> Branding editor</li>
+          <li><span data-icon="check"></span> Email support</li>
+          <li class="off"><span data-icon="close"></span> Custom domain</li>
+        </ul>
+        <a class="btn btn-outline btn-block btn-lg" href="#">Choose Starter</a>
+      </div>
+      <div class="plan feat">
+        <div class="pn">Growth</div>
+        <div class="pd">For established agencies scaling up.</div>
+        <div class="pp"><span class="cur">SAR</span>3,900<small>/mo</small></div>
+        <ul>
+          <li><span data-icon="check"></span> Up to <b>100 merchant slots</b></li>
+          <li><span data-icon="check"></span> Custom domain + SSL</li>
+          <li><span data-icon="check"></span> Priority partner support</li>
+          <li><span data-icon="check"></span> Advanced reports</li>
+          <li><span data-icon="check"></span> Feature override controls</li>
+        </ul>
+        <a class="btn btn-primary btn-block btn-lg" href="#">Choose Growth</a>
+      </div>
+      <div class="plan">
+        <div class="pn">Enterprise</div>
+        <div class="pd">For large distributors &amp; chains.</div>
+        <div class="pp"><span class="cur">SAR</span>8,500<small>/mo</small></div>
+        <ul>
+          <li><span data-icon="check"></span> <b>250+ merchant slots</b></li>
+          <li><span data-icon="check"></span> Dedicated account manager</li>
+          <li><span data-icon="check"></span> API &amp; webhooks</li>
+          <li><span data-icon="check"></span> Custom SLA &amp; onboarding</li>
+          <li><span data-icon="check"></span> Co-marketing budget</li>
+        </ul>
+        <a class="btn btn-outline btn-block btn-lg" href="#">Choose Enterprise</a>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- Testimonials -->
+  <section class="sec">
+    <div class="sec-head"><span class="eyebrow">Success stories</span><h2>Partners growing across the Kingdom.</h2></div>
+    <div class="cols-3">
+      <div class="quote-card">
+        <div class="stars"></div>
+        <p class="qt">"We went from zero to 180 merchants in eight months. Cloud POS handles everything technical — we just sell and support."</p>
+        <div class="who"><div class="avatar">TT</div><div><b>Khalid Tamimi</b><span>Tamkeen Tech · Riyadh</span></div><div class="growth"><b>+186</b><span>merchants</span></div></div>
+      </div>
+      <div class="quote-card">
+        <div class="stars"></div>
+        <p class="qt">"The white-label is genuinely ours. Our clients have no idea there's a platform behind it. That's the whole game."</p>
+        <div class="who"><div class="avatar">BS</div><div><b>Nora Al-Bayan</b><span>Bayan Solutions · Jeddah</span></div><div class="growth"><b>SAR 35K</b><span>MRR</span></div></div>
+      </div>
+      <div class="quote-card">
+        <div class="stars"></div>
+        <p class="qt">"Recurring revenue changed our agency. Predictable income every month, and it keeps compounding as we add merchants."</p>
+        <div class="who"><div class="avatar">QD</div><div><b>Yousef Qimam</b><span>Qimam Digital · Dammam</span></div><div class="growth"><b>+132</b><span>merchants</span></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA band -->
+  <section class="dark-bg"><div class="sec" style="text-align:center;">
+    <h2 style="font-size:40px;">Ready to build your POS business?</h2>
+    <p style="font-size:18px; color:oklch(0.88 0.02 222); margin:16px auto 30px; max-width:560px;">Join the partner program and launch your branded platform this week.</p>
+    <div class="center gap-12" style="justify-content:center;">
+      <a class="btn btn-gold btn-lg" href="#">Start Your Business Today</a>
+      <a class="btn btn-lg" style="background:oklch(1 0 0 / .1); color:#fff; border:1px solid oklch(1 0 0 / .2)" href="#">Book a demo</a>
+    </div>
+  </div></section>
+
+  <!-- Footer -->
+  <footer class="foot">
+    <div class="foot-in">
+      <div class="foot-grid">
+        <div class="foot-brand">
+          <div class="center gap-12" style="margin-bottom:4px;"><span class="l" style="width:34px;height:34px;border-radius:8px;background:oklch(1 0 0 / .14);display:grid;place-items:center;color:#fff;" data-icon="store"></span><b>Cloud POS</b></div>
+          <p>The white-label POS platform for the Saudi market. Build your software company on top of ours.</p>
+        </div>
+        <div><h4>Program</h4><a href="#">How it works</a><a href="#">Packages</a><a href="#">Partner login</a></div>
+        <div><h4>Company</h4><a href="#">About</a><a href="#">Success stories</a><a href="#">Contact sales</a></div>
+        <div><h4>Legal</h4><a href="#">Terms</a><a href="#">Privacy</a><a href="#">ZATCA compliance</a></div>
+      </div>
+      <div class="foot-bottom"><span>© 2026 Cloud POS · Riyadh, KSA · CR 1010XXXXXX</span><span class="center gap-16"><a href="#" style="color:inherit">LinkedIn</a><a href="#" style="color:inherit">X</a><a href="#" style="color:inherit">WhatsApp</a></span></div>
+    </div>
+  </footer>
+
+  <script src="assets/icons.js"></script>
+  <script src="assets/proto.js"></script>
+  <script>
+    // star fill
+    document.querySelectorAll('.stars').forEach(s => { s.innerHTML = Array(5).fill(icon('star')).join(''); });
+    // hero revenue chart
+    (function () {
+      const data = [22, 25, 24, 29, 33, 36, 41, 44, 46, 48.2];
+      const w = 440, h = 120, min = 18, max = 52;
+      const x = i => (i / (data.length - 1)) * w;
+      const y = v => h - 6 - ((v - min) / (max - min)) * (h - 18);
+      let line = '', area = `M ${x(0)} ${y(data[0])} `;
+      data.forEach((v, i) => line += (i ? 'L' : 'M') + ` ${x(i).toFixed(1)} ${y(v).toFixed(1)} `);
+      data.forEach((v, i) => { if (i) area += `L ${x(i).toFixed(1)} ${y(v).toFixed(1)} `; });
+      area += `L ${w} ${h} L 0 ${h} Z`;
+      document.getElementById('revChart').innerHTML = `
+        <defs><linearGradient id="rg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--brand)" stop-opacity=".26"/><stop offset="1" stop-color="var(--brand)" stop-opacity="0"/></linearGradient></defs>
+        <path d="${area}" fill="url(#rg)"/><path d="${line}" fill="none" stroke="var(--brand)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${x(data.length-1).toFixed(1)}" cy="${y(data[data.length-1]).toFixed(1)}" r="5" fill="var(--brand)" stroke="#fff" stroke-width="2"/>`;
+    })();
+    protoBar({
+      title: 'Hero layout',
+      variations: [{ key: 'hero', options: [{ val: 'split', label: 'Split', icon: 'grid' }, { val: 'center', label: 'Centered', icon: 'layers' }] }],
+      themes: true, rtl: true,
+    });
+  </script>
+</body>
+</html>
