@@ -172,6 +172,19 @@ async def test_no_agents_entity_crud_route_is_mounted(client):
     assert not offenders, f"orphaned agents CRUD route(s) still mounted: {sorted(offenders)}"
 
 
+async def test_no_permissions_entity_crud_route_is_mounted(client):
+    """H13: the generic /api/v1/entities/permissions CRUD scaffold scoped every
+    op on Permissions.user_id == current_user.id — a self-ownership model where a
+    user could only ever read/edit grants about themselves, with no frontend
+    caller. RBAC is enforced through dependencies/permissions.py; this triad must
+    not be mounted."""
+    from main import app
+
+    mounted = {getattr(r, "path", "") for r in app.routes}
+    offenders = {p for p in mounted if p.startswith("/api/v1/entities/permissions")}
+    assert not offenders, f"orphaned permissions CRUD route(s) still mounted: {sorted(offenders)}"
+
+
 # ---------------------------------------------------------------- C-6
 async def test_transactions_triad_is_read_only(client):
     _user, token, _ = await register_user(client)

@@ -51,7 +51,6 @@ ALLOWLIST = {
     "clients.py": "generic entity triad (provisioned via /api/v1/tenant)",
     "loyalty_points.py": "generic entity triad (loyalty driven by /api/v1/pos)",
     "loyalty_programs.py": "generic entity triad (loyalty config)",
-    "permissions.py": "generic entity triad (RBAC enforced via dependencies)",
     "shifts.py": "generic entity triad (shift ops via /api/v1/production + pos)",
     "transactions.py": "generic entity triad (sales written via /api/v1/pos)",
     # Backend-internal: no frontend caller by design.
@@ -82,6 +81,14 @@ REMOVED_BACKEND = [
     _BACKEND / "services" / "agents.py",
     _ROUTERS_DIR / "agent_features.py",
     _BACKEND / "services" / "agent_features.py",
+    # H13: the generic permissions CRUD scaffold scoped every op on
+    # Permissions.user_id == current_user.id — a contradictory self-ownership
+    # model (a user could only ever see/edit grants about themselves) with no
+    # frontend caller. RBAC is enforced through dependencies/permissions.py; the
+    # Permissions model (models/permissions.py) is kept — only the orphaned
+    # router/service are removed.
+    _ROUTERS_DIR / "permissions.py",
+    _BACKEND / "services" / "permissions.py",
 ]
 REMOVED_FRONTEND = [
     _FRONTEND_SRC / "pages" / "AuthCallback.tsx",
