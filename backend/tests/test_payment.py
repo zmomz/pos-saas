@@ -26,8 +26,11 @@ async def test_orphaned_stripe_checkout_endpoint_is_removed(client):
         },
         headers=auth_headers(token),
     )
-    # The route no longer exists -> 404 (it previously answered 503).
-    assert resp.status_code == 404, resp.text
+    # The route no longer exists. The SPA catch-all (GET /{full_path:path} in
+    # main.py, registered last) occupies every unmatched path, so an unmatched
+    # POST resolves to 405 (method not allowed) rather than 404 — either status
+    # confirms the POST handler is gone (it previously answered 503).
+    assert resp.status_code in (404, 405), resp.text
 
 
 async def test_orphaned_stripe_checkout_status_endpoint_is_removed(client):
