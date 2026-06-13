@@ -1138,7 +1138,7 @@ export default function POSTerminal() {
                           </p>
                         </div>
                         <div className="text-end">
-                          <p className="text-brand-400 font-bold">${txn.total_amount?.toFixed(2)}</p>
+                          <p className="text-brand-400 font-bold">{SAR(txn.total_amount || 0)}</p>
                           <Badge className="bg-muted text-foreground text-xs mt-1">
                             {txn.payment_method}
                           </Badge>
@@ -1184,7 +1184,7 @@ export default function POSTerminal() {
                             <div className="min-w-0 flex-1">
                               <p className="text-foreground text-xs truncate">{item.name}</p>
                               <p className="text-muted-foreground text-[11px]">
-                                ${Math.abs(item.price).toFixed(2)} · {item.quantity} {t('sold')}
+                                {SAR(Math.abs(item.price))} · {item.quantity} {t('sold')}
                               </p>
                             </div>
                             <div className="flex items-center gap-1">
@@ -1236,11 +1236,11 @@ export default function POSTerminal() {
                         )}
                       </span>
                       <span className="text-orange-400">
-                        $
-                        {(refundHasLineItems
-                          ? refundSelectedAmount
-                          : selectedTransaction.total_amount || 0
-                        ).toFixed(2)}
+                        {SAR(
+                          refundHasLineItems
+                            ? refundSelectedAmount
+                            : selectedTransaction.total_amount || 0
+                        )}
                       </span>
                     </div>
                   </div>

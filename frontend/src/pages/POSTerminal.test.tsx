@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
 import { LanguageProvider } from '@/lib/i18n';
@@ -92,5 +92,53 @@ describe('POSTerminal surfaces a products-load error distinct from empty (F-015 
 
     // The in-chrome offline badge announces the loss of connectivity.
     expect(await screen.findByText('Offline')).toBeInTheDocument();
+  });
+});
+
+// ISSUE-102 (U3.4): the refund panel rendered amounts with a `$` (USD) symbol on
+// a SAR-only product. Refund amounts must read in SAR like the rest of the POS.
+describe('POSTerminal refund panel renders amounts in SAR, not USD (ISSUE-102)', () => {
+  function refundHandlers() {
+    return [
+      http.get(PRODUCTS_URL, () => HttpResponse.json([])),
+      // Master grants every permission, including pos.refund.
+      http.get(`${BASE}/auth/me/permissions`, () =>
+        HttpResponse.json({ is_master: true, denied: [], granted: [] })
+      ),
+      http.get(`${BASE}/entities/customers`, () => HttpResponse.json([])),
+      http.get(`${BASE}/entities/branches`, () => HttpResponse.json([])),
+      http.get(`${BASE}/tenant/client/branding`, () =>
+        HttpResponse.json({ company_name: 'Test Shop', primary_color: '#000', secondary_color: '#fff', font_family: 'sans', button_radius: '0.5rem' })
+      ),
+      http.get(`${BASE}/pos/held`, () => HttpResponse.json({ items: [], total: 0 })),
+      http.get(`${BASE}/pos/transactions`, () =>
+        HttpResponse.json([
+          {
+            id: 1,
+            invoice_number: 'INV-001',
+            total_amount: 100,
+            payment_method: 'cash',
+            items: [{ product_id: 1, name: 'Widget', price: 50, quantity: 2 }],
+          },
+        ])
+      ),
+    ];
+  }
+
+  it('shows the refund amount in SAR with no USD symbol once a sale is selected', async () => {
+    server.use(...refundHandlers());
+
+    renderPage();
+
+    // Enter refund mode, then pick the recent sale to open the refund detail panel.
+    fireEvent.click(await screen.findByRole('button', { name: 'Refund' }));
+    fireEvent.click(await screen.findByText('INV-001'));
+
+    // The refund amount (and the line/list amounts) read in SAR…
+    expect(await screen.findByText('Refund Amount')).toBeInTheDocument();
+    expect(screen.getAllByText(/SAR\s*[\d,]/).length).toBeGreaterThan(0);
+
+    // …and the USD symbol is gone from the refund path.
+    expect(screen.queryByText(/\$\s*[\d,]/)).not.toBeInTheDocument();
   });
 });
