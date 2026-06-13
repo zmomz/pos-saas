@@ -113,6 +113,7 @@ app = FastAPI(
 # MAX_BODY_SIZE_MB (default 10MB).
 from middlewares.production import (  # noqa: E402
     ApiUsageMeteringMiddleware,
+    PerformanceMiddleware,
     RateLimitMiddleware,
     RequestValidationMiddleware,
 )
@@ -137,6 +138,12 @@ app.add_middleware(AuditLogMiddleware)
 # CORS policy is environment-aware — see core/cors.py. Set ALLOWED_ORIGINS to lock
 # down to specific origins in production.
 app.add_middleware(CORSMiddleware, **get_cors_config())
+
+# Performance monitoring: stamps a correlation id, records response time per
+# endpoint into the performance_monitor singleton, and logs slow requests.
+# Added last so it is the OUTERMOST layer — it times the full stack (including
+# CORS) and sets request.state.correlation_id before any inner middleware runs.
+app.add_middleware(PerformanceMiddleware)
 # MODULE_MIDDLEWARE_END
 
 
