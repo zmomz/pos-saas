@@ -214,3 +214,82 @@ async def test_master_sees_all_products(client):
     # Master is unrestricted: it sees products it does not own.
     owners = {p["user_id"] for p in resp.json()["items"]}
     assert any(o != master_user["id"] for o in owners)
+
+
+@pytest.mark.asyncio
+async def test_staff_can_use_owners_payment_gateway(client):
+    """A cashier sub-user lists the owner's terminals and charges through the gateway.
+
+    Regression for H17: ``payments_gateway.py`` scoped every op on the *caller's*
+    ``current_user.id`` (``_client_for_user``, register/list/charge), so a cashier —
+    who has no ``Clients`` row of their own — hit 403 on ``/charge`` and saw an empty
+    ``/terminals``. The gateway must resolve the client via ``get_owner_id`` so a
+    sub-user operates against the owning merchant's terminals.
+    """
+    owner, owner_token, _client_id = await make_client_account(client)
+    owner_headers = auth_headers(owner_token)
+
+    # Owner registers an in-store terminal.
+    resp = await client.post(
+        "/api/v1/payments/terminals",
+        json={"provider": "geidea", "label": "Front Till"},
+        headers=owner_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    terminal_id = resp.json()["id"]
+
+    # The cashier (a separate login under the merchant) operates the gateway.
+    _staff, staff_token = await _make_staff_login(client, owner["id"])
+    staff_headers = auth_headers(staff_token)
+
+    # The cashier lists the owner's terminals (not an empty private set).
+    resp = await client.get("/api/v1/payments/terminals", headers=staff_headers)
+    assert resp.status_code == 200, resp.text
+    assert terminal_id in [t["id"] for t in resp.json()]
+
+    # The cashier captures a card tender through the gateway.
+    resp = await client.post(
+        "/api/v1/payments/charge",
+        json={"tender_type": "mada", "amount": 50.0, "simulate": "approve"},
+        headers=staff_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["approved"] is True
+
+    # The cashier pushes a charge to the owner's terminal.
+    resp = await client.post(
+        "/api/v1/payments/terminal/charge",
+        json={"terminal_id": terminal_id, "amount": 25.0, "simulate": "approve"},
+        headers=staff_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["approved"] is True
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_terminal_charge_rejected(client):
+    """A different merchant cannot list or charge another merchant's terminal."""
+    owner, owner_token, _client_id = await make_client_account(client)
+    resp = await client.post(
+        "/api/v1/payments/terminals",
+        json={"provider": "geidea", "label": "Owner Till"},
+        headers=auth_headers(owner_token),
+    )
+    assert resp.status_code == 201, resp.text
+    terminal_id = resp.json()["id"]
+
+    _other, other_token, _other_cid = await make_client_account(client)
+    other_headers = auth_headers(other_token)
+
+    # The other merchant does not see the owner's terminal.
+    resp = await client.get("/api/v1/payments/terminals", headers=other_headers)
+    assert resp.status_code == 200, resp.text
+    assert terminal_id not in [t["id"] for t in resp.json()]
+
+    # And cannot charge against it.
+    resp = await client.post(
+        "/api/v1/payments/terminal/charge",
+        json={"terminal_id": terminal_id, "amount": 10.0, "simulate": "approve"},
+        headers=other_headers,
+    )
+    assert resp.status_code == 404, resp.text

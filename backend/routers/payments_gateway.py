@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
+from dependencies.tenancy import get_owner_id
 from models.clients import Clients
 from models.payment_tenders import PaymentTenders
 from models.terminals import Terminals
@@ -92,7 +93,7 @@ async def list_tender_types(
 @router.post("/charge", response_model=ChargeResponse)
 async def charge_tender(
     data: ChargeRequest,
-    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Capture a single tender via the active gateway (terminal/online pre-auth).
@@ -100,9 +101,10 @@ async def charge_tender(
     A card-like tender obtains a real approval; a decline returns **402** and
     nothing is persisted. An approved capture is recorded as an ``authorized``
     tender (not yet linked to a sale) which the subsequent sale references. Cash
-    and internal tenders are not chargeable here (use the sale path).
+    and internal tenders are not chargeable here (use the sale path). Scoped on
+    the owning merchant so a staff cashier captures against the merchant's client.
     """
-    client = await _client_for_user(db, str(current_user.id))
+    client = await _client_for_user(db, owner_id)
     ttype = normalize_tender_type(data.tender_type)
     amount = round(float(data.amount or 0), 2)
     if amount <= 0:
@@ -129,7 +131,7 @@ async def charge_tender(
         )
 
     tender = PaymentTenders(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         transaction_id=None,
         tender_type=ttype,
@@ -196,15 +198,16 @@ class TerminalChargeRequest(BaseModel):
 @router.post("/terminals", response_model=TerminalResponse, status_code=201)
 async def register_terminal(
     data: TerminalRegisterRequest,
-    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Register an in-store SoftPOS terminal the merchant has paired (HW-03).
 
     The terminal is owner-scoped; a card-like tender can later be pushed to it via
-    ``POST /payments/terminal/charge``. Only wired providers are accepted.
+    ``POST /payments/terminal/charge``. Only wired providers are accepted. A staff
+    cashier registers against the owning merchant, not their own login.
     """
-    client = await _client_for_user(db, str(current_user.id))
+    client = await _client_for_user(db, owner_id)
     provider = (data.provider or "geidea").strip().lower()
     if provider not in TERMINAL_PROVIDERS:
         raise HTTPException(
@@ -212,7 +215,7 @@ async def register_terminal(
             detail=f"Unsupported terminal provider '{provider}'. Allowed: {', '.join(TERMINAL_PROVIDERS)}",
         )
     terminal = Terminals(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         branch_id=data.branch_id,
         provider=provider,
@@ -229,14 +232,17 @@ async def register_terminal(
 
 @router.get("/terminals", response_model=list[TerminalResponse])
 async def list_terminals(
-    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """List the caller's registered terminals (owner-scoped, SEC-02)."""
-    await _client_for_user(db, str(current_user.id))
+    """List the owning merchant's registered terminals (owner-scoped, SEC-02).
+
+    A staff cashier sees the merchant's terminals rather than an empty private set.
+    """
+    await _client_for_user(db, owner_id)
     rows = (
         await db.execute(
-            select(Terminals).where(Terminals.user_id == str(current_user.id))
+            select(Terminals).where(Terminals.user_id == owner_id)
         )
     ).scalars().all()
     return rows
@@ -245,7 +251,7 @@ async def list_terminals(
 @router.post("/terminal/charge", response_model=ChargeResponse)
 async def charge_terminal(
     data: TerminalChargeRequest,
-    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Push an amount to a paired SoftPOS terminal and capture the approval (HW-03).
@@ -258,12 +264,12 @@ async def charge_terminal(
     SoftPOS adapter (live once ``GEIDEA_API_KEY`` + a paired device exist, else the
     hardware-free sandbox). The terminal must belong to the caller (SEC-02).
     """
-    client = await _client_for_user(db, str(current_user.id))
+    client = await _client_for_user(db, owner_id)
     terminal = (
         await db.execute(
             select(Terminals).where(
                 Terminals.id == data.terminal_id,
-                Terminals.user_id == str(current_user.id),
+                Terminals.user_id == owner_id,
             )
         )
     ).scalar_one_or_none()
@@ -302,7 +308,7 @@ async def charge_terminal(
         )
 
     tender = PaymentTenders(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         transaction_id=None,
         tender_type=ttype,
