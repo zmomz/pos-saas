@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { client } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import ErrorState from '@/components/states/ErrorState';
 import { Webhook, Plus, Play, Trash2, Edit, Copy, CheckCircle } from 'lucide-react';
 
 interface WebhookItem {
@@ -75,6 +76,7 @@ function generateSecret(): string {
 export default function WebhookManagement() {
   const [webhooks, setWebhooks] = useState<WebhookItem[]>([]);
   const [deliveryLogs, setDeliveryLogs] = useState<DeliveryLog[]>([]);
+  const [logsError, setLogsError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -101,6 +103,10 @@ export default function WebhookManagement() {
     } catch {
       setWebhooks([]);
     }
+    // ISSUE-020 (H24 / U5.1): the delivery-logs fetch used to swallow its 404 and
+    // fall through to an empty list, so a missing endpoint looked identical to an
+    // empty log. Surface the failure (logsError) so the tab renders a real error.
+    setLogsError(false);
     try {
       const logRes = await client.apiCall.invoke({
         url: '/api/v1/production/webhooks/logs',
@@ -109,8 +115,10 @@ export default function WebhookManagement() {
       });
       const lData = logRes.data;
       setDeliveryLogs(Array.isArray(lData?.items) ? lData.items : Array.isArray(lData) ? lData : []);
-    } catch {
+    } catch (err) {
+      console.error('Failed to load webhook delivery logs:', err);
       setDeliveryLogs([]);
+      setLogsError(true);
     }
     setLoading(false);
   }
@@ -400,7 +408,11 @@ export default function WebhookManagement() {
         </>
       )}
 
-      {activeTab === 'logs' && (
+      {activeTab === 'logs' && logsError && (
+        <ErrorState message={t('webhook_logs_load_error')} onRetry={loadData} />
+      )}
+
+      {activeTab === 'logs' && !logsError && (
         <div className="overflow-x-auto rounded-lg border border-slate-700">
           <table className="w-full text-sm">
             <thead className="bg-slate-800">

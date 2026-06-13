@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { client } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import ErrorState from '@/components/states/ErrorState';
 import { Gift, Star, Users, Settings, Plus, Minus } from 'lucide-react';
 
 interface LoyaltyConfig {
@@ -52,6 +53,7 @@ export default function LoyaltyProgram() {
   const [customerBalances, setCustomerBalances] = useState<CustomerLoyalty[]>([]);
   const [transactions, setTransactions] = useState<PointsTransaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [configEditing, setConfigEditing] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerLoyalty | null>(null);
@@ -69,7 +71,12 @@ export default function LoyaltyProgram() {
 
   async function loadData() {
     setLoading(true);
+    setLoadError(false);
     try {
+      // ISSUE-020 (C4 / U3.8): these endpoints were each wrapped in a swallowing
+      // catch, so a missing/failing one rendered the same empty view as a healthy
+      // empty program. Load them under one try/catch and surface a real error
+      // (ErrorState) on any failure instead of silently faking "no data".
       const configRes = await client.apiCall.invoke({
         url: '/api/v1/production/loyalty/config',
         method: 'GET',
@@ -78,10 +85,6 @@ export default function LoyaltyProgram() {
       if (configRes.data && configRes.data.points_per_sar != null) {
         setConfig(configRes.data);
       }
-    } catch {
-      // Use defaults
-    }
-    try {
       const balancesRes = await client.apiCall.invoke({
         url: '/api/v1/production/loyalty/balances',
         method: 'GET',
@@ -89,10 +92,6 @@ export default function LoyaltyProgram() {
       });
       const bData = balancesRes.data;
       setCustomerBalances(Array.isArray(bData?.items) ? bData.items : Array.isArray(bData) ? bData : []);
-    } catch {
-      setCustomerBalances([]);
-    }
-    try {
       const txRes = await client.apiCall.invoke({
         url: '/api/v1/production/loyalty/transactions',
         method: 'GET',
@@ -100,10 +99,12 @@ export default function LoyaltyProgram() {
       });
       const tData = txRes.data;
       setTransactions(Array.isArray(tData?.items) ? tData.items : Array.isArray(tData) ? tData : []);
-    } catch {
-      setTransactions([]);
+    } catch (err) {
+      console.error('Failed to load loyalty data:', err);
+      setLoadError(true);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   async function handleSaveConfig() {
@@ -153,6 +154,10 @@ export default function LoyaltyProgram() {
         <div className="text-white animate-pulse">{t('loading')}</div>
       </div>
     );
+  }
+
+  if (loadError) {
+    return <ErrorState message={t('loyalty_load_error')} onRetry={loadData} />;
   }
 
   return (
