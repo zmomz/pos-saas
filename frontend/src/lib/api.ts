@@ -300,10 +300,15 @@ export async function issueGiftCard(data: {
   return response.data;
 }
 
-export async function listGiftCards(): Promise<GiftCard[]> {
-  const response = await client.apiCall.invoke<GiftCard[]>({
+// Server-side paginated (OPS-05): `total` is the full count so the caller can page.
+export async function listGiftCards(
+  skip = 0,
+  limit = 50,
+): Promise<{ items: GiftCard[]; total: number }> {
+  const response = await client.apiCall.invoke<{ items: GiftCard[]; total: number }>({
     url: '/api/v1/gift-cards',
     method: 'GET',
+    data: { skip, limit },
   });
   return response.data;
 }
@@ -499,10 +504,14 @@ export async function holdSale(data: {
   return response.data;
 }
 
-export async function getHeldSales(): Promise<{ items: HeldTicket[]; total: number }> {
+export async function getHeldSales(
+  skip = 0,
+  limit = 50,
+): Promise<{ items: HeldTicket[]; total: number }> {
   const response = await client.apiCall.invoke<{ items: HeldTicket[]; total: number }>({
     url: '/api/v1/pos/held',
     method: 'GET',
+    data: { skip, limit },
   });
   return response.data;
 }
@@ -2709,11 +2718,15 @@ export async function getZatcaDocumentSummary(): Promise<ZatcaDocumentSummary> {
   return res.data;
 }
 
-export async function getZatcaDocuments(): Promise<ZatcaDocument[]> {
-  const res = await client.apiCall.invoke<ZatcaDocument[]>({
+// Server-side paginated (OPS-05): the fiscal archive grows one row per invoice.
+export async function getZatcaDocuments(
+  skip = 0,
+  limit = 50,
+): Promise<{ items: ZatcaDocument[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: ZatcaDocument[]; total: number }>({
     url: '/api/v1/zatca/documents',
     method: 'GET',
-    data: {},
+    data: { skip, limit },
   });
   return res.data;
 }

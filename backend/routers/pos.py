@@ -1111,23 +1111,35 @@ async def hold_sale(
 
 @router.get("/held", response_model=HeldListResponse)
 async def list_held_sales(
+    skip: int = Query(0, ge=0, description="Rows to skip (pagination offset)"),
+    limit: int = Query(50, ge=1, le=200, description="Max held tickets to return"),
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """List the current client's parked (held) tickets, newest first (POS-10)."""
+    """List the current client's parked (held) tickets, newest first (POS-10).
+
+    Server-side paginated (OPS-05): ``skip``/``limit`` bound the query and ``total``
+    is the full count so the held drawer never load-everythings.
+    """
     client = await get_client_for_user(db, owner_id)
+    filters = (
+        Transactions.client_id == client.id,
+        Transactions.user_id == owner_id,
+        Transactions.status == "held",
+    )
+    total = (
+        await db.execute(select(func.count(Transactions.id)).where(*filters))
+    ).scalar() or 0
     result = await db.execute(
         select(Transactions)
-        .where(
-            Transactions.client_id == client.id,
-            Transactions.user_id == owner_id,
-            Transactions.status == "held",
-        )
+        .where(*filters)
         .order_by(Transactions.created_at.desc())
+        .offset(skip)
+        .limit(limit)
     )
     held = result.scalars().all()
-    return HeldListResponse(items=[_held_summary(t) for t in held], total=len(held))
+    return HeldListResponse(items=[_held_summary(t) for t in held], total=int(total))
 
 
 @router.post("/recall/{held_id}", response_model=RecallResponse)

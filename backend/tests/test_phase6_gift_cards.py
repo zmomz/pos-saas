@@ -223,7 +223,7 @@ async def test_gift_card_is_owner_scoped(client):
     # B cannot see A's card in their list...
     listed = await client.get("/api/v1/gift-cards", headers=auth_headers(token_b))
     assert listed.status_code == 200, listed.text
-    assert all(c["code"] != card["code"] for c in listed.json())
+    assert all(c["code"] != card["code"] for c in listed.json()["items"])
 
     # ...cannot look up its balance (foreign code → 404)...
     bal = await client.get(

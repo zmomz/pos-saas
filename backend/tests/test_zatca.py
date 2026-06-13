@@ -131,9 +131,9 @@ async def test_sign_invoice_produces_verifiable_stamp_and_retention(client):
     # Status is "signed" then "pending" once background reporting runs and finds
     # no Fatoora gateway configured (fail-closed, sale stays valid).
     docs = (await client.get("/api/v1/zatca/documents", headers=headers)).json()
-    assert len(docs) == 1
-    assert docs[0]["status"] in ("signed", "pending")
-    assert docs[0]["retention_until"] is not None
+    assert docs["total"] == 1
+    assert docs["items"][0]["status"] in ("signed", "pending")
+    assert docs["items"][0]["retention_until"] is not None
 
     # Status now reflects the advanced hash chain (PIH != initial).
     status = (await client.get("/api/v1/zatca/status", headers=headers)).json()
@@ -172,15 +172,15 @@ async def test_sale_autosigns_without_manual_onboarding(client):
     # The sale already produced exactly one signed document for this client
     # ("signed", or "pending" after background reporting finds no gateway).
     docs = (await client.get("/api/v1/zatca/documents", headers=headers)).json()
-    assert len(docs) == 1
-    assert docs[0]["status"] in ("signed", "pending")
+    assert docs["total"] == 1
+    assert docs["items"][0]["status"] in ("signed", "pending")
 
     # Manual sign is idempotent — same document, no duplicate, chain intact.
     resp = await client.post(f"/api/v1/zatca/invoices/{txn_id}/sign", headers=headers)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["document_id"] == docs[0]["id"]
+    assert resp.json()["document_id"] == docs["items"][0]["id"]
     docs_after = (await client.get("/api/v1/zatca/documents", headers=headers)).json()
-    assert len(docs_after) == 1
+    assert docs_after["total"] == 1
 
 
 async def test_report_fails_closed_without_onboarding(client):

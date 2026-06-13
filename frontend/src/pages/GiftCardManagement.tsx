@@ -24,7 +24,10 @@ const STATUS_BADGE: Record<string, string> = {
 export default function GiftCardManagement() {
   const { t } = useLanguage();
 
+  const PAGE_SIZE = 50;
   const [cards, setCards] = useState<GiftCard[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [denied, setDenied] = useState(false);
@@ -39,8 +42,9 @@ export default function GiftCardManagement() {
     setError(false);
     setDenied(false);
     try {
-      const list = await listGiftCards();
-      setCards(Array.isArray(list) ? list : []);
+      const { items, total: count } = await listGiftCards(0, PAGE_SIZE);
+      setCards(items);
+      setTotal(count);
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       // 403 means the account is not a client tenancy (gift cards are client-scoped).
@@ -58,6 +62,20 @@ export default function GiftCardManagement() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // OPS-05: the list is server-side paginated; fetch the next page and append.
+  async function loadMore() {
+    setLoadingMore(true);
+    try {
+      const { items, total: count } = await listGiftCards(cards.length, PAGE_SIZE);
+      setCards((prev) => [...prev, ...items]);
+      setTotal(count);
+    } catch {
+      // Keep the rows already shown; a transient failure must not blank the list.
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   async function handleIssue() {
     const value = Number(amount);
@@ -209,6 +227,17 @@ export default function GiftCardManagement() {
                 ))}
               </tbody>
             </table>
+            {cards.length < total && (
+              <div className="flex justify-center pt-4">
+                <Button
+                  variant="outline"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? t('loading') : `${t('load_more')} (${cards.length}/${total})`}
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

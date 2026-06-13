@@ -90,6 +90,13 @@ class DocumentResponse(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class DocumentListResponse(BaseModel):
+    """A server-side-paginated page of retained documents + full ``total`` (OPS-05)."""
+
+    items: List[DocumentResponse]
+    total: int
+
+
 class ReportResponse(BaseModel):
     document_id: int
     status: str
@@ -521,18 +528,35 @@ async def documents_summary(
 # ---------------------------------------------------------------------------
 # Retained documents
 # ---------------------------------------------------------------------------
-@router.get("/documents", response_model=List[DocumentResponse])
+@router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
+    skip: int = Query(0, ge=0, description="Rows to skip (pagination offset)"),
+    limit: int = Query(50, ge=1, le=200, description="Max documents to return"),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """List the client's retained ZATCA documents, newest first.
+
+    Server-side paginated (OPS-05): the fiscal archive grows one row per invoice
+    with 6-year retention, so ``skip``/``limit`` bound the query and ``total`` is
+    the full count for the UI to page through.
+    """
     client = await _get_client(db, str(current_user.id))
+    total = (
+        await db.execute(
+            select(func.count(ZatcaDocuments.id)).where(
+                ZatcaDocuments.client_id == client.id
+            )
+        )
+    ).scalar() or 0
     result = await db.execute(
         select(ZatcaDocuments)
         .where(ZatcaDocuments.client_id == client.id)
         .order_by(ZatcaDocuments.id.desc())
+        .offset(skip)
+        .limit(limit)
     )
-    return [
+    items = [
         DocumentResponse(
             id=d.id,
             invoice_number=d.invoice_number,
@@ -545,6 +569,7 @@ async def list_documents(
         )
         for d in result.scalars().all()
     ]
+    return DocumentListResponse(items=items, total=int(total))
 
 
 # ---------------------------------------------------------------------------

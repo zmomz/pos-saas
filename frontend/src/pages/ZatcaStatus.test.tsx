@@ -31,7 +31,7 @@ describe('ZatcaStatus (F-019 / ZA-08)', () => {
   it('shows an error state — not the empty state — when the summary fetch 500s', async () => {
     server.use(
       http.get(SUMMARY, () => new HttpResponse(null, { status: 500 })),
-      http.get(DOCS, () => HttpResponse.json([]))
+      http.get(DOCS, () => HttpResponse.json({ items: [], total: 0 }))
     );
 
     renderPage();
@@ -54,7 +54,7 @@ describe('ZatcaStatus (F-019 / ZA-08)', () => {
           gateway_configured: false,
         })
       ),
-      http.get(DOCS, () => HttpResponse.json([]))
+      http.get(DOCS, () => HttpResponse.json({ items: [], total: 0 }))
     );
 
     renderPage();
@@ -78,11 +78,14 @@ describe('ZatcaStatus (F-019 / ZA-08)', () => {
         })
       ),
       http.get(DOCS, () =>
-        HttpResponse.json([
-          { id: 3, invoice_number: 'INV-3', icv: 3, status: 'failed', created_at: '2026-06-03T10:00:00Z' },
-          { id: 2, invoice_number: 'INV-2', icv: 2, status: 'pending', created_at: '2026-06-03T09:00:00Z' },
-          { id: 1, invoice_number: 'INV-1', icv: 1, status: 'signed', created_at: '2026-06-03T08:00:00Z' },
-        ])
+        HttpResponse.json({
+          items: [
+            { id: 3, invoice_number: 'INV-3', icv: 3, status: 'failed', created_at: '2026-06-03T10:00:00Z' },
+            { id: 2, invoice_number: 'INV-2', icv: 2, status: 'pending', created_at: '2026-06-03T09:00:00Z' },
+            { id: 1, invoice_number: 'INV-1', icv: 1, status: 'signed', created_at: '2026-06-03T08:00:00Z' },
+          ],
+          total: 3,
+        })
       )
     );
 

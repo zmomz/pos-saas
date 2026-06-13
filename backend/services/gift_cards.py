@@ -97,14 +97,32 @@ class GiftCardsService:
         )
         return result.scalars().first()
 
-    async def list_for_user(self, user_id: str) -> list[Gift_cards]:
-        """All cards owned by ``user_id``, newest first (owner-scoped, SEC-02)."""
-        result = await self.db.execute(
+    async def list_for_user(
+        self, user_id: str, *, skip: int = 0, limit: Optional[int] = None
+    ) -> list[Gift_cards]:
+        """A page of cards owned by ``user_id``, newest first (owner-scoped, SEC-02).
+
+        Server-side paginated (OPS-05): ``limit`` bounds the rows materialized so a
+        client with thousands of issued cards never load-everythings. ``limit=None``
+        returns the full set (used by internal callers that already constrain scope).
+        """
+        stmt = (
             select(Gift_cards)
             .where(Gift_cards.user_id == str(user_id))
             .order_by(Gift_cards.id.desc())
+            .offset(skip)
         )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def count_for_user(self, user_id: str) -> int:
+        """Total cards owned by ``user_id`` (for the paginated list's ``total``)."""
+        result = await self.db.execute(
+            select(func.count(Gift_cards.id)).where(Gift_cards.user_id == str(user_id))
+        )
+        return int(result.scalar() or 0)
 
     async def validate(
         self, code: str, amount: float, user_id: str, now: Optional[datetime] = None

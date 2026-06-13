@@ -46,8 +46,11 @@ const STATUS_ORDER = ['cleared', 'reported', 'signed', 'pending', 'failed'];
 export default function ZatcaStatus() {
   const { t } = useLanguage();
 
+  const DOCS_PAGE_SIZE = 50;
   const [summary, setSummary] = useState<ZatcaDocumentSummary | null>(null);
   const [documents, setDocuments] = useState<ZatcaDocument[]>([]);
+  const [docsTotal, setDocsTotal] = useState(0);
+  const [loadingMoreDocs, setLoadingMoreDocs] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -62,10 +65,11 @@ export default function ZatcaStatus() {
     try {
       const [sum, docs] = await Promise.all([
         getZatcaDocumentSummary(),
-        getZatcaDocuments(),
+        getZatcaDocuments(0, DOCS_PAGE_SIZE),
       ]);
       setSummary(sum);
-      setDocuments(Array.isArray(docs) ? docs : []);
+      setDocuments(docs.items);
+      setDocsTotal(docs.total);
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       // 403 here means the account isn't a client tenancy (ZATCA is client-scoped).
@@ -83,6 +87,20 @@ export default function ZatcaStatus() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // OPS-05: the document archive is server-side paginated; append the next page.
+  async function loadMoreDocs() {
+    setLoadingMoreDocs(true);
+    try {
+      const docs = await getZatcaDocuments(documents.length, DOCS_PAGE_SIZE);
+      setDocuments((prev) => [...prev, ...docs.items]);
+      setDocsTotal(docs.total);
+    } catch {
+      // Keep the rows already shown on a transient failure.
+    } finally {
+      setLoadingMoreDocs(false);
+    }
+  }
 
   async function handleReconcile() {
     setReconciling(true);
@@ -248,6 +266,19 @@ export default function ZatcaStatus() {
                   ))}
                 </tbody>
               </table>
+              {documents.length < docsTotal && (
+                <div className="flex justify-center p-4">
+                  <Button
+                    variant="outline"
+                    onClick={loadMoreDocs}
+                    disabled={loadingMoreDocs}
+                  >
+                    {loadingMoreDocs
+                      ? t('loading')
+                      : `${t('load_more')} (${documents.length}/${docsTotal})`}
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </>

@@ -13,7 +13,7 @@ import logging
 from datetime import datetime
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,6 +71,13 @@ class GiftCardResponse(BaseModel):
         from_attributes = True
 
 
+class GiftCardListResponse(BaseModel):
+    """A server-side-paginated page of gift cards plus the full ``total`` (OPS-05)."""
+
+    items: List[GiftCardResponse]
+    total: int
+
+
 class GiftCardBalanceResponse(BaseModel):
     code: str
     balance: float
@@ -120,16 +127,24 @@ async def issue_gift_card(
     return _to_response(card)
 
 
-@router.get("", response_model=List[GiftCardResponse])
+@router.get("", response_model=GiftCardListResponse)
 async def list_gift_cards(
+    skip: int = Query(0, ge=0, description="Rows to skip (pagination offset)"),
+    limit: int = Query(50, ge=1, le=200, description="Max cards to return"),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """List the caller's issued gift cards, newest first (owner-scoped, SEC-02)."""
+    """List the caller's issued gift cards, newest first (owner-scoped, SEC-02).
+
+    Server-side paginated (OPS-05): ``skip``/``limit`` bound the query so a client
+    with thousands of cards never load-everythings; ``total`` is the full count so
+    the UI can page.
+    """
     await _client_for_user(db, owner_id)
     service = GiftCardsService(db)
-    cards = await service.list_for_user(owner_id)
-    return [_to_response(c) for c in cards]
+    cards = await service.list_for_user(owner_id, skip=skip, limit=limit)
+    total = await service.count_for_user(owner_id)
+    return GiftCardListResponse(items=[_to_response(c) for c in cards], total=total)
 
 
 @router.get("/{code}/balance", response_model=GiftCardBalanceResponse)
