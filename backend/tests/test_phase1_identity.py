@@ -155,6 +155,23 @@ async def test_no_packages_entity_crud_route_is_mounted(client):
     assert not offenders, f"orphaned packages CRUD route(s) still mounted: {sorted(offenders)}"
 
 
+async def test_no_agents_entity_crud_route_is_mounted(client):
+    """H2: the orphaned /api/v1/entities/agents and /agent_features CRUD
+    scaffolds let any authenticated user create/update/HARD-DELETE branding/
+    feature-flag rows keyed on their own user_id. The real branding/provisioning
+    surface is /api/v1/tenant + features.py; these triads must not be mounted."""
+    from main import app
+
+    mounted = {getattr(r, "path", "") for r in app.routes}
+    offenders = {
+        p
+        for p in mounted
+        if p.startswith("/api/v1/entities/agents")
+        or p.startswith("/api/v1/entities/agent_features")
+    }
+    assert not offenders, f"orphaned agents CRUD route(s) still mounted: {sorted(offenders)}"
+
+
 # ---------------------------------------------------------------- C-6
 async def test_transactions_triad_is_read_only(client):
     _user, token, _ = await register_user(client)

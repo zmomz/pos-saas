@@ -46,8 +46,6 @@ ALLOWLIST = {
     # The live UI reaches these entities through domain routers (tenant/pos/…),
     # so they carry no dedicated literal caller — but they are the convention,
     # not dead code.
-    "agent_features.py": "generic entity triad (white-label feature flags)",
-    "agents.py": "generic entity triad (managed via /api/v1/tenant)",
     "api_usage.py": "generic entity triad (API metering, backend-written)",
     "client_features.py": "generic entity triad (per-client feature flags)",
     "clients.py": "generic entity triad (provisioned via /api/v1/tenant)",
@@ -75,6 +73,15 @@ REMOVED_BACKEND = [
     # + /batch at /api/v1/entities/packages with NO auth on the write verbs. The
     # only package surface is the master-gated soft-delete path in features.py.
     _ROUTERS_DIR / "packages.py",
+    # H2: the agents/agent_features CRUD scaffolds let any authenticated user
+    # create/update/HARD-DELETE branding + feature-flag rows keyed on their own
+    # user_id. The real surface is tenant.py/features.py; the SQLAlchemy models
+    # (models/agents.py, models/agent_features.py) are kept — only the orphaned
+    # routers/services are removed.
+    _ROUTERS_DIR / "agents.py",
+    _BACKEND / "services" / "agents.py",
+    _ROUTERS_DIR / "agent_features.py",
+    _BACKEND / "services" / "agent_features.py",
 ]
 REMOVED_FRONTEND = [
     _FRONTEND_SRC / "pages" / "AuthCallback.tsx",
