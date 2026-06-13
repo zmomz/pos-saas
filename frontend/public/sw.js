@@ -6,7 +6,7 @@
  * network and fail fast so the queue can take over.
  */
 const CACHE = 'pos-shell-v1';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest'];
+const SHELL = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
