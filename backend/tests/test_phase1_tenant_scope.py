@@ -5,11 +5,14 @@ Proves the centralised tenancy boundary:
 * an agent resolves to its agent_id,
 * the platform master is unrestricted (owner_user_id is None),
 * a staff member resolves to the *owning* client's user_id (shared catalog),
-* cross-tenant product reads are blocked while master sees everything.
+* cross-tenant product reads are blocked while master sees everything,
+* a staff sub-user can receive their owner's PO (owner-scoped, not by login id).
 """
+import json
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from core.database import db_manager
 from dependencies.tenancy import resolve_tenant_scope
@@ -28,6 +31,33 @@ from conftest import (
 
 def _as_user(user: dict) -> UserResponse:
     return UserResponse(id=user["id"], email=user.get("email", ""), name="X", role="user")
+
+
+async def _make_staff_login(client, owner_user_id: str, role: str = "cashier"):
+    """Register a separate login and link it as a staff member of ``owner_user_id``.
+
+    Returns (staff_user_dict, token). The staff row is keyed on the cashier's email
+    so :func:`resolve_tenant_scope` maps the cashier back to the owning merchant.
+    """
+    staff_email = unique_email()
+    resp = await client.post(
+        "/api/v1/auth/register",
+        json={"email": staff_email, "password": "Password123", "name": "Cashier"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    async with db_manager.async_session_maker() as db:
+        db.add(
+            Staff_members(
+                user_id=owner_user_id,
+                name="Cashier",
+                email=staff_email,
+                role=role,
+                is_active=True,
+            )
+        )
+        await db.commit()
+    return body["user"], body["token"]
 
 
 @pytest.mark.asyncio
@@ -117,6 +147,58 @@ async def test_cross_tenant_product_read_blocked(client):
     # A can read its own.
     resp = await client.get(f"/api/v1/entities/products/{pid}", headers=auth_headers(token_a))
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_staff_can_receive_owners_purchase_order(client):
+    """A cashier sub-user receives a PO their owner created (no 404), cross-tenant rejected.
+
+    Regression for H18: ``receive_purchase_order`` filtered ``Purchase_orders.user_id``
+    on the *caller's* id, so a staff cashier who can list a merchant's POs got a 404
+    receiving them. The receive path must scope on the owning merchant (``owner_user_id``).
+    """
+    owner, owner_token, client_id = await make_client_account(client)
+    owner_headers = auth_headers(owner_token)
+    pid = await add_product(client_id, owner["id"], quantity=0, price=20.0)
+
+    # Owner creates a PO for one of its own products.
+    resp = await client.post(
+        "/api/v1/entities/purchase_orders",
+        json={
+            "order_number": "PO-STAFF",
+            "status": "ordered",
+            "items_json": json.dumps([{"product_id": pid, "quantity": 4, "cost": 5.0}]),
+        },
+        headers=owner_headers,
+    )
+    assert resp.status_code == 201, resp.text
+    po_id = resp.json()["id"]
+
+    # The cashier (a separate login under the merchant) receives it.
+    _staff, staff_token = await _make_staff_login(client, owner["id"])
+    r = await client.post(
+        f"/api/v1/entities/purchase_orders/{po_id}/receive",
+        json={},
+        headers=auth_headers(staff_token),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "received"
+
+    # Stock landed against the owner's product.
+    async with db_manager.async_session_maker() as db:
+        from models.products import Products
+
+        prod = (await db.execute(select(Products).where(Products.id == pid))).scalar_one()
+        assert prod.quantity == 4
+
+    # A different merchant cannot receive this PO (cross-tenant rejected).
+    _other, other_token, _other_cid = await make_client_account(client)
+    r2 = await client.post(
+        f"/api/v1/entities/purchase_orders/{po_id}/receive",
+        json={},
+        headers=auth_headers(other_token),
+    )
+    assert r2.status_code == 404
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from services.purchase_orders import Purchase_ordersService
 from dependencies.auth import get_admin_user, get_current_user
-from dependencies.tenancy import TenantScope, get_tenant_scope
+from dependencies.tenancy import TenantScope, get_owner_id, get_tenant_scope
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -298,7 +298,7 @@ def _apply_received_to_lines(items: list, to_receive: dict) -> dict:
 async def receive_purchase_order(
     id: int,
     request: Optional[ReceivePurchaseOrderRequest] = Body(None),
-    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Receive a purchase order into stock and advance its status (INV-07/INV-09).
@@ -327,7 +327,7 @@ async def receive_purchase_order(
         await db.execute(
             select(Purchase_orders).where(
                 Purchase_orders.id == id,
-                Purchase_orders.user_id == str(current_user.id),
+                Purchase_orders.user_id == owner_id,
             )
         )
     ).scalar_one_or_none()
@@ -403,7 +403,7 @@ async def receive_purchase_order(
     if branch_id is not None:
         from routers.pos import get_client_for_user
 
-        client = await get_client_for_user(db, str(current_user.id))
+        client = await get_client_for_user(db, owner_id)
 
     received_lines = 0
     for pid, qty in applied.items():
@@ -412,7 +412,7 @@ async def receive_purchase_order(
         product = (
             await db.execute(
                 select(Products).where(
-                    Products.id == pid, Products.user_id == str(current_user.id)
+                    Products.id == pid, Products.user_id == owner_id
                 )
             )
         ).scalar_one_or_none()
@@ -425,7 +425,7 @@ async def receive_purchase_order(
             from services.branch_stock import get_or_init_row
 
             row = await get_or_init_row(
-                db, str(current_user.id), client.id, branch_id, product
+                db, owner_id, client.id, branch_id, product
             )
             prior_qty = row.quantity or 0
             row.quantity = prior_qty + qty
