@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { server, http, HttpResponse } from '../test/msw';
-import { createTransaction, getPackages } from './api';
+import {
+  createTransaction,
+  getPackages,
+  generateDiscountCodes,
+  redeemDiscountCode,
+} from './api';
 
 // T-F: assert the POS checkout payload the app actually sends — the layer where
 // the discount / split-pay / loyalty / branch gaps historically hid.
@@ -67,5 +72,62 @@ describe('getPackages', () => {
 
     expect(hit).toBe(true);
     expect(data.items[0].name).toBe('Starter');
+  });
+});
+
+// ISSUE-059: single-use unique discount codes — the API helpers target the
+// dedicated /discount-codes batch-generate + redeem endpoints (distinct from the
+// reusable /entities/discounts CRUD).
+describe('unique discount codes', () => {
+  it('generates a batch via /discount-codes/generate', async () => {
+    let captured: Record<string, unknown> | null = null;
+    server.use(
+      http.post(
+        'http://127.0.0.1:8000/api/v1/entities/discount-codes/generate',
+        async ({ request }) => {
+          captured = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            batch_id: 'b1',
+            count: 2,
+            codes: [
+              { id: 1, code: 'ABCDE23456', type: 'percentage', value: 10, redeemed: false },
+              { id: 2, code: 'FGHJK78900', type: 'percentage', value: 10, redeemed: false },
+            ],
+          });
+        }
+      )
+    );
+
+    const out = await generateDiscountCodes({ count: 2, type: 'percentage', value: 10 });
+
+    expect(captured).not.toBeNull();
+    expect(captured!.count).toBe(2);
+    expect(out.codes).toHaveLength(2);
+    expect(out.codes[0].code).toBe('ABCDE23456');
+  });
+
+  it('redeems a code via /discount-codes/redeem', async () => {
+    let captured: Record<string, unknown> | null = null;
+    server.use(
+      http.post(
+        'http://127.0.0.1:8000/api/v1/entities/discount-codes/redeem',
+        async ({ request }) => {
+          captured = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({
+            valid: true,
+            code: 'ABCDE23456',
+            type: 'percentage',
+            value: 10,
+            discount_amount: 10,
+          });
+        }
+      )
+    );
+
+    const out = await redeemDiscountCode('ABCDE23456', 100);
+
+    expect(captured).toEqual({ code: 'ABCDE23456', subtotal: 100 });
+    expect(out.valid).toBe(true);
+    expect(out.discount_amount).toBe(10);
   });
 });

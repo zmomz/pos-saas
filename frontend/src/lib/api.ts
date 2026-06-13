@@ -2872,3 +2872,60 @@ export async function connectAggregator(
   });
   return res.data;
 }
+
+// ISSUE-059: single-use / unique discount codes. Distinct from the reusable
+// discount definitions (one shared code with a usage cap) — these are minted in
+// batches, each redeemable exactly once within an optional validity window. The
+// server generates the codes and consumes the one-and-only use atomically.
+export interface UniqueDiscountCode {
+  id: number;
+  user_id: string;
+  batch_id: string;
+  code: string;
+  type: string;
+  value: number;
+  min_purchase?: number | null;
+  redeemed: boolean;
+  redeemed_at?: string | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  created_at?: string | null;
+}
+
+export async function generateDiscountCodes(data: {
+  count: number;
+  type: string;
+  value: number;
+  min_purchase?: number;
+  starts_at?: string;
+  ends_at?: string;
+}): Promise<{ batch_id: string; count: number; codes: UniqueDiscountCode[] }> {
+  const res = await client.apiCall.invoke<{
+    batch_id: string;
+    count: number;
+    codes: UniqueDiscountCode[];
+  }>({
+    url: '/api/v1/entities/discount-codes/generate',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function redeemDiscountCode(
+  code: string,
+  subtotal: number
+): Promise<{ valid: boolean; code: string; type: string; value: number; discount_amount: number }> {
+  const res = await client.apiCall.invoke<{
+    valid: boolean;
+    code: string;
+    type: string;
+    value: number;
+    discount_amount: number;
+  }>({
+    url: '/api/v1/entities/discount-codes/redeem',
+    method: 'POST',
+    data: { code, subtotal },
+  });
+  return res.data;
+}
