@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
+from dependencies.tenancy import get_owner_id
 from dependencies.features import require_feature
 from dependencies.permissions import has_permission, require_permission
 from schemas.auth import UserResponse
@@ -413,6 +414,7 @@ class BarcodeResolution(BaseModel):
 async def resolve_barcode(
     barcode: str = Query(..., description="The scanned barcode/SKU"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Resolve a scanned barcode to one of the caller's variants or products.
@@ -424,13 +426,13 @@ async def resolve_barcode(
     """
     from services.product_variants import resolve_variant_barcode, resolve_product_barcode
 
-    variant = await resolve_variant_barcode(db, str(current_user.id), barcode)
+    variant = await resolve_variant_barcode(db, owner_id, barcode)
     if variant:
         parent = (
             await db.execute(
                 select(Products).where(
                     Products.id == variant.product_id,
-                    Products.user_id == str(current_user.id),
+                    Products.user_id == owner_id,
                 )
             )
         ).scalar_one_or_none()
@@ -446,7 +448,7 @@ async def resolve_barcode(
             sku=variant.sku,
         )
 
-    product = await resolve_product_barcode(db, str(current_user.id), barcode)
+    product = await resolve_product_barcode(db, owner_id, barcode)
     if product:
         return BarcodeResolution(
             kind="product",
@@ -466,10 +468,11 @@ async def create_transaction(
     data: CreateTransactionRequest,
     background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new POS transaction, ECDSA-signed and ZATCA-reported (C-3/C-4)."""
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
 
     # Calculate totals
     subtotal = 0.0
@@ -528,13 +531,13 @@ async def create_transaction(
     if discount_code:
         try:
             discount_rule = await discounts_service.validate(
-                discount_code, subtotal, user_id=str(current_user.id)
+                discount_code, subtotal, user_id=owner_id
             )
         except DiscountValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         discount_amount = compute_discount_amount(discount_rule, subtotal)
         if not await discounts_service.consume(
-            discount_rule.id, user_id=str(current_user.id)
+            discount_rule.id, user_id=owner_id
         ):
             # Lost the cap race between validate and consume — treat as exhausted.
             raise HTTPException(
@@ -554,7 +557,7 @@ async def create_transaction(
     # Redeemed points reduce the order as a discount (before VAT). The point
     # deduction happens in this same session and is committed atomically with
     # the sale below, so a rolled-back sale never spends points.
-    program = await loyalty_service.get_active_program(db, str(current_user.id))
+    program = await loyalty_service.get_active_program(db, owner_id)
     loyalty_points_redeemed = 0
     loyalty_discount = 0.0
     loyalty_balance: Optional[int] = None
@@ -571,7 +574,7 @@ async def create_transaction(
         try:
             redemption = await loyalty_service.redeem_points(
                 db,
-                user_id=str(current_user.id),
+                user_id=owner_id,
                 client_id=client.id,
                 customer_id=data.customer_id,
                 points=int(data.redeem_points),
@@ -642,7 +645,7 @@ async def create_transaction(
             await db.execute(
                 select(Customers).where(
                     Customers.id == data.customer_id,
-                    Customers.user_id == str(current_user.id),
+                    Customers.user_id == owner_id,
                 )
             )
         ).scalar_one_or_none()
@@ -663,7 +666,7 @@ async def create_transaction(
     result = await execute_sale(
         db,
         NormalizedCart(
-            user_id=str(current_user.id),
+            user_id=owner_id,
             client=client,
             lines=data.items,
             subtotal=subtotal,
@@ -706,7 +709,7 @@ async def create_transaction(
     # notified. Best-effort: a failing endpoint never affects the committed sale.
     background_tasks.add_task(
         fire_event_background,
-        str(current_user.id),
+        owner_id,
         "sale.completed",
         {
             "transaction_id": transaction.id,
@@ -921,10 +924,11 @@ async def list_transactions(
     page_size: int = Query(20, ge=1, le=100),
     branch_id: Optional[int] = Query(None, description="Filter to one branch (multi-branch)"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """List transactions for the current client, optionally scoped to a branch."""
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
 
     offset = (page - 1) * page_size
 
@@ -1053,6 +1057,7 @@ def _held_summary(t: Transactions) -> HeldTicketResponse:
 async def hold_sale(
     data: HoldRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Park the current cart as a ``held`` ticket (POS-10).
@@ -1063,7 +1068,7 @@ async def hold_sale(
     ticket is rung up through ``POST /pos/transaction``).
     """
     logger.info("hold_sale: user=%s items=%d", current_user.id, len(data.items))
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
 
     if not data.items:
         raise HTTPException(status_code=400, detail="Cannot hold an empty cart")
@@ -1083,7 +1088,7 @@ async def hold_sale(
     held_number = f"HELD-{client.id:04d}-{uuid.uuid4().hex[:8]}"
 
     held = Transactions(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         invoice_number=held_number,
         subtotal=subtotal,
@@ -1107,15 +1112,16 @@ async def hold_sale(
 @router.get("/held", response_model=HeldListResponse)
 async def list_held_sales(
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """List the current client's parked (held) tickets, newest first (POS-10)."""
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     result = await db.execute(
         select(Transactions)
         .where(
             Transactions.client_id == client.id,
-            Transactions.user_id == str(current_user.id),
+            Transactions.user_id == owner_id,
             Transactions.status == "held",
         )
         .order_by(Transactions.created_at.desc())
@@ -1128,6 +1134,7 @@ async def list_held_sales(
 async def recall_sale(
     held_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Recall a held ticket: return its cart and remove it from the held list.
@@ -1137,12 +1144,12 @@ async def recall_sale(
     via ``POST /pos/transaction`` with all its fiscal side effects. Owner-scoped: a
     client can only recall its own held tickets (SEC-02).
     """
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     result = await db.execute(
         select(Transactions).where(
             Transactions.id == held_id,
             Transactions.client_id == client.id,
-            Transactions.user_id == str(current_user.id),
+            Transactions.user_id == owner_id,
             Transactions.status == "held",
         )
     )
@@ -1305,6 +1312,7 @@ async def refund_transaction(
     background_tasks: BackgroundTasks,
     payload: Optional[RefundRequest] = None,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Refund a sale by issuing a ZATCA **credit note** (POS-07).
@@ -1323,7 +1331,7 @@ async def refund_transaction(
     credit-note amounts. The original lands in ``refunded`` when everything is
     returned, else ``partial_refunded`` while a balance remains.
     """
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     original = await _get_owned_transaction(db, client, txn_id)
 
     if (original.total_amount or 0) < 0 or (original.payment_method or "") == "refund":
@@ -1426,7 +1434,7 @@ async def refund_transaction(
     # from (branch ledger when branch-tagged, variant ledger for variant lines,
     # else client-level).
     await _restore_stock(
-        db, str(current_user.id), client.id, original.branch_id, refund_items
+        db, owner_id, client.id, original.branch_id, refund_items
     )
 
     # Allocate the credit note its own sequential invoice number.
@@ -1437,7 +1445,7 @@ async def refund_transaction(
     credit_number = f"CRN-{client.id:04d}-{current_counter:06d}"
 
     credit = Transactions(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         invoice_number=credit_number,
         subtotal=-refund_subtotal,
@@ -1464,7 +1472,7 @@ async def refund_transaction(
 
     # Net the refund into the open shift (negative amount) so cash reconciles.
     credit.shift_id = await _apply_sale_to_open_shift(
-        db, str(current_user.id), credit.total_amount
+        db, owner_id, credit.total_amount
     )
 
     await db.flush()
@@ -1475,7 +1483,7 @@ async def refund_transaction(
     # is auditable and the drawer reconciliation can tell the cash portion of a
     # refund from the card portion. A gateway failure rolls the credit note back.
     refund_tender_rows = await _refund_tenders(db, original, refund_total)
-    _persist_tenders(db, str(current_user.id), client.id, credit.id, refund_tender_rows)
+    _persist_tenders(db, owner_id, client.id, credit.id, refund_tender_rows)
 
     # ZA-09: a credit note follows the original sale's per-client policy. With
     # ZATCA on it is a real type-381 ECDSA-signed, hash-chained document; with it
@@ -1505,7 +1513,7 @@ async def refund_transaction(
         background_tasks.add_task(zatca_sale.report_document_background, document_id, client.id)
     background_tasks.add_task(
         fire_event_background,
-        str(current_user.id),
+        owner_id,
         "refund.created",
         {
             "credit_note_id": credit.id,
@@ -1562,6 +1570,7 @@ async def void_transaction(
     txn_id: int,
     payload: Optional[VoidRequest] = None,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Void a sale (POS-08) — an **audited** cancellation gated by ``pos.void``.
@@ -1584,7 +1593,7 @@ async def void_transaction(
     client, so one client can never void another client's sale (foreign id →
     404).
     """
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     txn = await _get_owned_transaction(db, client, txn_id)
 
     status_now = txn.status or "completed"
@@ -1627,7 +1636,7 @@ async def void_transaction(
         items = json.loads(txn.items_json) if txn.items_json else []
     except (ValueError, TypeError):
         items = []
-    await _restore_stock(db, str(current_user.id), client.id, txn.branch_id, items)
+    await _restore_stock(db, owner_id, client.id, txn.branch_id, items)
 
     txn.status = "voided"
 
@@ -1672,6 +1681,7 @@ async def _get_owned_transaction(db: AsyncSession, client: Clients, txn_id: int)
 async def get_invoice_document(
     txn_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Render the ZATCA tax invoice as an **always-Arabic** print-ready document.
@@ -1681,7 +1691,7 @@ async def get_invoice_document(
     returned HTML is print-to-PDF ready in any browser; wire a headless renderer
     (e.g. WeasyPrint) in front of this for server-side PDF bytes.
     """
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     txn = await _get_owned_transaction(db, client, txn_id)
 
     try:
@@ -1711,6 +1721,7 @@ async def get_invoice_document(
 async def get_invoice_pdf(
     txn_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Return the tax invoice as real ``application/pdf`` bytes (Phase 6 PDF).
@@ -1722,7 +1733,7 @@ async def get_invoice_pdf(
 
     from services.pdf_render import invoice_pdf_bytes
 
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     txn = await _get_owned_transaction(db, client, txn_id)
 
     try:
@@ -1765,6 +1776,7 @@ async def get_invoice_pdf(
 async def get_escpos_receipt(
     txn_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Return a base64 ESC/POS byte stream for thermal printing (Phase E).
@@ -1773,7 +1785,7 @@ async def get_escpos_receipt(
     printer. The embedded QR is the canonical ZATCA TLV payload, so the printed
     receipt carries the same fiscal QR as the always-Arabic HTML invoice.
     """
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     txn = await _get_owned_transaction(db, client, txn_id)
 
     try:
@@ -1827,6 +1839,7 @@ async def email_invoice_receipt(
     txn_id: int,
     data: EmailReceiptRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Email a receipt for a transaction (POS-04).
@@ -1835,7 +1848,7 @@ async def email_invoice_receipt(
     disable receipt emailing for a specific client. Uses the EmailService
     (stub-logs until SMTP is configured).
     """
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     txn = await _get_owned_transaction(db, client, txn_id)
 
     to_email = (data.to_email or "").strip()
@@ -1857,6 +1870,7 @@ async def sms_invoice_receipt(
     txn_id: int,
     data: SmsReceiptRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Send a transaction receipt by SMS (POS-04).
@@ -1867,7 +1881,7 @@ async def sms_invoice_receipt(
     """
     from core.sms import send_sms
 
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     txn = await _get_owned_transaction(db, client, txn_id)
 
     to_number = (data.to_number or "").strip()
@@ -1894,12 +1908,13 @@ class BranchStockSetRequest(BaseModel):
 async def get_branch_stock(
     branch_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """List the per-branch stock ledger for a branch (branch-scoped stock report)."""
     from services.branch_stock import list_branch_stock
 
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     rows = await list_branch_stock(db, client.id, branch_id)
     return {
         "branch_id": branch_id,
@@ -1915,14 +1930,15 @@ async def set_branch_stock_endpoint(
     branch_id: int,
     data: BranchStockSetRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Allocate/adjust a product's stock for a specific branch."""
     from services.branch_stock import set_branch_stock
 
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     row = await set_branch_stock(
-        db, str(current_user.id), client.id, branch_id, data.product_id, data.quantity
+        db, owner_id, client.id, branch_id, data.product_id, data.quantity
     )
     return {
         "branch_id": branch_id,

@@ -132,3 +132,21 @@ async def get_tenant_scope(
 ) -> TenantScope:
     """FastAPI dependency exposing the caller's :class:`TenantScope`."""
     return await resolve_tenant_scope(db, current_user)
+
+
+async def get_owner_id(scope: TenantScope = Depends(get_tenant_scope)) -> str:
+    """The tenancy-owner user id the caller's data lives under, as a plain string.
+
+    For a client merchant or agent this is their own id; for a **staff member**
+    it is the *owning* merchant's id (so a cashier operates on the merchant's
+    catalog/sales, not an empty private tenant — F-SEC-1). Master has no owner
+    scope, so we fall back to the caller's own id rather than ``None`` — a master
+    hitting an owner-scoped endpoint then acts within its own (empty) scope rather
+    than crashing on a ``None`` filter.
+
+    Used by the deep routers (``pos``/``production``) that resolve a ``Clients``
+    row or filter by ownership and must keep ``current_user.id`` separately for the
+    *actor* identity (audit, cashier-on-shift). The generic CRUD triads use
+    ``scope.owner_user_id`` directly instead.
+    """
+    return scope.owner_user_id or scope.user_id

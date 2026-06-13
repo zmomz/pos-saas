@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from services.loyalty_programs import Loyalty_programsService
 from dependencies.auth import get_admin_user, get_current_user
+from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -95,6 +96,7 @@ async def query_loyalty_programss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Query loyalty_programss with filtering, sorting, and pagination (user can only see their own records)"""
@@ -115,7 +117,7 @@ async def query_loyalty_programss(
             limit=limit,
             query_dict=query_dict,
             sort=sort,
-            user_id=str(current_user.id),
+            user_id=scope.owner_user_id,
         )
         logger.debug(f"Found {result['total']} loyalty_programss")
         return result
@@ -169,6 +171,7 @@ async def get_loyalty_programs(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single loyalty_programs by ID (user can only see their own records)"""
@@ -176,7 +179,7 @@ async def get_loyalty_programs(
     
     service = Loyalty_programsService(db)
     try:
-        result = await service.get_by_id(id, user_id=str(current_user.id))
+        result = await service.get_by_id(id, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Loyalty_programs with id {id} not found")
             raise HTTPException(status_code=404, detail="Loyalty_programs not found")
@@ -193,6 +196,7 @@ async def get_loyalty_programs(
 async def create_loyalty_programs(
     data: Loyalty_programsData,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new loyalty_programs"""
@@ -200,7 +204,7 @@ async def create_loyalty_programs(
     
     service = Loyalty_programsService(db)
     try:
-        result = await service.create(data.model_dump(), user_id=str(current_user.id))
+        result = await service.create(data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create loyalty_programs")
         
@@ -218,6 +222,7 @@ async def create_loyalty_programs(
 async def create_loyalty_programss_batch(
     request: Loyalty_programsBatchCreateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create multiple loyalty_programss in a single request"""
@@ -228,7 +233,7 @@ async def create_loyalty_programss_batch(
     
     try:
         for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=str(current_user.id))
+            result = await service.create(item_data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
             if result:
                 results.append(result)
         
@@ -244,6 +249,7 @@ async def create_loyalty_programss_batch(
 async def update_loyalty_programss_batch(
     request: Loyalty_programsBatchUpdateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Update multiple loyalty_programss in a single request (requires ownership)"""
@@ -256,7 +262,7 @@ async def update_loyalty_programss_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
-            result = await service.update(item.id, update_dict, user_id=str(current_user.id))
+            result = await service.update(item.id, update_dict, user_id=scope.owner_user_id)
             if result:
                 results.append(result)
         
@@ -273,6 +279,7 @@ async def update_loyalty_programs(
     id: int,
     data: Loyalty_programsUpdateData,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing loyalty_programs (requires ownership)"""
@@ -282,7 +289,7 @@ async def update_loyalty_programs(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
+        result = await service.update(id, update_dict, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Loyalty_programs with id {id} not found for update")
             raise HTTPException(status_code=404, detail="Loyalty_programs not found")
@@ -303,6 +310,7 @@ async def update_loyalty_programs(
 async def delete_loyalty_programss_batch(
     request: Loyalty_programsBatchDeleteRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete multiple loyalty_programss by their IDs (requires ownership)"""
@@ -313,7 +321,7 @@ async def delete_loyalty_programss_batch(
     
     try:
         for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
+            success = await service.delete(item_id, user_id=scope.owner_user_id)
             if success:
                 deleted_count += 1
         
@@ -329,6 +337,7 @@ async def delete_loyalty_programss_batch(
 async def delete_loyalty_programs(
     id: int,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a single loyalty_programs by ID (requires ownership)"""
@@ -336,7 +345,7 @@ async def delete_loyalty_programs(
     
     service = Loyalty_programsService(db)
     try:
-        success = await service.delete(id, user_id=str(current_user.id))
+        success = await service.delete(id, user_id=scope.owner_user_id)
         if not success:
             logger.warning(f"Loyalty_programs with id {id} not found for deletion")
             raise HTTPException(status_code=404, detail="Loyalty_programs not found")

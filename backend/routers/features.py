@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db, db_manager
 from dependencies.auth import get_current_user
+from dependencies.tenancy import get_owner_id
 from dependencies.features import require_feature
 from services.packages import normalize_feature_tier, parse_feature_tier
 from schemas.auth import UserResponse
@@ -142,10 +143,11 @@ async def list_products(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """List products for current client with optional filters."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access products")
 
@@ -203,17 +205,18 @@ async def list_products(
 async def create_product(
     data: ProductCreateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new product for the current client."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can create products")
 
     client_id = role_info["entity_id"]
 
     product = Products(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client_id,
         name=data.name,
         name_ar=data.name_ar,
@@ -262,10 +265,11 @@ async def update_product(
     product_id: int,
     data: ProductUpdateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a product (client only)."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can update products")
 
@@ -316,10 +320,11 @@ async def update_product(
 async def delete_product(
     product_id: int,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Deactivate a product (soft delete)."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can delete products")
 
@@ -348,6 +353,7 @@ async def delete_product(
 async def get_low_stock_products(
     threshold: int = Query(10, ge=1),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get low-stock products.
@@ -356,7 +362,7 @@ async def get_low_stock_products(
     ``reorder_point`` (when configured); products without a reorder point fall
     back to the fixed ``threshold`` query param (legacy behaviour).
     """
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access products")
 
@@ -416,6 +422,7 @@ class ReorderSuggestionsResponse(BaseModel):
 @router.get("/api/v1/products/reorder-suggestions", response_model=ReorderSuggestionsResponse)
 async def get_reorder_suggestions(
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """INV-08 (F-035): auto-PO suggestions for products at/below their reorder point.
@@ -425,7 +432,7 @@ async def get_reorder_suggestions(
     product. The suggested order quantity is the product's ``reorder_quantity``
     when set, otherwise enough to bring stock back above the reorder point.
     """
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access products")
 
@@ -502,6 +509,7 @@ class InventoryAlertsResponse(BaseModel):
 async def deduct_inventory(
     data: InventoryDeductRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """DEPRECATED: stock is now deducted atomically inside POST /api/v1/pos/transaction.
@@ -509,7 +517,7 @@ async def deduct_inventory(
     Kept for backward compatibility / manual stock adjustments only. Do not call
     this after creating a transaction or stock will be double-deducted.
     """
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can deduct inventory")
 
@@ -547,10 +555,11 @@ async def deduct_inventory(
 async def get_inventory_alerts(
     threshold: int = Query(10, ge=1),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get low stock alerts (reorder-point aware; falls back to threshold)."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access inventory alerts")
 
@@ -928,10 +937,11 @@ async def get_sales_summary(
     days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get sales summary grouped by period for current client."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access reports")
 
@@ -996,10 +1006,11 @@ async def get_top_products(
     days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get top selling products by quantity sold."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access reports")
 
@@ -1067,10 +1078,11 @@ async def get_top_products(
 async def export_transactions_csv(
     days: int = Query(30, ge=1, le=365),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Export transactions as CSV text."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can export reports")
 
@@ -1150,6 +1162,7 @@ async def get_payment_breakdown(
     days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Payment-method breakdown for the period (RPT-03).
@@ -1159,7 +1172,7 @@ async def get_payment_breakdown(
     so the breakdown is what the merchant truly collected per method — not a sum
     of method labels. ``net = collected - refunds``.
     """
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access reports")
 
@@ -1303,6 +1316,7 @@ async def export_accounting_journal(
     days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Accounting journal / general-ledger export for the period (FIN-02).
@@ -1312,7 +1326,7 @@ async def export_accounting_journal(
     construction; voided and held rows are excluded (neither is realized
     revenue), credit notes net the accounts down via their negative amounts.
     """
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can export the accounting journal")
 
@@ -1543,6 +1557,7 @@ async def report_profit_margin(
     dead_stock_days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Profit / COGS / margin by item and category, plus a dead-stock list (F-068).
@@ -1553,7 +1568,7 @@ async def report_profit_margin(
     ``days``; dead stock is products with on-hand > 0 and no sale in
     ``dead_stock_days``. Aggregated by streaming items_json once (OPS-05).
     """
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can view the profit/margin report")
 
@@ -1823,6 +1838,7 @@ async def report_vat_summary(
     days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Output VAT by rate over a window — the ZATCA VAT-return boxes (F-069).
@@ -1832,7 +1848,7 @@ async def report_vat_summary(
     SUM nets collected − reversed. Owner-scoped to the calling client (SEC-02),
     windowed by ``days``, aggregated in SQL (OPS-05).
     """
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can view the VAT summary report")
 
@@ -1990,6 +2006,7 @@ async def report_inventory(
     days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """On-hand inventory valued at ``cost_price`` + a movement ledger (F-070).
@@ -2006,12 +2023,12 @@ async def report_inventory(
     from models.stock_adjustments import Stock_adjustments
     from models.stock_transfers import Stock_transfers
 
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can view the inventory report")
 
     client_id = role_info["entity_id"]
-    user_id = str(current_user.id)
+    user_id = owner_id
     now = datetime.now(timezone.utc)
     start_date = now - timedelta(days=days)
 
@@ -2305,6 +2322,7 @@ async def report_refunds_voids(
     days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Every refund + void over a window with actor / reason / amount / time (F-071).
@@ -2317,7 +2335,7 @@ async def report_refunds_voids(
     """
     from models.audit_logs import Audit_logs
 
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can view the refunds/voids report")
 
@@ -2506,6 +2524,7 @@ async def report_discounts(
     days: int = Query(30, ge=1, le=365),
     format: str = Query("json", pattern=_FMT_FORMATS),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Every discounted sale over a window with actor / code / amount / time (F-071).
@@ -2515,7 +2534,7 @@ async def report_discounts(
     code (PRC-01; ``is_manual`` for a codeless ``pos.discount`` override), the
     discount amount and who rang it. Owner-scoped (SEC-02), windowed by ``days``.
     """
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can view the discount report")
 
@@ -2841,16 +2860,17 @@ async def _aggregate_zreport(db: AsyncSession, client_id: int, shift) -> dict:
 async def get_zreport(
     shift_id: Optional[int] = Query(None, description="Shift to report on; omit for the current open shift"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Z-report (closed shift) / X-report (open shift): tenders, VAT, discounts,
     voids, refunds and cash variance for a single shift (RPT-06)."""
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access reports")
 
     client_id = role_info["entity_id"]
-    shift = await _resolve_shift(db, str(current_user.id), shift_id)
+    shift = await _resolve_shift(db, owner_id, shift_id)
     if not shift:
         detail = "Shift not found" if shift_id is not None else "No open shift to report on"
         raise HTTPException(status_code=404, detail=detail)
@@ -2863,6 +2883,7 @@ async def get_zreport(
 async def get_zreport_document(
     shift_id: Optional[int] = Query(None, description="Shift to print; omit for the current open shift"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Render the Z/X-report as an **always-Arabic** print-ready document (PRN-05).
@@ -2872,12 +2893,12 @@ async def get_zreport_document(
     ready in any browser (80mm or A4)."""
     from services.production import PDFInvoiceService
 
-    role_info = await get_user_role(db, str(current_user.id))
+    role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access reports")
 
     client_id = role_info["entity_id"]
-    shift = await _resolve_shift(db, str(current_user.id), shift_id)
+    shift = await _resolve_shift(db, owner_id, shift_id)
     if not shift:
         detail = "Shift not found" if shift_id is not None else "No open shift to report on"
         raise HTTPException(status_code=404, detail=detail)
@@ -3055,6 +3076,7 @@ async def _materialize_notifications(db: AsyncSession, user_id: str, client_id: 
 @router.get("/api/v1/notifications/list", response_model=NotificationsResponse)
 async def get_notifications(
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get the persisted notification feed for the current user (UX-08).
@@ -3063,7 +3085,7 @@ async def get_notifications(
     ``dedupe_key`` — preserves read state), then return every persisted row owned
     by this user, newest first.
     """
-    user_id = str(current_user.id)
+    user_id = owner_id
     role_info = await get_user_role(db, user_id)
 
     if role_info["role"] == "client":
@@ -3098,6 +3120,7 @@ async def get_notifications(
 async def mark_notifications_read(
     payload: MarkReadRequest = MarkReadRequest(),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Persist a read acknowledgment (UX-08).
@@ -3107,7 +3130,7 @@ async def mark_notifications_read(
     acknowledge their own notifications — acknowledging a row that isn't theirs (or
     doesn't exist) is a 404 (SEC-02).
     """
-    user_id = str(current_user.id)
+    user_id = owner_id
 
     if payload.notification_id is not None:
         try:

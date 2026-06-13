@@ -19,10 +19,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
-from dependencies.auth import get_current_user
+from dependencies.tenancy import get_owner_id
 from models.clients import Clients
 from models.gift_cards import Gift_cards
-from schemas.auth import UserResponse
 from services.gift_cards import (
     ACTIVE,
     GiftCardError,
@@ -97,7 +96,7 @@ def _to_response(card: Gift_cards) -> GiftCardResponse:
 @router.post("", response_model=GiftCardResponse, status_code=201)
 async def issue_gift_card(
     data: IssueGiftCardRequest,
-    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Issue a new active gift card (prepaid store credit) with a CSPRNG code.
@@ -105,13 +104,13 @@ async def issue_gift_card(
     The amount is the card's face value; the server generates the bearer code (never
     trusted from the client). Owner-scoped to the caller's client.
     """
-    client = await _client_for_user(db, str(current_user.id))
+    client = await _client_for_user(db, owner_id)
     amount = round(float(data.amount or 0), 2)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="amount must be greater than 0")
     service = GiftCardsService(db)
     card = await service.issue(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         amount=amount,
         currency=data.currency or "SAR",
@@ -123,29 +122,29 @@ async def issue_gift_card(
 
 @router.get("", response_model=List[GiftCardResponse])
 async def list_gift_cards(
-    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """List the caller's issued gift cards, newest first (owner-scoped, SEC-02)."""
-    await _client_for_user(db, str(current_user.id))
+    await _client_for_user(db, owner_id)
     service = GiftCardsService(db)
-    cards = await service.list_for_user(str(current_user.id))
+    cards = await service.list_for_user(owner_id)
     return [_to_response(c) for c in cards]
 
 
 @router.get("/{code}/balance", response_model=GiftCardBalanceResponse)
 async def gift_card_balance(
     code: str,
-    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Look up a card's balance + redeemability within the owner's scope (SEC-02).
 
     A foreign/unknown code is a 404 so one client cannot probe another's cards.
     """
-    await _client_for_user(db, str(current_user.id))
+    await _client_for_user(db, owner_id)
     service = GiftCardsService(db)
-    card = await service.get_by_code(code, str(current_user.id))
+    card = await service.get_by_code(code, owner_id)
     if not card:
         raise HTTPException(status_code=404, detail="Gift card not found")
     redeemable = (

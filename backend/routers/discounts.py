@@ -15,6 +15,7 @@ from services.discounts import (
     compute_discount_amount,
 )
 from dependencies.auth import get_admin_user, get_current_user
+from dependencies.tenancy import TenantScope, get_tenant_scope
 from dependencies.features import require_feature
 from schemas.auth import UserResponse
 
@@ -125,6 +126,7 @@ async def query_discountss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Query discountss with filtering, sorting, and pagination (user can only see their own records)"""
@@ -145,7 +147,7 @@ async def query_discountss(
             limit=limit,
             query_dict=query_dict,
             sort=sort,
-            user_id=str(current_user.id),
+            user_id=scope.owner_user_id,
         )
         logger.debug(f"Found {result['total']} discountss")
         return result
@@ -199,6 +201,7 @@ async def get_discounts(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single discounts by ID (user can only see their own records)"""
@@ -206,7 +209,7 @@ async def get_discounts(
     
     service = DiscountsService(db)
     try:
-        result = await service.get_by_id(id, user_id=str(current_user.id))
+        result = await service.get_by_id(id, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Discounts with id {id} not found")
             raise HTTPException(status_code=404, detail="Discounts not found")
@@ -223,6 +226,7 @@ async def get_discounts(
 async def create_discounts(
     data: DiscountsData,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new discounts"""
@@ -230,7 +234,7 @@ async def create_discounts(
     
     service = DiscountsService(db)
     try:
-        result = await service.create(data.model_dump(), user_id=str(current_user.id))
+        result = await service.create(data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create discounts")
         
@@ -252,6 +256,7 @@ async def create_discounts(
 async def validate_discount(
     data: DiscountValidateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Validate a discount code server-side and return the authoritative amount (PRC-01).
@@ -267,7 +272,7 @@ async def validate_discount(
     service = DiscountsService(db)
     try:
         discount = await service.validate(
-            data.code, data.subtotal, user_id=str(current_user.id)
+            data.code, data.subtotal, user_id=scope.owner_user_id
         )
     except DiscountValidationError as e:
         logger.info(f"Discount validation rejected: {str(e)}")
@@ -290,6 +295,7 @@ async def validate_discount(
 async def create_discountss_batch(
     request: DiscountsBatchCreateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create multiple discountss in a single request"""
@@ -300,7 +306,7 @@ async def create_discountss_batch(
     
     try:
         for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=str(current_user.id))
+            result = await service.create(item_data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
             if result:
                 results.append(result)
         
@@ -316,6 +322,7 @@ async def create_discountss_batch(
 async def update_discountss_batch(
     request: DiscountsBatchUpdateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Update multiple discountss in a single request (requires ownership)"""
@@ -328,7 +335,7 @@ async def update_discountss_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
-            result = await service.update(item.id, update_dict, user_id=str(current_user.id))
+            result = await service.update(item.id, update_dict, user_id=scope.owner_user_id)
             if result:
                 results.append(result)
         
@@ -345,6 +352,7 @@ async def update_discounts(
     id: int,
     data: DiscountsUpdateData,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing discounts (requires ownership)"""
@@ -354,7 +362,7 @@ async def update_discounts(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
+        result = await service.update(id, update_dict, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Discounts with id {id} not found for update")
             raise HTTPException(status_code=404, detail="Discounts not found")
@@ -375,6 +383,7 @@ async def update_discounts(
 async def delete_discountss_batch(
     request: DiscountsBatchDeleteRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete multiple discountss by their IDs (requires ownership)"""
@@ -385,7 +394,7 @@ async def delete_discountss_batch(
     
     try:
         for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
+            success = await service.delete(item_id, user_id=scope.owner_user_id)
             if success:
                 deleted_count += 1
         
@@ -401,6 +410,7 @@ async def delete_discountss_batch(
 async def delete_discounts(
     id: int,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a single discounts by ID (requires ownership)"""
@@ -408,7 +418,7 @@ async def delete_discounts(
     
     service = DiscountsService(db)
     try:
-        success = await service.delete(id, user_id=str(current_user.id))
+        success = await service.delete(id, user_id=scope.owner_user_id)
         if not success:
             logger.warning(f"Discounts with id {id} not found for deletion")
             raise HTTPException(status_code=404, detail="Discounts not found")

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
+from dependencies.tenancy import get_owner_id
 from dependencies.features import require_feature
 from schemas.auth import UserResponse
 
@@ -341,6 +342,7 @@ async def get_metrics(
 async def generate_pdf_invoice(
     data: InvoicePDFRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate Arabic-only PDF invoice HTML from a transaction ID."""
@@ -351,7 +353,7 @@ async def generate_pdf_invoice(
     result = await db.execute(
         select(Transactions).where(
             Transactions.id == data.transaction_id,
-            Transactions.user_id == str(current_user.id),
+            Transactions.user_id == owner_id,
         )
     )
     txn = result.scalar_one_or_none()
@@ -402,6 +404,7 @@ async def generate_pdf_invoice(
 async def generate_zatca_xml(
     data: ZATCAXMLRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Generate ZATCA Phase 2 compliant XML invoice."""
@@ -411,7 +414,7 @@ async def generate_zatca_xml(
     result = await db.execute(
         select(Transactions).where(
             Transactions.id == data.transaction_id,
-            Transactions.user_id == str(current_user.id),
+            Transactions.user_id == owner_id,
         )
     )
     txn = result.scalar_one_or_none()
@@ -486,11 +489,12 @@ async def send_notification(
 async def get_stock_alerts(
     threshold: int = Query(default=10, ge=0, description="Stock threshold"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get low stock alerts for current user's products."""
     alerts = await LowStockChecker.check_low_stock(
-        db=db, user_id=str(current_user.id), threshold=threshold
+        db=db, user_id=owner_id, threshold=threshold
     )
     return {
         "alerts": alerts,
@@ -507,6 +511,7 @@ async def get_stock_alerts(
 async def test_webhook(
     data: WebhookTestRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Test a webhook by sending a test event."""
@@ -515,7 +520,7 @@ async def test_webhook(
     result = await db.execute(
         select(Webhooks).where(
             Webhooks.id == data.webhook_id,
-            Webhooks.user_id == str(current_user.id),
+            Webhooks.user_id == owner_id,
         )
     )
     webhook = result.scalar_one_or_none()
@@ -545,6 +550,7 @@ async def test_webhook(
 async def open_shift(
     data: ShiftOpenRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Open a new shift."""
@@ -553,7 +559,7 @@ async def open_shift(
     # Check for existing open shift
     existing = await db.execute(
         select(Shifts).where(
-            Shifts.user_id == str(current_user.id),
+            Shifts.user_id == owner_id,
             Shifts.status == "open",
         )
     )
@@ -562,7 +568,7 @@ async def open_shift(
 
     now = datetime.now(timezone.utc)
     shift = Shifts(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         branch_id=data.branch_id,
         staff_name=data.staff_name or current_user.name or current_user.email,
         start_time=now.isoformat(),
@@ -589,6 +595,7 @@ async def open_shift(
 async def close_shift(
     data: ShiftCloseRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Close the current open shift with cash reconciliation."""
@@ -596,7 +603,7 @@ async def close_shift(
 
     result = await db.execute(
         select(Shifts).where(
-            Shifts.user_id == str(current_user.id),
+            Shifts.user_id == owner_id,
             Shifts.status == "open",
         )
     )
@@ -649,6 +656,7 @@ async def close_shift(
 @router.get("/shifts/current")
 async def get_current_shift(
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get the current open shift."""
@@ -656,7 +664,7 @@ async def get_current_shift(
 
     result = await db.execute(
         select(Shifts).where(
-            Shifts.user_id == str(current_user.id),
+            Shifts.user_id == owner_id,
             Shifts.status == "open",
         )
     )
@@ -684,6 +692,7 @@ async def get_current_shift(
 async def get_shift_history(
     limit: int = Query(default=50, ge=1, le=200),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """List the caller's closed shifts (most recent first) for reconciliation."""
@@ -691,7 +700,7 @@ async def get_shift_history(
 
     result = await db.execute(
         select(Shifts)
-        .where(Shifts.user_id == str(current_user.id), Shifts.status == "closed")
+        .where(Shifts.user_id == owner_id, Shifts.status == "closed")
         .order_by(Shifts.id.desc())
         .limit(limit)
     )
@@ -729,6 +738,7 @@ _MOVEMENT_TYPES = {"pay_in", "pay_out", "cash_drop"}
 async def record_cash_movement(
     data: CashMovementRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Record a pay-in / pay-out / cash-drop against the caller's open shift.
@@ -751,7 +761,7 @@ async def record_cash_movement(
 
     result = await db.execute(
         select(Shifts).where(
-            Shifts.user_id == str(current_user.id),
+            Shifts.user_id == owner_id,
             Shifts.status == "open",
         )
     )
@@ -760,7 +770,7 @@ async def record_cash_movement(
         raise HTTPException(status_code=404, detail="No open shift to record a cash movement against")
 
     movement = Cash_movements(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=shift.client_id,
         shift_id=shift.id,
         movement_type=movement_type,
@@ -789,6 +799,7 @@ async def record_cash_movement(
 async def list_cash_movements(
     shift_id: Optional[int] = Query(None, description="Shift to list movements for; omit for the current open shift"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """List the caller's drawer movements for a shift (owner-scoped, SEC-02).
@@ -801,7 +812,7 @@ async def list_cash_movements(
     if shift_id is None:
         result = await db.execute(
             select(Shifts).where(
-                Shifts.user_id == str(current_user.id),
+                Shifts.user_id == owner_id,
                 Shifts.status == "open",
             )
         )
@@ -813,7 +824,7 @@ async def list_cash_movements(
     result = await db.execute(
         select(Cash_movements)
         .where(
-            Cash_movements.user_id == str(current_user.id),
+            Cash_movements.user_id == owner_id,
             Cash_movements.shift_id == shift_id,
         )
         .order_by(Cash_movements.id.desc())
@@ -848,6 +859,7 @@ async def list_cash_movements(
 async def earn_loyalty_points(
     data: LoyaltyEarnRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Earn loyalty points from a transaction."""
@@ -858,7 +870,7 @@ async def earn_loyalty_points(
     # Find or create loyalty record
     result = await db.execute(
         select(Loyalty_points).where(
-            Loyalty_points.user_id == str(current_user.id),
+            Loyalty_points.user_id == owner_id,
             Loyalty_points.customer_id == data.customer_id,
         )
     )
@@ -874,7 +886,7 @@ async def earn_loyalty_points(
         )
     else:
         new_loyalty = Loyalty_points(
-            user_id=str(current_user.id),
+            user_id=owner_id,
             customer_id=data.customer_id,
             points_balance=points_earned,
             total_earned=points_earned,
@@ -896,6 +908,7 @@ async def earn_loyalty_points(
 async def redeem_loyalty_points(
     data: LoyaltyRedeemRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Redeem loyalty points for a customer."""
@@ -903,7 +916,7 @@ async def redeem_loyalty_points(
 
     result = await db.execute(
         select(Loyalty_points).where(
-            Loyalty_points.user_id == str(current_user.id),
+            Loyalty_points.user_id == owner_id,
             Loyalty_points.customer_id == data.customer_id,
         )
     )
@@ -941,6 +954,7 @@ async def redeem_loyalty_points(
 async def get_loyalty_balance(
     customer_id: int = Query(..., description="Customer ID"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get customer loyalty points balance."""
@@ -948,7 +962,7 @@ async def get_loyalty_balance(
 
     result = await db.execute(
         select(Loyalty_points).where(
-            Loyalty_points.user_id == str(current_user.id),
+            Loyalty_points.user_id == owner_id,
             Loyalty_points.customer_id == customer_id,
         )
     )
@@ -977,6 +991,7 @@ async def get_loyalty_balance(
 async def bulk_import(
     data: BulkImportRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Import CSV data for products or customers."""
@@ -993,7 +1008,7 @@ async def bulk_import(
             imported = 0
             for row in validation["valid_rows"]:
                 product = Products(
-                    user_id=str(current_user.id),
+                    user_id=owner_id,
                     name=row.get("name", ""),
                     name_ar=row.get("name_ar", ""),
                     barcode=row.get("barcode", ""),
@@ -1017,7 +1032,7 @@ async def bulk_import(
             imported = 0
             for row in validation["valid_rows"]:
                 customer = Customers(
-                    user_id=str(current_user.id),
+                    user_id=owner_id,
                     name=row.get("name", ""),
                     phone=row.get("phone", ""),
                     email=row.get("email", ""),
@@ -1039,10 +1054,11 @@ async def bulk_import(
 async def bulk_export(
     data: BulkExportRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Export data as CSV."""
-    user_id = str(current_user.id)
+    user_id = owner_id
 
     if data.entity_type == "products":
         from models.products import Products
@@ -1130,11 +1146,12 @@ async def global_search(
     q: str = Query(..., min_length=1, description="Search query"),
     limit: int = Query(default=20, ge=1, le=100),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Global search across products, customers, and transactions."""
     results = await SearchService.global_search(
-        db=db, user_id=str(current_user.id), query=q, limit=limit
+        db=db, user_id=owner_id, query=q, limit=limit
     )
 
     total_results = sum(len(v) for v in results.values())
@@ -1152,6 +1169,7 @@ async def global_search(
 async def sync_offline_transactions(
     data: OfflineSyncRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Sync offline-queued transactions through the full atomic sale path (POS-05)."""
@@ -1168,10 +1186,10 @@ async def sync_offline_transactions(
 
     from routers.pos import get_client_for_user
 
-    client = await get_client_for_user(db, str(current_user.id))
+    client = await get_client_for_user(db, owner_id)
     result = await OfflineSyncService.process_offline_queue(
         db=db,
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         queued_transactions=data.transactions,
     )
@@ -1185,11 +1203,12 @@ async def sync_offline_transactions(
 async def get_sales_forecast(
     days: int = Query(default=30, ge=1, le=90, description="Days to forecast"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """AI-powered sales forecast."""
     forecast = await AnalyticsService.get_sales_forecast(
-        db=db, user_id=str(current_user.id), days_ahead=days
+        db=db, user_id=owner_id, days_ahead=days
     )
     return forecast
 
@@ -1201,6 +1220,7 @@ async def get_sales_forecast(
 async def get_branch_inventory(
     branch_id: Optional[int] = Query(default=None, description="Filter by branch ID"),
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Get multi-branch inventory view backed by the per-branch stock ledger.
@@ -1215,7 +1235,7 @@ async def get_branch_inventory(
     from models.products import Products
 
     # Get branches for user
-    branch_query = select(Branches).where(Branches.user_id == str(current_user.id))
+    branch_query = select(Branches).where(Branches.user_id == owner_id)
     if branch_id:
         branch_query = branch_query.where(Branches.id == branch_id)
 
@@ -1225,7 +1245,7 @@ async def get_branch_inventory(
     # Get all products for user
     prod_result = await db.execute(
         select(Products).where(
-            Products.user_id == str(current_user.id),
+            Products.user_id == owner_id,
             Products.is_active == True,  # noqa: E712
         )
     )
@@ -1234,7 +1254,7 @@ async def get_branch_inventory(
     # Per-branch ledger overrides, keyed by (branch_id, product_id).
     ledger_result = await db.execute(
         select(Product_branch_stock).where(
-            Product_branch_stock.user_id == str(current_user.id)
+            Product_branch_stock.user_id == owner_id
         )
     )
     ledger = {(r.branch_id, r.product_id): r.quantity for r in ledger_result.scalars().all()}
@@ -1300,6 +1320,7 @@ class StockAdjustmentRequest(BaseModel):
 async def transfer_branch_stock(
     data: StockTransferRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Move stock between two branches on the per-branch ledger (INV-05, F-032).
@@ -1321,7 +1342,7 @@ async def transfer_branch_stock(
 
     # POS features are client-scoped — resolve the caller's client row.
     client = (
-        await db.execute(select(Clients).where(Clients.user_id == str(current_user.id)))
+        await db.execute(select(Clients).where(Clients.user_id == owner_id))
     ).scalar_one_or_none()
     if not client:
         raise HTTPException(status_code=403, detail="Only clients can transfer stock")
@@ -1336,7 +1357,7 @@ async def transfer_branch_stock(
     branch_rows = (
         await db.execute(
             select(Branches).where(
-                Branches.user_id == str(current_user.id),
+                Branches.user_id == owner_id,
                 Branches.id.in_([int(data.from_branch_id), int(data.to_branch_id)]),
             )
         )
@@ -1361,7 +1382,7 @@ async def transfer_branch_stock(
     # same way the sale path does. The helpers do not commit — we commit once below
     # so the two legs + the audit row land atomically (roll back wholly on any raise).
     src = await get_or_init_row(
-        db, str(current_user.id), client.id, int(data.from_branch_id), product
+        db, owner_id, client.id, int(data.from_branch_id), product
     )
     if (src.quantity or 0) < qty:
         raise HTTPException(
@@ -1372,13 +1393,13 @@ async def transfer_branch_stock(
             ),
         )
     dst = await get_or_init_row(
-        db, str(current_user.id), client.id, int(data.to_branch_id), product
+        db, owner_id, client.id, int(data.to_branch_id), product
     )
     src.quantity = (src.quantity or 0) - qty
     dst.quantity = (dst.quantity or 0) + qty
 
     record = StockTransfers(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         from_branch_id=int(data.from_branch_id),
         to_branch_id=int(data.to_branch_id),
@@ -1408,6 +1429,7 @@ async def transfer_branch_stock(
 async def create_stock_adjustment(
     data: StockAdjustmentRequest,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Record a stock count / adjustment with a reason → variance (INV-06, F-036).
@@ -1434,7 +1456,7 @@ async def create_stock_adjustment(
 
     # POS features are client-scoped — resolve the caller's client row.
     client = (
-        await db.execute(select(Clients).where(Clients.user_id == str(current_user.id)))
+        await db.execute(select(Clients).where(Clients.user_id == owner_id))
     ).scalar_one_or_none()
     if not client:
         raise HTTPException(status_code=403, detail="Only clients can adjust stock")
@@ -1468,7 +1490,7 @@ async def create_stock_adjustment(
         branch = (
             await db.execute(
                 select(Branches).where(
-                    Branches.user_id == str(current_user.id),
+                    Branches.user_id == owner_id,
                     Branches.id == int(data.branch_id),
                 )
             )
@@ -1476,7 +1498,7 @@ async def create_stock_adjustment(
         if not branch:
             raise HTTPException(status_code=404, detail="Branch not found")
         row = await get_or_init_row(
-            db, str(current_user.id), client.id, int(data.branch_id), product
+            db, owner_id, client.id, int(data.branch_id), product
         )
         system_quantity = int(row.quantity or 0)
         row.quantity = counted
@@ -1486,7 +1508,7 @@ async def create_stock_adjustment(
 
     variance = counted - system_quantity
     record = StockAdjustments(
-        user_id=str(current_user.id),
+        user_id=owner_id,
         client_id=client.id,
         branch_id=int(data.branch_id) if data.branch_id is not None else None,
         product_id=product.id,
@@ -1521,6 +1543,7 @@ async def list_stock_adjustments(
     product_id: Optional[int] = None,
     limit: int = 100,
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """List the caller's stock counts/adjustments (the variance history, INV-06).
@@ -1531,7 +1554,7 @@ async def list_stock_adjustments(
     from models.stock_adjustments import Stock_adjustments as StockAdjustments
 
     query = select(StockAdjustments).where(
-        StockAdjustments.user_id == str(current_user.id)
+        StockAdjustments.user_id == owner_id
     )
     if branch_id is not None:
         query = query.where(StockAdjustments.branch_id == int(branch_id))

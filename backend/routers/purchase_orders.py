@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from services.purchase_orders import Purchase_ordersService
 from dependencies.auth import get_admin_user, get_current_user
+from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -104,6 +105,7 @@ async def query_purchase_orderss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Query purchase_orderss with filtering, sorting, and pagination (user can only see their own records)"""
@@ -124,7 +126,7 @@ async def query_purchase_orderss(
             limit=limit,
             query_dict=query_dict,
             sort=sort,
-            user_id=str(current_user.id),
+            user_id=scope.owner_user_id,
         )
         logger.debug(f"Found {result['total']} purchase_orderss")
         return result
@@ -178,6 +180,7 @@ async def get_purchase_orders(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a single purchase_orders by ID (user can only see their own records)"""
@@ -185,7 +188,7 @@ async def get_purchase_orders(
     
     service = Purchase_ordersService(db)
     try:
-        result = await service.get_by_id(id, user_id=str(current_user.id))
+        result = await service.get_by_id(id, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Purchase_orders with id {id} not found")
             raise HTTPException(status_code=404, detail="Purchase_orders not found")
@@ -202,6 +205,7 @@ async def get_purchase_orders(
 async def create_purchase_orders(
     data: Purchase_ordersData,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new purchase_orders"""
@@ -209,7 +213,7 @@ async def create_purchase_orders(
     
     service = Purchase_ordersService(db)
     try:
-        result = await service.create(data.model_dump(), user_id=str(current_user.id))
+        result = await service.create(data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create purchase_orders")
         
@@ -469,6 +473,7 @@ async def receive_purchase_order(
 async def create_purchase_orderss_batch(
     request: Purchase_ordersBatchCreateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create multiple purchase_orderss in a single request"""
@@ -479,7 +484,7 @@ async def create_purchase_orderss_batch(
     
     try:
         for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=str(current_user.id))
+            result = await service.create(item_data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
             if result:
                 results.append(result)
         
@@ -495,6 +500,7 @@ async def create_purchase_orderss_batch(
 async def update_purchase_orderss_batch(
     request: Purchase_ordersBatchUpdateRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Update multiple purchase_orderss in a single request (requires ownership)"""
@@ -507,7 +513,7 @@ async def update_purchase_orderss_batch(
         for item in request.items:
             # Only include non-None values for partial updates
             update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
-            result = await service.update(item.id, update_dict, user_id=str(current_user.id))
+            result = await service.update(item.id, update_dict, user_id=scope.owner_user_id)
             if result:
                 results.append(result)
         
@@ -524,6 +530,7 @@ async def update_purchase_orders(
     id: int,
     data: Purchase_ordersUpdateData,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Update an existing purchase_orders (requires ownership)"""
@@ -533,7 +540,7 @@ async def update_purchase_orders(
     try:
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
+        result = await service.update(id, update_dict, user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Purchase_orders with id {id} not found for update")
             raise HTTPException(status_code=404, detail="Purchase_orders not found")
@@ -554,6 +561,7 @@ async def update_purchase_orders(
 async def delete_purchase_orderss_batch(
     request: Purchase_ordersBatchDeleteRequest,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete multiple purchase_orderss by their IDs (requires ownership)"""
@@ -564,7 +572,7 @@ async def delete_purchase_orderss_batch(
     
     try:
         for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
+            success = await service.delete(item_id, user_id=scope.owner_user_id)
             if success:
                 deleted_count += 1
         
@@ -580,6 +588,7 @@ async def delete_purchase_orderss_batch(
 async def delete_purchase_orders(
     id: int,
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a single purchase_orders by ID (requires ownership)"""
@@ -587,7 +596,7 @@ async def delete_purchase_orders(
     
     service = Purchase_ordersService(db)
     try:
-        success = await service.delete(id, user_id=str(current_user.id))
+        success = await service.delete(id, user_id=scope.owner_user_id)
         if not success:
             logger.warning(f"Purchase_orders with id {id} not found for deletion")
             raise HTTPException(status_code=404, detail="Purchase_orders not found")
