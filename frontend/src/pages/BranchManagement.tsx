@@ -10,9 +10,9 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { client, createStockAdjustment, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
+import { client, createStockAdjustment, setMainBranch, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList } from 'lucide-react';
+import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star } from 'lucide-react';
 
 const ADJUSTMENT_REASONS: StockAdjustmentReason[] = [
   'count',
@@ -30,6 +30,7 @@ interface Branch {
   manager_name?: string;
   phone?: string;
   is_active: boolean;
+  is_main?: boolean;
   created_at?: string;
 }
 
@@ -183,6 +184,15 @@ export default function BranchManagement() {
       console.error('Failed to update branch:', err);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleSetMain(branch: Branch) {
+    try {
+      await setMainBranch(Number(branch.id));
+      await loadBranches();
+    } catch (err) {
+      console.error('Failed to set main branch:', err);
     }
   }
 
@@ -350,9 +360,16 @@ export default function BranchManagement() {
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-white text-lg">{branch.name}</CardTitle>
-                  <Badge className={branch.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}>
-                    {branch.is_active ? 'Active' : 'Inactive'}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    {branch.is_main && (
+                      <Badge className="bg-brand-500/20 text-brand-300 flex items-center gap-1">
+                        <Star className="h-3 w-3 fill-current" /> {t('main_branch')}
+                      </Badge>
+                    )}
+                    <Badge className={branch.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}>
+                      {branch.is_active ? 'Active' : 'Inactive'}
+                    </Badge>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -379,6 +396,11 @@ export default function BranchManagement() {
                     {branch.is_active ? 'Disable' : 'Enable'}
                   </Button>
                 </div>
+                {!branch.is_main && (
+                  <Button size="sm" variant="outline" onClick={() => handleSetMain(branch)} className="w-full border-brand-600/50 text-brand-300 hover:bg-brand-600/20 text-xs">
+                    <Star className="h-3 w-3 mr-1" /> {t('set_as_main')}
+                  </Button>
+                )}
               </CardContent>
             </Card>
           ))

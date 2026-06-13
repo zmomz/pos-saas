@@ -172,6 +172,38 @@ async def query_branchess_all(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@router.post("/{id}/set-main", response_model=BranchesResponse)
+async def set_main_branch(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Designate a branch as THE main branch for the tenant (exactly one).
+
+    Sets ``is_main`` on the target and clears it on every other branch the owner
+    has, atomically — so there is always at most one main branch, used by defaults
+    across the app. Owner-scoped (SEC-02): the branch must belong to the caller's
+    tenant, else 404.
+    """
+    logger.debug(f"Setting branches {id} as main")
+
+    service = BranchesService(db)
+    try:
+        result = await service.set_main(id, user_id=scope.owner_user_id)
+        if not result:
+            logger.warning(f"Branches with id {id} not found for set-main")
+            raise HTTPException(status_code=404, detail="Branches not found")
+
+        logger.info(f"Branches {id} designated as main")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting branches {id} as main: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @router.get("/{id}", response_model=BranchesResponse)
 async def get_branches(
     id: int,

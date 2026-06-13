@@ -123,6 +123,36 @@ class BranchesService:
             logger.error(f"Error updating branches {obj_id}: {str(e)}")
             raise
 
+    async def set_main(self, obj_id: int, user_id: Optional[str] = None) -> Optional[Branches]:
+        """Designate one branch as THE main branch for its owner (exactly one).
+
+        Clears ``is_main`` on every branch the owner has and sets it on the
+        target, committed once so there is always at most one main branch.
+        Returns None (no change) if the target isn't owned by ``user_id``.
+        """
+        try:
+            target = await self.get_by_id(obj_id, user_id=user_id)
+            if not target:
+                logger.warning(f"Branches {obj_id} not found for set-main")
+                return None
+            # Scope the flip on the target's actual owner so a master caller
+            # (user_id=None) still only touches that one tenant's branches.
+            owner_branches = (
+                await self.db.execute(
+                    select(Branches).where(Branches.user_id == target.user_id)
+                )
+            ).scalars().all()
+            for branch in owner_branches:
+                branch.is_main = branch.id == obj_id
+            await self.db.commit()
+            await self.db.refresh(target)
+            logger.info(f"Set branches {obj_id} as main for owner {target.user_id}")
+            return target
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error setting branches {obj_id} as main: {str(e)}")
+            raise
+
     async def delete(self, obj_id: int, user_id: Optional[str] = None) -> bool:
         """Delete branches (requires ownership)"""
         try:

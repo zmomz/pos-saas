@@ -1494,6 +1494,17 @@ export async function getBranches() {
   return response.data;
 }
 
+// Designate THE main branch (exactly one). The backend unsets the previous
+// main atomically, so callers just reload after this resolves (ISSUE-062).
+export async function setMainBranch(branchId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/entities/branches/${branchId}/set-main`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
 // Per-branch stock ledger (Phase 6). Set/list a branch's stock allocation.
 export async function getBranchStock(branchId: number) {
   const response = await client.apiCall.invoke({
