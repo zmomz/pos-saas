@@ -138,9 +138,21 @@ async def test_all_routes_require_master(client):
     )
     master_token = relog.json()["token"]
     ok = await client.get(
-        "/api/v1/entities/packages/all", headers=auth_headers(master_token)
+        "/api/v1/entities/clients/all", headers=auth_headers(master_token)
     )
     assert ok.status_code == 200, ok.text
+
+
+# ---------------------------------------------------------------- H1
+async def test_no_packages_entity_crud_route_is_mounted(client):
+    """H1: the orphaned /api/v1/entities/packages CRUD scaffold — full
+    create/update/delete with no auth on the write verbs — must not be mounted.
+    The only package surface is the master-gated path under /api/v1/packages."""
+    from main import app
+
+    mounted = {getattr(r, "path", "") for r in app.routes}
+    offenders = {p for p in mounted if p.startswith("/api/v1/entities/packages")}
+    assert not offenders, f"orphaned packages CRUD route(s) still mounted: {sorted(offenders)}"
 
 
 # ---------------------------------------------------------------- C-6

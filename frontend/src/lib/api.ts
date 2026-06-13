@@ -608,9 +608,12 @@ export async function getProducts() {
 }
 
 export async function getPackages() {
-  const response = await client.entities.packages.queryAll({
-    query: {},
-    limit: 20,
+  // H1: the generic /api/v1/entities/packages scaffold was removed; the only
+  // package surface is the master-gated listing in routers/features.py.
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/packages/list',
+    method: 'GET',
+    data: {},
   });
   return response.data;
 }

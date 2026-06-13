@@ -71,6 +71,10 @@ REMOVED_BACKEND = [
     _BACKEND / "schemas" / "aihub.py",
     _ROUTERS_DIR / "integrations.py",
     _ROUTERS_DIR / "payment.py",  # F-006 (Stripe Checkout orphan)
+    # H1: the orphaned packages CRUD scaffold shipped full create/update/delete
+    # + /batch at /api/v1/entities/packages with NO auth on the write verbs. The
+    # only package surface is the master-gated soft-delete path in features.py.
+    _ROUTERS_DIR / "packages.py",
 ]
 REMOVED_FRONTEND = [
     _FRONTEND_SRC / "pages" / "AuthCallback.tsx",
@@ -156,3 +160,18 @@ def test_removed_orphans_stay_removed():
         "Removed orphan(s) reappeared — these were deleted as dead code "
         "(F-054 / F-006):\n  " + "\n  ".join(present)
     )
+
+
+def test_packages_service_class_gone_helpers_kept():
+    """H1: the CRUD PackagesService is deleted; the two feature-tier helpers,
+    consumed by features.py/tenant.py, are preserved in services/packages.py."""
+    import services.packages as pkg
+
+    assert not hasattr(pkg, "PackagesService"), (
+        "PackagesService (orphaned CRUD) must be deleted; only the feature-tier "
+        "helpers may remain in services/packages.py"
+    )
+    # The helpers the master-gated path depends on must still be importable.
+    from services.packages import normalize_feature_tier, parse_feature_tier
+
+    assert callable(normalize_feature_tier) and callable(parse_feature_tier)
