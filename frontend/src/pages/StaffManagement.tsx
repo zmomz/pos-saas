@@ -17,7 +17,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { getStaffMembers, createStaffMember, updateStaffMember, deleteStaffMember } from '@/lib/api';
+import {
+  getStaffMembers,
+  createStaffMember,
+  updateStaffMember,
+  deleteStaffMember,
+  getStaffPermissions,
+  setStaffPermission,
+  type StaffPermission,
+} from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { UserCheck, UserX, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -57,6 +65,11 @@ export default function StaffManagement() {
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
   const [formData, setFormData] = useState<StaffFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+  const [permsOpen, setPermsOpen] = useState(false);
+  const [permsStaff, setPermsStaff] = useState<StaffMember | null>(null);
+  const [perms, setPerms] = useState<StaffPermission[]>([]);
+  const [permsHasLogin, setPermsHasLogin] = useState(true);
+  const [permsLoading, setPermsLoading] = useState(false);
 
   const { t } = useLanguage();
 
@@ -172,6 +185,38 @@ export default function StaffManagement() {
       console.error('Failed to delete staff:', err);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function openPermissions(member: StaffMember) {
+    setPermsStaff(member);
+    setPerms([]);
+    setPermsHasLogin(true);
+    setPermsOpen(true);
+    await loadPermissions(member.id);
+  }
+
+  async function loadPermissions(staffId: string) {
+    setPermsLoading(true);
+    try {
+      const data = await getStaffPermissions(staffId);
+      setPerms(data.permissions || []);
+      setPermsHasLogin(data.has_login);
+    } catch (err) {
+      console.error('Failed to load staff permissions:', err);
+      setPerms([]);
+    } finally {
+      setPermsLoading(false);
+    }
+  }
+
+  async function handleSetPermission(key: string, isGranted: boolean | null) {
+    if (!permsStaff) return;
+    try {
+      await setStaffPermission(permsStaff.id, key, isGranted);
+      await loadPermissions(permsStaff.id);
+    } catch (err) {
+      console.error('Failed to set permission:', err);
     }
   }
 
@@ -353,6 +398,14 @@ export default function StaffManagement() {
                       <Button
                         size="sm"
                         variant="outline"
+                        onClick={() => openPermissions(member)}
+                        className="border-brand-600/50 text-brand-400 hover:bg-brand-600/20 text-xs"
+                      >
+                        {t('permissions')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => openEdit(member)}
                         className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
                       >
@@ -411,6 +464,79 @@ export default function StaffManagement() {
               {submitting ? t('loading') : 'Delete'}
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Permissions Dialog (ISSUE-035) */}
+      <Dialog open={permsOpen} onOpenChange={setPermsOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-white">
+              {t('manage_permissions')} — {permsStaff?.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          {permsLoading && perms.length === 0 ? (
+            <div className="py-6 text-center text-slate-400 animate-pulse">{t('loading')}</div>
+          ) : !permsHasLogin ? (
+            <p role="alert" className="py-4 text-sm text-orange-400">
+              {t('no_login_permissions')}
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {perms.map((p) => (
+                <div
+                  key={p.permission_key}
+                  data-perm-row
+                  className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-900/40 p-3"
+                >
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm text-white">{p.permission_key}</p>
+                    <p className="text-xs text-slate-500">
+                      {t('role_default')}: {p.role_default ? t('allowed') : t('denied')}
+                      {p.override === null && ` · ${t('role_default')}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleSetPermission(p.permission_key, true)}
+                      className={`text-xs ${
+                        p.effective
+                          ? 'border-green-600 bg-green-600/20 text-green-400'
+                          : 'border-slate-600 text-slate-400 hover:bg-slate-700'
+                      }`}
+                    >
+                      {t('allowed')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleSetPermission(p.permission_key, false)}
+                      className={`text-xs ${
+                        !p.effective
+                          ? 'border-red-600 bg-red-600/20 text-red-400'
+                          : 'border-slate-600 text-slate-400 hover:bg-slate-700'
+                      }`}
+                    >
+                      {t('denied')}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={p.override === null}
+                      onClick={() => handleSetPermission(p.permission_key, null)}
+                      title={t('reset_to_default')}
+                      className="text-xs border-slate-600 text-slate-400 hover:bg-slate-700 disabled:opacity-40"
+                    >
+                      ↺
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.auth import get_current_user
-from dependencies.tenancy import get_owner_id
+from dependencies.tenancy import TenantScope, get_owner_id, get_tenant_scope
 from dependencies.features import require_feature
 from schemas.auth import UserResponse
 
@@ -82,6 +82,13 @@ class PermissionGrantRequest(BaseModel):
 class PermissionRevokeRequest(BaseModel):
     target_user_id: str
     permission_key: str
+
+
+class StaffPermissionSetRequest(BaseModel):
+    """Set a per-staff override on a managed key. ``is_granted=None`` resets the
+    override (deletes the row) so the key falls back to the staff role default."""
+    permission_key: str
+    is_granted: Optional[bool] = None
 
 
 class InvoicePDFRequest(BaseModel):
@@ -317,6 +324,167 @@ async def revoke_permission(
     await db.commit()
 
     return {"status": "revoked", "permission_key": data.permission_key, "target_user_id": data.target_user_id}
+
+
+# -----------------------------------------------------------------------------
+# Staff-permission editor (ISSUE-035, H12) — owner-scoped override of role defaults
+# -----------------------------------------------------------------------------
+async def _resolve_owned_staff_login(
+    db: AsyncSession, owner_user_id: Optional[str], staff_member_id: int
+):
+    """Return ``(staff_row, login_user_id)`` for a staff member the caller owns.
+
+    Owner-scoped: the staff row must belong to ``owner_user_id`` (the tenancy
+    owner), otherwise a cross-tenant edit is rejected with 404. ``login_user_id``
+    is the staff member's *auth* account (resolved by email — the same key
+    ``has_permission`` checks), or ``None`` when the staff entry has no login.
+    """
+    from models.auth import User
+    from models.staff_members import Staff_members
+
+    staff = (
+        await db.execute(
+            select(Staff_members).where(
+                Staff_members.id == staff_member_id,
+                Staff_members.user_id == str(owner_user_id),
+            )
+        )
+    ).scalar_one_or_none()
+    if staff is None:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+
+    login_uid = None
+    if staff.email:
+        login_uid = (
+            await db.execute(select(User.id).where(User.email == staff.email))
+        ).scalars().first()
+    return staff, (str(login_uid) if login_uid else None)
+
+
+def _effective_permission_map(role: str, overrides: dict) -> list[dict]:
+    """The managed-key map for a staff ``role`` layered with explicit ``overrides``."""
+    from dependencies.permissions import MANAGED_PERMISSION_KEYS, role_allows
+
+    rows = []
+    for key in sorted(MANAGED_PERMISSION_KEYS):
+        default = role_allows(role, key)
+        override = overrides.get(key)  # True / False / None (no override row)
+        rows.append(
+            {
+                "permission_key": key,
+                "role_default": default,
+                "override": override,
+                "effective": override if override is not None else default,
+            }
+        )
+    return rows
+
+
+@router.get("/staff-permissions/{staff_member_id}")
+async def get_staff_permissions(
+    staff_member_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """The effective managed-permission map for one of the owner's staff members."""
+    from models.permissions import Permissions
+
+    staff, login_uid = await _resolve_owned_staff_login(
+        db, scope.owner_user_id, staff_member_id
+    )
+
+    overrides: dict = {}
+    if login_uid:
+        rows = (
+            await db.execute(
+                select(Permissions.permission_key, Permissions.is_granted).where(
+                    Permissions.user_id == login_uid
+                )
+            )
+        ).all()
+        overrides = {key: is_granted for key, is_granted in rows}
+
+    return {
+        "staff_member_id": staff.id,
+        "role": staff.role,
+        "has_login": login_uid is not None,
+        "permissions": _effective_permission_map(staff.role, overrides),
+    }
+
+
+@router.post("/staff-permissions/{staff_member_id}")
+async def set_staff_permission(
+    staff_member_id: int,
+    data: StaffPermissionSetRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Grant/deny a managed key for a staff member (or reset to the role default).
+
+    The override row is keyed on the staff member's *login* user id, so it takes
+    effect in ``has_permission`` over the role default (ISSUE-034). Owner-scoped:
+    editing another tenant's staff member is rejected (404 from the lookup).
+    """
+    from dependencies.permissions import MANAGED_PERMISSION_KEYS, role_allows
+    from models.permissions import Permissions
+
+    if data.permission_key not in MANAGED_PERMISSION_KEYS:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown or unmanaged permission key: {data.permission_key}"
+        )
+
+    staff, login_uid = await _resolve_owned_staff_login(
+        db, scope.owner_user_id, staff_member_id
+    )
+    if login_uid is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Staff member has no login account to scope permissions to",
+        )
+
+    existing = (
+        await db.execute(
+            select(Permissions).where(
+                Permissions.user_id == login_uid,
+                Permissions.permission_key == data.permission_key,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if data.is_granted is None:
+        # Reset: drop the override so the key falls back to the role default.
+        if existing is not None:
+            await db.delete(existing)
+        await db.commit()
+        effective = role_allows(staff.role, data.permission_key)
+        return {
+            "staff_member_id": staff.id,
+            "permission_key": data.permission_key,
+            "override": None,
+            "effective": effective,
+        }
+
+    if existing is not None:
+        existing.is_granted = data.is_granted
+        existing.granted_by = str(current_user.id)
+    else:
+        db.add(
+            Permissions(
+                user_id=login_uid,
+                permission_key=data.permission_key,
+                is_granted=data.is_granted,
+                granted_by=str(current_user.id),
+            )
+        )
+    await db.commit()
+    return {
+        "staff_member_id": staff.id,
+        "permission_key": data.permission_key,
+        "override": data.is_granted,
+        "effective": data.is_granted,
+    }
 
 
 # =============================================================================

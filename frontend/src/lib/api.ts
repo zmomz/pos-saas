@@ -1945,6 +1945,50 @@ export async function deleteStaffMember(id: string) {
   await client.entities.staff_members.delete({ id });
 }
 
+// ISSUE-035: owner-scoped staff-permission editor. `override` is the explicit
+// grant/deny row (null = no override → the role default applies); `effective`
+// is what `has_permission` resolves to.
+export interface StaffPermission {
+  permission_key: string;
+  role_default: boolean;
+  override: boolean | null;
+  effective: boolean;
+}
+
+export interface StaffPermissions {
+  staff_member_id: number;
+  role: string;
+  has_login: boolean;
+  permissions: StaffPermission[];
+}
+
+export async function getStaffPermissions(staffMemberId: string | number): Promise<StaffPermissions> {
+  const response = await client.apiCall.invoke<StaffPermissions>({
+    url: `/api/v1/production/staff-permissions/${staffMemberId}`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+/** Set a grant/deny override on a managed key, or pass `null` to reset to the role default. */
+export async function setStaffPermission(
+  staffMemberId: string | number,
+  permissionKey: string,
+  isGranted: boolean | null,
+): Promise<{ staff_member_id: number; permission_key: string; override: boolean | null; effective: boolean }> {
+  const response = await client.apiCall.invoke<{
+    staff_member_id: number;
+    permission_key: string;
+    override: boolean | null;
+    effective: boolean;
+  }>({
+    url: `/api/v1/production/staff-permissions/${staffMemberId}`,
+    method: 'POST',
+    data: { permission_key: permissionKey, is_granted: isGranted },
+  });
+  return response.data;
+}
+
 // Audit Logs (read-only)
 export async function getAuditLogs() {
   const response = await client.entities.audit_logs.query({
