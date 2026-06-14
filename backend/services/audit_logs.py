@@ -48,30 +48,11 @@ class Audit_logsService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Audit_logs]:
-        """Create a new audit_logs"""
-        try:
-            if user_id:
-                data['user_id'] = user_id
-            obj = Audit_logs(**data)
-            self.db.add(obj)
-            await self.db.commit()
-            await self.db.refresh(obj)
-            logger.info(f"Created audit_logs with id: {obj.id}")
-            return obj
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Error creating audit_logs: {str(e)}")
-            raise
-
-    async def check_ownership(self, obj_id: int, user_id: str) -> bool:
-        """Check if user owns this record"""
-        try:
-            obj = await self.get_by_id(obj_id, owner_user_id=user_id)
-            return obj is not None
-        except Exception as e:
-            logger.error(f"Error checking ownership for audit_logs {obj_id}: {str(e)}")
-            return False
+    # NOTE: This service is intentionally READ-ONLY (ISSUE-019, finding H3). The
+    # audit trail is an append-only, hash-chained compliance log whose SOLE writer
+    # is ``services.audit.write_audit_log``. No create/update/delete is exposed
+    # here — an actor must not be able to fabricate, edit, or delete audit history,
+    # and any in-place mutation is detectable via ``verify_audit_chain``.
 
     async def get_by_id(self, obj_id: int, owner_user_id: Optional[str] = None) -> Optional[Audit_logs]:
         """Get audit_logs by ID, scoped to the owning merchant's tenant.
@@ -143,42 +124,6 @@ class Audit_logsService:
             }
         except Exception as e:
             logger.error(f"Error fetching audit_logs list: {str(e)}")
-            raise
-
-    async def update(self, obj_id: int, update_data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Audit_logs]:
-        """Update audit_logs (requires ownership)"""
-        try:
-            obj = await self.get_by_id(obj_id, owner_user_id=user_id)
-            if not obj:
-                logger.warning(f"Audit_logs {obj_id} not found for update")
-                return None
-            for key, value in update_data.items():
-                if hasattr(obj, key) and key != 'user_id':
-                    setattr(obj, key, value)
-
-            await self.db.commit()
-            await self.db.refresh(obj)
-            logger.info(f"Updated audit_logs {obj_id}")
-            return obj
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Error updating audit_logs {obj_id}: {str(e)}")
-            raise
-
-    async def delete(self, obj_id: int, user_id: Optional[str] = None) -> bool:
-        """Delete audit_logs (requires ownership)"""
-        try:
-            obj = await self.get_by_id(obj_id, owner_user_id=user_id)
-            if not obj:
-                logger.warning(f"Audit_logs {obj_id} not found for deletion")
-                return False
-            await self.db.delete(obj)
-            await self.db.commit()
-            logger.info(f"Deleted audit_logs {obj_id}")
-            return True
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Error deleting audit_logs {obj_id}: {str(e)}")
             raise
 
     async def _email_map(self, user_ids: List[Optional[str]]) -> Dict[str, str]:

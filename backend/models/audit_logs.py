@@ -23,5 +23,13 @@ class Audit_logs(Base):
     entity_type = Column(String, nullable=True)
     entity_id = Column(String, nullable=True)
     changes = Column(String, nullable=True)
+    # Tamper-evidence (ISSUE-019): each row is linked to the prior row by a
+    # SHA-256 chain. ``prev_hash`` is the preceding row's ``row_hash`` (a genesis
+    # constant for the first row); ``row_hash`` = sha256(prev_hash + canonical
+    # content). ``services.audit.verify_audit_chain`` re-walks the chain so a
+    # mutated or removed row is detectable. Nullable only to tolerate pre-ISSUE-019
+    # rows on an already-migrated database.
+    prev_hash = Column(String, nullable=True)
+    row_hash = Column(String, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
