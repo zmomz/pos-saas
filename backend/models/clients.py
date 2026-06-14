@@ -28,6 +28,19 @@ class Clients(Base):
     dunning_attempts = Column(Integer, nullable=True, default=0, server_default='0')
     grace_deadline = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
+    # Subscription coupon (ISSUE-054). A coupon discounts the subscription fee for
+    # a bounded number of billing periods: ``coupon_type`` is 'percentage'|'fixed',
+    # ``coupon_value`` the percent/flat amount off, and ``coupon_duration_remaining``
+    # the number of charges the coupon still applies to — decremented on each
+    # discounted charge and cleared to 0 when spent (after which the full fee is
+    # charged). All null/zero ⇒ no coupon.
+    coupon_type = Column(String, nullable=True)
+    coupon_value = Column(Float, nullable=True)
+    coupon_duration_remaining = Column(Integer, nullable=True, default=0, server_default='0')
+    # Subscription trial (ISSUE-054). ``trial_end`` is an ISO date; while it is in
+    # the future the first charge is deferred (the subscription bills only once the
+    # trial ends). Null ⇒ no trial.
+    trial_end = Column(String, nullable=True)
     # Retail / restaurant / both — picked at provisioning / first-login (CL-02).
     # Drives POS mode and gates the restaurant vertical (RST-*, F-045). Defaults
     # to 'retail' so existing clients keep the retail-only experience.

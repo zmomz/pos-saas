@@ -1525,6 +1525,14 @@ class SubscriptionResponse(BaseModel):
 class UpdateSubscriptionRequest(BaseModel):
     subscription_fee: Optional[float] = None
     billing_cycle: Optional[str] = None  # 'monthly' | 'yearly'
+    # Coupon (ISSUE-054): 'percentage' | 'fixed', the value off, and the number of
+    # billing periods it applies for. coupon_type=None with coupon_duration=0 (or
+    # omitted) leaves the coupon untouched; an explicit coupon_type sets it.
+    coupon_type: Optional[str] = None  # 'percentage' | 'fixed'
+    coupon_value: Optional[float] = None
+    coupon_duration: Optional[int] = None  # number of billing periods
+    # Trial (ISSUE-054): ISO date; while in the future the first charge is deferred.
+    trial_end: Optional[str] = None
 
 
 def _advance_billing_date(start: datetime, cycle: str) -> str:
@@ -1597,9 +1605,6 @@ async def pay_client_subscription(
     agent's gateway is the production path; this records the settled payment.)
     """
     merchant = await _client_for_current_user(db, str(current_user.id))
-    fee = merchant.subscription_fee or 0
-    if fee <= 0:
-        raise HTTPException(status_code=400, detail="No subscription fee is configured")
 
     now = datetime.now(timezone.utc)
     cycle = merchant.billing_cycle or "monthly"
@@ -1611,8 +1616,36 @@ async def pay_client_subscription(
     # decline aborts the payment (402) and does NOT advance the billing period.
     from services.subscription_billing import (
         SubscriptionChargeError,
+        apply_coupon,
         charge_subscription,
+        is_in_trial,
         record_settled_payment,
+    )
+
+    # Trial (ISSUE-054): while the trial is still running the first charge is
+    # deferred — no payment, no commission row. The subscription sits in
+    # 'trialing' with its next billing date pinned to the trial end.
+    if is_in_trial(merchant.trial_end, now.date()):
+        await db.execute(
+            update(Clients)
+            .where(Clients.id == merchant.id)
+            .values(subscription_status="trialing", next_billing_date=merchant.trial_end)
+        )
+        await db.commit()
+        await db.refresh(merchant)
+        return await _subscription_payload(db, merchant)
+
+    fee = merchant.subscription_fee or 0
+    if fee <= 0:
+        raise HTTPException(status_code=400, detail="No subscription fee is configured")
+
+    # Coupon (ISSUE-054): while the coupon still has periods left, the client is
+    # charged the discounted net; once spent it reverts to the full fee.
+    coupon_active = int(merchant.coupon_duration_remaining or 0) > 0
+    net_fee = (
+        apply_coupon(float(fee), merchant.coupon_type, merchant.coupon_value)
+        if coupon_active
+        else round(float(fee), 2)
     )
 
     agent_stripe_account = None
@@ -1626,7 +1659,7 @@ async def pay_client_subscription(
 
     try:
         charge = await charge_subscription(
-            amount=float(fee),
+            amount=net_fee,
             currency=str(getattr(_settings, "subscription_currency", "sar") or "sar"),
             agent_stripe_account=agent_stripe_account,
             client_id=merchant.id,
@@ -1646,7 +1679,23 @@ async def pay_client_subscription(
         period_start=period_start,
         period_end=period_end,
         agent_row=agent_row,
+        amount=net_fee,
     )
+    # Spend one period of the coupon; clear it once exhausted.
+    if coupon_active:
+        remaining = int(merchant.coupon_duration_remaining or 0) - 1
+        if remaining <= 0:
+            await db.execute(
+                update(Clients)
+                .where(Clients.id == merchant.id)
+                .values(coupon_duration_remaining=0, coupon_type=None, coupon_value=None)
+            )
+        else:
+            await db.execute(
+                update(Clients)
+                .where(Clients.id == merchant.id)
+                .values(coupon_duration_remaining=remaining)
+            )
     await db.commit()
     await db.refresh(merchant)
     return await _subscription_payload(db, merchant)
@@ -1826,6 +1875,17 @@ async def update_client_subscription(
         if data.billing_cycle not in ("monthly", "yearly"):
             raise HTTPException(status_code=400, detail="billing_cycle must be monthly or yearly")
         values["billing_cycle"] = data.billing_cycle
+    # Coupon (ISSUE-054): set the discount and how many periods it applies for.
+    if data.coupon_type is not None:
+        if data.coupon_type not in ("percentage", "fixed"):
+            raise HTTPException(status_code=400, detail="coupon_type must be percentage or fixed")
+        if data.coupon_value is None or data.coupon_value < 0:
+            raise HTTPException(status_code=400, detail="coupon_value must be >= 0")
+        values["coupon_type"] = data.coupon_type
+        values["coupon_value"] = data.coupon_value
+        values["coupon_duration_remaining"] = max(int(data.coupon_duration or 0), 0)
+    if data.trial_end is not None:
+        values["trial_end"] = data.trial_end or None
     if values:
         await db.execute(update(Clients).where(Clients.id == client_id).values(**values))
         await db.commit()

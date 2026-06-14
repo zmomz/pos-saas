@@ -14,12 +14,51 @@ the billing period.
 """
 import logging
 from dataclasses import dataclass
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def apply_coupon(
+    fee: float, coupon_type: Optional[str], coupon_value: Optional[float]
+) -> float:
+    """Return the net subscription fee after applying a coupon (ISSUE-054).
+
+    ``coupon_type`` is ``'percentage'`` (``coupon_value`` is a percent off) or
+    ``'fixed'`` (a flat amount off in the fee currency). With no coupon — either
+    field missing/zero — the fee is returned unchanged. The result is clamped at
+    0 so a fixed coupon larger than the fee never produces a negative charge, and
+    rounded to 2 decimals to match the recorded payment amount.
+    """
+    gross = float(fee or 0)
+    if not coupon_type or not coupon_value:
+        return round(gross, 2)
+    if coupon_type == "percentage":
+        net = gross * (1 - float(coupon_value) / 100.0)
+    elif coupon_type == "fixed":
+        net = gross - float(coupon_value)
+    else:
+        net = gross
+    return round(max(net, 0.0), 2)
+
+
+def is_in_trial(trial_end: Optional[str], today: date) -> bool:
+    """True when a trial is configured and has not yet ended (ISSUE-054).
+
+    ``trial_end`` is an ISO date string; the subscription is in trial — and the
+    first charge deferred — until that date (exclusive: on/after ``trial_end``
+    the charge is due). No trial date, or an unparseable one, means not in trial.
+    """
+    if not trial_end:
+        return False
+    try:
+        return today < date.fromisoformat(trial_end)
+    except ValueError:
+        return False
 
 
 class SubscriptionChargeError(Exception):
@@ -96,9 +135,15 @@ async def record_settled_payment(
     period_start: str,
     period_end: str,
     agent_row=None,
+    amount: Optional[float] = None,
 ):
     """Persist a settled subscription payment + a balanced commission row, advance
     the billing period, and clear any dunning state (status -> active).
+
+    ``amount`` is the actual amount collected this period; when omitted it falls
+    back to the merchant's full ``subscription_fee``. A subscription coupon
+    (ISSUE-054) passes the discounted net here so the recorded payment and the
+    commission split's gross both reflect what the client was charged.
 
     Shared by the interactive pay endpoint (CL-04) and the dunning sweep (CL-06)
     so a successful retry records the payment exactly like a manual pay. Runs in
@@ -114,10 +159,11 @@ async def record_settled_payment(
     from models.subscription_payments import Subscription_payments
     from services.commission import compute_commission_split
 
+    collected = float(merchant.subscription_fee or 0) if amount is None else float(amount)
     payment = Subscription_payments(
         user_id=str(payer_user_id),
         client_id=merchant.id,
-        amount=merchant.subscription_fee,
+        amount=collected,
         billing_cycle=cycle,
         period_start=period_start,
         period_end=period_end,
@@ -137,7 +183,7 @@ async def record_settled_payment(
         package = (
             await db.execute(select(Packages).where(Packages.id == agent_row.package_type))
         ).scalar_one_or_none()
-    fee = float(merchant.subscription_fee or 0)
+    fee = collected
     master_cut, agent_net = compute_commission_split(
         gross=fee,
         wholesale_price=float(getattr(package, "wholesale_price", 0) or 0),
