@@ -167,6 +167,10 @@ async def list_products(
     category: Optional[str] = Query(None),
     category_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
+    # ISSUE-068 (P2 catalog): archived (soft-deleted) products are hidden from the
+    # active catalog / POS by default; the management screen opts in to see them
+    # (so they can be restored) by passing ``include_archived=true``.
+    include_archived: bool = Query(False),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     current_user: UserResponse = Depends(get_current_user),
@@ -177,6 +181,10 @@ async def list_products(
 
     H7 (ISSUE-038): ``category_id`` filters by the linked category tree; the legacy
     free-text ``category`` filter is retained for backward compatibility.
+
+    ISSUE-068: archived products (``is_active=False``) are excluded unless
+    ``include_archived`` is set. ``is_distinct_from(False)`` keeps legacy
+    NULL-status rows (treated as active) alongside explicitly active ones.
     """
     role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
@@ -185,6 +193,8 @@ async def list_products(
     client_id = role_info["entity_id"]
     query = select(Products).where(Products.client_id == client_id)
 
+    if not include_archived:
+        query = query.where(Products.is_active.is_distinct_from(False))
     if category_id is not None:
         query = query.where(Products.category_id == category_id)
     if category:
@@ -194,6 +204,8 @@ async def list_products(
 
     # Count
     count_query = select(func.count(Products.id)).where(Products.client_id == client_id)
+    if not include_archived:
+        count_query = count_query.where(Products.is_active.is_distinct_from(False))
     if category_id is not None:
         count_query = count_query.where(Products.category_id == category_id)
     if category:
@@ -396,6 +408,65 @@ async def delete_product(
     await db.commit()
 
     return {"success": True, "message": "Product deactivated"}
+
+
+@router.post("/api/v1/products/{product_id}/restore", response_model=ProductResponse)
+async def restore_product(
+    product_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """ISSUE-068 (P2 catalog): un-archive a soft-deleted product.
+
+    Re-activates a product the merchant previously archived via ``DELETE`` so it
+    reappears in the active catalog / POS. Owner-scoped — a product the merchant
+    does not own is a 404, so one merchant cannot restore another's SKU.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can restore products")
+
+    client_id = role_info["entity_id"]
+
+    result = await db.execute(
+        select(Products).where(
+            and_(Products.id == product_id, Products.client_id == client_id)
+        )
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    await db.execute(
+        update(Products)
+        .where(and_(Products.id == product_id, Products.client_id == client_id))
+        .values(is_active=True)
+    )
+    await db.commit()
+    await db.refresh(product)
+
+    return ProductResponse(
+        id=product.id,
+        client_id=product.client_id,
+        name=product.name,
+        name_ar=product.name_ar,
+        barcode=product.barcode,
+        price=product.price,
+        cost_price=product.cost_price,
+        quantity=product.quantity or 0,
+        reorder_point=product.reorder_point or 0,
+        reorder_quantity=product.reorder_quantity or 0,
+        category=product.category,
+        category_id=product.category_id,
+        vat_rate=product.vat_rate,
+        is_active=True,
+        is_weighted=bool(product.is_weighted),
+        is_open_price=bool(product.is_open_price),
+        unit_label=product.unit_label,
+        created_at=product.created_at,
+        updated_at=product.updated_at,
+    )
 
 
 @router.get("/api/v1/products/low-stock", response_model=ProductListResponse)

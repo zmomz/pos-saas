@@ -23,6 +23,7 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  restoreProduct,
   getProductVariants,
   createProductVariant,
   updateProductVariant,
@@ -137,6 +138,8 @@ export default function ProductManagement() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  // ISSUE-068: opt in to see archived (soft-deleted) products so they can be restored.
+  const [showArchived, setShowArchived] = useState(false);
   // H7 (ISSUE-038): the merchant's categories, sourced for the form + filter.
   const [categories, setCategories] = useState<Category[]>([]);
   const [addOpen, setAddOpen] = useState(false);
@@ -207,7 +210,7 @@ export default function ProductManagement() {
       // H7 (ISSUE-038): filter by the linked category id.
       const categoryId = categoryFilter !== 'all' ? categoryFilter : undefined;
       const searchTerm = search.trim() || undefined;
-      const data = await getProductsList(categoryId, searchTerm);
+      const data = await getProductsList(categoryId, searchTerm, showArchived);
       // /products/list returns ProductListResponse { items, total } (ISSUE-021).
       setProducts(Array.isArray(data) ? data : data?.items || []);
     } catch (err) {
@@ -224,7 +227,7 @@ export default function ProductManagement() {
       loadProducts();
     }, 300);
     return () => clearTimeout(timeout);
-  }, [search, categoryFilter]);
+  }, [search, categoryFilter, showArchived]);
 
   // ISSUE-064: catalog CSV export/import.
   async function handleExportCsv() {
@@ -371,6 +374,20 @@ export default function ProductManagement() {
       await loadSuggestions();
     } catch (err) {
       console.error('Failed to delete product:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // ISSUE-068: un-archive a soft-deleted product so it reappears in the catalog/POS.
+  async function handleRestoreProduct(product: Product) {
+    setSubmitting(true);
+    try {
+      await restoreProduct(product.id);
+      await loadProducts();
+      await loadSuggestions();
+    } catch (err) {
+      console.error('Failed to restore product:', err);
     } finally {
       setSubmitting(false);
     }
@@ -779,6 +796,17 @@ export default function ProductManagement() {
             </SelectContent>
           </Select>
 
+          {/* ISSUE-068: opt in to see archived products so they can be restored. */}
+          <label className="flex items-center gap-2 text-sm text-slate-300 whitespace-nowrap">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+              className="h-4 w-4 accent-brand-600"
+            />
+            {t('show_archived')}
+          </label>
+
           {/* ISSUE-064: CSV export / import. */}
           <Button
             variant="outline"
@@ -934,14 +962,26 @@ export default function ProductManagement() {
                         >
                           Edit
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openDelete(product)}
-                          className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
-                        >
-                          Delete
-                        </Button>
+                        {product.is_active === false ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRestoreProduct(product)}
+                            disabled={submitting}
+                            className="border-green-600/50 text-green-400 hover:bg-green-600/20 text-xs"
+                          >
+                            {t('restore')}
+                          </Button>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openDelete(product)}
+                            className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
+                          >
+                            Delete
+                          </Button>
+                        )}
                       </div>
                     </td>
                   </tr>

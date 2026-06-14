@@ -952,6 +952,7 @@ export interface ProductListResponse {
 export async function getProductsList(
   categoryId?: number | string,
   search?: string,
+  includeArchived?: boolean,
 ): Promise<ProductListResponse> {
   const params: Record<string, string> = {};
   // H7 (ISSUE-038): filter by the linked category id, not the legacy free-text name.
@@ -959,6 +960,8 @@ export async function getProductsList(
     params.category_id = String(categoryId);
   }
   if (search) params.search = search;
+  // ISSUE-068: opt in to see archived (soft-deleted) products for restore.
+  if (includeArchived) params.include_archived = 'true';
   const queryString = new URLSearchParams(params).toString();
   const url = queryString ? `/api/v1/products/list?${queryString}` : '/api/v1/products/list';
   const response = await client.apiCall.invoke<ProductListResponse>({
@@ -1008,6 +1011,17 @@ export async function deleteProduct(productId: number) {
   const response = await client.apiCall.invoke({
     url: `/api/v1/products/${productId}`,
     method: 'DELETE',
+    data: {},
+  });
+  return response.data;
+}
+
+// ISSUE-068: un-archive a soft-deleted product so it reappears in the active
+// catalog / POS.
+export async function restoreProduct(productId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/products/${productId}/restore`,
+    method: 'POST',
     data: {},
   });
   return response.data;
