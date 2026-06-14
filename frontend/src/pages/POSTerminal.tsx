@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
 import { CUSTOMER_DISPLAY_KEY, buildCustomerDisplayPayload, paidCustomerDisplayPayload } from '@/lib/customerDisplay';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
@@ -100,6 +100,14 @@ export function cartLineFromHeld(it: HeldItem, products: Product[]): CartItem {
     unitPrice,
     key: cartKeyFor(it.product_id, variantId),
   };
+}
+
+// HW-03/PAY-05 (F-005): tenders that capture a real card approval and so can be
+// routed to a paired in-store SoftPOS terminal. Cash/gift-card/transfer legs have
+// no terminal leg, so the picker is hidden and no terminal_id is sent for them.
+const TERMINAL_TENDERS = new Set(['card', 'mada', 'applepay', 'stcpay', 'tabby', 'tamara']);
+function isTerminalTender(method: string): boolean {
+  return TERMINAL_TENDERS.has(method);
 }
 
 interface Receipt {
@@ -202,6 +210,13 @@ export default function POSTerminal() {
   // CRM-03/PRC-05 (F-038): bearer code for a single-tender gift-card sale.
   const [giftCardCode, setGiftCardCode] = useState('');
 
+  // HW-03/PAY-05 (F-005, H16): paired in-store SoftPOS terminals. When the cashier
+  // picks one for a card-like single tender, the charge routes to that terminal's
+  // gateway (`payment_terminal_id`) instead of the online gateway. Empty selection
+  // keeps the online/sandbox gateway.
+  const [terminals, setTerminals] = useState<Terminal[]>([]);
+  const [selectedTerminalId, setSelectedTerminalId] = useState<string>('');
+
   // POS-13 (F-012): tip / gratuity collected on top of the invoice total. Outside
   // the VAT base; added to the amount due so the tenders cover total + tip.
   const [tipAmount, setTipAmount] = useState(0);
@@ -251,6 +266,11 @@ export default function POSTerminal() {
     getBranches()
       .then((d) => setBranches((d?.items || d || []) as { id: number; name: string }[]))
       .catch(() => setBranches([]));
+    // HW-03 (F-005): the merchant's paired SoftPOS terminals — fuels the checkout
+    // terminal picker (best-effort; no terminals just hides it).
+    listTerminals()
+      .then((ts) => setTerminals(ts.filter((tm) => tm.status !== 'inactive')))
+      .catch(() => setTerminals([]));
     // HW-05: resolve the merchant brand name for the customer display header
     // (best-effort; falls back to the display's own default when absent).
     getClientBranding()
@@ -700,6 +720,13 @@ export default function POSTerminal() {
           !splitMode && paymentMethod === 'giftcard' && giftCardCode.trim()
             ? giftCardCode.trim()
             : undefined,
+        // HW-03/PAY-05 (F-005, H16): a single card-like tender the cashier chose to
+        // capture on a paired in-store terminal; sale_core routes it to that
+        // terminal's gateway (a decline blocks the sale).
+        payment_terminal_id:
+          !splitMode && selectedTerminalId && isTerminalTender(paymentMethod)
+            ? Number(selectedTerminalId)
+            : undefined,
         // Loyalty (Phase 4): accrue/redeem against the selected customer.
         customer_id:
           selectedCustomerId && selectedCustomerId !== 'walkin'
@@ -744,6 +771,7 @@ export default function POSTerminal() {
       setSplitMode(false);
       setSplitPayments([{ method: 'cash', amount: 0 }, { method: 'card', amount: 0 }]);
       setGiftCardCode('');
+      setSelectedTerminalId('');
       setTipAmount(0);
       setRedeemPoints('');
       setSelectedCustomerId('');
@@ -1827,6 +1855,44 @@ export default function POSTerminal() {
                     dir="ltr"
                     className="mt-2 bg-muted border-border text-foreground"
                   />
+                )}
+                {/* HW-03 (F-005, H16): pick a paired in-store terminal for a
+                    card-like tender; the charge routes to its gateway. */}
+                {terminals.length > 0 && isTerminalTender(paymentMethod) && (
+                  <div className="mt-2">
+                    <label className="text-muted-foreground text-xs">{t('charge_on')}</label>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTerminalId('')}
+                        className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                          selectedTerminalId === ''
+                            ? 'border-brand bg-brand-50 text-brand-700'
+                            : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
+                        }`}
+                      >
+                        {t('online_gateway')}
+                      </button>
+                      {terminals.map((tm) => {
+                        const active = selectedTerminalId === String(tm.id);
+                        return (
+                          <button
+                            key={tm.id}
+                            type="button"
+                            onClick={() => setSelectedTerminalId(String(tm.id))}
+                            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                              active
+                                ? 'border-brand bg-brand-50 text-brand-700'
+                                : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
+                            }`}
+                          >
+                            <CreditCard className="h-3.5 w-3.5" />
+                            {tm.label || tm.serial || `#${tm.id}`}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </>
             ) : (

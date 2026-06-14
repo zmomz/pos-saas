@@ -31,6 +31,7 @@ function mountSideHandlers() {
       HttpResponse.json({ company_name: 'Test Shop', primary_color: '#000', secondary_color: '#fff', font_family: 'sans', button_radius: '0.5rem' })
     ),
     http.get(`${BASE}/pos/held`, () => HttpResponse.json({ items: [], total: 0 })),
+    http.get(`${BASE}/payments/terminals`, () => HttpResponse.json([])),
   ];
 }
 
@@ -111,6 +112,7 @@ describe('POSTerminal refund panel renders amounts in SAR, not USD (ISSUE-102)',
         HttpResponse.json({ company_name: 'Test Shop', primary_color: '#000', secondary_color: '#fff', font_family: 'sans', button_radius: '0.5rem' })
       ),
       http.get(`${BASE}/pos/held`, () => HttpResponse.json({ items: [], total: 0 })),
+    http.get(`${BASE}/payments/terminals`, () => HttpResponse.json([])),
       http.get(`${BASE}/pos/transactions`, () =>
         HttpResponse.json([
           {
