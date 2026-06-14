@@ -144,3 +144,17 @@ def _prefer_default(printers: List[Printers]) -> Printers:
         if p.is_default:
             return p
     return printers[0]
+
+
+def printer_echo(printer: Optional[Printers]) -> Optional[Dict[str, Any]]:
+    """The resolved-device summary a print response echoes back so the browser
+    streams to that printer instead of re-prompting (``None`` when nothing was
+    resolved — the caller's built-in default path then takes over)."""
+    if printer is None:
+        return None
+    return {
+        "id": printer.id,
+        "name": printer.name,
+        "device_id": printer.device_id,
+        "paper_size": printer.paper_size,
+    }

@@ -34,7 +34,7 @@ from schemas.auth import UserResponse
 from services import zatca as zatca_service_mod
 from services import zatca_sale
 from services.escpos import build_kot_base64, build_receipt_base64
-from services.printers import resolve_printer
+from services.printers import printer_echo, resolve_printer
 from services.receipt_templates import load_default_template
 from services.kds_channel import kds_broker
 from services.restaurant import (
@@ -334,6 +334,9 @@ class SettleResponse(BaseModel):
     zatca_qr_base64: Optional[str] = None
     # Always-Arabic 80mm receipt for the settled invoice (base64 ESC/POS).
     receipt_base64: Optional[str] = None
+    # H26/U5.2 (#47/#71): the resolved receipt printer the browser streams the
+    # receipt to (null when none is registered — the built-in default path runs).
+    printer: Optional[dict] = None
     ticket_status: str = "settled"
     table_freed: bool = False
     # ISSUE-070: False when this was a partial settlement that left an unpaid
@@ -1336,6 +1339,15 @@ async def settle_ticket_endpoint(
     # shown outside the VAT base, fiscal QR embedded). H26 (#45): rendered through
     # the merchant's default receipt template.
     template = await load_default_template(db, client.user_id)
+
+    # H26/U5.2 (#47/#71): route the final receipt to the merchant's saved/selected
+    # receipt printer — its paper_size overrides the template's so the raster matches
+    # the actual head, and the resolved device is echoed back so the browser streams
+    # to it rather than re-prompting for any USB device.
+    printer = await resolve_printer(db, client.user_id, "receipt")
+    if printer is not None and printer.paper_size:
+        template = {**(template or {}), "paper_size": printer.paper_size}
+
     receipt_base64 = build_receipt_base64(
         seller_name=client.business_name or "Business",
         vat_number=client.vat_number or "",
@@ -1380,6 +1392,7 @@ async def settle_ticket_endpoint(
             else None
         ),
         receipt_base64=receipt_base64,
+        printer=printer_echo(printer),
         ticket_status=ticket.status or "settled",
         table_freed=ticket.table_id is not None,
         fully_settled=True,
@@ -1491,6 +1504,13 @@ async def settle_ticket_partial_endpoint(
         )
 
     template = await load_default_template(db, client.user_id)
+
+    # H26/U5.2 (#47/#71): route this partial's fiscal receipt to the merchant's
+    # receipt printer, honoring its paper_size override (same as the full settle).
+    printer = await resolve_printer(db, client.user_id, "receipt")
+    if printer is not None and printer.paper_size:
+        template = {**(template or {}), "paper_size": printer.paper_size}
+
     receipt_base64 = build_receipt_base64(
         seller_name=client.business_name or "Business",
         vat_number=client.vat_number or "",
@@ -1535,6 +1555,7 @@ async def settle_ticket_partial_endpoint(
             else None
         ),
         receipt_base64=receipt_base64,
+        printer=printer_echo(printer),
         # Open while anything is still unpaid; settled once the remainder clears.
         ticket_status=ticket.status or ("settled" if fully_settled else "open"),
         table_freed=fully_settled and ticket.table_id is not None,

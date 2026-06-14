@@ -1245,6 +1245,17 @@ class RestaurantService:
         from services.receipt_templates import load_default_template
 
         template = await load_default_template(self.db, user_id)
+
+        # H26/U5.2 (#47): route the proforma to the merchant's saved/selected
+        # receipt printer — its paper_size overrides the template's so the raster
+        # matches the actual head, and the resolved device is echoed back so the
+        # browser streams to it rather than re-prompting for any USB device.
+        from services.printers import printer_echo, resolve_printer
+
+        printer = await resolve_printer(self.db, user_id, "receipt")
+        if printer is not None and printer.paper_size:
+            template = {**(template or {}), "paper_size": printer.paper_size}
+
         proforma_base64 = build_receipt_base64(
             seller_name=client.business_name or "Business",
             vat_number=client.vat_number or "",
@@ -1268,6 +1279,7 @@ class RestaurantService:
             "has_qr": False,
             "has_stamp": False,
             "proforma_base64": proforma_base64,
+            "printer": printer_echo(printer),
         }
 
     async def settle_ticket(
