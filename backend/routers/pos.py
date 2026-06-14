@@ -1928,6 +1928,10 @@ async def get_invoice_pdf(
 @router.get("/transactions/{txn_id}/escpos")
 async def get_escpos_receipt(
     txn_id: int,
+    reprint: bool = Query(
+        False,
+        description="Reprint a past sale: stamp the receipt as a duplicate copy and audit it.",
+    ),
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
@@ -1937,6 +1941,13 @@ async def get_escpos_receipt(
     The frontend streams the decoded bytes to a WebUSB / Web Bluetooth thermal
     printer. The embedded QR is the canonical ZATCA TLV payload, so the printed
     receipt carries the same fiscal QR as the always-Arabic HTML invoice.
+
+    ISSUE-075 (reprint past receipts): with ``reprint=true`` the cashier reprints
+    a *past* sale. The receipt is re-rendered from the stored sale data through
+    the same renderer — template, totals and QR all match the original — but the
+    body is stamped *نسخة — إعادة طباعة* ("copy — reprint") so the duplicate can
+    never be mistaken for the original tax invoice, and the reprint is recorded
+    in ``audit_logs`` (fraud control, mirroring the void audit trail).
     """
     client = await get_client_for_user(db, owner_id)
     txn = await _get_owned_transaction(db, client, txn_id)
@@ -1987,8 +1998,24 @@ async def get_escpos_receipt(
         tip_amount=txn.tip_amount or 0,
         zatca_qr=txn.zatca_qr or "",
         open_drawer=open_drawer,
+        reprint=reprint,
         template=template,
     )
+
+    # ISSUE-075: a reprint of a past sale is audited for fraud control (a duplicate
+    # fiscal document leaving the printer is a sensitive action, like a void).
+    if reprint:
+        db.add(
+            Audit_logs(
+                user_id=str(current_user.id),
+                action="POS_REPRINT_RECEIPT",
+                entity_type="transactions",
+                entity_id=str(txn.id),
+                details=f"Reprinted receipt for sale {txn.invoice_number}",
+            )
+        )
+        await db.commit()
+
     return {
         "invoice_number": txn.invoice_number,
         "format": "escpos",

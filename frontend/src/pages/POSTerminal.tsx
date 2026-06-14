@@ -241,6 +241,8 @@ export default function POSTerminal() {
   const [refundProcessing, setRefundProcessing] = useState(false);
   // POS-08: void (audited cancellation) of the selected sale.
   const [voidProcessing, setVoidProcessing] = useState(false);
+  // ISSUE-075: reprint-in-progress flag for the selected past sale.
+  const [reprinting, setReprinting] = useState(false);
   const [voidError, setVoidError] = useState('');
   // POS-07: per-line quantity to return, keyed by the line's index in the
   // selected transaction. Defaults to the full sold quantity (whole-invoice
@@ -855,6 +857,22 @@ export default function POSTerminal() {
     }
   }
 
+  // ISSUE-075: reprint a PAST sale's receipt. Re-renders from the stored sale
+  // through the same renderer (template/Arabic/totals/QR all match the original)
+  // and flags `reprint` so the backend stamps the duplicate copy + audits it.
+  async function handleReprint(txn: Transaction) {
+    if (!txn?.id) return;
+    setReprinting(true);
+    try {
+      const payload = await getEscposReceipt(txn.id, { reprint: true });
+      await printEscPos(payload);
+    } catch (err) {
+      console.error('Reprint failed:', err);
+    } finally {
+      setReprinting(false);
+    }
+  }
+
   // POS-07: select a sale for refund and default every line's return quantity to
   // its full sold quantity (whole-invoice refund as the starting point).
   function selectTransactionForRefund(txn: Transaction) {
@@ -1363,6 +1381,24 @@ export default function POSTerminal() {
                       )}
                     </div>
                   )}
+
+                {/* ISSUE-075: reprint this past sale's receipt (a stamped,
+                    audited duplicate). Available for any past sale regardless of
+                    refund/void eligibility. */}
+                <div className="border-t border-border pt-3 mt-3">
+                  <Button
+                    onClick={() => handleReprint(selectedTransaction)}
+                    disabled={reprinting}
+                    variant="outline"
+                    className="w-full border-border text-foreground hover:bg-muted disabled:opacity-50"
+                  >
+                    <Printer className="w-4 h-4 me-2" />
+                    {reprinting ? t('loading') : t('reprint_receipt')}
+                  </Button>
+                  <p className="text-center text-xs text-muted-foreground mt-2">
+                    {t('reprint_receipt_hint')}
+                  </p>
+                </div>
               </div>
             ) : (
               <div className="flex items-center justify-center h-full text-muted-foreground">

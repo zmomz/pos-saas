@@ -74,6 +74,10 @@ _L = {
     "tip": "البقشيش",
     "total_paid": "المبلغ المدفوع (ر.س)",
     "thanks": "شكراً لزيارتكم",
+    # ISSUE-075: a reprint of a past sale is NOT a fresh fiscal issuance. The
+    # duplicate is stamped *نسخة — إعادة طباعة* ("copy — reprint") so the printed
+    # receipt can never be mistaken for the original tax invoice.
+    "reprint": "نسخة — إعادة طباعة",
     # F-057: kitchen order ticket (KOT) — printed per prep-station for a fired
     # course. It is an operational ticket, NOT a fiscal document: modifiers are
     # grouped under each course and **no prices ever appear**.
@@ -283,6 +287,7 @@ def _render_receipt_image(
     tip_amount: float = 0,
     service_charge: float = 0,
     proforma: bool = False,
+    reprint: bool = False,
     settings: dict = None,
 ):
     """Render the always-Arabic receipt body to a 1-bit PIL image (RTL).
@@ -290,6 +295,11 @@ def _render_receipt_image(
     When ``proforma`` (F-059) the header reads *فاتورة مبدئية* instead of *فاتورة
     ضريبية* so the non-fiscal check the customer reviews before paying is never
     mistaken for a tax invoice.
+
+    When ``reprint`` (ISSUE-075) the body carries a centered *نسخة — إعادة طباعة*
+    stamp under the document header so a reprinted past sale is visibly a copy and
+    never confused with the original tax invoice. Everything else — template,
+    totals, the canonical ZATCA QR — is re-rendered unchanged from the stored sale.
 
     H26: ``settings`` carries the merchant's template knobs (font scale, custom
     header line, logo toggle). The seller name is always printed — it is fiscally
@@ -361,6 +371,10 @@ def _render_receipt_image(
         center(settings["header_text"], f_norm)
     lr(_L["vat_no"], vat_number or "-", f_small)
     center(_L["proforma"] if proforma else _L["tax_invoice"], f_big)
+    # ISSUE-075: stamp a reprinted past sale as a duplicate copy so it can never
+    # be mistaken for the original tax invoice.
+    if reprint:
+        center(_L["reprint"], f_norm)
     rule()
     lr(_L["invoice_no"], invoice_number or "-", f_small)
     lr(_L["date"], issue_date or "-", f_small)
@@ -446,6 +460,7 @@ def _append_text_fallback(
     tip_amount: float = 0,
     service_charge: float = 0,
     proforma: bool = False,
+    reprint: bool = False,
     width: int,
     settings: dict = None,
 ) -> None:  # pragma: no cover - only hit in a degraded environment
@@ -462,6 +477,8 @@ def _append_text_fallback(
     if settings["header_text"]:
         b.line(settings["header_text"])
     b.line("PROFORMA" if proforma else "TAX INVOICE")
+    if reprint:
+        b.line("REPRINT - COPY")
     b.line(f"VAT: {vat_number or '-'}")
     b.bold(False)
     b.line("-" * width)
@@ -514,6 +531,7 @@ def build_receipt(
     service_charge: float = 0,
     zatca_qr: str = "",
     proforma: bool = False,
+    reprint: bool = False,
     width: int = 42,
     open_drawer: bool = False,
     template: dict = None,
@@ -557,6 +575,7 @@ def build_receipt(
                 tip_amount=tip_amount,
                 service_charge=service_charge,
                 proforma=proforma,
+                reprint=reprint,
                 settings=settings,
             )
             b.align("center").raster_image(body)
@@ -579,6 +598,7 @@ def build_receipt(
             tip_amount=tip_amount,
             service_charge=service_charge,
             proforma=proforma,
+            reprint=reprint,
             width=settings["text_width"],
             settings=settings,
         )

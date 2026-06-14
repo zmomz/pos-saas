@@ -2562,11 +2562,16 @@ export async function convertQuotation(
 // ---- Phase E ----
 
 // Fetch a base64 ESC/POS byte stream for thermal printing (see lib/thermalPrint).
-export async function getEscposReceipt(transactionId: number): Promise<string> {
+// ISSUE-075: pass `{ reprint: true }` to reprint a PAST sale — the backend stamps
+// the receipt as a duplicate copy and audits the reprint.
+export async function getEscposReceipt(
+  transactionId: number,
+  opts?: { reprint?: boolean }
+): Promise<string> {
   const response = await client.apiCall.invoke({
     url: `/api/v1/pos/transactions/${transactionId}/escpos`,
     method: 'GET',
-    data: {},
+    data: opts?.reprint ? { reprint: true } : {},
   });
   return response.data?.data as string;
 }
