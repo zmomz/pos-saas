@@ -69,8 +69,8 @@ export default function ExpenseTracking() {
       const expItems = Array.isArray(expData?.items) ? expData.items : Array.isArray(expData) ? expData : [];
       setExpenses(expItems);
 
-      const transactions = Array.isArray(txData?.transactions) ? txData.transactions : Array.isArray(txData) ? txData : [];
-      const revenue = transactions.reduce((sum: number, tx: { total?: number }) => sum + (tx.total || 0), 0);
+      const transactions = Array.isArray(txData?.items) ? txData.items : Array.isArray(txData) ? txData : [];
+      const revenue = transactions.reduce((sum: number, tx: { total_amount?: number }) => sum + (tx.total_amount || 0), 0);
       setTotalRevenue(revenue);
     } catch (err) {
       console.error('Failed to load data:', err);
