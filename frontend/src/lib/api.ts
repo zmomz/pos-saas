@@ -2961,6 +2961,66 @@ export async function getProductModifierGroups(
   return res.data;
 }
 
+// ---------- Bill-of-materials / recipe (F-062, ISSUE-039) ----------
+// A parent product's recipe: each entry is a component product with a qty-per
+// (units of the component consumed per unit of the parent sold). Selling a
+// BOM-backed product depletes every component by qty_per × qty_sold inside the
+// same atomic settle transaction (the sale-core depletion path).
+export interface BomEntry {
+  id: number;
+  user_id: string;
+  client_id?: number | null;
+  parent_product_id: number;
+  component_product_id: number;
+  qty_per: number;
+}
+
+export interface BomList {
+  items: BomEntry[];
+  total: number;
+  // Component costs rolled up to the parent's cost-of-goods value.
+  cost_of_goods: number;
+}
+
+export async function getProductBom(productId: number): Promise<BomList> {
+  const res = await client.apiCall.invoke<BomList>({
+    url: `/api/v1/restaurant/products/${productId}/bom`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function addBomEntry(
+  productId: number,
+  data: { component_product_id: number; qty_per: number }
+): Promise<BomEntry> {
+  const res = await client.apiCall.invoke<BomEntry>({
+    url: `/api/v1/restaurant/products/${productId}/bom`,
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function updateBomEntry(bomId: number, qtyPer: number): Promise<BomEntry> {
+  const res = await client.apiCall.invoke<BomEntry>({
+    url: `/api/v1/restaurant/bom/${bomId}`,
+    method: 'PUT',
+    data: { qty_per: qtyPer },
+  });
+  return res.data;
+}
+
+export async function deleteBomEntry(bomId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/bom/${bomId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
 export async function attachModifierGroup(productId: number, groupId: number) {
   const res = await client.apiCall.invoke({
     url: `/api/v1/restaurant/products/${productId}/modifier-groups/${groupId}`,

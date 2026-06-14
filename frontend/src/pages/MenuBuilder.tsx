@@ -23,14 +23,18 @@ import {
   getProductModifierGroups,
   attachModifierGroup,
   detachModifierGroup,
+  getProductBom,
+  addBomEntry,
+  deleteBomEntry,
   type ModifierGroup,
   type Modifier,
   type Combo,
   type ComboComponentRef,
   type ProductModifierGroup,
+  type BomEntry,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { UtensilsCrossed, Plus, Trash2, WifiOff, AlertTriangle, Lock, Layers } from 'lucide-react';
+import { UtensilsCrossed, Plus, Trash2, WifiOff, AlertTriangle, Lock, Layers, ChefHat } from 'lucide-react';
 
 interface ProductLite {
   id: number;
@@ -50,6 +54,11 @@ export default function MenuBuilder() {
   );
   // Per-product selection in the "attach a group" dropdown.
   const [attachChoice, setAttachChoice] = useState<Record<number, number | ''>>({});
+  // Per-product recipe (BOM) state: components, rolled-up COGS, and the add-row inputs.
+  const [bomByProduct, setBomByProduct] = useState<Record<number, BomEntry[]>>({});
+  const [cogsByProduct, setCogsByProduct] = useState<Record<number, number>>({});
+  const [bomChoice, setBomChoice] = useState<Record<number, number | ''>>({});
+  const [bomQty, setBomQty] = useState<Record<number, number>>({});
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -117,6 +126,15 @@ export default function MenuBuilder() {
         )
       );
       setAttachedByProduct(Object.fromEntries(attachEntries));
+      // Pull each product's recipe (BOM) components + rolled-up cost-of-goods.
+      const bomEntries = await Promise.all(
+        safeProducts.map(
+          async (p) =>
+            [p.id, await getProductBom(p.id).catch(() => ({ items: [], total: 0, cost_of_goods: 0 }))] as const
+        )
+      );
+      setBomByProduct(Object.fromEntries(bomEntries.map(([id, b]) => [id, b.items])));
+      setCogsByProduct(Object.fromEntries(bomEntries.map(([id, b]) => [id, b.cost_of_goods])));
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       if (status === 403) setDenied(true);
@@ -202,6 +220,35 @@ export default function MenuBuilder() {
       await load();
     } catch (err) {
       console.error('Failed to detach modifier group:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleAddComponent(productId: number) {
+    const componentId = bomChoice[productId];
+    const qtyPer = bomQty[productId] ?? 1;
+    if (!componentId || qtyPer <= 0) return;
+    setSubmitting(true);
+    try {
+      await addBomEntry(productId, { component_product_id: componentId, qty_per: qtyPer });
+      setBomChoice((c) => ({ ...c, [productId]: '' }));
+      setBomQty((q) => ({ ...q, [productId]: 1 }));
+      await load();
+    } catch (err) {
+      console.error('Failed to add recipe component:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleRemoveComponent(bomId: number) {
+    setSubmitting(true);
+    try {
+      await deleteBomEntry(bomId);
+      await load();
+    } catch (err) {
+      console.error('Failed to remove recipe component:', err);
     } finally {
       setSubmitting(false);
     }
@@ -473,6 +520,118 @@ export default function MenuBuilder() {
                         className="bg-brand-600 hover:bg-brand-700 text-white"
                       >
                         <Plus className="h-3.5 w-3.5 mr-1" /> {t('attach')}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Recipes (BOM) — define a product's component recipe (ISSUE-039) */}
+      <div>
+        <h3 className="text-white font-semibold mb-2 flex items-center gap-2">
+          <ChefHat className="h-5 w-5 text-brand-400" />
+          {t('recipes')}
+        </h3>
+        {products.length === 0 ? (
+          <Card className="bg-slate-800 border-slate-700">
+            <CardContent className="p-8 text-center">
+              <ChefHat className="h-10 w-10 text-slate-600 mx-auto mb-2" />
+              <p className="text-slate-400 text-sm">{t('no_products_for_recipes')}</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {products.map((p) => {
+              const components = bomByProduct[p.id] || [];
+              const usedIds = new Set(components.map((b) => b.component_product_id));
+              // A component can be any other product not already in this recipe (no self).
+              const available = products.filter((c) => c.id !== p.id && !usedIds.has(c.id));
+              const cogs = cogsByProduct[p.id] ?? 0;
+              return (
+                <Card
+                  key={p.id}
+                  data-testid={`product-bom-${p.id}`}
+                  className="bg-slate-800 border-slate-700"
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-white font-medium">{p.name}</span>
+                      {cogs > 0 && (
+                        <span className="text-xs text-slate-400">
+                          {t('cost_of_goods')}: {cogs.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                    {components.length === 0 ? (
+                      <p className="text-xs text-slate-500 mb-2">{t('no_components')}</p>
+                    ) : (
+                      <div className="space-y-1 mb-2">
+                        {components.map((b) => {
+                          const comp = products.find((c) => c.id === b.component_product_id);
+                          const compName = comp?.name ?? `#${b.component_product_id}`;
+                          return (
+                            <div
+                              key={b.id}
+                              className="flex items-center justify-between text-sm text-slate-300"
+                            >
+                              <span>
+                                {compName} <span className="text-slate-400">×{b.qty_per}</span>
+                              </span>
+                              <button
+                                onClick={() => handleRemoveComponent(b.id)}
+                                disabled={submitting}
+                                className="text-slate-500 hover:text-red-400"
+                                aria-label={`${t('remove')} ${compName}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <select
+                        aria-label={`${t('add_component')} — ${p.name}`}
+                        value={bomChoice[p.id] ?? ''}
+                        onChange={(e) =>
+                          setBomChoice((c) => ({
+                            ...c,
+                            [p.id]: e.target.value ? parseInt(e.target.value) : '',
+                          }))
+                        }
+                        disabled={available.length === 0}
+                        className="flex-1 rounded-md bg-slate-700 border border-slate-600 text-white text-sm px-2 py-1.5 disabled:opacity-50"
+                      >
+                        <option value="">{t('add_component')}</option>
+                        {available.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                      <Input
+                        type="number"
+                        aria-label={`${t('qty_per')} — ${p.name}`}
+                        value={bomQty[p.id] ?? 1}
+                        min={0}
+                        step="any"
+                        onChange={(e) =>
+                          setBomQty((q) => ({ ...q, [p.id]: parseFloat(e.target.value) || 0 }))
+                        }
+                        className="w-20 h-9 bg-slate-700 border-slate-600 text-white"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => handleAddComponent(p.id)}
+                        disabled={submitting || !bomChoice[p.id]}
+                        className="bg-brand-600 hover:bg-brand-700 text-white"
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" /> {t('add_component')}
                       </Button>
                     </div>
                   </CardContent>
