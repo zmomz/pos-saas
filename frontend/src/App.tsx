@@ -32,6 +32,7 @@ import ShiftManagement from './pages/ShiftManagement';
 import LoyaltyProgram from './pages/LoyaltyProgram';
 import WebhookManagement from './pages/WebhookManagement';
 import UserProfile from './pages/UserProfile';
+import StoreSettings from './pages/StoreSettings';
 import BranchManagement from './pages/BranchManagement';
 import FloorMap from './pages/FloorMap';
 import Reservations from './pages/Reservations';
@@ -141,6 +142,7 @@ const AppRoutes = () => (
       <Route path="/printers" element={<PrinterSettings />} />
       <Route path="/devices" element={<DevicesSettings />} />
       <Route path="/receipt-template" element={<ReceiptTemplateDesigner />} />
+      <Route path="/store-settings" element={<StoreSettings />} />
     </Route>
 
     {/* Shared routes (agent + client) */}

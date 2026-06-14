@@ -34,6 +34,7 @@ import {
   Gift,
   Printer,
   CreditCard,
+  Store,
 } from 'lucide-react';
 
 type UserRole = 'master' | 'agent' | 'client';
@@ -84,6 +85,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: Printer, label: 'printers', path: '/printers' },
     { icon: CreditCard, label: 'devices', path: '/devices' },
     { icon: Receipt, label: 'receipt_template', path: '/receipt-template' },
+    { icon: Store, label: 'store_settings', path: '/store-settings' },
     { icon: BarChart3, label: 'reports', path: '/reports' },
     { icon: Globe, label: 'online_orders', path: '/channels' },
     { icon: ShieldCheck, label: 'zatca_status', path: '/zatca' },

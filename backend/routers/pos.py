@@ -60,6 +60,7 @@ from services.sale_core import (
 from services.escpos import build_receipt_base64
 from services.printers import resolve_printer
 from services.receipt_templates import load_default_template
+from services.store_settings import get_store_settings
 from services.production import EmailService, LowStockChecker, PDFInvoiceService, fire_event_background
 from services.promotions import price_cart_promotions
 from services.system_settings import get_effective_tax_rate
@@ -1984,6 +1985,15 @@ async def get_escpos_receipt(
     printer = await resolve_printer(db, owner_id, "receipt")
     if printer is not None and printer.paper_size:
         template = {**(template or {}), "paper_size": printer.paper_size}
+
+    # ISSUE-079: the merchant's store-settings receipt footer feeds the printed
+    # receipt. A footer set on the receipt-template still wins (it is the more
+    # specific knob); the store-settings footer fills in when the template leaves
+    # it blank, so the merchant-level default reaches the printout.
+    store = await get_store_settings(db, owner_id)
+    if store is not None and (store.receipt_footer or "").strip():
+        if not (template or {}).get("footer_text"):
+            template = {**(template or {}), "footer_text": store.receipt_footer.strip()}
 
     payload = build_receipt_base64(
         seller_name=client.business_name or "Store",

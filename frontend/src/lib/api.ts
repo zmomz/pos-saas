@@ -1250,6 +1250,48 @@ export async function saveUserPreferences(prefs: {
   return response.data;
 }
 
+// Merchant store settings (ISSUE-079) — the store-level identity + operational
+// defaults that feed every receipt/invoice: VAT/CR numbers, receipt footer, the
+// branch profile and business hours. Persisted server-side at
+// /api/v1/store-settings (seller name + VAT written through to the client row).
+export interface BusinessHours {
+  day: string;
+  open: string;
+  close: string;
+  closed: boolean;
+}
+
+export interface StoreSettings {
+  store_name: string | null;
+  vat_number: string | null;
+  cr_number: string | null;
+  receipt_footer: string | null;
+  address: string | null;
+  city: string | null;
+  phone: string | null;
+  business_hours: BusinessHours[] | null;
+}
+
+export async function getStoreSettings(): Promise<StoreSettings> {
+  const response = await client.apiCall.invoke<StoreSettings>({
+    url: '/api/v1/store-settings',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+export async function saveStoreSettings(
+  settings: Partial<StoreSettings>
+): Promise<StoreSettings> {
+  const response = await client.apiCall.invoke<StoreSettings>({
+    url: '/api/v1/store-settings',
+    method: 'PUT',
+    data: settings,
+  });
+  return response.data;
+}
+
 // Client self-service profile (CL-02 first-login business type)
 export type BusinessType = 'retail' | 'restaurant' | 'both';
 
