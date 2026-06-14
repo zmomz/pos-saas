@@ -57,6 +57,7 @@ from services.sale_core import (
     redeem_gift_cards as _redeem_gift_cards,
 )
 from services.escpos import build_receipt_base64
+from services.receipt_templates import load_default_template
 from services.production import EmailService, LowStockChecker, PDFInvoiceService, fire_event_background
 from services.promotions import price_cart_promotions
 from services.system_settings import get_effective_tax_rate
@@ -1815,6 +1816,10 @@ async def get_escpos_receipt(
     ).scalar() or 0
     open_drawer = cash_legs > 0 or normalize_tender_type(txn.payment_method) == "cash"
 
+    # H26 (#45): render through the merchant's default receipt template so its
+    # header/footer/logo/show_qr/font_size knobs actually reach the printout.
+    template = await load_default_template(db, owner_id)
+
     payload = build_receipt_base64(
         seller_name=client.business_name or "Store",
         vat_number=client.vat_number or "",
@@ -1828,6 +1833,7 @@ async def get_escpos_receipt(
         tip_amount=txn.tip_amount or 0,
         zatca_qr=txn.zatca_qr or "",
         open_drawer=open_drawer,
+        template=template,
     )
     return {
         "invoice_number": txn.invoice_number,

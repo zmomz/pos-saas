@@ -33,6 +33,7 @@ from schemas.auth import UserResponse
 from services import zatca as zatca_service_mod
 from services import zatca_sale
 from services.escpos import build_kot_base64, build_receipt_base64
+from services.receipt_templates import load_default_template
 from services.kds_channel import kds_broker
 from services.restaurant import (
     KDS_STATUSES,
@@ -1070,7 +1071,9 @@ async def settle_ticket_endpoint(
         )
 
     # Always-Arabic 80mm receipt for the settled invoice (service charge + tip both
-    # shown outside the VAT base, fiscal QR embedded).
+    # shown outside the VAT base, fiscal QR embedded). H26 (#45): rendered through
+    # the merchant's default receipt template.
+    template = await load_default_template(db, client.user_id)
     receipt_base64 = build_receipt_base64(
         seller_name=client.business_name or "Business",
         vat_number=client.vat_number or "",
@@ -1093,6 +1096,7 @@ async def settle_ticket_endpoint(
         tip_amount=chk["tip_amount"],
         service_charge=chk["service_charge"]["amount"],
         zatca_qr=result.stamped_qr or "",
+        template=template,
     )
 
     return SettleResponse(
@@ -1586,12 +1590,14 @@ async def print_kds_kot(
     if payload is None:
         raise HTTPException(status_code=404, detail="KDS ticket not found")
     station_label = payload.get("station_name_ar") or payload.get("station_name") or ""
+    template = await load_default_template(db, client.user_id)
     kot_base64 = build_kot_base64(
         station_name=station_label,
         order_ref=str(payload.get("order_ticket_id") or ""),
         table_label=str(payload.get("table_id") or ""),
         fired_at=(payload.get("fired_at") or "")[:16].replace("T", " "),
         courses=payload.get("courses") or [],
+        template=template,
     )
     return {**payload, "kot_base64": kot_base64}
 

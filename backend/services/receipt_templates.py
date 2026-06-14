@@ -170,3 +170,39 @@ class Receipt_templatesService:
         except Exception as e:
             logger.error(f"Error fetching receipt_templatess by {field_name}: {str(e)}")
             raise
+
+
+# H26 (ISSUE-045): the render knobs the ESC/POS builders honor. Mirrors the
+# template fields `escpos.build_receipt`/`build_kot` read out of the dict.
+_TEMPLATE_KNOBS = ("header_text", "footer_text", "show_logo", "show_qr_code", "paper_size", "font_size")
+
+
+async def load_default_template(db: AsyncSession, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Return the merchant's default receipt template as a plain render-knob dict.
+
+    Picks the template flagged ``is_default`` for the owner; failing that, the
+    most-recent template; ``None`` when the merchant has none (the renderer then
+    uses its built-in defaults). Returns a plain dict — not the ORM row — so the
+    pure, DB-free ``escpos`` renderer stays decoupled from the database.
+
+    Best-effort: any error resolves to ``None`` so a template lookup can never
+    break the print/receipt path (OPS-08).
+    """
+    if not user_id:
+        return None
+    try:
+        service = Receipt_templatesService(db)
+        result = await service.get_list(
+            limit=1, user_id=user_id, query_dict={"is_default": True}
+        )
+        items = result.get("items") or []
+        if not items:
+            result = await service.get_list(limit=1, user_id=user_id)
+            items = result.get("items") or []
+        if not items:
+            return None
+        row = items[0]
+        return {knob: getattr(row, knob, None) for knob in _TEMPLATE_KNOBS}
+    except Exception:
+        logger.warning("Failed to load default receipt template; using renderer defaults", exc_info=True)
+        return None

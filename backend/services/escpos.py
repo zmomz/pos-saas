@@ -77,6 +77,37 @@ _L = {
     "fired": "أُرسلت",
 }
 
+# H26 (F-?): the merchant's receipt template knobs. font_size is a coarse label
+# ("small"/"medium"/"large") mapped to a multiplier over the base raster font
+# sizes, so a bigger font produces a visibly taller bitmap.
+_FONT_SCALE = {"small": 0.85, "medium": 1.0, "large": 1.2}
+
+
+def _template_settings(template: object) -> dict:
+    """Resolve a merchant receipt template (a plain dict or ``None``) into the
+    render knobs honored by the builders, applying defaults.
+
+    Booleans default to *on* (``show_logo``/``show_qr_code``) so a merchant with
+    no template — or a template that leaves a field null — keeps the historical
+    behaviour (logo title + QR emitted). ``header_text``/``footer_text`` default
+    to empty (no extra line). ``font_size`` defaults to the unscaled size.
+    """
+    t = template if isinstance(template, dict) else {}
+
+    def _flag(key: str) -> bool:
+        v = t.get(key)
+        return True if v is None else bool(v)
+
+    fs = t.get("font_size")
+    fs = fs.lower() if isinstance(fs, str) else "medium"
+    return {
+        "header_text": (t.get("header_text") or "").strip(),
+        "footer_text": (t.get("footer_text") or "").strip(),
+        "show_logo": _flag("show_logo"),
+        "show_qr_code": _flag("show_qr_code"),
+        "font_scale": _FONT_SCALE.get(fs, 1.0),
+    }
+
 
 class EscPosBuilder:
     """Accumulates an ESC/POS command stream."""
@@ -238,23 +269,34 @@ def _render_receipt_image(
     tip_amount: float = 0,
     service_charge: float = 0,
     proforma: bool = False,
+    settings: dict = None,
 ):
     """Render the always-Arabic receipt body to a 1-bit PIL image (RTL).
 
     When ``proforma`` (F-059) the header reads *فاتورة مبدئية* instead of *فاتورة
     ضريبية* so the non-fiscal check the customer reviews before paying is never
     mistaken for a tax invoice.
+
+    H26: ``settings`` carries the merchant's template knobs (font scale, custom
+    header line, logo toggle). The seller name is always printed — it is fiscally
+    required — but ``show_logo`` selects whether it is rendered as the prominent
+    title (the textual brand mark) or in the normal body size; ``header_text``
+    adds a custom centered line below it; ``font_scale`` scales every font.
     """
     from PIL import Image, ImageDraw, ImageFont
 
-    f_title = ImageFont.truetype(_FONT_PATH, 40)
-    f_big = ImageFont.truetype(_FONT_PATH, 30)
-    f_norm = ImageFont.truetype(_FONT_PATH, 26)
-    f_small = ImageFont.truetype(_FONT_PATH, 24)
+    settings = settings or _template_settings(None)
+    scale = settings["font_scale"]
+    f_title = ImageFont.truetype(_FONT_PATH, int(40 * scale))
+    f_big = ImageFont.truetype(_FONT_PATH, int(30 * scale))
+    f_norm = ImageFont.truetype(_FONT_PATH, int(26 * scale))
+    f_small = ImageFont.truetype(_FONT_PATH, int(24 * scale))
 
     margin = 12
-    # Generous canvas; cropped to the rendered height before emitting.
-    est_h = 640 + len(line_items or []) * 150
+    # Generous canvas; cropped to the rendered height before emitting. Scaled by
+    # the font multiplier (taller fonts need a taller canvas) plus headroom for
+    # an optional custom header line.
+    est_h = int((640 + len(line_items or []) * 150) * max(scale, 1.0)) + 120
     img = Image.new("1", (_WIDTH_PX, est_h), 1)  # 1 == white background
     draw = ImageDraw.Draw(img)
     y = margin
@@ -293,7 +335,11 @@ def _render_receipt_image(
         y += 12
 
     # ---- header ----
-    center(seller_name or _L["store"], f_title)
+    # show_logo selects the prominence of the (always-present, fiscally-required)
+    # seller name; header_text is the merchant's custom line printed beneath it.
+    center(seller_name or _L["store"], f_title if settings["show_logo"] else f_norm)
+    if settings["header_text"]:
+        center(settings["header_text"], f_norm)
     lr(_L["vat_no"], vat_number or "-", f_small)
     center(_L["proforma"] if proforma else _L["tax_invoice"], f_big)
     rule()
@@ -343,16 +389,23 @@ def _render_receipt_image(
     return img.crop((0, 0, _WIDTH_PX, min(y + margin, est_h)))
 
 
-def _render_footer_image():
-    """Render the always-Arabic 'thank you' footer to a 1-bit PIL image."""
+def _render_footer_image(settings: dict = None):
+    """Render the always-Arabic footer to a 1-bit PIL image.
+
+    H26: when the merchant's template carries ``footer_text`` it is printed (in
+    place of the default *شكراً لزيارتكم*); otherwise the default thanks line is
+    used. ``font_scale`` scales the footer to match the body.
+    """
     from PIL import Image, ImageDraw, ImageFont
 
-    font = ImageFont.truetype(_FONT_PATH, 26)
+    settings = settings or _template_settings(None)
+    text = settings["footer_text"] or _L["thanks"]
+    font = ImageFont.truetype(_FONT_PATH, int(26 * settings["font_scale"]))
     ascent, descent = font.getmetrics()
     h = ascent + descent + 16
     img = Image.new("1", (_WIDTH_PX, h), 1)
     draw = ImageDraw.Draw(img)
-    t = _shape(_L["thanks"])
+    t = _shape(text)
     w = draw.textlength(t, font=font)
     draw.text(((_WIDTH_PX - w) / 2, 8), t, font=font, fill=0)
     return img
@@ -374,15 +427,20 @@ def _append_text_fallback(
     service_charge: float = 0,
     proforma: bool = False,
     width: int,
+    settings: dict = None,
 ) -> None:  # pragma: no cover - only hit in a degraded environment
     """Degraded ASCII receipt body when Arabic rendering is unavailable.
 
     Keeps the stream valid (OPS-08) so a printer still produces a receipt with the
     scannable ZATCA QR even if the font/shaping libraries are missing at runtime.
+    H26: the merchant's custom header line is honored here too.
     """
+    settings = settings or _template_settings(None)
     b.align("center").bold(True).double_size(True)
     b.line(seller_name or "Store")
     b.double_size(False)
+    if settings["header_text"]:
+        b.line(settings["header_text"])
     b.line("PROFORMA" if proforma else "TAX INVOICE")
     b.line(f"VAT: {vat_number or '-'}")
     b.bold(False)
@@ -438,6 +496,7 @@ def build_receipt(
     proforma: bool = False,
     width: int = 42,
     open_drawer: bool = False,
+    template: dict = None,
 ) -> bytes:
     """Render a transaction as an ESC/POS byte stream for an 80mm printer.
 
@@ -448,8 +507,15 @@ def build_receipt(
     When ``proforma`` (F-059) the body is headed *فاتورة مبدئية* and **no QR is
     emitted regardless of ``zatca_qr``** — a check is non-fiscal and must carry no
     QR and no stamp, so it can never be mistaken for a tax invoice.
+
+    H26: ``template`` is the merchant's default receipt template (a plain dict of
+    knobs, or ``None`` for the defaults). It controls the custom header/footer
+    lines, the logo-title prominence, the font scale, and — crucially — whether
+    the ZATCA QR is emitted (``show_qr_code``). The always-Arabic fiscal invariant
+    is unaffected: every label and the body still render in Arabic regardless.
     """
     b = EscPosBuilder()
+    settings = _template_settings(template)
 
     if open_drawer:
         # Pulse the drawer first so the till opens for the cashier immediately.
@@ -471,6 +537,7 @@ def build_receipt(
                 tip_amount=tip_amount,
                 service_charge=service_charge,
                 proforma=proforma,
+                settings=settings,
             )
             b.align("center").raster_image(body)
             rendered = True
@@ -493,16 +560,18 @@ def build_receipt(
             service_charge=service_charge,
             proforma=proforma,
             width=width,
+            settings=settings,
         )
 
     # A proforma is non-fiscal: never emit a QR even if one was passed (F-059).
-    if zatca_qr and not proforma:
+    # H26: the merchant's template can also turn the QR off (show_qr_code).
+    if zatca_qr and not proforma and settings["show_qr_code"]:
         b.align("center").qr(zatca_qr)
 
     # Footer (always Arabic when rendering is available).
     if rendered:
         try:
-            b.align("center").raster_image(_render_footer_image())
+            b.align("center").raster_image(_render_footer_image(settings))
         except Exception:  # pragma: no cover - degraded environment
             b.align("center").line("Thank you")
     else:  # pragma: no cover - degraded environment
@@ -524,6 +593,7 @@ def _render_kot_image(
     table_label: str,
     fired_at: str,
     courses: list,
+    settings: dict = None,
 ):
     """Render an always-Arabic KOT body to a 1-bit PIL image (RTL) — F-057.
 
@@ -531,17 +601,23 @@ def _render_kot_image(
     quantity, name, modifier choices and any note — **never a price** (a kitchen
     ticket carries no money). ``courses`` is a list of
     ``{"course": str, "items": [{"name"/"name_ar", "qty", "notes", "modifiers": [str]}]}``.
+
+    H26: ``settings`` carries the merchant's template knobs — the font scale and
+    an optional custom header line apply to the kitchen ticket too (no QR, no
+    footer, no prices ever).
     """
     from PIL import Image, ImageDraw, ImageFont
 
-    f_title = ImageFont.truetype(_FONT_PATH, 42)
-    f_course = ImageFont.truetype(_FONT_PATH, 32)
-    f_item = ImageFont.truetype(_FONT_PATH, 34)
-    f_small = ImageFont.truetype(_FONT_PATH, 24)
+    settings = settings or _template_settings(None)
+    scale = settings["font_scale"]
+    f_title = ImageFont.truetype(_FONT_PATH, int(42 * scale))
+    f_course = ImageFont.truetype(_FONT_PATH, int(32 * scale))
+    f_item = ImageFont.truetype(_FONT_PATH, int(34 * scale))
+    f_small = ImageFont.truetype(_FONT_PATH, int(24 * scale))
 
     margin = 12
     n_items = sum(len(c.get("items") or []) for c in courses or [])
-    est_h = 360 + len(courses or []) * 60 + n_items * 130
+    est_h = int((360 + len(courses or []) * 60 + n_items * 130) * max(scale, 1.0)) + 120
     img = Image.new("1", (_WIDTH_PX, est_h), 1)
     draw = ImageDraw.Draw(img)
     y = margin
@@ -581,6 +657,8 @@ def _render_kot_image(
     # ---- header ----
     center(_L["kot"], f_title)
     center(station_name or _L["station"], f_course)
+    if settings["header_text"]:
+        center(settings["header_text"], f_small)
     rule()
     if order_ref:
         lr(_L["order"], order_ref, f_small)
@@ -653,14 +731,19 @@ def build_kot(
     fired_at: str = "",
     courses: list,
     width: int = 42,
+    template: dict = None,
 ) -> bytes:
     """Render a per-station Kitchen Order Ticket as an ESC/POS byte stream (F-057).
 
     The KOT is an **always-Arabic** operational ticket (the fiscal-document Arabic
     invariant applies to every printable): items are grouped under each course and
     carry **no prices** — a kitchen ticket never shows money. No QR, no stamp.
+
+    H26: ``template`` (the merchant's default receipt template, or ``None``)
+    contributes the font scale and an optional custom header line.
     """
     b = EscPosBuilder()
+    settings = _template_settings(template)
     rendered = False
     if _arabic_render_available():
         try:
@@ -670,6 +753,7 @@ def build_kot(
                 table_label=table_label,
                 fired_at=fired_at,
                 courses=courses,
+                settings=settings,
             )
             b.align("center").raster_image(body)
             rendered = True

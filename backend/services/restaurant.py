@@ -975,6 +975,12 @@ class RestaurantService:
             for i in items
         ]
         sc_amount = check["service_charge"]["amount"]
+        # H26 (#45): render through the merchant's default receipt template (its QR
+        # knob is moot here — a proforma never carries a QR — but header/footer/
+        # logo/font_size still apply).
+        from services.receipt_templates import load_default_template
+
+        template = await load_default_template(self.db, user_id)
         proforma_base64 = build_receipt_base64(
             seller_name=client.business_name or "Business",
             vat_number=client.vat_number or "",
@@ -988,6 +994,7 @@ class RestaurantService:
             tip_amount=check["tip_amount"],
             service_charge=sc_amount,
             proforma=True,
+            template=template,
         )
         return {
             **check,
