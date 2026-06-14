@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -28,8 +28,11 @@ import {
   updateProductVariant,
   deleteProductVariant,
   getReorderSuggestions,
+  exportProductsCsv,
+  importProductsCsv,
   type ProductVariant,
   type ReorderSuggestion,
+  type CsvImportResult,
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import { DataPagination } from '@/components/DataPagination';
@@ -145,6 +148,11 @@ export default function ProductManagement() {
   const [suggestionsLoading, setSuggestionsLoading] = useState(true);
   const [suggestionsError, setSuggestionsError] = useState(false);
 
+  // ISSUE-064: catalog CSV import/export.
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<CsvImportResult | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const navigate = useNavigate();
   const { t, language, setLanguage } = useLanguage();
 
@@ -190,6 +198,38 @@ export default function ProductManagement() {
     }, 300);
     return () => clearTimeout(timeout);
   }, [search, categoryFilter]);
+
+  // ISSUE-064: catalog CSV export/import.
+  async function handleExportCsv() {
+    try {
+      const blob = await exportProductsCsv();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'products.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to export catalog:', err);
+    }
+  }
+
+  async function handleImportCsv(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // allow re-importing the same file
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const result = await importProductsCsv(file);
+      setImportResult(result);
+      await loadProducts();
+    } catch (err) {
+      console.error('Failed to import catalog:', err);
+    } finally {
+      setImporting(false);
+    }
+  }
 
   const pagedProducts = products.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -696,6 +736,31 @@ export default function ProductManagement() {
             </SelectContent>
           </Select>
 
+          {/* ISSUE-064: CSV export / import. */}
+          <Button
+            variant="outline"
+            onClick={handleExportCsv}
+            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          >
+            {t('export_csv')}
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            onChange={handleImportCsv}
+            className="hidden"
+            data-testid="csv-import-input"
+          />
+          <Button
+            variant="outline"
+            disabled={importing}
+            onClick={() => fileInputRef.current?.click()}
+            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          >
+            {importing ? t('loading') : t('import_csv')}
+          </Button>
+
           {/* Add Product Dialog */}
           <Dialog open={addOpen} onOpenChange={setAddOpen}>
             <DialogTrigger asChild>
@@ -714,6 +779,33 @@ export default function ProductManagement() {
             </DialogContent>
           </Dialog>
         </div>
+
+        {/* ISSUE-064: import outcome — created/updated counts + rejected rows. */}
+        {importResult && (
+          <Card className="bg-slate-800 border-slate-700">
+            <CardContent className="p-4 space-y-2">
+              <p className="text-slate-200 text-sm">
+                {t('import_summary')
+                  .replace('{created}', String(importResult.created))
+                  .replace('{updated}', String(importResult.updated))}
+              </p>
+              {importResult.errors.length > 0 && (
+                <div className="text-sm text-orange-400">
+                  <p className="font-semibold">
+                    {t('import_rejected').replace('{count}', String(importResult.errors.length))}
+                  </p>
+                  <ul className="list-disc ms-5 mt-1 space-y-0.5">
+                    {importResult.errors.map((err) => (
+                      <li key={err.row}>
+                        {t('row')} {err.row}: {err.errors.join('; ')}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Products Table */}
         <div className="overflow-x-auto rounded-lg border border-slate-700">

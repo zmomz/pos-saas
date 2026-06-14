@@ -4,11 +4,13 @@ from typing import List, Optional
 
 from datetime import datetime, date
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from services.catalog_csv import parse_products_csv, products_to_csv
 from services.products import ProductsService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
@@ -188,6 +190,76 @@ async def query_productss_all(
     except Exception as e:
         logger.error(f"Error querying productss: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.get("/export")
+async def export_products_csv(
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export the merchant's catalog as a downloadable CSV (owner-scoped)."""
+    service = ProductsService(db)
+    # Fetch all the owner's products (a catalog export is not paginated).
+    result = await service.get_list(skip=0, limit=2000, user_id=scope.owner_user_id)
+    csv_text = products_to_csv(result["items"])
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="products.csv"'},
+    )
+
+
+@router.post("/import")
+async def import_products_csv(
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk create/update the merchant's catalog from an uploaded CSV.
+
+    Rows are upserted by ``barcode`` (a barcode matching an existing owner product
+    updates it; otherwise a new product is created). Invalid rows are reported in
+    ``errors`` and never silently dropped.
+    """
+    raw = await file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded")
+
+    valid_rows, errors = parse_products_csv(text)
+
+    service = ProductsService(db)
+    owner_id = scope.owner_user_id or str(current_user.id)
+    created = 0
+    updated = 0
+
+    for data in valid_rows:
+        barcode = data.get("barcode")
+        existing = None
+        if barcode:
+            match = await service.get_list(
+                limit=1, user_id=owner_id, query_dict={"barcode": barcode}
+            )
+            if match["items"]:
+                existing = match["items"][0]
+
+        if existing:
+            await service.update(existing.id, data, user_id=owner_id)
+            updated += 1
+        else:
+            data.setdefault("client_id", scope.client_id or 0)
+            await service.create(data, user_id=owner_id)
+            created += 1
+
+    return {
+        "created": created,
+        "updated": updated,
+        "total_rows": len(valid_rows) + len(errors),
+        "errors": errors,
+    }
 
 
 @router.get("/{id}", response_model=ProductsResponse)

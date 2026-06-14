@@ -1007,6 +1007,29 @@ export async function deleteProduct(productId: number) {
   return response.data;
 }
 
+// ISSUE-064: catalog CSV export/import. Export streams the merchant's catalog as
+// a CSV blob; import uploads a CSV and returns a per-run report (created/updated
+// counts + the rejected rows, so bad rows are surfaced, not silently dropped).
+export interface CsvImportError {
+  row: number;
+  errors: string[];
+}
+
+export interface CsvImportResult {
+  created: number;
+  updated: number;
+  total_rows: number;
+  errors: CsvImportError[];
+}
+
+export async function exportProductsCsv(): Promise<Blob> {
+  return getBlob('/api/v1/entities/products/export');
+}
+
+export async function importProductsCsv(file: File): Promise<CsvImportResult> {
+  return uploadMultipart<CsvImportResult>('/api/v1/entities/products/import', file);
+}
+
 export async function getLowStockProducts() {
   const response = await client.apiCall.invoke({
     url: '/api/v1/products/low-stock',
