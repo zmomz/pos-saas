@@ -99,6 +99,62 @@ class OrderTickets(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 
 
+class Reservations(Base):
+    """A table booked ahead for a future time — ISSUE-069 (RST).
+
+    A host books a ``table`` for a ``reserved_at`` time and a party; the booking
+    surfaces on the floor (the table tile shows its next upcoming reservation)
+    until it is seated or cancelled. ``status`` is the booking lifecycle:
+    ``booked`` (on the books) -> ``seated`` (party arrived, table occupied) /
+    ``cancelled`` / ``no_show``. Owner-scoped like every other entity (SEC-02).
+    """
+
+    __tablename__ = "reservations"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    branch_id = Column(Integer, nullable=True)
+    table_id = Column(Integer, nullable=True, index=True)
+    customer_name = Column(String, nullable=True)
+    party_size = Column(Integer, nullable=True)
+    reserved_at = Column(DateTime(timezone=True), nullable=False)
+    # booked / seated / cancelled / no_show
+    status = Column(String, nullable=True, default="booked", server_default="booked")
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
+class WaitlistEntries(Base):
+    """A walk-in party queued for the next free table — ISSUE-069 (RST).
+
+    A host adds a party to the queue; entries surface in arrival order. Seating
+    an entry to a table flips it ``waiting -> seated``, opens an order ticket on
+    that table, and records ``seated_table_id`` / ``seated_ticket_id``. ``status``
+    is ``waiting`` (in the queue) -> ``seated`` / ``cancelled``. Owner-scoped
+    like every other entity (SEC-02).
+    """
+
+    __tablename__ = "waitlist_entries"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    branch_id = Column(Integer, nullable=True)
+    customer_name = Column(String, nullable=True)
+    party_size = Column(Integer, nullable=True)
+    # waiting / seated / cancelled
+    status = Column(String, nullable=True, default="waiting", server_default="waiting")
+    notes = Column(String, nullable=True)
+    seated_table_id = Column(Integer, nullable=True)
+    seated_ticket_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
 class ModifierGroups(Base):
     """A named set of choices that attaches to menu items — F-056 (RST).
 

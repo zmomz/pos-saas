@@ -26,7 +26,9 @@ from models.restaurant import (
     OrderTickets,
     PrepStations,
     ProductModifierGroups,
+    Reservations,
     RestaurantTables,
+    WaitlistEntries,
 )
 from services.kds_channel import kds_broker
 
@@ -45,6 +47,10 @@ SPLIT_STRATEGIES = ("seat", "amount", "item")
 KDS_STATUSES = ("active", "bumped")
 # Statuses past which a ticket can no longer be edited from the floor.
 CLOSED_TICKET_STATUSES = ("settled", "void")
+# A reservation's lifecycle (ISSUE-069): booked -> seated / cancelled / no_show.
+RESERVATION_STATUSES = ("booked", "seated", "cancelled", "no_show")
+# A waitlist entry's lifecycle (ISSUE-069): waiting -> seated / cancelled.
+WAITLIST_STATUSES = ("waiting", "seated", "cancelled")
 
 # Print routing per order type (F-058). ``order_type`` stops being a dead label
 # and decides where the order's documents print: the kitchen always gets a KOT,
@@ -225,6 +231,228 @@ class RestaurantService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Error deleting restaurant table {table_id}: {str(e)}")
+            raise
+
+    # ----------------------------------------------------------- reservations
+    @staticmethod
+    def _parse_reserved_at(value: Any) -> datetime:
+        """Coerce the request's ``reserved_at`` into a datetime (ISO-8601)."""
+        if isinstance(value, datetime):
+            return value
+        if not value:
+            raise ValueError("reserved_at is required")
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            raise ValueError("reserved_at must be an ISO-8601 datetime")
+
+    async def list_reservations(
+        self,
+        user_id: str,
+        status: Optional[str] = None,
+        table_id: Optional[int] = None,
+    ) -> List[Reservations]:
+        query = select(Reservations).where(Reservations.user_id == user_id)
+        if status is not None:
+            query = query.where(Reservations.status == status)
+        if table_id is not None:
+            query = query.where(Reservations.table_id == table_id)
+        # Soonest bookings first — the order a host reads the floor in.
+        query = query.order_by(Reservations.reserved_at.asc())
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
+    async def get_reservation(self, reservation_id: int, user_id: str) -> Optional[Reservations]:
+        result = await self.db.execute(
+            select(Reservations).where(
+                Reservations.id == reservation_id, Reservations.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_reservation(
+        self, data: Dict[str, Any], user_id: str, client_id: Optional[int]
+    ) -> Reservations:
+        """Book a table ahead for a future time (ISSUE-069).
+
+        Raises ``ValueError`` if ``reserved_at`` is missing/unparseable or the
+        referenced table isn't the caller's (so one client can't book onto
+        another's floor, SEC-02).
+        """
+        reserved_at = self._parse_reserved_at(data.get("reserved_at"))
+        table_id = data.get("table_id")
+        branch_id = data.get("branch_id")
+        if table_id is not None:
+            table = await self.get_table(table_id, user_id)
+            if not table:
+                raise ValueError("Table not found")
+            if branch_id is None:
+                branch_id = table.branch_id
+        try:
+            reservation = Reservations(
+                user_id=user_id,
+                client_id=client_id,
+                branch_id=branch_id,
+                table_id=table_id,
+                customer_name=data.get("customer_name"),
+                party_size=data.get("party_size"),
+                reserved_at=reserved_at,
+                status="booked",
+                notes=data.get("notes"),
+            )
+            self.db.add(reservation)
+            await self.db.commit()
+            await self.db.refresh(reservation)
+            logger.info(f"Created reservation {reservation.id} for user {user_id}")
+            return reservation
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error creating reservation: {str(e)}")
+            raise
+
+    async def update_reservation(
+        self, reservation_id: int, updates: Dict[str, Any], user_id: str
+    ) -> Optional[Reservations]:
+        reservation = await self.get_reservation(reservation_id, user_id)
+        if not reservation:
+            return None
+        if "reserved_at" in updates and updates["reserved_at"] is not None:
+            updates["reserved_at"] = self._parse_reserved_at(updates["reserved_at"])
+        if "status" in updates and updates["status"] not in RESERVATION_STATUSES:
+            raise ValueError(
+                f"Invalid status. Allowed: {', '.join(RESERVATION_STATUSES)}"
+            )
+        try:
+            for key, value in updates.items():
+                if hasattr(reservation, key) and key not in ("id", "user_id", "client_id"):
+                    setattr(reservation, key, value)
+            await self.db.commit()
+            await self.db.refresh(reservation)
+            return reservation
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error updating reservation {reservation_id}: {str(e)}")
+            raise
+
+    async def cancel_reservation(self, reservation_id: int, user_id: str) -> Optional[Reservations]:
+        """Mark a reservation cancelled (the booking lifecycle, ISSUE-069)."""
+        return await self.update_reservation(reservation_id, {"status": "cancelled"}, user_id)
+
+    async def next_reservation_for_table(
+        self, table_id: int, user_id: str
+    ) -> Optional[Reservations]:
+        """The soonest still-booked reservation for a table — the floor overlay."""
+        result = await self.db.execute(
+            select(Reservations)
+            .where(
+                Reservations.user_id == user_id,
+                Reservations.table_id == table_id,
+                Reservations.status == "booked",
+            )
+            .order_by(Reservations.reserved_at.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    # -------------------------------------------------------------- waitlist
+    async def list_waitlist(
+        self, user_id: str, status: Optional[str] = "waiting"
+    ) -> List[WaitlistEntries]:
+        query = select(WaitlistEntries).where(WaitlistEntries.user_id == user_id)
+        if status is not None:
+            query = query.where(WaitlistEntries.status == status)
+        # FIFO — earliest arrival is next to be seated.
+        query = query.order_by(WaitlistEntries.id.asc())
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
+    async def get_waitlist_entry(self, entry_id: int, user_id: str) -> Optional[WaitlistEntries]:
+        result = await self.db.execute(
+            select(WaitlistEntries).where(
+                WaitlistEntries.id == entry_id, WaitlistEntries.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def add_to_waitlist(
+        self, data: Dict[str, Any], user_id: str, client_id: Optional[int]
+    ) -> WaitlistEntries:
+        """Queue a walk-in party (ISSUE-069)."""
+        try:
+            entry = WaitlistEntries(
+                user_id=user_id,
+                client_id=client_id,
+                branch_id=data.get("branch_id"),
+                customer_name=data.get("customer_name"),
+                party_size=data.get("party_size"),
+                status="waiting",
+                notes=data.get("notes"),
+            )
+            self.db.add(entry)
+            await self.db.commit()
+            await self.db.refresh(entry)
+            logger.info(f"Added waitlist entry {entry.id} for user {user_id}")
+            return entry
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error adding waitlist entry: {str(e)}")
+            raise
+
+    async def cancel_waitlist_entry(self, entry_id: int, user_id: str) -> Optional[WaitlistEntries]:
+        entry = await self.get_waitlist_entry(entry_id, user_id)
+        if not entry:
+            return None
+        try:
+            entry.status = "cancelled"
+            await self.db.commit()
+            await self.db.refresh(entry)
+            return entry
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error cancelling waitlist entry {entry_id}: {str(e)}")
+            raise
+
+    async def seat_waitlist_entry(
+        self, entry_id: int, table_id: int, user_id: str, client_id: Optional[int]
+    ) -> Optional[Dict[str, Any]]:
+        """Seat a queued party to a table, opening an order ticket (ISSUE-069).
+
+        Atomic: the entry flips ``waiting -> seated`` and an ``open`` dine-in
+        ticket is opened on the free table (which itself flips to ``occupied``),
+        committing together. Raises ``ValueError`` if the entry is already
+        seated/cancelled or the table is occupied; returns ``None`` (caller →
+        404) if the entry or table isn't the caller's.
+        """
+        entry = await self.get_waitlist_entry(entry_id, user_id)
+        if not entry:
+            return None
+        if entry.status != "waiting":
+            raise ValueError(f"Waitlist entry is already {entry.status}")
+        table = await self.get_table(table_id, user_id)
+        if not table:
+            return None
+        # open_order enforces the free->occupied invariant and raises if occupied.
+        ticket = await self.open_order(
+            table_id,
+            {
+                "order_type": "dine_in",
+                "customer_name": entry.customer_name,
+                "party_size": entry.party_size,
+            },
+            user_id,
+            client_id,
+        )
+        try:
+            entry.status = "seated"
+            entry.seated_table_id = table_id
+            entry.seated_ticket_id = ticket.id
+            await self.db.commit()
+            await self.db.refresh(entry)
+            logger.info(f"Seated waitlist entry {entry.id} to table {table_id} (ticket {ticket.id})")
+            return {"entry": entry, "ticket": ticket}
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error seating waitlist entry {entry_id}: {str(e)}")
             raise
 
     # ---------------------------------------------------------- order tickets

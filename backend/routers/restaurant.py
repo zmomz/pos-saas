@@ -16,6 +16,7 @@ another's floor (SEC-02).
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -39,8 +40,10 @@ from services.kds_channel import kds_broker
 from services.restaurant import (
     KDS_STATUSES,
     ORDER_TYPES,
+    RESERVATION_STATUSES,
     SPLIT_STRATEGIES,
     TABLE_STATES,
+    WAITLIST_STATUSES,
     RestaurantService,
 )
 from services.system_settings import get_effective_tax_rate
@@ -140,6 +143,9 @@ class TableResponse(BaseModel):
     seats: Optional[int] = None
     state: Optional[str] = None
     current_ticket_id: Optional[int] = None
+    # The soonest still-booked reservation for this table — the floor overlay
+    # (null when the table has no upcoming booking). ISSUE-069.
+    next_reservation: Optional["ReservationResponse"] = None
 
     class Config:
         from_attributes = True
@@ -478,6 +484,84 @@ class PrepStationResponse(BaseModel):
         from_attributes = True
 
 
+# ---------- Reservation schemas (ISSUE-069) ----------
+class ReservationData(BaseModel):
+    table_id: Optional[int] = None
+    reserved_at: str
+    customer_name: Optional[str] = None
+    party_size: Optional[int] = None
+    branch_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class ReservationUpdateData(BaseModel):
+    table_id: Optional[int] = None
+    reserved_at: Optional[str] = None
+    customer_name: Optional[str] = None
+    party_size: Optional[int] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ReservationResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    branch_id: Optional[int] = None
+    table_id: Optional[int] = None
+    customer_name: Optional[str] = None
+    party_size: Optional[int] = None
+    reserved_at: Optional[datetime] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ReservationListResponse(BaseModel):
+    items: List[ReservationResponse]
+    total: int
+
+
+# ---------- Waitlist schemas (ISSUE-069) ----------
+class WaitlistData(BaseModel):
+    customer_name: Optional[str] = None
+    party_size: Optional[int] = None
+    branch_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class WaitlistResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    branch_id: Optional[int] = None
+    customer_name: Optional[str] = None
+    party_size: Optional[int] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    seated_table_id: Optional[int] = None
+    seated_ticket_id: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+
+class WaitlistListResponse(BaseModel):
+    items: List[WaitlistResponse]
+    total: int
+
+
+class SeatWaitlistRequest(BaseModel):
+    table_id: int
+
+
+class SeatWaitlistResponse(BaseModel):
+    entry: WaitlistResponse
+    ticket: OrderTicketResponse
+
+
 # ---------- Zone routes ----------
 @router.get("/zones", response_model=List[ZoneResponse])
 async def list_zones(
@@ -551,7 +635,16 @@ async def list_tables(
     items = await service.list_tables(
         user_id=client.user_id, zone_id=zone_id, branch_id=branch_id, state=state
     )
-    return {"items": items, "total": len(items)}
+    # Overlay each tile's soonest upcoming booking so reservations surface on the
+    # floor (ISSUE-069).
+    enriched = []
+    for table in items:
+        resp = TableResponse.model_validate(table)
+        resp.next_reservation = await service.next_reservation_for_table(
+            table.id, user_id=client.user_id
+        )
+        enriched.append(resp)
+    return {"items": enriched, "total": len(enriched)}
 
 
 @router.get("/tables/{table_id}", response_model=TableResponse)
@@ -645,6 +738,157 @@ async def open_order(
     if ticket is None:
         raise HTTPException(status_code=404, detail="Table not found")
     return ticket
+
+
+# ---------- Reservation routes (ISSUE-069) ----------
+@router.get("/reservations", response_model=ReservationListResponse)
+async def list_reservations(
+    status: Optional[str] = Query(None),
+    table_id: Optional[int] = Query(None),
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's reservations, optionally filtered by status/table (ISSUE-069)."""
+    if status is not None and status not in RESERVATION_STATUSES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status. Allowed: {', '.join(RESERVATION_STATUSES)}"
+        )
+    service = RestaurantService(db)
+    items = await service.list_reservations(user_id=client.user_id, status=status, table_id=table_id)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/reservations", response_model=ReservationResponse, status_code=201)
+async def create_reservation(
+    data: ReservationData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Book a table ahead for a future time (ISSUE-069)."""
+    service = RestaurantService(db)
+    try:
+        return await service.create_reservation(
+            data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating reservation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.put("/reservations/{reservation_id}", response_model=ReservationResponse)
+async def update_reservation(
+    reservation_id: int,
+    data: ReservationUpdateData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a reservation (time/party/status), requires ownership (ISSUE-069)."""
+    service = RestaurantService(db)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    try:
+        result = await service.update_reservation(reservation_id, updates, user_id=client.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not result:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    return result
+
+
+@router.delete("/reservations/{reservation_id}", response_model=ReservationResponse)
+async def cancel_reservation(
+    reservation_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a reservation — flips it to ``cancelled`` (ISSUE-069)."""
+    service = RestaurantService(db)
+    result = await service.cancel_reservation(reservation_id, user_id=client.user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    return result
+
+
+# ---------- Waitlist routes (ISSUE-069) ----------
+@router.get("/waitlist", response_model=WaitlistListResponse)
+async def list_waitlist(
+    status: Optional[str] = Query("waiting"),
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's waitlist in arrival order (ISSUE-069).
+
+    Defaults to ``waiting`` (the live queue); pass ``status=`` (empty) for all.
+    """
+    if status == "":
+        status = None
+    if status is not None and status not in WAITLIST_STATUSES:
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status. Allowed: {', '.join(WAITLIST_STATUSES)}"
+        )
+    service = RestaurantService(db)
+    items = await service.list_waitlist(user_id=client.user_id, status=status)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/waitlist", response_model=WaitlistResponse, status_code=201)
+async def add_to_waitlist(
+    data: WaitlistData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue a walk-in party for the next free table (ISSUE-069)."""
+    service = RestaurantService(db)
+    try:
+        return await service.add_to_waitlist(
+            data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except Exception as e:
+        logger.error(f"Error adding waitlist entry: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.delete("/waitlist/{entry_id}", response_model=WaitlistResponse)
+async def cancel_waitlist_entry(
+    entry_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a party from the waitlist — flips it to ``cancelled`` (ISSUE-069)."""
+    service = RestaurantService(db)
+    result = await service.cancel_waitlist_entry(entry_id, user_id=client.user_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Waitlist entry not found")
+    return result
+
+
+@router.post("/waitlist/{entry_id}/seat", response_model=SeatWaitlistResponse)
+async def seat_waitlist_entry(
+    entry_id: int,
+    data: SeatWaitlistRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Seat a queued party to a free table, opening an order ticket (ISSUE-069).
+
+    The entry flips ``waiting -> seated`` and a dine-in ticket opens on the table
+    (which itself flips ``free -> occupied``). A second seat, or seating onto an
+    occupied table, is rejected (409).
+    """
+    service = RestaurantService(db)
+    try:
+        result = await service.seat_waitlist_entry(
+            entry_id, data.table_id, user_id=client.user_id, client_id=client.id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error seating waitlist entry {entry_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    if result is None:
+        raise HTTPException(status_code=404, detail="Waitlist entry or table not found")
+    return result
 
 
 # ---------- Order ticket routes ----------

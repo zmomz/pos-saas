@@ -2596,6 +2596,7 @@ export interface RestaurantTable {
   branch_id?: number | null;
   state?: string | null; // free | occupied | bill_printed
   current_ticket_id?: number | null;
+  next_reservation?: Reservation | null; // soonest upcoming booking (ISSUE-069)
 }
 
 export interface OrderTicket {
@@ -2674,6 +2675,109 @@ export async function openTableOrder(
     url: `/api/v1/restaurant/tables/${tableId}/open-order`,
     method: 'POST',
     data,
+  });
+  return res.data;
+}
+
+// ---------- Reservations + waitlist (ISSUE-069) ----------
+export interface Reservation {
+  id: number;
+  table_id?: number | null;
+  customer_name?: string | null;
+  party_size?: number | null;
+  reserved_at?: string | null; // ISO-8601
+  status?: string | null; // booked | seated | cancelled | no_show
+  notes?: string | null;
+  branch_id?: number | null;
+}
+
+export interface WaitlistEntry {
+  id: number;
+  customer_name?: string | null;
+  party_size?: number | null;
+  status?: string | null; // waiting | seated | cancelled
+  notes?: string | null;
+  seated_table_id?: number | null;
+  seated_ticket_id?: number | null;
+}
+
+export async function getReservations(params?: {
+  status?: string;
+  table_id?: number;
+}): Promise<{ items: Reservation[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: Reservation[]; total: number }>({
+    url: '/api/v1/restaurant/reservations',
+    method: 'GET',
+    data: params || {},
+  });
+  return res.data;
+}
+
+export async function createReservation(data: {
+  table_id?: number;
+  reserved_at: string;
+  customer_name?: string;
+  party_size?: number;
+  notes?: string;
+}): Promise<Reservation> {
+  const res = await client.apiCall.invoke<Reservation>({
+    url: '/api/v1/restaurant/reservations',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function cancelReservation(reservationId: number): Promise<Reservation> {
+  const res = await client.apiCall.invoke<Reservation>({
+    url: `/api/v1/restaurant/reservations/${reservationId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getWaitlist(params?: {
+  status?: string;
+}): Promise<{ items: WaitlistEntry[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: WaitlistEntry[]; total: number }>({
+    url: '/api/v1/restaurant/waitlist',
+    method: 'GET',
+    data: params || {},
+  });
+  return res.data;
+}
+
+export async function addToWaitlist(data: {
+  customer_name?: string;
+  party_size?: number;
+  notes?: string;
+}): Promise<WaitlistEntry> {
+  const res = await client.apiCall.invoke<WaitlistEntry>({
+    url: '/api/v1/restaurant/waitlist',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function cancelWaitlistEntry(entryId: number): Promise<WaitlistEntry> {
+  const res = await client.apiCall.invoke<WaitlistEntry>({
+    url: `/api/v1/restaurant/waitlist/${entryId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function seatWaitlistEntry(
+  entryId: number,
+  tableId: number
+): Promise<{ entry: WaitlistEntry; ticket: OrderTicket }> {
+  const res = await client.apiCall.invoke<{ entry: WaitlistEntry; ticket: OrderTicket }>({
+    url: `/api/v1/restaurant/waitlist/${entryId}/seat`,
+    method: 'POST',
+    data: { table_id: tableId },
   });
   return res.data;
 }
