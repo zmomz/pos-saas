@@ -147,6 +147,11 @@ class CreateTransactionRequest(BaseModel):
     # the tenders must cover and reported per shift in the Z-report. A split's
     # per-tender amounts therefore sum to total_amount + tip_amount.
     tip_amount: Optional[float] = 0
+    # Cash-drawer change helper (ISSUE-074). The cash the customer handed over for
+    # the cash portion of the sale; the server computes + records the change owed
+    # back (change_due). Must cover the cash amount due. Drawer-facing only — it
+    # never changes the invoice total or the captured tender. Null on a card sale.
+    cash_tendered: Optional[float] = None
     vat_rate: Optional[float] = 15.0  # fallback; the global rate (MA-05) wins when set
     # Optional split-tender breakdown (POS-02). When given, the per-method amounts
     # must sum to the invoice total; payment_method is derived ("mixed" if >1).
@@ -208,6 +213,10 @@ class TransactionResponse(BaseModel):
     # Gratuity collected on top of total_amount (POS-13, F-012); null when no tip.
     # The customer paid total_amount + tip_amount across the tenders.
     tip_amount: Optional[float] = None
+    # Cash-drawer change helper (ISSUE-074); null on a non-cash / unentered sale.
+    # cash_tendered is what the customer handed over, change_due what they get back.
+    cash_tendered: Optional[float] = None
+    change_due: Optional[float] = None
     payment_method: str
     payment_breakdown: Optional[str] = None
     status: str
@@ -687,6 +696,35 @@ async def create_transaction(
         methods = [p.method for p in data.payments]
         payment_method = "mixed" if len(set(methods)) > 1 else methods[0]
 
+    # ---- Cash-drawer change helper (ISSUE-074) ----
+    # When the cashier records the cash the customer handed over, compute the change
+    # owed back. The cash AMOUNT DUE is the cash leg of the sale: the whole charge
+    # (incl. tip) for a single cash tender, or the sum of the cash legs of a split.
+    # Tendering less than that cash due is rejected — you can't under-pay cash. The
+    # change is recorded for the drawer only; it never changes the captured tenders
+    # (which still cover the amount due), the invoice total, or the VAT base.
+    cash_tendered: Optional[float] = None
+    change_due: Optional[float] = None
+    if data.cash_tendered is not None:
+        cash_tendered = round(float(data.cash_tendered), 2)
+        if cash_tendered < 0:
+            raise HTTPException(status_code=400, detail="cash_tendered cannot be negative")
+        if data.payments:
+            cash_due = round(
+                sum(p.amount for p in data.payments if (p.method or "") == "cash"), 2
+            )
+        else:
+            cash_due = charge_total if payment_method == "cash" else 0.0
+        if cash_tendered + 0.01 < cash_due:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cash tendered {cash_tendered:.2f} is less than the cash due "
+                    f"{cash_due:.2f}"
+                ),
+            )
+        change_due = round(cash_tendered - cash_due, 2)
+
     # ---- Buyer VAT capture (F-018 / ZA-06) ----
     # A VAT-registered buyer makes this a B2B supply. Prefer the explicit request
     # value (ad-hoc business walk-in); otherwise fall back to the saved customer's
@@ -741,6 +779,8 @@ async def create_transaction(
             payment_method=payment_method,
             payment_breakdown_json=payment_breakdown_json,
             tip_amount=tip_amount,
+            cash_tendered=cash_tendered,
+            change_due=change_due,
             customer_name=data.customer_name,
             customer_phone=data.customer_phone,
             buyer_vat=buyer_vat,
@@ -795,6 +835,8 @@ async def create_transaction(
         discount_amount=transaction.discount_amount or 0,
         total_amount=transaction.total_amount,
         tip_amount=transaction.tip_amount or None,
+        cash_tendered=transaction.cash_tendered,
+        change_due=transaction.change_due,
         payment_method=transaction.payment_method,
         payment_breakdown=transaction.payment_breakdown,
         status=transaction.status or "completed",

@@ -468,6 +468,11 @@ class NormalizedCart:
     # caller folds them into ``tender_specs``; the core records the tip on the row.
     tip_amount: float = 0.0
     service_charge: float = 0.0
+    # Cash-drawer change helper (ISSUE-074): the cash the customer handed over and
+    # the change owed back. Drawer-facing only — recorded on the row, never folded
+    # into the tenders (which cover the amount due). Null on a non-cash sale.
+    cash_tendered: Optional[float] = None
+    change_due: Optional[float] = None
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     buyer_vat: Optional[str] = None
@@ -550,6 +555,8 @@ async def execute_sale(db: AsyncSession, cart: NormalizedCart) -> SaleResult:
         discount_code=cart.discount_code,
         total_amount=cart.total_amount,
         tip_amount=cart.tip_amount,
+        cash_tendered=cart.cash_tendered,
+        change_due=cart.change_due,
         payment_method=cart.payment_method,
         payment_breakdown=cart.payment_breakdown_json,
         status="completed",

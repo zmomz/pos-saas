@@ -223,6 +223,11 @@ export default function POSTerminal() {
   // the VAT base; added to the amount due so the tenders cover total + tip.
   const [tipAmount, setTipAmount] = useState(0);
 
+  // ISSUE-074: cash-drawer change helper. On a cash payment the cashier records the
+  // cash the customer handed over; the UI shows the change owed back and the
+  // checkout sends `cash_tendered` so the backend records tendered + change.
+  const [cashTendered, setCashTendered] = useState('');
+
   // Discount state
   const [discountCode, setDiscountCode] = useState('');
   const [appliedDiscount, setAppliedDiscount] = useState<Discount | null>(null);
@@ -590,6 +595,11 @@ export default function POSTerminal() {
   // invoice total plus the tip, so the tenders (split or single) must cover this.
   const tip = Math.max(0, Number(tipAmount) || 0);
   const amountDue = total + tip;
+  // ISSUE-074: change owed back on a single-tender cash sale. Only meaningful when
+  // the cashier has entered the cash handed over and it covers the amount due.
+  const cashGiven = Math.max(0, Number(cashTendered) || 0);
+  const isCashSale = !splitMode && paymentMethod === 'cash';
+  const changeDue = isCashSale && cashGiven > 0 ? cashGiven - amountDue : 0;
 
   // POS-06: products filtered by the name-search box (Arabic name included) and
   // the active category chip (handoff).
@@ -713,6 +723,11 @@ export default function POSTerminal() {
         // POS-13 (F-012): gratuity on top of the invoice total; the backend adds it
         // to the amount the tenders must cover and reports it in the Z-report.
         tip_amount: tip > 0 ? Number(tip.toFixed(2)) : undefined,
+        // ISSUE-074: on a single-tender cash sale, send the cash handed over so the
+        // backend records the change owed back. Drawer-facing — never changes the
+        // captured tender (which covers the amount due).
+        cash_tendered:
+          isCashSale && cashGiven > 0 ? Number(cashGiven.toFixed(2)) : undefined,
         payments: splitMode
           ? splitPayments.filter((p) => (Number(p.amount) || 0) > 0)
           : undefined,
@@ -775,6 +790,7 @@ export default function POSTerminal() {
       setGiftCardCode('');
       setSelectedTerminalId('');
       setTipAmount(0);
+      setCashTendered('');
       setRedeemPoints('');
       setSelectedCustomerId('');
     } catch (err) {
@@ -1867,6 +1883,40 @@ export default function POSTerminal() {
                     dir="ltr"
                     className="mt-2 bg-muted border-border text-foreground"
                   />
+                )}
+                {/* ISSUE-074: cash-drawer change helper. The cashier enters the cash
+                    the customer handed over; the change owed back is shown and sent
+                    on the sale. Only on a single-tender cash payment. */}
+                {paymentMethod === 'cash' && (
+                  <div className="mt-2">
+                    <label
+                      htmlFor="cash-tendered"
+                      className="text-muted-foreground text-sm block mb-1"
+                    >
+                      {t('cash_tendered')}
+                    </label>
+                    <Input
+                      id="cash-tendered"
+                      type="number"
+                      inputMode="decimal"
+                      min={0}
+                      step="0.01"
+                      value={cashTendered}
+                      onChange={(e) => setCashTendered(e.target.value)}
+                      placeholder="0.00"
+                      className="bg-muted border-border text-foreground"
+                    />
+                    {cashGiven > 0 && (
+                      <div className="flex justify-between mt-2 text-sm font-semibold">
+                        <span className="text-muted-foreground">{t('change_due')}</span>
+                        <span
+                          className={`tabular-nums ${changeDue < 0 ? 'text-danger' : 'text-success'}`}
+                        >
+                          {SAR(Math.max(0, changeDue))}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )}
                 {/* HW-03 (F-005, H16): pick a paired in-store terminal for a
                     card-like tender; the charge routes to its gateway. */}

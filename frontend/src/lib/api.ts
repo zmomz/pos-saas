@@ -251,6 +251,10 @@ export interface TransactionResult {
   // POS-13 (F-012): gratuity collected on top of total_amount; null when no tip.
   // The customer paid total_amount + tip_amount across the tenders.
   tip_amount?: number | null;
+  // ISSUE-074: cash-drawer change helper — cash handed over + change owed back.
+  // Drawer-facing only; null on a non-cash / unentered sale.
+  cash_tendered?: number | null;
+  change_due?: number | null;
   payment_method: string;
   status: string;
   // Stamped ZATCA TLV (base64) + the ready-to-render fiscal QR PNG (base64).
@@ -297,6 +301,9 @@ export async function createTransaction(data: {
   // POS-13 (F-012): gratuity collected on top of the invoice total. Outside the VAT
   // base; the split/single tenders must cover total_amount + tip_amount.
   tip_amount?: number;
+  // ISSUE-074: cash the customer handed over on a cash payment; the server records
+  // it and the change owed back. Drawer-facing only — never changes the tender.
+  cash_tendered?: number;
   // PRC-01: a discount code the server validates and prices authoritatively. When
   // set, the server recomputes the discount from the rule and consumes one use —
   // the client-sent discount_amount is not trusted for the coded portion.
