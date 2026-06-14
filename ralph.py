@@ -59,6 +59,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# On Windows the console streams default to the locale codec (cp1252) and blow
+# up echoing Claude's UTF-8 output. Re-pin our own stdout/stderr to UTF-8.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass  # not a reconfigurable stream (e.g. redirected to a non-TTY pipe)
+
 COMPLETE_SENTINEL = "<promise>COMPLETE</promise>"
 
 PRD_STUB = """# PRD
@@ -269,7 +277,13 @@ def build_command(
 def run_iteration(cmd: list[str], *, capture: bool, env: dict | None = None) -> str:
     """Run one Claude invocation. Returns captured stdout (or '' if streaming)."""
     if capture:
-        proc = subprocess.run(cmd, text=True, capture_output=True, env=env)
+        # Claude emits UTF-8; Windows would otherwise decode the captured pipes
+        # with the locale codec (cp1252) and the reader thread dies on bytes like
+        # 0x90. Pin UTF-8 and replace undecodable bytes instead of crashing.
+        proc = subprocess.run(
+            cmd, text=True, capture_output=True, env=env,
+            encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
+        )
         out = proc.stdout or ""
         if out:
             print(out)
