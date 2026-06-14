@@ -271,7 +271,7 @@ async def test_webhook_fires_on_sale(client, monkeypatch):
                 client_id=client_id,
                 name="hook",
                 url="https://example.test/sale",
-                events="sale.completed,refund.created",
+                events="sale.completed,sale.refunded",
                 secret_key="sek",
                 is_active=True,
             )

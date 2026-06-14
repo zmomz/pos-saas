@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,6 +51,7 @@ from services.production import (
     SearchService,
     WebhookDispatcher,
     compute_shift_cash_reconciliation,
+    fire_event_background,
     performance_monitor,
     rate_limiter,
     zatca_service,
@@ -629,6 +630,7 @@ async def list_webhook_deliveries(
 @router.post("/shifts/open")
 async def open_shift(
     data: ShiftOpenRequest,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
@@ -662,6 +664,19 @@ async def open_shift(
     await db.commit()
     await db.refresh(shift)
 
+    # Domain webhook (ISSUE-051, H25): notify subscribers the shift opened.
+    background_tasks.add_task(
+        fire_event_background,
+        owner_id,
+        "shift.opened",
+        {
+            "shift_id": shift.id,
+            "branch_id": shift.branch_id,
+            "staff_name": shift.staff_name,
+            "opening_cash": shift.opening_cash,
+        },
+    )
+
     return {
         "id": shift.id,
         "status": "open",
@@ -674,6 +689,7 @@ async def open_shift(
 @router.post("/shifts/close")
 async def close_shift(
     data: ShiftCloseRequest,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
@@ -712,6 +728,21 @@ async def close_shift(
         )
     )
     await db.commit()
+
+    # Domain webhook (ISSUE-051, H25): notify subscribers the shift closed,
+    # carrying the reconciliation outcome integrations care about.
+    background_tasks.add_task(
+        fire_event_background,
+        owner_id,
+        "shift.closed",
+        {
+            "shift_id": shift.id,
+            "branch_id": shift.branch_id,
+            "closing_cash": data.closing_cash,
+            "expected_cash": expected_cash,
+            "cash_difference": cash_difference,
+        },
+    )
 
     return {
         "id": shift.id,
@@ -1992,6 +2023,7 @@ async def list_branch_transfers(
 @router.post("/stock-adjustments")
 async def create_stock_adjustment(
     data: StockAdjustmentRequest,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
@@ -2086,6 +2118,23 @@ async def create_stock_adjustment(
     db.add(record)
     await db.commit()
     await db.refresh(record)
+
+    # Domain webhook (ISSUE-051, H25): an adjustment changed on-hand stock — notify
+    # subscribers so inventory integrations stay in sync.
+    background_tasks.add_task(
+        fire_event_background,
+        owner_id,
+        "inventory.updated",
+        {
+            "product_id": record.product_id,
+            "product_name": record.product_name,
+            "branch_id": record.branch_id,
+            "reason": record.reason,
+            "system_quantity": record.system_quantity,
+            "counted_quantity": record.counted_quantity,
+            "variance": record.variance,
+        },
+    )
 
     return {
         "id": record.id,

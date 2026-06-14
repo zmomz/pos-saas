@@ -4,13 +4,14 @@ from typing import List, Optional
 
 from datetime import datetime, date, timezone
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from services.customers import CustomersService
+from services.production import fire_event_background
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from models.audit_logs import Audit_logs
@@ -528,13 +529,15 @@ async def get_customer_insights(
 @router.post("", response_model=CustomersResponse, status_code=201)
 async def create_customers(
     data: CustomersData,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_user),
     scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new customers"""
     logger.debug(f"Creating new customers with data: {data}")
-    
+
+    owner_id = scope.owner_user_id or str(current_user.id)
     service = CustomersService(db)
     try:
         create_dict = data.model_dump()
@@ -544,11 +547,18 @@ async def create_customers(
             create_dict["consent_updated_at"] = datetime.now()
         # CRM-04 (F-039): encode the tags list to the JSON string the column holds.
         _serialize_tags(create_dict)
-        result = await service.create(create_dict, user_id=(scope.owner_user_id or str(current_user.id)))
+        result = await service.create(create_dict, user_id=owner_id)
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create customers")
-        
+
         logger.info(f"Customers created successfully with id: {result.id}")
+        # Domain webhook (ISSUE-051, H25): notify subscribers of the new customer.
+        background_tasks.add_task(
+            fire_event_background,
+            owner_id,
+            "customer.created",
+            {"customer_id": result.id, "name": result.name},
+        )
         return result
     except ValueError as e:
         logger.error(f"Validation error creating customers: {str(e)}")

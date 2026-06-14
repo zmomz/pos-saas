@@ -712,7 +712,7 @@ async def create_transaction(
     # After the sale is durably persisted, notify the merchant about any sold
     # product that has fallen to/below the threshold. Never blocks or fails the
     # sale — alert dispatch is in stub/log mode until SMTP is configured.
-    await _maybe_send_low_stock_alerts(db, client, data.items)
+    await _maybe_send_low_stock_alerts(db, client, data.items, background_tasks, owner_id)
 
     return TransactionResponse(
         id=transaction.id,
@@ -764,9 +764,18 @@ async def create_transaction(
 
 
 async def _maybe_send_low_stock_alerts(
-    db: AsyncSession, client: Clients, items: List["CartItem"]
+    db: AsyncSession,
+    client: Clients,
+    items: List["CartItem"],
+    background_tasks: Optional[BackgroundTasks] = None,
+    owner_id: Optional[str] = None,
 ) -> None:
-    """Dispatch a low-stock alert for any sold product now at/below threshold."""
+    """Dispatch a low-stock alert for any sold product now at/below threshold.
+
+    Sends the merchant email and, when ``background_tasks``/``owner_id`` are
+    given, fires the ``product.low_stock`` webhook (ISSUE-051, H25) per affected
+    product so integrations can reorder.
+    """
     threshold = LowStockChecker.DEFAULT_THRESHOLD
     product_ids = list({item.product_id for item in items})
     if not product_ids:
@@ -787,6 +796,19 @@ async def _maybe_send_low_stock_alerts(
                 current_stock=product.quantity or 0,
                 threshold=threshold,
             )
+            if background_tasks is not None and owner_id is not None:
+                background_tasks.add_task(
+                    fire_event_background,
+                    owner_id,
+                    "product.low_stock",
+                    {
+                        "product_id": product.id,
+                        "name": product.name,
+                        "quantity": product.quantity or 0,
+                        "threshold": threshold,
+                        "client_id": client.id,
+                    },
+                )
     except Exception as exc:  # pragma: no cover - alerts must never break a sale
         logger.warning("Low-stock alert dispatch failed: %s", exc)
 
@@ -1521,7 +1543,7 @@ async def refund_transaction(
     background_tasks.add_task(
         fire_event_background,
         owner_id,
-        "refund.created",
+        "sale.refunded",
         {
             "credit_note_id": credit.id,
             "credit_note_number": credit_number,

@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from datetime import datetime, date
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from services.catalog_csv import parse_products_csv, products_to_csv
 from services.products import ProductsService
+from services.production import fire_event_background
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
@@ -291,20 +292,30 @@ async def get_products(
 @router.post("", response_model=ProductsResponse, status_code=201)
 async def create_products(
     data: ProductsData,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_user),
     scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new products"""
     logger.debug(f"Creating new products with data: {data}")
-    
+
+    owner_id = scope.owner_user_id or str(current_user.id)
     service = ProductsService(db)
     try:
-        result = await service.create(data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
+        result = await service.create(data.model_dump(), user_id=owner_id)
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create products")
-        
+
         logger.info(f"Products created successfully with id: {result.id}")
+        # Domain webhook (ISSUE-051, H25): notify subscribers post-commit. Best
+        # effort — a failing endpoint never affects the created product.
+        background_tasks.add_task(
+            fire_event_background,
+            owner_id,
+            "product.created",
+            {"product_id": result.id, "name": result.name, "client_id": result.client_id},
+        )
         return result
     except ValueError as e:
         logger.error(f"Validation error creating products: {str(e)}")
@@ -374,6 +385,7 @@ async def update_productss_batch(
 async def update_products(
     id: int,
     data: ProductsUpdateData,
+    background_tasks: BackgroundTasks,
     current_user: UserResponse = Depends(get_current_user),
     scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
@@ -381,6 +393,7 @@ async def update_products(
     """Update an existing products (requires ownership)"""
     logger.debug(f"Updating products {id} with data: {data}")
 
+    owner_id = scope.owner_user_id or str(current_user.id)
     service = ProductsService(db)
     try:
         # Only include non-None values for partial updates
@@ -389,8 +402,15 @@ async def update_products(
         if not result:
             logger.warning(f"Products with id {id} not found for update")
             raise HTTPException(status_code=404, detail="Products not found")
-        
+
         logger.info(f"Products {id} updated successfully")
+        # Domain webhook (ISSUE-051, H25): notify subscribers of the change.
+        background_tasks.add_task(
+            fire_event_background,
+            owner_id,
+            "product.updated",
+            {"product_id": result.id, "name": result.name, "client_id": result.client_id},
+        )
         return result
     except HTTPException:
         raise

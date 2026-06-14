@@ -835,6 +835,25 @@ class EmailService:
 # =============================================================================
 # Webhook Dispatcher
 # =============================================================================
+
+# Canonical set of advertised webhook events (ISSUE-051, H25). The
+# WebhookManagement UI's ``AVAILABLE_EVENTS`` must mirror this list exactly, and
+# every entry here is fired at its source so a subscriber never signs up for an
+# event that silently never arrives. ``sale.refunded`` (not ``refund.created``)
+# is the agreed name on both sides.
+WEBHOOK_EVENTS = [
+    "sale.completed",
+    "sale.refunded",
+    "product.created",
+    "product.updated",
+    "product.low_stock",
+    "customer.created",
+    "shift.opened",
+    "shift.closed",
+    "inventory.updated",
+]
+
+
 class WebhookDispatcher:
     """Fires webhooks with HMAC signatures for event notifications."""
 
