@@ -45,7 +45,8 @@ describe('SupplierManagement VAT number (ISSUE-063)', () => {
     server.use(
       http.get(`${BASE}/api/v1/entities/suppliers`, () => HttpResponse.json(ONE_SUPPLIER)),
       http.get(`${BASE}/api/v1/entities/purchase_orders`, () => HttpResponse.json(EMPTY)),
-      http.get(`${BASE}/api/v1/entities/products`, () => HttpResponse.json(EMPTY))
+      http.get(`${BASE}/api/v1/entities/products`, () => HttpResponse.json(EMPTY)),
+      http.get(`${BASE}/api/v1/entities/branches`, () => HttpResponse.json(EMPTY))
     );
 
     renderPage();
@@ -59,6 +60,7 @@ describe('SupplierManagement VAT number (ISSUE-063)', () => {
       http.get(`${BASE}/api/v1/entities/suppliers`, () => HttpResponse.json(EMPTY)),
       http.get(`${BASE}/api/v1/entities/purchase_orders`, () => HttpResponse.json(EMPTY)),
       http.get(`${BASE}/api/v1/entities/products`, () => HttpResponse.json(EMPTY)),
+      http.get(`${BASE}/api/v1/entities/branches`, () => HttpResponse.json(EMPTY)),
       http.post(`${BASE}/api/v1/entities/suppliers`, async ({ request }) => {
         const body = (await request.json()) as { vat_number?: string };
         createdVat = body.vat_number;
@@ -98,6 +100,7 @@ describe('SupplierManagement create PO (ISSUE-036)', () => {
       http.get(`${BASE}/api/v1/entities/suppliers`, () => HttpResponse.json(ONE_SUPPLIER)),
       http.get(`${BASE}/api/v1/entities/purchase_orders`, () => HttpResponse.json(EMPTY)),
       http.get(`${BASE}/api/v1/entities/products`, () => HttpResponse.json(PRODUCTS)),
+      http.get(`${BASE}/api/v1/entities/branches`, () => HttpResponse.json(EMPTY)),
       http.post(`${BASE}/api/v1/entities/purchase_orders`, async ({ request }) => {
         body = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json({ id: '10', ...body }, { status: 201 });

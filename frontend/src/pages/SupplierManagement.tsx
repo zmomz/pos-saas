@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { client, receivePurchaseOrder } from '@/lib/api';
+import { client, receivePurchaseOrder, getBranches } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { Truck, Plus, Search, Package, ClipboardList, CheckCircle } from 'lucide-react';
 
@@ -34,9 +34,19 @@ interface PurchaseOrder {
   status: string;
   total_amount: number;
   items_count: number;
+  items_json?: string;
   order_date?: string;
   received_date?: string;
   created_at?: string;
+}
+
+// A line being received now (a partial receipt against the PO).
+interface ReceiveLine {
+  product_id: string;
+  product_name: string;
+  ordered: number;
+  received: number;
+  qty: number;
 }
 
 interface SupplierFormData {
@@ -69,12 +79,17 @@ const emptySupplierForm: SupplierFormData = {
 export default function SupplierManagement() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<{ id: string; name: string }[]>([]);
+  const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [poOpen, setPoOpen] = useState(false);
+  const [receiveOpen, setReceiveOpen] = useState(false);
+  const [receivePO, setReceivePO] = useState<PurchaseOrder | null>(null);
+  const [receiveBranchId, setReceiveBranchId] = useState('');
+  const [receiveLines, setReceiveLines] = useState<ReceiveLine[]>([]);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [formData, setFormData] = useState<SupplierFormData>(emptySupplierForm);
@@ -91,10 +106,11 @@ export default function SupplierManagement() {
   async function loadData() {
     setLoading(true);
     try {
-      const [suppRes, poRes, prodRes] = await Promise.all([
+      const [suppRes, poRes, prodRes, branchData] = await Promise.all([
         client.entities.suppliers.query({ query: {}, limit: 200 }),
         client.entities.purchase_orders.query({ query: {}, limit: 200 }),
         client.entities.products.query({ query: {}, limit: 500 }),
+        getBranches(),
       ]);
       const suppData = suppRes.data;
       const poData = poRes.data;
@@ -103,6 +119,8 @@ export default function SupplierManagement() {
       setPurchaseOrders(Array.isArray(poData?.items) ? poData.items : Array.isArray(poData) ? poData : []);
       const prodList = Array.isArray(prodData?.items) ? prodData.items : Array.isArray(prodData) ? prodData : [];
       setProducts(prodList.map((p: { id: string | number; name: string }) => ({ id: String(p.id), name: p.name })));
+      const branchList = Array.isArray(branchData?.items) ? branchData.items : Array.isArray(branchData) ? branchData : [];
+      setBranches(branchList.map((b: { id: string | number; name: string }) => ({ id: String(b.id), name: b.name })));
     } catch (err) {
       console.error('Failed to load supplier data:', err);
       setSuppliers([]);
@@ -246,14 +264,63 @@ export default function SupplierManagement() {
     }
   }
 
-  async function handleReceiveStock(po: PurchaseOrder) {
+  // Open the receive dialog for a PO: parse its items_json lines (only those that
+  // carry a product_id are receivable into stock) and default each line's
+  // receive-now quantity to its outstanding balance (ordered − already received).
+  function openReceive(po: PurchaseOrder) {
+    let parsed: unknown = [];
     try {
-      // Phase 6: the real receive endpoint increments product stock + records
-      // cost server-side (idempotent), rather than just flipping the status.
-      await receivePurchaseOrder(po.id);
+      parsed = po.items_json ? JSON.parse(po.items_json) : [];
+    } catch {
+      parsed = [];
+    }
+    const lines: ReceiveLine[] = (Array.isArray(parsed) ? parsed : [])
+      .filter((l) => l && l.product_id !== undefined && l.product_id !== null)
+      .map((l) => {
+        const ordered = Number(l.quantity) || 0;
+        const received = Number(l.received) || 0;
+        return {
+          product_id: String(l.product_id),
+          product_name:
+            l.product_name || products.find((p) => p.id === String(l.product_id))?.name || `#${l.product_id}`,
+          ordered,
+          received,
+          qty: Math.max(0, ordered - received),
+        };
+      });
+    setReceivePO(po);
+    setReceiveLines(lines);
+    setReceiveBranchId('');
+    setReceiveOpen(true);
+  }
+
+  function updateReceiveQty(index: number, value: number) {
+    setReceiveLines((prev) => {
+      const lines = [...prev];
+      lines[index] = { ...lines[index], qty: Math.max(0, value) };
+      return lines;
+    });
+  }
+
+  async function handleReceiveSubmit() {
+    if (!receivePO) return;
+    setSubmitting(true);
+    try {
+      // The real receive endpoint lands stock per line (keyed off product_id),
+      // optionally into a branch ledger, and leaves the PO partially_received
+      // when only part of a line's outstanding balance is received.
+      const lines = receiveLines
+        .filter((l) => l.qty > 0)
+        .map((l) => ({ product_id: Number(l.product_id), quantity: l.qty }));
+      const branch_id = receiveBranchId ? Number(receiveBranchId) : undefined;
+      await receivePurchaseOrder(Number(receivePO.id), { branch_id, lines });
+      setReceiveOpen(false);
+      setReceivePO(null);
       await loadData();
     } catch (err) {
       console.error('Failed to receive stock:', err);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -501,9 +568,9 @@ export default function SupplierManagement() {
                     <td className="p-3">{po.order_date ? new Date(po.order_date).toLocaleDateString() : '—'}</td>
                     <td className="p-3">
                       {po.status !== 'received' && po.status !== 'cancelled' && (
-                        <Button size="sm" onClick={() => handleReceiveStock(po)} className="bg-green-600 hover:bg-green-700 text-white text-xs">
+                        <Button size="sm" onClick={() => openReceive(po)} className="bg-green-600 hover:bg-green-700 text-white text-xs">
                           <CheckCircle className="h-3 w-3 mr-1" />
-                          {po.status === 'partially_received' ? 'Receive Remaining' : 'Receive'}
+                          {po.status === 'partially_received' ? t('receive_remaining') : t('receive_po')}
                         </Button>
                       )}
                     </td>
@@ -568,6 +635,65 @@ export default function SupplierManagement() {
             </div>
             <Button onClick={handleCreatePO} disabled={submitting || poForm.items.some((i) => !i.product_id)} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
               {submitting ? t('loading') : 'Create Purchase Order'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Receive PO Dialog */}
+      <Dialog open={receiveOpen} onOpenChange={setReceiveOpen}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-white">{t('receive_stock')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs text-slate-400 mb-1 block">{t('branch')}</label>
+              <select
+                value={receiveBranchId}
+                onChange={(e) => setReceiveBranchId(e.target.value)}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2 text-sm"
+              >
+                <option value="">{t('client_level_stock')}</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            </div>
+            {receiveLines.length === 0 ? (
+              <p className="text-slate-500 text-sm">{t('no_receivable_lines')}</p>
+            ) : (
+              receiveLines.map((line, idx) => {
+                const remaining = Math.max(0, line.ordered - line.received);
+                return (
+                  <div key={idx} className="flex gap-2 items-end">
+                    <div className="flex-1">
+                      <p className="text-white text-sm">{line.product_name}</p>
+                      <p className="text-xs text-slate-400">
+                        {t('ordered')}: {line.ordered} · {t('remaining')}: {remaining}
+                      </p>
+                    </div>
+                    <div className="w-24">
+                      <label className="text-xs text-slate-400">{t('receive_now')}</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={remaining}
+                        value={line.qty}
+                        onChange={(e) => updateReceiveQty(idx, parseInt(e.target.value) || 0)}
+                        className="bg-slate-700 border-slate-600 text-white text-sm"
+                      />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            <Button
+              onClick={handleReceiveSubmit}
+              disabled={submitting || receiveLines.every((l) => l.qty <= 0)}
+              className="w-full bg-green-600 hover:bg-green-700 text-white"
+            >
+              {submitting ? t('loading') : t('receive_stock')}
             </Button>
           </div>
         </DialogContent>
