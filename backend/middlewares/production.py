@@ -304,14 +304,20 @@ class ApiUsageMeteringMiddleware(BaseHTTPMiddleware):
         from datetime import datetime, timezone
 
         from core.database import db_manager
+        from dependencies.tenancy import resolve_owner_user_id
         from models.api_usage import Api_usage
 
         if not db_manager.async_session_maker:
             return
         async with db_manager.async_session_maker() as db:
+            # Tag the row with the owning merchant so a merchant's usage query
+            # aggregates all staff activity, not only the owner's own requests
+            # (finding H4).
+            owner_user_id = await resolve_owner_user_id(db, user_id)
             db.add(
                 Api_usage(
                     user_id=str(user_id),
+                    owner_user_id=owner_user_id,
                     endpoint=endpoint[:255],
                     method=method,
                     status_code=status_code,

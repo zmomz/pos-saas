@@ -126,6 +126,37 @@ async def resolve_tenant_scope(db: AsyncSession, current_user: UserResponse) -> 
     return TenantScope(role="client", user_id=uid, owner_user_id=uid)
 
 
+async def resolve_owner_user_id(db: AsyncSession, user_id: str) -> Optional[str]:
+    """Resolve the tenancy-owner id for a raw user id (e.g. a JWT ``sub``).
+
+    Write-path middleware (audit, metering) only has the actor's user id, not a
+    full :class:`UserResponse`. This loads the user to recover the email — so a
+    staff member maps back to the *owning* merchant — and defers to
+    :func:`resolve_tenant_scope`. Returns ``None`` for the platform master
+    (unrestricted), and falls back to the caller's own id if the user row cannot
+    be loaded. Best-effort: never raises.
+    """
+    from models.auth import User
+
+    try:
+        user = (
+            await db.execute(select(User).where(User.id == str(user_id)))
+        ).scalar_one_or_none()
+        if user is None:
+            return str(user_id)
+        pseudo = UserResponse(
+            id=str(user.id),
+            email=(user.email or ""),
+            name=(user.name or ""),
+            role=(user.role or "user"),
+        )
+        scope = await resolve_tenant_scope(db, pseudo)
+        return scope.owner_user_id
+    except Exception:  # pragma: no cover - tagging must not break the write path
+        logger.debug("Owner resolution failed for user_id=%s", user_id)
+        return str(user_id)
+
+
 async def get_tenant_scope(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

@@ -35,18 +35,23 @@ class Audit_logsService:
     async def check_ownership(self, obj_id: int, user_id: str) -> bool:
         """Check if user owns this record"""
         try:
-            obj = await self.get_by_id(obj_id, user_id=user_id)
+            obj = await self.get_by_id(obj_id, owner_user_id=user_id)
             return obj is not None
         except Exception as e:
             logger.error(f"Error checking ownership for audit_logs {obj_id}: {str(e)}")
             return False
 
-    async def get_by_id(self, obj_id: int, user_id: Optional[str] = None) -> Optional[Audit_logs]:
-        """Get audit_logs by ID (user can only see their own records)"""
+    async def get_by_id(self, obj_id: int, owner_user_id: Optional[str] = None) -> Optional[Audit_logs]:
+        """Get audit_logs by ID, scoped to the owning merchant's tenant.
+
+        ``owner_user_id`` is the tenancy owner (the merchant), not the actor, so a
+        merchant sees rows produced by their staff. ``None`` (platform master) is
+        unrestricted (finding H4).
+        """
         try:
             query = select(Audit_logs).where(Audit_logs.id == obj_id)
-            if user_id:
-                query = query.where(Audit_logs.user_id == user_id)
+            if owner_user_id:
+                query = query.where(Audit_logs.owner_user_id == owner_user_id)
             result = await self.db.execute(query)
             return result.scalar_one_or_none()
         except Exception as e:
@@ -54,21 +59,26 @@ class Audit_logsService:
             raise
 
     async def get_list(
-        self, 
-        skip: int = 0, 
-        limit: int = 20, 
-        user_id: Optional[str] = None,
+        self,
+        skip: int = 0,
+        limit: int = 20,
+        owner_user_id: Optional[str] = None,
         query_dict: Optional[Dict[str, Any]] = None,
         sort: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Get paginated list of audit_logss (user can only see their own records)"""
+        """Get paginated list of audit_logss, scoped to the owning merchant's tenant.
+
+        Scopes on ``owner_user_id`` (the merchant), not the actor, so a merchant's
+        audit query surfaces all their staff's actions. ``None`` (platform master)
+        is unrestricted (finding H4).
+        """
         try:
             query = select(Audit_logs)
             count_query = select(func.count(Audit_logs.id))
-            
-            if user_id:
-                query = query.where(Audit_logs.user_id == user_id)
-                count_query = count_query.where(Audit_logs.user_id == user_id)
+
+            if owner_user_id:
+                query = query.where(Audit_logs.owner_user_id == owner_user_id)
+                count_query = count_query.where(Audit_logs.owner_user_id == owner_user_id)
             
             if query_dict:
                 for field, value in query_dict.items():
@@ -106,7 +116,7 @@ class Audit_logsService:
     async def update(self, obj_id: int, update_data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Audit_logs]:
         """Update audit_logs (requires ownership)"""
         try:
-            obj = await self.get_by_id(obj_id, user_id=user_id)
+            obj = await self.get_by_id(obj_id, owner_user_id=user_id)
             if not obj:
                 logger.warning(f"Audit_logs {obj_id} not found for update")
                 return None
@@ -126,7 +136,7 @@ class Audit_logsService:
     async def delete(self, obj_id: int, user_id: Optional[str] = None) -> bool:
         """Delete audit_logs (requires ownership)"""
         try:
-            obj = await self.get_by_id(obj_id, user_id=user_id)
+            obj = await self.get_by_id(obj_id, owner_user_id=user_id)
             if not obj:
                 logger.warning(f"Audit_logs {obj_id} not found for deletion")
                 return False

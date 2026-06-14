@@ -8,7 +8,11 @@ class Audit_logs(Base):
     __table_args__ = {"extend_existing": True}
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
-    user_id = Column(String, nullable=False)
+    user_id = Column(String, nullable=False)  # the *actor* — the JWT ``sub`` that performed the action
+    # The owning merchant this row belongs to (resolved via the tenant scope). A
+    # staff member's actions are tagged with their owner so the merchant's audit
+    # query surfaces all staff activity, not just the owner's own (finding H4).
+    owner_user_id = Column(String, nullable=True, index=True)
     action = Column(String, nullable=False)
     details = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)

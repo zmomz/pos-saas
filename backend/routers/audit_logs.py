@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from services.audit_logs import Audit_logsService
 from dependencies.auth import get_admin_user, get_current_user
+from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -24,6 +25,7 @@ class Audit_logsResponse(BaseModel):
     """Entity response schema"""
     id: int
     user_id: str
+    owner_user_id: Optional[str] = None
     action: str
     details: Optional[str] = None
     ip_address: Optional[str] = None
@@ -51,9 +53,10 @@ async def query_audit_logss(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
-    """Query audit_logss with filtering, sorting, and pagination (user can only see their own records)"""
+    """Query audit_logss scoped to the caller's tenant (owner sees staff actions)"""
     logger.debug(f"Querying audit_logss: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
     
     service = Audit_logsService(db)
@@ -71,7 +74,7 @@ async def query_audit_logss(
             limit=limit,
             query_dict=query_dict,
             sort=sort,
-            user_id=str(current_user.id),
+            owner_user_id=scope.owner_user_id,
         )
         logger.debug(f"Found {result['total']} audit_logss")
         return result
@@ -125,14 +128,15 @@ async def get_audit_logs(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single audit_logs by ID (user can only see their own records)"""
+    """Get a single audit_logs by ID, scoped to the caller's tenant"""
     logger.debug(f"Fetching audit_logs with id: {id}, fields={fields}")
-    
+
     service = Audit_logsService(db)
     try:
-        result = await service.get_by_id(id, user_id=str(current_user.id))
+        result = await service.get_by_id(id, owner_user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Audit_logs with id {id} not found")
             raise HTTPException(status_code=404, detail="Audit_logs not found")

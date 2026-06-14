@@ -27,10 +27,22 @@ async def write_audit_log(
     if not db_manager.async_session_maker:
         return
     try:
+        from dependencies.tenancy import resolve_owner_user_id
+
         async with db_manager.async_session_maker() as db:
+            # Tag the row with the owning merchant (resolved via the tenant scope)
+            # so a merchant's audit query surfaces all staff activity, not only the
+            # actor's own actions (finding H4). ``anonymous`` failed-auth rows have
+            # no resolvable owner.
+            owner_user_id = (
+                await resolve_owner_user_id(db, user_id)
+                if user_id and user_id != "anonymous"
+                else None
+            )
             db.add(
                 Audit_logs(
                     user_id=str(user_id),
+                    owner_user_id=owner_user_id,
                     action=action,
                     details=(details or "")[:2000] or None,
                     ip_address=ip_address,

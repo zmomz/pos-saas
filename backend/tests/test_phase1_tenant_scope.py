@@ -17,6 +17,7 @@ from sqlalchemy import select
 from core.database import db_manager
 from dependencies.tenancy import resolve_tenant_scope
 from schemas.auth import UserResponse
+from models.api_usage import Api_usage
 from models.staff_members import Staff_members
 
 from conftest import (
@@ -199,6 +200,135 @@ async def test_staff_can_receive_owners_purchase_order(client):
         headers=auth_headers(other_token),
     )
     assert r2.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_owner_audit_query_returns_staff_actions(client):
+    """H4: a merchant owner's audit query must surface actions performed by their
+    staff. The audit middleware tags each row with the owning merchant
+    (``owner_user_id``) resolved via the tenant scope — not only the actor ``sub``
+    — and the read scopes on ``owner_user_id``, so a cashier's mutation is visible
+    to the owner while still attributed to the cashier as the actor.
+    """
+    owner, owner_token, _client_id = await make_client_account(client)
+
+    # A cashier (separate login under the merchant) performs a mutation.
+    staff_login, staff_token = await _make_staff_login(client, owner["id"])
+    r = await client.post(
+        "/api/v1/entities/expenses",
+        json={"category": "supplies", "amount": 12.5},
+        headers=auth_headers(staff_token),
+    )
+    assert r.status_code == 201, r.text
+
+    # The owner's audit query surfaces the cashier's mutation.
+    resp = await client.get("/api/v1/entities/audit_logs", headers=auth_headers(owner_token))
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    staff_creates = [
+        a for a in items
+        if a["action"].startswith("POST /api/v1/entities/expenses")
+        and a["user_id"] == staff_login["id"]
+    ]
+    assert staff_creates, f"owner did not see staff action; got {items}"
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_audit_read_rejected(client):
+    """A merchant must never see another merchant's audit rows. Merchant A performs
+    a mutation; merchant B's audit query is scoped to B's tenant and excludes it.
+    """
+    owner_a, token_a, _ca = await make_client_account(client)
+    owner_b, token_b, _cb = await make_client_account(client)
+
+    r = await client.post(
+        "/api/v1/entities/expenses",
+        json={"category": "rent", "amount": 99.0},
+        headers=auth_headers(token_a),
+    )
+    assert r.status_code == 201, r.text
+
+    resp = await client.get("/api/v1/entities/audit_logs", headers=auth_headers(token_b))
+    assert resp.status_code == 200, resp.text
+    items = resp.json()["items"]
+    # None of B's visible rows belong to A's actor or A's tenant.
+    assert all(a["user_id"] != owner_a["id"] for a in items), items
+    assert all(a.get("owner_user_id") != owner_a["id"] for a in items), items
+
+
+@pytest.mark.asyncio
+async def test_api_usage_reads_scope_on_owner(client):
+    """``api_usage`` GET scopes on the owning merchant: a staff-tagged row (owner =
+    merchant) is visible to the owner, while another tenant's row is not."""
+    owner, owner_token, _co = await make_client_account(client)
+    other, _other_token, _ce = await make_client_account(client)
+
+    # Seed metering rows directly (the metering middleware is env-gated off in CI):
+    # one produced by the owner's staff (tagged with the owner), one for another tenant.
+    async with db_manager.async_session_maker() as db:
+        db.add(
+            Api_usage(
+                user_id="staff-sub-1",
+                owner_user_id=owner["id"],
+                endpoint="/api/v1/pos/checkout",
+                method="POST",
+            )
+        )
+        db.add(
+            Api_usage(
+                user_id=other["id"],
+                owner_user_id=other["id"],
+                endpoint="/api/v1/other/tenant",
+                method="POST",
+            )
+        )
+        await db.commit()
+
+    resp = await client.get("/api/v1/entities/api_usage", headers=auth_headers(owner_token))
+    assert resp.status_code == 200, resp.text
+    endpoints = [i["endpoint"] for i in resp.json()["items"]]
+    assert "/api/v1/pos/checkout" in endpoints
+    assert "/api/v1/other/tenant" not in endpoints
+
+
+@pytest.mark.asyncio
+async def test_api_usage_stats_scope_on_owner(client):
+    """``GET /api/v1/production/api-usage/stats`` must aggregate the owning
+    merchant's tenant: a staff-tagged row counts toward the owner's stats, while
+    another tenant's row does not (finding H4)."""
+    owner, owner_token, _co = await make_client_account(client)
+    other, _other_token, _ce = await make_client_account(client)
+
+    async with db_manager.async_session_maker() as db:
+        db.add(
+            Api_usage(
+                user_id="staff-sub-2",
+                owner_user_id=owner["id"],
+                endpoint="/api/v1/pos/sale",
+                method="POST",
+                response_time_ms=10,
+            )
+        )
+        db.add(
+            Api_usage(
+                user_id=other["id"],
+                owner_user_id=other["id"],
+                endpoint="/api/v1/other/thing",
+                method="POST",
+                response_time_ms=20,
+            )
+        )
+        await db.commit()
+
+    resp = await client.get(
+        "/api/v1/production/api-usage/stats", headers=auth_headers(owner_token)
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    endpoints = [e["endpoint"] for e in body["endpoints"]]
+    assert "/api/v1/pos/sale" in endpoints
+    assert "/api/v1/other/thing" not in endpoints
+    assert body["total_requests"] == 1
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from services.api_usage import Api_usageService
 from dependencies.auth import get_admin_user, get_current_user
+from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -24,6 +25,7 @@ class Api_usageResponse(BaseModel):
     """Entity response schema"""
     id: int
     user_id: str
+    owner_user_id: Optional[str] = None
     agent_id: Optional[int] = None
     endpoint: str
     method: str
@@ -54,9 +56,10 @@ async def query_api_usages(
     limit: int = Query(20, ge=1, le=2000, description="Max number of records to return"),
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
-    """Query api_usages with filtering, sorting, and pagination (user can only see their own records)"""
+    """Query api_usages scoped to the caller's tenant (owner sees staff metering)"""
     logger.debug(f"Querying api_usages: query={query}, sort={sort}, skip={skip}, limit={limit}, fields={fields}")
     
     service = Api_usageService(db)
@@ -74,7 +77,7 @@ async def query_api_usages(
             limit=limit,
             query_dict=query_dict,
             sort=sort,
-            user_id=str(current_user.id),
+            owner_user_id=scope.owner_user_id,
         )
         logger.debug(f"Found {result['total']} api_usages")
         return result
@@ -128,14 +131,15 @@ async def get_api_usage(
     id: int,
     fields: str = Query(None, description="Comma-separated list of fields to return"),
     current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a single api_usage by ID (user can only see their own records)"""
+    """Get a single api_usage by ID, scoped to the caller's tenant"""
     logger.debug(f"Fetching api_usage with id: {id}, fields={fields}")
-    
+
     service = Api_usageService(db)
     try:
-        result = await service.get_by_id(id, user_id=str(current_user.id))
+        result = await service.get_by_id(id, owner_user_id=scope.owner_user_id)
         if not result:
             logger.warning(f"Api_usage with id {id} not found")
             raise HTTPException(status_code=404, detail="Api_usage not found")

@@ -1647,9 +1647,14 @@ async def list_stock_adjustments(
 @router.get("/api-usage/stats")
 async def get_api_usage_stats(
     current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get API usage statistics for rate plans."""
+    """Get API usage statistics for rate plans.
+
+    Scoped to the owning merchant (``owner_user_id``), not the raw actor, so a
+    merchant's usage aggregates all their staff's requests (finding H4).
+    """
     from models.api_usage import Api_usage
 
     result = await db.execute(
@@ -1658,14 +1663,14 @@ async def get_api_usage_stats(
             func.count(Api_usage.id).label("request_count"),
             func.avg(Api_usage.response_time_ms).label("avg_response_time"),
         )
-        .where(Api_usage.user_id == str(current_user.id))
+        .where(Api_usage.owner_user_id == owner_id)
         .group_by(Api_usage.endpoint)
     )
     stats = result.all()
 
     total_result = await db.execute(
         select(func.count(Api_usage.id)).where(
-            Api_usage.user_id == str(current_user.id)
+            Api_usage.owner_user_id == owner_id
         )
     )
     total_requests = total_result.scalar() or 0
