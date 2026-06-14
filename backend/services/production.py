@@ -879,6 +879,7 @@ class WebhookDispatcher:
 
         last_error: Optional[str] = None
         status_code: Optional[int] = None
+        started = time.monotonic()
         for attempt in range(1, WebhookDispatcher.MAX_ATTEMPTS + 1):
             try:
                 async with httpx.AsyncClient(timeout=WebhookDispatcher.TIMEOUT_SECONDS) as http:
@@ -891,6 +892,7 @@ class WebhookDispatcher:
                         "event": event,
                         "status": "delivered",
                         "status_code": status_code,
+                        "response_time_ms": int((time.monotonic() - started) * 1000),
                         "attempts": attempt,
                         "signature": f"sha256={signature}",
                     }
@@ -911,6 +913,7 @@ class WebhookDispatcher:
             "event": event,
             "status": "failed",
             "status_code": status_code,
+            "response_time_ms": int((time.monotonic() - started) * 1000),
             "attempts": WebhookDispatcher.MAX_ATTEMPTS,
             "error": last_error,
             "signature": f"sha256={signature}",
@@ -946,9 +949,48 @@ async def fire_event(
             continue
         if not _hook_subscribes(hook.events, event):
             continue
-        await WebhookDispatcher.dispatch(hook.url, event, body, hook.secret_key or "")
+        result = await WebhookDispatcher.dispatch(hook.url, event, body, hook.secret_key or "")
+        await record_delivery(db, str(user_id), hook.id, hook.url, event, result)
         attempted += 1
     return attempted
+
+
+async def record_delivery(
+    db: AsyncSession,
+    user_id: str,
+    webhook_id: Optional[int],
+    url: str,
+    event: str,
+    result: Optional[Dict[str, Any]],
+) -> None:
+    """Persist a single ``WebhookDispatcher.dispatch`` outcome (ISSUE-029).
+
+    Best effort — a logging failure (or a missing key in a stubbed result) must
+    never break the originating dispatch. ``result`` is the dict returned by
+    ``dispatch``; ``status`` is "delivered" only on a 2xx.
+    """
+    from models.webhook_deliveries import Webhook_deliveries
+
+    result = result or {}
+    status = result.get("status") or "failed"
+    try:
+        db.add(
+            Webhook_deliveries(
+                user_id=user_id,
+                webhook_id=webhook_id,
+                event=event,
+                target_url=url,
+                status=status,
+                status_code=result.get("status_code"),
+                response_time_ms=result.get("response_time_ms"),
+                attempts=result.get("attempts"),
+                error=result.get("error"),
+            )
+        )
+        await db.commit()
+    except Exception as exc:  # pragma: no cover - logging must not break dispatch
+        logger.warning("Webhook delivery log write failed for %s: %s", event, exc)
+        await db.rollback()
 
 
 async def fire_event_background(user_id: str, event: str, payload: Dict[str, Any]) -> None:

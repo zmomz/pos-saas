@@ -37,6 +37,9 @@ from models.shifts import Shifts  # noqa: F401
 # Imported so the loyalty_transactions ledger table registers on Base.metadata at
 # startup (ISSUE-028 / C4). The loyalty admin endpoints below reference it lazily.
 from models.loyalty_transactions import Loyalty_transactions  # noqa: F401
+# Imported so the webhook_deliveries log table registers on Base.metadata at
+# startup (ISSUE-029 / H24). The /webhooks/logs endpoint references it lazily.
+from models.webhook_deliveries import Webhook_deliveries  # noqa: F401
 from models.customers import Customers  # noqa: F401
 from services.production import (
     AnalyticsService,
@@ -568,7 +571,58 @@ async def test_webhook(
         secret=webhook.secret_key or "default_secret",
     )
 
+    # Persist the test delivery so it surfaces in the Delivery Logs tab (ISSUE-029).
+    from services.production import record_delivery
+
+    await record_delivery(
+        db, owner_id, webhook.id, webhook.url, "test.ping", dispatch_result
+    )
+
     return dispatch_result
+
+
+@router.get("/webhooks/logs")
+async def list_webhook_deliveries(
+    limit: int = Query(default=50, ge=1, le=500),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the merchant's webhook delivery history, newest first (ISSUE-029).
+
+    Each row is joined to its webhook name and carries ``success``/``status_code``
+    so the WebhookManagement "Delivery Logs" tab and its "Deliveries Today" stat
+    render real outcomes instead of a swallowed 404.
+    """
+    from models.webhook_deliveries import Webhook_deliveries
+    from models.webhooks import Webhooks
+
+    result = await db.execute(
+        select(Webhook_deliveries, Webhooks.name)
+        .outerjoin(Webhooks, Webhooks.id == Webhook_deliveries.webhook_id)
+        .where(Webhook_deliveries.user_id == owner_id)
+        .order_by(Webhook_deliveries.id.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    items = [
+        {
+            "id": d.id,
+            "webhook_id": d.webhook_id,
+            "webhook_name": name,
+            "event": d.event,
+            "url": d.target_url,
+            "status": d.status,
+            "success": d.status == "delivered",
+            "status_code": d.status_code,
+            "response_time_ms": d.response_time_ms,
+            "attempts": d.attempts,
+            "error": d.error,
+            "created_at": d.created_at.isoformat() if d.created_at else None,
+        }
+        for d, name in rows
+    ]
+    return {"items": items, "total": len(items)}
 
 
 # =============================================================================
