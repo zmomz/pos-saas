@@ -47,8 +47,6 @@ ALLOWLIST = {
     # so they carry no dedicated literal caller — but they are the convention,
     # not dead code.
     "api_usage.py": "generic entity triad (API metering, backend-written)",
-    "client_features.py": "generic entity triad (per-client feature flags)",
-    "clients.py": "generic entity triad (provisioned via /api/v1/tenant)",
     "loyalty_points.py": "generic entity triad (loyalty driven by /api/v1/pos)",
     "loyalty_programs.py": "generic entity triad (loyalty config)",
     "shifts.py": "generic entity triad (shift ops via /api/v1/production + pos)",
@@ -89,6 +87,18 @@ REMOVED_BACKEND = [
     # router/service are removed.
     _ROUTERS_DIR / "permissions.py",
     _BACKEND / "services" / "permissions.py",
+    # H14/H15: the clients/client_features CRUD scaffolds scoped every op on
+    # user_id == current_user.id (a merchant could only ever touch grants about
+    # its own login — structurally incapable of managing another tenant), and
+    # clients.py additionally exposed an admin /clients/all cross-tenant read
+    # (H15). No frontend caller; the live per-client toggle is tenant.py +
+    # features.py (AgentDashboard). The models (models/clients.py,
+    # models/client_features.py) are kept — only the orphaned routers/services
+    # are removed.
+    _ROUTERS_DIR / "clients.py",
+    _BACKEND / "services" / "clients.py",
+    _ROUTERS_DIR / "client_features.py",
+    _BACKEND / "services" / "client_features.py",
 ]
 REMOVED_FRONTEND = [
     _FRONTEND_SRC / "pages" / "AuthCallback.tsx",

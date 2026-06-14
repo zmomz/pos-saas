@@ -4,7 +4,8 @@ Covers the critical defects closed in Phase 1:
   C-1  provisioned clients get a real, loggable account (own user_id, temp pw)
   C-2  suspension targets the merchant, not the agent / siblings
   MA-02 slot deduction is atomic — a full package cannot be oversold
-  C-5  unauthenticated `/all` routes are gated to master/admin
+  H14/H15 the orphaned clients/client_features CRUD scaffolds — incl. the
+       cross-tenant `/clients/all` read — are deleted, not mounted
   C-6  the generic transactions triad cannot create/mutate fiscal records
   first-login force-reset clears must_change_password on password change
 """
@@ -16,7 +17,6 @@ from conftest import (
     add_product,
     auth_headers,
     make_agent_account,
-    make_master_account,
     register_user,
     unique_email,
 )
@@ -116,31 +116,25 @@ async def test_slot_deduction_cannot_oversell(client):
     assert second.status_code == 409, second.text
 
 
-# ---------------------------------------------------------------- C-5
-async def test_all_routes_require_master(client):
-    # Unauthenticated → 401.
-    anon = await client.get("/api/v1/entities/clients/all")
-    assert anon.status_code == 401
+# ---------------------------------------------------------------- H14/H15
+async def test_no_clients_entity_crud_route_is_mounted(client):
+    """H14/H15: the orphaned /api/v1/entities/clients and /client_features CRUD
+    scaffolds scoped every op on user_id == current_user.id — a merchant could
+    only ever read/mutate grants about its OWN login, never another tenant — and
+    additionally exposed an admin /clients/all cross-tenant read (H15). No
+    frontend caller; the live per-client toggle is the master/agent-gated path in
+    tenant.py + features.py (AgentDashboard). Neither triad — including /all —
+    may be mounted."""
+    from main import app
 
-    # Authenticated non-master (plain user) → 403.
-    _user, user_token, _ = await register_user(client)
-    forbidden = await client.get(
-        "/api/v1/entities/clients/all", headers=auth_headers(user_token)
-    )
-    assert forbidden.status_code == 403
-
-    # Master (admin role in a freshly issued token) → 200.
-    master_user, _stale = await make_master_account(client)
-    # Re-login so the JWT carries the promoted admin role (matches production).
-    relog = await client.post(
-        "/api/v1/auth/login",
-        json={"email": master_user["email"], "password": "Password123"},
-    )
-    master_token = relog.json()["token"]
-    ok = await client.get(
-        "/api/v1/entities/clients/all", headers=auth_headers(master_token)
-    )
-    assert ok.status_code == 200, ok.text
+    mounted = {getattr(r, "path", "") for r in app.routes}
+    offenders = {
+        p
+        for p in mounted
+        if p.startswith("/api/v1/entities/clients")
+        or p.startswith("/api/v1/entities/client_features")
+    }
+    assert not offenders, f"orphaned clients CRUD route(s) still mounted: {sorted(offenders)}"
 
 
 # ---------------------------------------------------------------- H1
