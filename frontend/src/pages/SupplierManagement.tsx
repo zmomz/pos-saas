@@ -51,8 +51,10 @@ interface SupplierFormData {
 
 interface POFormData {
   supplier_id: string;
-  items: { product_name: string; quantity: number; unit_price: number }[];
+  items: { product_id: string; product_name: string; quantity: number; unit_price: number }[];
 }
+
+const emptyPOItem = { product_id: '', product_name: '', quantity: 1, unit_price: 0 };
 
 const emptySupplierForm: SupplierFormData = {
   name: '',
@@ -66,6 +68,7 @@ const emptySupplierForm: SupplierFormData = {
 
 export default function SupplierManagement() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [products, setProducts] = useState<{ id: string; name: string }[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -75,7 +78,7 @@ export default function SupplierManagement() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [formData, setFormData] = useState<SupplierFormData>(emptySupplierForm);
-  const [poForm, setPoForm] = useState<POFormData>({ supplier_id: '', items: [{ product_name: '', quantity: 1, unit_price: 0 }] });
+  const [poForm, setPoForm] = useState<POFormData>({ supplier_id: '', items: [{ ...emptyPOItem }] });
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'suppliers' | 'orders'>('suppliers');
 
@@ -88,14 +91,18 @@ export default function SupplierManagement() {
   async function loadData() {
     setLoading(true);
     try {
-      const [suppRes, poRes] = await Promise.all([
+      const [suppRes, poRes, prodRes] = await Promise.all([
         client.entities.suppliers.query({ query: {}, limit: 200 }),
         client.entities.purchase_orders.query({ query: {}, limit: 200 }),
+        client.entities.products.query({ query: {}, limit: 500 }),
       ]);
       const suppData = suppRes.data;
       const poData = poRes.data;
+      const prodData = prodRes.data;
       setSuppliers(Array.isArray(suppData?.items) ? suppData.items : Array.isArray(suppData) ? suppData : []);
       setPurchaseOrders(Array.isArray(poData?.items) ? poData.items : Array.isArray(poData) ? poData : []);
+      const prodList = Array.isArray(prodData?.items) ? prodData.items : Array.isArray(prodData) ? prodData : [];
+      setProducts(prodList.map((p: { id: string | number; name: string }) => ({ id: String(p.id), name: p.name })));
     } catch (err) {
       console.error('Failed to load supplier data:', err);
       setSuppliers([]);
@@ -201,7 +208,7 @@ export default function SupplierManagement() {
 
   function openCreatePO(supplier: Supplier) {
     setSelectedSupplier(supplier);
-    setPoForm({ supplier_id: supplier.id, items: [{ product_name: '', quantity: 1, unit_price: 0 }] });
+    setPoForm({ supplier_id: supplier.id, items: [{ ...emptyPOItem }] });
     setPoOpen(true);
   }
 
@@ -209,15 +216,25 @@ export default function SupplierManagement() {
     setSubmitting(true);
     try {
       const totalAmount = poForm.items.reduce((sum, item) => sum + item.quantity * item.unit_price, 0);
+      // Map to the real `Purchase_orders` schema: `order_number` is NOT NULL with
+      // no default (so generate one), lines live in `items_json` carrying the
+      // `product_id` the receive flow keys off of. The old payload's
+      // supplier_name/items_count/items/order_date fields don't exist on the model.
+      const itemsJson = JSON.stringify(
+        poForm.items.map((item) => ({
+          product_id: Number(item.product_id),
+          product_name: item.product_name,
+          quantity: item.quantity,
+          unit_price: item.unit_price,
+        })),
+      );
       await client.entities.purchase_orders.create({
         data: {
-          supplier_id: poForm.supplier_id,
-          supplier_name: selectedSupplier?.name,
+          supplier_id: Number(poForm.supplier_id),
+          order_number: `PO-${Date.now()}`,
           status: 'draft',
           total_amount: totalAmount,
-          items_count: poForm.items.length,
-          items: JSON.stringify(poForm.items),
-          order_date: new Date().toISOString(),
+          items_json: itemsJson,
         },
       });
       setPoOpen(false);
@@ -243,8 +260,17 @@ export default function SupplierManagement() {
   function addPOItem() {
     setPoForm((prev) => ({
       ...prev,
-      items: [...prev.items, { product_name: '', quantity: 1, unit_price: 0 }],
+      items: [...prev.items, { ...emptyPOItem }],
     }));
+  }
+
+  function selectPOProduct(index: number, productId: string) {
+    setPoForm((prev) => {
+      const items = [...prev.items];
+      const name = products.find((p) => p.id === productId)?.name ?? '';
+      items[index] = { ...items[index], product_id: productId, product_name: name };
+      return { ...prev, items };
+    });
   }
 
   function updatePOItem(index: number, field: string, value: string | number) {
@@ -509,8 +535,17 @@ export default function SupplierManagement() {
             {poForm.items.map((item, idx) => (
               <div key={idx} className="flex gap-2 items-end">
                 <div className="flex-1">
-                  <label className="text-xs text-slate-400">Product</label>
-                  <Input value={item.product_name} onChange={(e) => updatePOItem(idx, 'product_name', e.target.value)} placeholder="Product name" className="bg-slate-700 border-slate-600 text-white text-sm" />
+                  <label className="text-xs text-slate-400">{t('product')}</label>
+                  <select
+                    value={item.product_id}
+                    onChange={(e) => selectPOProduct(idx, e.target.value)}
+                    className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2 text-sm"
+                  >
+                    <option value="">{t('select_product')}</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="w-20">
                   <label className="text-xs text-slate-400">Qty</label>
@@ -531,7 +566,7 @@ export default function SupplierManagement() {
             <div className="border-t border-slate-700 pt-3">
               <p className="text-slate-400 text-sm">Total: <span className="text-white font-bold">SAR {poForm.items.reduce((s, i) => s + i.quantity * i.unit_price, 0).toFixed(2)}</span></p>
             </div>
-            <Button onClick={handleCreatePO} disabled={submitting || poForm.items.some((i) => !i.product_name)} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
+            <Button onClick={handleCreatePO} disabled={submitting || poForm.items.some((i) => !i.product_id)} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
               {submitting ? t('loading') : 'Create Purchase Order'}
             </Button>
           </div>
