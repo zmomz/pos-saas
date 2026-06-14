@@ -15,12 +15,17 @@ import {
   getQuotations,
   createQuotation,
   deleteQuotation,
+  convertQuotation,
   quotationDocumentPath,
 } from '@/lib/api';
 import { getAPIBaseURL } from '@/lib/config';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
-import { FileText, Plus, Trash2, Eye } from 'lucide-react';
+import { toast } from 'sonner';
+import { FileText, Plus, Trash2, Eye, ShoppingCart } from 'lucide-react';
+
+// ISSUE-056: a converted/expired quote is terminal — it can't be converted again.
+const TERMINAL_STATUSES = ['converted', 'expired'];
 
 interface LineItem {
   name: string;
@@ -110,6 +115,18 @@ export default function QuotationManagement() {
       await load();
     } catch (err) {
       console.error('Failed to delete quotation:', err);
+    }
+  }
+
+  // ISSUE-056: turn the quote into a real ZATCA sale via the canonical path.
+  async function handleConvert(id: number) {
+    try {
+      const result = await convertQuotation(id, { payment_method: 'cash' });
+      toast.success(`${t('converted_to_sale')}: ${result.invoice_number}`);
+      await load();
+    } catch (err) {
+      console.error('Failed to convert quotation:', err);
+      toast.error(t('convert_failed'));
     }
   }
 
@@ -250,6 +267,13 @@ export default function QuotationManagement() {
                   <div className="flex items-center gap-3">
                     <Badge className="bg-slate-600 text-white">{q.status || 'draft'}</Badge>
                     <span className="text-brand-400 font-bold">{formatMoney(q.total_amount || 0, language)}</span>
+                    {!TERMINAL_STATUSES.includes(q.status || 'draft') && (
+                      <Button size="sm" variant="outline" onClick={() => handleConvert(q.id)}
+                        className="border-green-700 text-green-400 hover:bg-green-900/40">
+                        <ShoppingCart className="w-4 h-4 me-1" />
+                        {t('convert_to_sale')}
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => openDocument(q.id)}
                       className="border-slate-600 text-slate-300 hover:bg-slate-700">
                       <Eye className="w-4 h-4" />

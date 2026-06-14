@@ -72,6 +72,8 @@ class QuotationsResponse(BaseModel):
     total_amount: Optional[float] = None
     valid_until: Optional[datetime] = None
     status: Optional[str] = None
+    # ISSUE-056: the fiscal sale this quote was converted into (null until converted).
+    converted_transaction_id: Optional[int] = None
     notes: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -116,6 +118,66 @@ def _with_quote_number(data: dict) -> dict:
         # have no statutory sequential-counter requirement, unlike tax invoices).
         data["quote_number"] = f"QT-{int(datetime.now().timestamp())}"
     return data
+
+
+# ---------- Status lifecycle (ISSUE-056) ----------
+# A quotation moves forward through draft → sent → accepted and ends in one of two
+# terminal states: ``converted`` (turned into a sale) or ``expired``. Transitions
+# are forward-only and enforced server-side so a quote can't, e.g., be re-opened
+# after it was converted. ``converted`` is reached ONLY via the convert endpoint.
+_TERMINAL_STATUSES = {"converted", "expired"}
+_ALLOWED_TRANSITIONS = {
+    "draft": {"sent", "accepted", "expired"},
+    "sent": {"accepted", "expired"},
+    "accepted": {"expired"},
+    "expired": set(),
+    "converted": set(),
+}
+
+
+class QuotationStatusData(BaseModel):
+    """Request body for an explicit status transition."""
+
+    status: str
+
+
+class QuotationConvertData(BaseModel):
+    """Request body for converting a quotation into a sale.
+
+    The pricing/lines come from the stored quotation; the caller only chooses how
+    the resulting sale is paid (defaults to a single cash tender for the full
+    total). Card-like tenders would need real capture, so the minimal slice settles
+    cash — the sale still flows through the canonical ZATCA-stamping path.
+    """
+
+    payment_method: str = "cash"
+
+
+class QuotationConvertResponse(BaseModel):
+    """Outcome of a quote→sale conversion: the new fiscal sale + the quote status."""
+
+    quotation_id: int
+    status: str
+    transaction_id: int
+    invoice_number: str
+    total_amount: float
+    zatca_document_id: Optional[int] = None
+    zatca_status: str
+
+
+class _ConvertLine(BaseModel):
+    """A quotation line normalized to the cart-line contract ``execute_sale`` expects
+    (``model_dump()`` + ``product_id`` / ``quantity`` / ``variant_id``). An ad-hoc
+    line with no catalog ``product_id`` still settles — the sale core skips inventory
+    for an unknown product."""
+
+    product_id: Optional[int] = None
+    variant_id: Optional[int] = None
+    name: Optional[str] = None
+    name_ar: Optional[str] = None
+    price: float = 0.0
+    quantity: float = 1.0
+    discount: float = 0.0
 
 
 # ---------- Routes ----------
@@ -298,6 +360,137 @@ async def create_quotations(
     except Exception as e:
         logger.error(f"Error creating quotations: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.put("/{id}/status", response_model=QuotationsResponse)
+async def transition_quotation_status(
+    id: int,
+    data: QuotationStatusData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move a quotation along its lifecycle (ISSUE-056), enforcing valid transitions.
+
+    Forward-only: draft → sent → accepted, with ``expired`` reachable from any
+    non-terminal state. ``converted`` is terminal and is reached only via
+    ``/convert``; it can't be set here. An illegal transition is a 400.
+    """
+    service = QuotationsService(db)
+    quote = await service.get_by_id(id, user_id=scope.owner_user_id)
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+
+    target = (data.status or "").strip()
+    current = quote.status or "draft"
+    if target == current:
+        return quote
+    if target == "converted":
+        raise HTTPException(
+            status_code=400,
+            detail="Use POST /convert to convert a quotation into a sale",
+        )
+    if target not in _ALLOWED_TRANSITIONS.get(current, set()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot transition quotation from '{current}' to '{target or '(empty)'}'",
+        )
+
+    result = await service.update(id, {"status": target}, user_id=scope.owner_user_id)
+    return result
+
+
+@router.post("/{id}/convert", response_model=QuotationConvertResponse)
+async def convert_quotation_to_sale(
+    id: int,
+    data: QuotationConvertData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Convert a quotation into a real sale through the canonical sale core (ISSUE-056).
+
+    Carries the quote's stored lines and authoritative totals into
+    ``services.sale_core.execute_sale`` — the exact atomic path the POS and the
+    restaurant settle use — so the resulting invoice is ZATCA-stamped where the
+    client has e-invoicing enabled. On success the quotation is marked ``converted``
+    and linked to the resulting transaction; a converted/expired quote cannot be
+    converted again.
+    """
+    from services.sale_core import NormalizedCart, execute_sale
+    from services.system_settings import get_effective_tax_rate
+
+    service = QuotationsService(db)
+    quote = await service.get_by_id(id, user_id=scope.owner_user_id)
+    if not quote:
+        raise HTTPException(status_code=404, detail="Quotation not found")
+    if (quote.status or "draft") in _TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Quotation is '{quote.status}' and cannot be converted",
+        )
+
+    client = (
+        await db.execute(
+            select(Clients).where(Clients.user_id == scope.owner_user_id)
+        )
+    ).scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=403, detail="Only clients can convert quotations")
+
+    try:
+        raw_lines = json.loads(quote.items_json) if quote.items_json else []
+    except (ValueError, TypeError):
+        raw_lines = []
+    lines = [_ConvertLine(**{k: v for k, v in ln.items() if k in _ConvertLine.model_fields})
+             for ln in raw_lines]
+    if not lines:
+        raise HTTPException(status_code=400, detail="Quotation has no line items to convert")
+
+    subtotal = round(float(quote.subtotal or 0), 2)
+    discount_amount = round(float(quote.discount_amount or 0), 2)
+    vat_amount = round(float(quote.vat_amount or 0), 2)
+    total_amount = round(float(quote.total_amount or 0), 2)
+    vat_rate = await get_effective_tax_rate(db, 15.0)
+
+    result = await execute_sale(
+        db,
+        NormalizedCart(
+            user_id=scope.owner_user_id,
+            client=client,
+            lines=lines,
+            subtotal=subtotal,
+            discount_amount=discount_amount,
+            vat_rate=vat_rate,
+            vat_amount=vat_amount,
+            total_amount=total_amount,
+            tender_specs=[
+                {"tender_type": data.payment_method or "cash", "amount": total_amount}
+            ],
+            payment_method=data.payment_method or "cash",
+            customer_name=quote.customer_name,
+            customer_phone=quote.customer_phone,
+        ),
+    )
+    transaction = result.transaction
+
+    # Link the sale and close the quote. execute_sale already committed the sale;
+    # this records the conversion outcome on the quote in its own commit.
+    await service.update(
+        id,
+        {"status": "converted", "converted_transaction_id": transaction.id},
+        user_id=scope.owner_user_id,
+    )
+
+    return QuotationConvertResponse(
+        quotation_id=quote.id,
+        status="converted",
+        transaction_id=transaction.id,
+        invoice_number=transaction.invoice_number,
+        total_amount=transaction.total_amount,
+        zatca_document_id=result.document_id,
+        zatca_status="signed" if result.document_id is not None else "disabled",
+    )
 
 
 @router.post("/batch", response_model=List[QuotationsResponse], status_code=201)

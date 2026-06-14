@@ -2041,6 +2041,41 @@ export function quotationDocumentPath(quotationId: number): string {
   return `/api/v1/entities/quotations/${quotationId}/document`;
 }
 
+// ISSUE-056: move a quotation along its lifecycle (draft → sent → accepted →
+// expired). `converted` is reached only via convertQuotation, not here.
+export async function updateQuotationStatus(id: number, status: string) {
+  const res = await client.apiCall.invoke<Record<string, unknown>>({
+    url: `/api/v1/entities/quotations/${id}/status`,
+    method: 'PUT',
+    data: { status },
+  });
+  return res.data;
+}
+
+export interface QuotationConvertResult {
+  quotation_id: number;
+  status: string;
+  transaction_id: number;
+  invoice_number: string;
+  total_amount: number;
+  zatca_document_id?: number | null;
+  zatca_status: string;
+}
+
+// ISSUE-056: convert a quotation into a real sale through the canonical ZATCA
+// sale path. Marks the quote `converted` and links the resulting invoice.
+export async function convertQuotation(
+  id: number,
+  data: { payment_method?: string } = {}
+): Promise<QuotationConvertResult> {
+  const res = await client.apiCall.invoke<QuotationConvertResult>({
+    url: `/api/v1/entities/quotations/${id}/convert`,
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
 // ---- Phase E ----
 
 // Fetch a base64 ESC/POS byte stream for thermal printing (see lib/thermalPrint).

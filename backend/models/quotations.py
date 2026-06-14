@@ -26,6 +26,9 @@ class Quotations(Base):
     total_amount = Column(Float, nullable=True, default=0, server_default='0')
     valid_until = Column(DateTime(timezone=True), nullable=True)
     status = Column(String, nullable=True, default='draft', server_default='draft')
+    # ISSUE-056: the sale this quote was converted into (set once, on conversion),
+    # so a `converted` quote links back to its resulting fiscal invoice.
+    converted_transaction_id = Column(Integer, nullable=True)
     notes = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
