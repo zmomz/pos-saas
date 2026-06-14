@@ -58,6 +58,9 @@ export default function KDS() {
   const [stations, setStations] = useState<PrepStation[]>([]);
   const [cards, setCards] = useState<KdsCard[]>([]);
   const [activeStation, setActiveStation] = useState<number | 'all'>('all');
+  // Which board the kitchen is looking at: the live line ('active') or the
+  // recently-bumped cards ('bumped') it can recall back (ISSUE-073).
+  const [boardStatus, setBoardStatus] = useState<'active' | 'bumped'>('active');
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -96,7 +99,10 @@ export default function KDS() {
     setError(false);
     setDenied(false);
     try {
-      const [st, tk] = await Promise.all([getPrepStations(), getKdsTickets({ status: 'active' })]);
+      const [st, tk] = await Promise.all([
+        getPrepStations(),
+        getKdsTickets({ status: boardStatus }),
+      ]);
       setStations(Array.isArray(st) ? st : []);
       setCards(Array.isArray(tk?.items) ? tk.items : []);
     } catch (err: unknown) {
@@ -109,7 +115,7 @@ export default function KDS() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [boardStatus]);
 
   useEffect(() => {
     load();
@@ -119,7 +125,12 @@ export default function KDS() {
   // recalled cards reflect on the board within ~1s. The browser EventSource
   // auto-reconnects; a poll fallback keeps the board fresh if SSE is unavailable.
   useEffect(() => {
-    if (denied) return;
+    // The live channel only feeds the active line; the bumped (completed) board
+    // is read on demand via load/poll, so don't subscribe while viewing it.
+    if (denied || boardStatus !== 'active') {
+      setStreamLive(false);
+      return;
+    }
     const url = kdsStreamUrl();
     if (!url || typeof EventSource === 'undefined') return;
 
@@ -163,19 +174,19 @@ export default function KDS() {
     es.onerror = () => setStreamLive(false);
 
     return () => es.close();
-  }, [denied]);
+  }, [denied, boardStatus]);
 
   // Poll fallback: when the live stream isn't connected, refresh on a timer so
   // the board never goes stale (the SSE path makes this a no-op while connected).
   useEffect(() => {
     if (denied || streamLive) return;
     const id = setInterval(() => {
-      getKdsTickets({ status: 'active' })
+      getKdsTickets({ status: boardStatus })
         .then((tk) => setCards(Array.isArray(tk?.items) ? tk.items : []))
         .catch(() => {});
     }, 5000);
     return () => clearInterval(id);
-  }, [denied, streamLive]);
+  }, [denied, streamLive, boardStatus]);
 
   async function handleAddStation() {
     setSubmitting(true);
@@ -379,6 +390,22 @@ export default function KDS() {
         </div>
       </div>
 
+      {/* Board view: live line vs. recently-bumped cards to recall (ISSUE-073) */}
+      <div className="flex gap-2">
+        <button
+          onClick={() => setBoardStatus('active')}
+          className={`px-3 py-1 rounded-md text-sm ${boardStatus === 'active' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+        >
+          {t('kds_active')}
+        </button>
+        <button
+          onClick={() => setBoardStatus('bumped')}
+          className={`px-3 py-1 rounded-md text-sm ${boardStatus === 'bumped' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+        >
+          {t('kds_completed')}
+        </button>
+      </div>
+
       {/* Station filter tabs */}
       {stations.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -410,12 +437,16 @@ export default function KDS() {
           </CardContent>
         </Card>
       ) : visibleCards.length === 0 ? (
-        /* Empty board (stations exist, nothing fired) */
+        /* Empty board (stations exist, nothing fired / nothing bumped) */
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-10 text-center">
             <ChefHat className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-1">{t('no_kds_tickets')}</h3>
-            <p className="text-slate-400 text-sm">{t('no_kds_tickets_desc')}</p>
+            <h3 className="text-white font-semibold mb-1">
+              {boardStatus === 'bumped' ? t('no_bumped_tickets') : t('no_kds_tickets')}
+            </h3>
+            <p className="text-slate-400 text-sm">
+              {boardStatus === 'bumped' ? t('no_bumped_tickets_desc') : t('no_kds_tickets_desc')}
+            </p>
           </CardContent>
         </Card>
       ) : (
@@ -472,13 +503,15 @@ export default function KDS() {
                             ))}
                           </ul>
                           <div className="flex gap-2 pt-1">
-                            <Button
-                              size="sm"
-                              onClick={() => handleBump(card)}
-                              className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                            >
-                              <Check className="h-4 w-4 mr-1" /> {t('bump')}
-                            </Button>
+                            {card.status !== 'bumped' && (
+                              <Button
+                                size="sm"
+                                onClick={() => handleBump(card)}
+                                className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                              >
+                                <Check className="h-4 w-4 mr-1" /> {t('bump')}
+                              </Button>
+                            )}
                             {isThermalPrintSupported() && (
                               <Button
                                 size="sm"
@@ -495,10 +528,10 @@ export default function KDS() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handleRecall(card)}
-                                className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                                className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
                                 title={t('recall')}
                               >
-                                <RotateCcw className="h-4 w-4" />
+                                <RotateCcw className="h-4 w-4 mr-1" /> {t('recall')}
                               </Button>
                             )}
                           </div>
