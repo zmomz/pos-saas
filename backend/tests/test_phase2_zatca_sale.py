@@ -7,6 +7,7 @@ failures and fails closed when unconfigured, and that the chain+signature
 integrity endpoint validates the whole chain.
 """
 import base64
+import re
 import uuid
 
 from sqlalchemy import select
@@ -134,6 +135,52 @@ async def test_sale_is_signed_stamped_and_qr_rendered(client):
     assert zatca.verify_stamp(pub, doc["invoice_hash"], doc["stamp"])
     # tag 6 in the QR re-hashes to the archived invoice hash.
     assert tags[6] == base64.b64decode(doc["invoice_hash"])
+
+
+def _embedded_pih(signed_xml: str) -> str:
+    """The PIH actually embedded in the UBL (cbc:EmbeddedDocumentBinaryObject
+    under the ``PIH`` AdditionalDocumentReference) — what a verifier re-reads,
+    distinct from the recorded ``ZatcaDocuments.previous_hash``."""
+    m = re.search(r"EmbeddedDocumentBinaryObject[^>]*>([^<]*)<", signed_xml)
+    assert m, "no embedded PIH found in signed XML"
+    return m.group(1)
+
+
+async def test_pih_chain_does_not_bleed_across_clients(client):
+    """C1: interleaving two clients' sales must not let one client's invoice hash
+    leak into the other's on-chain PIH. The PIH *embedded in each UBL* must equal
+    that client's own recorded chain head — proving no fiscal state lives on the
+    process-global ``zatca_service`` singleton."""
+    user_a, token_a, cid_a = await make_client_account(client)
+    user_b, token_b, cid_b = await make_client_account(client)
+    ha, hb = auth_headers(token_a), auth_headers(token_b)
+    await _set_vat(cid_a)
+    await _set_vat(cid_b)
+    pa = await add_product(cid_a, user_a["id"], name="Cola", quantity=50, price=5.0)
+    pb = await add_product(cid_b, user_b["id"], name="Pepsi", quantity=50, price=5.0)
+
+    # Interleave the two clients' sales: A1, B1, A2, B2.
+    await _sale(client, ha, pa)
+    await _sale(client, hb, pb)
+    await _sale(client, ha, pa)
+    await _sale(client, hb, pb)
+
+    docs_a = await _docs(cid_a)
+    docs_b = await _docs(cid_b)
+    assert len(docs_a) == 2 and len(docs_b) == 2
+
+    # The PIH embedded in every UBL equals that document's recorded chain head
+    # (so a verifier re-reading the XML sees the real per-client chain).
+    for docs in (docs_a, docs_b):
+        for d in docs:
+            assert _embedded_pih(d["signed_xml"]) == d["previous_hash"]
+
+    # Each client's first invoice seeds from INITIAL_PIH; the second chains onto
+    # *its own* first invoice — never the other client's, despite interleaving.
+    assert _embedded_pih(docs_a[0]["signed_xml"]) == zatca.INITIAL_PIH
+    assert _embedded_pih(docs_b[0]["signed_xml"]) == zatca.INITIAL_PIH
+    assert _embedded_pih(docs_a[1]["signed_xml"]) == docs_a[0]["invoice_hash"]
+    assert _embedded_pih(docs_b[1]["signed_xml"]) == docs_b[0]["invoice_hash"]
 
 
 async def test_two_sales_chain_previous_hash(client):

@@ -23,6 +23,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.formatting import format_money_ar, to_arabic_digits
+from services.zatca import INITIAL_PIH
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,6 @@ class ZATCAService:
 
     def __init__(self):
         self._invoice_counter: int = 0
-        self._previous_hash: str = "0" * 64  # Initial hash for chain
 
     def _next_sequential_number(self) -> str:
         """Generate sequential invoice number for ZATCA compliance."""
@@ -213,6 +213,7 @@ class ZATCAService:
         invoice_type_code: str = "388",  # 388 = Tax Invoice, 381 = Credit Note
         invoice_type_name: str = "0100000",
         billing_reference_id: Optional[str] = None,  # original invoice no. for 381
+        previous_hash: Optional[str] = None,
     ) -> str:
         """Generate ZATCA Phase 2 compliant UBL 2.1 XML invoice.
 
@@ -220,6 +221,12 @@ class ZATCAService:
         credit note, pass ``billing_reference_id`` with the original invoice
         number so the document carries the required ``cac:BillingReference``
         linking the credit note back to the invoice it reverses (POS-07).
+
+        ``previous_hash`` is the PIH (Previous Invoice Hash) embedded into the
+        chaining element. It MUST be the invoking client's recorded chain head
+        (``creds.pih`` / ``INITIAL_PIH`` for the first invoice). The fiscal chain
+        is never held on this process-global service — passing it explicitly is
+        what keeps interleaved tenants' chains from bleeding into each other (C1).
         """
         # Root element
         invoice = Element("Invoice")
@@ -268,7 +275,7 @@ class ZATCAService:
         attachment = SubElement(additional_doc, "cac:Attachment")
         embedded = SubElement(attachment, "cbc:EmbeddedDocumentBinaryObject")
         embedded.set("mimeCode", "text/plain")
-        embedded.text = self._previous_hash
+        embedded.text = previous_hash or INITIAL_PIH
 
         # Supplier (Seller)
         supplier_party = SubElement(invoice, "cac:AccountingSupplierParty")
@@ -368,10 +375,9 @@ class ZATCAService:
         xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>\n'
         full_xml = xml_declaration + xml_bytes
 
-        # Update hash chain
-        invoice_hash = self.generate_invoice_hash(full_xml.encode("utf-8"))
-        self._previous_hash = invoice_hash
-
+        # No fiscal chain state is held here: the caller computes the invoice hash
+        # over this XML and advances the per-client chain (``creds.pih``). This
+        # service stays stateless w.r.t. the PIH so concurrent tenants never bleed.
         return full_xml
 
 

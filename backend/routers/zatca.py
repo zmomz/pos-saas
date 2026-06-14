@@ -348,6 +348,7 @@ async def sign_invoice(
     # Reuse the existing UBL builder, then hash + sign with real crypto.
     items = json.loads(txn.items_json) if txn.items_json else []
     issued = txn.created_at or datetime.now(timezone.utc)
+    previous_hash = creds.pih or zatca.INITIAL_PIH
     xml = zatca_service.generate_xml_invoice(
         seller_name=client.business_name or "Business",
         seller_vat=client.vat_number or "000000000000000",
@@ -360,9 +361,9 @@ async def sign_invoice(
         total_excluding_vat=txn.subtotal or 0,
         total_vat=txn.vat_amount or 0,
         total_including_vat=txn.total_amount or 0,
+        previous_hash=previous_hash,
     )
 
-    previous_hash = creds.pih or zatca.INITIAL_PIH
     inv_hash = zatca.invoice_hash_b64(xml.encode("utf-8"))
     key_pem = zatca.decrypt_secret(creds.private_key_enc)
     stamp = zatca.sign_invoice_hash(key_pem, inv_hash)

@@ -190,6 +190,11 @@ async def sign_transaction(
         else INVOICE_TYPE_NAME_SIMPLIFIED
     )
 
+    # The PIH is this client's recorded chain head — embedded into the UBL AND
+    # recorded on the document, so the on-chain PIH and the stored chain agree
+    # and never bleed across tenants (C1). Never sourced from process state.
+    previous_hash = creds.pih or zatca.INITIAL_PIH
+
     xml = zatca_service.generate_xml_invoice(
         seller_name=seller_name,
         seller_vat=seller_vat,
@@ -205,9 +210,9 @@ async def sign_transaction(
         invoice_type_code=invoice_type_code,
         invoice_type_name=invoice_type_name,
         billing_reference_id=billing_reference,
+        previous_hash=previous_hash,
     )
 
-    previous_hash = creds.pih or zatca.INITIAL_PIH
     inv_hash = zatca.invoice_hash_b64(xml.encode("utf-8"))
     key_pem = zatca.decrypt_secret(creds.private_key_enc)
     stamp = zatca.sign_invoice_hash(key_pem, inv_hash)
