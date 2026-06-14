@@ -40,6 +40,7 @@ import KDS from './pages/KDS';
 import ZatcaStatus from './pages/ZatcaStatus';
 import ChannelOrders from './pages/ChannelOrders';
 import GiftCardManagement from './pages/GiftCardManagement';
+import PrinterSettings from './pages/PrinterSettings';
 import CustomerDisplay from './pages/CustomerDisplay';
 import ForceResetPassword from './pages/ForceResetPassword';
 import NotFound from './pages/NotFound';
@@ -131,6 +132,7 @@ const AppRoutes = () => (
       <Route path="/channels" element={<ChannelOrders />} />
       <Route path="/zatca" element={<ZatcaStatus />} />
       <Route path="/gift-cards" element={<GiftCardManagement />} />
+      <Route path="/printers" element={<PrinterSettings />} />
     </Route>
 
     {/* Shared routes (agent + client) */}

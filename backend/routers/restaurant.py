@@ -33,6 +33,7 @@ from schemas.auth import UserResponse
 from services import zatca as zatca_service_mod
 from services import zatca_sale
 from services.escpos import build_kot_base64, build_receipt_base64
+from services.printers import resolve_printer
 from services.receipt_templates import load_default_template
 from services.kds_channel import kds_broker
 from services.restaurant import (
@@ -1591,6 +1592,17 @@ async def print_kds_kot(
         raise HTTPException(status_code=404, detail="KDS ticket not found")
     station_label = payload.get("station_name_ar") or payload.get("station_name") or ""
     template = await load_default_template(db, client.user_id)
+
+    # H26/U5.2 (#47): route this station's KOT to its bound printer (falling back
+    # to the default KOT printer). The printer's paper_size overrides the
+    # template's and the resolved device is echoed back so the browser streams to
+    # the prep-station printer rather than re-prompting for any USB device.
+    printer = await resolve_printer(
+        db, client.user_id, "kot", station_id=payload.get("station_id")
+    )
+    if printer is not None and printer.paper_size:
+        template = {**(template or {}), "paper_size": printer.paper_size}
+
     kot_base64 = build_kot_base64(
         station_name=station_label,
         order_ref=str(payload.get("order_ticket_id") or ""),
@@ -1599,7 +1611,20 @@ async def print_kds_kot(
         courses=payload.get("courses") or [],
         template=template,
     )
-    return {**payload, "kot_base64": kot_base64}
+    return {
+        **payload,
+        "kot_base64": kot_base64,
+        "printer": (
+            {
+                "id": printer.id,
+                "name": printer.name,
+                "device_id": printer.device_id,
+                "paper_size": printer.paper_size,
+            }
+            if printer is not None
+            else None
+        ),
+    }
 
 
 @router.get("/kds/stream")

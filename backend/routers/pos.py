@@ -57,6 +57,7 @@ from services.sale_core import (
     redeem_gift_cards as _redeem_gift_cards,
 )
 from services.escpos import build_receipt_base64
+from services.printers import resolve_printer
 from services.receipt_templates import load_default_template
 from services.production import EmailService, LowStockChecker, PDFInvoiceService, fire_event_background
 from services.promotions import price_cart_promotions
@@ -1842,6 +1843,14 @@ async def get_escpos_receipt(
     # header/footer/logo/show_qr/font_size knobs actually reach the printout.
     template = await load_default_template(db, owner_id)
 
+    # H26/U5.2 (#47): route to the merchant's saved/selected receipt printer. A
+    # printer's paper_size overrides the template's so the raster matches the
+    # actual head, and the resolved device is echoed back so the browser streams
+    # to the right printer instead of re-prompting for any USB device.
+    printer = await resolve_printer(db, owner_id, "receipt")
+    if printer is not None and printer.paper_size:
+        template = {**(template or {}), "paper_size": printer.paper_size}
+
     payload = build_receipt_base64(
         seller_name=client.business_name or "Store",
         vat_number=client.vat_number or "",
@@ -1862,6 +1871,16 @@ async def get_escpos_receipt(
         "format": "escpos",
         "encoding": "base64",
         "data": payload,
+        "printer": (
+            {
+                "id": printer.id,
+                "name": printer.name,
+                "device_id": printer.device_id,
+                "paper_size": printer.paper_size,
+            }
+            if printer is not None
+            else None
+        ),
     }
 
 

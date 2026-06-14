@@ -1845,6 +1845,72 @@ export async function getBranches() {
   return response.data;
 }
 
+// ----- ISSUE-047: saved-printer registry + per-station routing (H26/U5.2) -----
+export type PrinterRole = 'receipt' | 'kot';
+
+export interface Printer {
+  id: number;
+  name: string;
+  role: PrinterRole;
+  station_id?: number | null;
+  device_id?: string | null;
+  paper_size?: string | null;
+  is_default?: boolean | null;
+  status?: string | null;
+}
+
+export async function listPrinters(): Promise<Printer[]> {
+  const response = await client.apiCall.invoke<Printer[]>({
+    url: '/api/v1/printers',
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function createPrinter(data: {
+  name: string;
+  role: PrinterRole;
+  station_id?: number | null;
+  device_id?: string | null;
+  paper_size?: string | null;
+  is_default?: boolean;
+}): Promise<Printer> {
+  const response = await client.apiCall.invoke<Printer>({
+    url: '/api/v1/printers',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function updatePrinter(
+  id: number,
+  data: Partial<{
+    name: string;
+    role: PrinterRole;
+    station_id: number | null;
+    device_id: string | null;
+    paper_size: string | null;
+    is_default: boolean;
+    status: string;
+  }>,
+): Promise<Printer> {
+  const response = await client.apiCall.invoke<Printer>({
+    url: `/api/v1/printers/${id}`,
+    method: 'PUT',
+    data,
+  });
+  return response.data;
+}
+
+export async function deletePrinter(id: number): Promise<void> {
+  await client.apiCall.invoke({
+    url: `/api/v1/printers/${id}`,
+    method: 'DELETE',
+    data: {},
+  });
+}
+
 // Designate THE main branch (exactly one). The backend unsets the previous
 // main atomically, so callers just reload after this resolves (ISSUE-062).
 export async function setMainBranch(branchId: number) {

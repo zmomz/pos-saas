@@ -31,6 +31,7 @@ import {
   ChefHat,
   ShieldCheck,
   Gift,
+  Printer,
 } from 'lucide-react';
 
 type UserRole = 'master' | 'agent' | 'client';
@@ -76,6 +77,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: Receipt, label: 'expenses', path: '/expenses' },
     { icon: Tag, label: 'discounts', path: '/discounts' },
     { icon: Gift, label: 'gift_cards', path: '/gift-cards' },
+    { icon: Printer, label: 'printers', path: '/printers' },
     { icon: BarChart3, label: 'reports', path: '/reports' },
     { icon: Globe, label: 'online_orders', path: '/channels' },
     { icon: ShieldCheck, label: 'zatca_status', path: '/zatca' },
