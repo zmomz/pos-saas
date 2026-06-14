@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from datetime import datetime, date
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,20 +20,6 @@ router = APIRouter(prefix="/api/v1/entities/audit_logs", tags=["audit_logs"])
 
 
 # ---------- Pydantic Schemas ----------
-class Audit_logsData(BaseModel):
-    """Entity data schema (for create/update)"""
-    action: str
-    details: str = None
-    ip_address: str = None
-
-
-class Audit_logsUpdateData(BaseModel):
-    """Update entity data (partial updates allowed)"""
-    action: Optional[str] = None
-    details: Optional[str] = None
-    ip_address: Optional[str] = None
-
-
 class Audit_logsResponse(BaseModel):
     """Entity response schema"""
     id: int
@@ -54,27 +40,6 @@ class Audit_logsListResponse(BaseModel):
     total: int
     skip: int
     limit: int
-
-
-class Audit_logsBatchCreateRequest(BaseModel):
-    """Batch create request"""
-    items: List[Audit_logsData]
-
-
-class Audit_logsBatchUpdateItem(BaseModel):
-    """Batch update item"""
-    id: int
-    updates: Audit_logsUpdateData
-
-
-class Audit_logsBatchUpdateRequest(BaseModel):
-    """Batch update request"""
-    items: List[Audit_logsBatchUpdateItem]
-
-
-class Audit_logsBatchDeleteRequest(BaseModel):
-    """Batch delete request"""
-    ids: List[int]
 
 
 # ---------- Routes ----------
@@ -178,164 +143,7 @@ async def get_audit_logs(
     except Exception as e:
         logger.error(f"Error fetching audit_logs {id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-@router.post("", response_model=Audit_logsResponse, status_code=201)
-async def create_audit_logs(
-    data: Audit_logsData,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a new audit_logs"""
-    logger.debug(f"Creating new audit_logs with data: {data}")
-    
-    service = Audit_logsService(db)
-    try:
-        result = await service.create(data.model_dump(), user_id=str(current_user.id))
-        if not result:
-            raise HTTPException(status_code=400, detail="Failed to create audit_logs")
-        
-        logger.info(f"Audit_logs created successfully with id: {result.id}")
-        return result
-    except ValueError as e:
-        logger.error(f"Validation error creating audit_logs: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error creating audit_logs: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-@router.post("/batch", response_model=List[Audit_logsResponse], status_code=201)
-async def create_audit_logss_batch(
-    request: Audit_logsBatchCreateRequest,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create multiple audit_logss in a single request"""
-    logger.debug(f"Batch creating {len(request.items)} audit_logss")
-    
-    service = Audit_logsService(db)
-    results = []
-    
-    try:
-        for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=str(current_user.id))
-            if result:
-                results.append(result)
-        
-        logger.info(f"Batch created {len(results)} audit_logss successfully")
-        return results
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
-
-
-@router.put("/batch", response_model=List[Audit_logsResponse])
-async def update_audit_logss_batch(
-    request: Audit_logsBatchUpdateRequest,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update multiple audit_logss in a single request (requires ownership)"""
-    logger.debug(f"Batch updating {len(request.items)} audit_logss")
-    
-    service = Audit_logsService(db)
-    results = []
-    
-    try:
-        for item in request.items:
-            # Only include non-None values for partial updates
-            update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
-            result = await service.update(item.id, update_dict, user_id=str(current_user.id))
-            if result:
-                results.append(result)
-        
-        logger.info(f"Batch updated {len(results)} audit_logss successfully")
-        return results
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
-
-
-@router.put("/{id}", response_model=Audit_logsResponse)
-async def update_audit_logs(
-    id: int,
-    data: Audit_logsUpdateData,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update an existing audit_logs (requires ownership)"""
-    logger.debug(f"Updating audit_logs {id} with data: {data}")
-
-    service = Audit_logsService(db)
-    try:
-        # Only include non-None values for partial updates
-        update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
-        if not result:
-            logger.warning(f"Audit_logs with id {id} not found for update")
-            raise HTTPException(status_code=404, detail="Audit_logs not found")
-        
-        logger.info(f"Audit_logs {id} updated successfully")
-        return result
-    except HTTPException:
-        raise
-    except ValueError as e:
-        logger.error(f"Validation error updating audit_logs {id}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error updating audit_logs {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-@router.delete("/batch")
-async def delete_audit_logss_batch(
-    request: Audit_logsBatchDeleteRequest,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete multiple audit_logss by their IDs (requires ownership)"""
-    logger.debug(f"Batch deleting {len(request.ids)} audit_logss")
-    
-    service = Audit_logsService(db)
-    deleted_count = 0
-    
-    try:
-        for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
-            if success:
-                deleted_count += 1
-        
-        logger.info(f"Batch deleted {deleted_count} audit_logss successfully")
-        return {"message": f"Successfully deleted {deleted_count} audit_logss", "deleted_count": deleted_count}
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
-
-
-@router.delete("/{id}")
-async def delete_audit_logs(
-    id: int,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a single audit_logs by ID (requires ownership)"""
-    logger.debug(f"Deleting audit_logs with id: {id}")
-    
-    service = Audit_logsService(db)
-    try:
-        success = await service.delete(id, user_id=str(current_user.id))
-        if not success:
-            logger.warning(f"Audit_logs with id {id} not found for deletion")
-            raise HTTPException(status_code=404, detail="Audit_logs not found")
-        
-        logger.info(f"Audit_logs {id} deleted successfully")
-        return {"message": "Audit_logs deleted successfully", "id": id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting audit_logs {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+# NOTE: This router is intentionally READ-ONLY (finding H3). The audit trail is a
+# compliance log: the audit middleware (middlewares/audit.py::write_audit_log) is
+# its SOLE writer. No create/update/delete/batch endpoint is exposed here — an
+# actor must not be able to fabricate, edit, or delete their own audit history.
