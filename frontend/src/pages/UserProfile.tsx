@@ -6,13 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { User, Globe, Bell, Palette, Shield, Sun, Moon } from 'lucide-react';
-
-interface NotificationPrefs {
-  email_alerts: boolean;
-  low_stock_alerts: boolean;
-  daily_summary: boolean;
-  transaction_alerts: boolean;
-}
+import { getUserPreferences, saveUserPreferences, type NotificationPrefs } from '@/lib/api';
 
 export default function UserProfile() {
   const { language, setLanguage, t } = useLanguage();
@@ -28,27 +22,44 @@ export default function UserProfile() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    const savedName = localStorage.getItem('pos-display-name') || '';
-    setDisplayName(savedName);
-    const savedPrefs = localStorage.getItem('pos-notification-prefs');
-    if (savedPrefs) {
-      try {
-        setNotifPrefs(JSON.parse(savedPrefs));
-      } catch {
-        // use defaults
-      }
-    }
+    let cancelled = false;
+    // Load the server-persisted profile so it follows the user across devices.
+    // Fall back to the local cache only if the server is unreachable.
+    getUserPreferences()
+      .then((prefs) => {
+        if (cancelled) return;
+        setDisplayName(prefs.display_name || '');
+        setNotifPrefs(prefs.notification_prefs);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDisplayName(localStorage.getItem('pos-display-name') || '');
+        const cached = localStorage.getItem('pos-notification-prefs');
+        if (cached) {
+          try {
+            setNotifPrefs(JSON.parse(cached));
+          } catch {
+            // use defaults
+          }
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  function handleSaveProfile() {
+  async function handleSaveProfile() {
     setSaving(true);
-    localStorage.setItem('pos-display-name', displayName);
-    localStorage.setItem('pos-notification-prefs', JSON.stringify(notifPrefs));
-    setTimeout(() => {
-      setSaving(false);
+    try {
+      await saveUserPreferences({ display_name: displayName, notification_prefs: notifPrefs });
+      // Keep a local cache for instant paint / offline fallback.
+      localStorage.setItem('pos-display-name', displayName);
+      localStorage.setItem('pos-notification-prefs', JSON.stringify(notifPrefs));
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    }, 500);
+    } finally {
+      setSaving(false);
+    }
   }
 
   function toggleNotifPref(key: keyof NotificationPrefs) {

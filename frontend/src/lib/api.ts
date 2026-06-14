@@ -1216,6 +1216,40 @@ export async function changePassword(currentPassword: string, newPassword: strin
   return response.data;
 }
 
+// Per-user profile + notification preferences (ISSUE-078, persisted server-side)
+export interface NotificationPrefs {
+  email_alerts: boolean;
+  low_stock_alerts: boolean;
+  daily_summary: boolean;
+  transaction_alerts: boolean;
+}
+
+export interface UserPreferences {
+  display_name: string | null;
+  notification_prefs: NotificationPrefs;
+}
+
+export async function getUserPreferences(): Promise<UserPreferences> {
+  const response = await client.apiCall.invoke<UserPreferences>({
+    url: '/api/v1/users/preferences',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+export async function saveUserPreferences(prefs: {
+  display_name?: string | null;
+  notification_prefs?: NotificationPrefs;
+}): Promise<UserPreferences> {
+  const response = await client.apiCall.invoke<UserPreferences>({
+    url: '/api/v1/users/preferences',
+    method: 'PUT',
+    data: prefs,
+  });
+  return response.data;
+}
+
 // Client self-service profile (CL-02 first-login business type)
 export type BusinessType = 'retail' | 'restaurant' | 'both';
 

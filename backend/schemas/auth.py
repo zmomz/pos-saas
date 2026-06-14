@@ -62,3 +62,26 @@ class ChangePasswordRequest(BaseModel):
 
     current_password: str
     new_password: str = Field(min_length=8)
+
+
+class NotificationPrefs(BaseModel):
+    """Per-user notification toggles. Defaults mirror the prior frontend defaults."""
+
+    email_alerts: bool = True
+    low_stock_alerts: bool = True
+    daily_summary: bool = False
+    transaction_alerts: bool = True
+
+
+class UserPreferencesResponse(BaseModel):
+    """Server-side per-user profile + notification preferences."""
+
+    display_name: Optional[str] = None
+    notification_prefs: NotificationPrefs = Field(default_factory=NotificationPrefs)
+
+
+class UpdateUserPreferencesRequest(BaseModel):
+    """Request body for persisting profile + notification preferences."""
+
+    display_name: Optional[str] = None
+    notification_prefs: Optional[NotificationPrefs] = None

@@ -5,7 +5,13 @@ from dependencies.auth import get_current_user
 from fastapi import APIRouter, Depends, HTTPException, status
 from models.auth import User
 from pydantic import BaseModel
-from schemas.auth import ChangePasswordRequest, UserResponse
+from schemas.auth import (
+    ChangePasswordRequest,
+    NotificationPrefs,
+    UpdateUserPreferencesRequest,
+    UserPreferencesResponse,
+    UserResponse,
+)
 from services.user import PasswordError, UserService
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +42,51 @@ async def update_profile(
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
     return profile
+
+
+def _to_preferences_response(profile) -> UserPreferencesResponse:
+    if profile is None:
+        return UserPreferencesResponse()
+    return UserPreferencesResponse(
+        display_name=profile.display_name,
+        notification_prefs=NotificationPrefs(
+            email_alerts=profile.email_alerts,
+            low_stock_alerts=profile.low_stock_alerts,
+            daily_summary=profile.daily_summary,
+            transaction_alerts=profile.transaction_alerts,
+        ),
+    )
+
+
+@router.get("/preferences", response_model=UserPreferencesResponse)
+async def get_preferences(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the authenticated user's persisted profile + notification prefs.
+
+    Falls back to server-side defaults when the user has never saved a profile.
+    """
+    profile = await UserService.get_preferences(db, current_user.id)
+    return _to_preferences_response(profile)
+
+
+@router.put("/preferences", response_model=UserPreferencesResponse)
+async def update_preferences(
+    payload: UpdateUserPreferencesRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Persist the authenticated user's profile + notification prefs (server-side)."""
+    profile = await UserService.update_preferences(
+        db,
+        current_user.id,
+        display_name=payload.display_name,
+        notification_prefs=(
+            payload.notification_prefs.model_dump() if payload.notification_prefs is not None else None
+        ),
+    )
+    return _to_preferences_response(profile)
 
 
 @router.post("/change-password")

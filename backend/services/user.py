@@ -4,8 +4,12 @@ from typing import Optional
 
 from core.security import hash_password, verify_password
 from models.auth import User
+from models.user_profile import UserProfile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Notification-preference fields that live on UserProfile.
+_PREF_FIELDS = ("email_alerts", "low_stock_alerts", "daily_summary", "transaction_alerts")
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,41 @@ class UserService:
             logger.debug(f"[DB_OP] User profile update completed in {time.time() - start_time_update:.4f}s")
 
         return user
+
+    @staticmethod
+    async def get_preferences(db: AsyncSession, user_id: str) -> Optional[UserProfile]:
+        """Return the user's persisted profile preferences, or None if never saved."""
+        result = await db.execute(select(UserProfile).where(UserProfile.user_id == str(user_id)))
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def update_preferences(
+        db: AsyncSession,
+        user_id: str,
+        display_name=None,
+        notification_prefs: Optional[dict] = None,
+    ) -> UserProfile:
+        """Persist (creating on first save) the user's profile + notification prefs.
+
+        Only the provided fields are touched; omitting ``display_name`` or
+        ``notification_prefs`` leaves the stored value unchanged.
+        """
+        result = await db.execute(select(UserProfile).where(UserProfile.user_id == str(user_id)))
+        profile = result.scalar_one_or_none()
+        if profile is None:
+            profile = UserProfile(user_id=str(user_id))
+            db.add(profile)
+
+        if display_name is not None:
+            profile.display_name = display_name
+        if notification_prefs is not None:
+            for field in _PREF_FIELDS:
+                if field in notification_prefs and notification_prefs[field] is not None:
+                    setattr(profile, field, bool(notification_prefs[field]))
+
+        await db.commit()
+        await db.refresh(profile)
+        return profile
 
     @staticmethod
     async def change_password(
