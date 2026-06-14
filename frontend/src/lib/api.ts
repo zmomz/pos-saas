@@ -533,6 +533,73 @@ export async function chargeTerminal(data: {
   return response.data;
 }
 
+// ---- Advanced discounts: auto-applied promotions (ISSUE-058) ----
+export interface Promotion {
+  id: number;
+  name: string;
+  kind: 'line' | 'category' | 'bogo';
+  disc_type?: string | null;
+  value?: number | null;
+  product_id?: number | null;
+  category?: string | null;
+  min_subtotal?: number | null;
+  bogo_buy_qty?: number | null;
+  bogo_get_qty?: number | null;
+  bogo_get_percent?: number | null;
+  is_active?: boolean | null;
+}
+
+export interface AppliedPromotion {
+  promotion_id?: number | null;
+  name: string;
+  kind: string;
+  amount: number;
+}
+
+// Define a line/category/BOGO promotion the merchant's carts auto-apply (ISSUE-058).
+export async function createPromotion(data: {
+  name: string;
+  kind: 'line' | 'category' | 'bogo';
+  disc_type?: string;
+  value?: number;
+  product_id?: number;
+  category?: string;
+  min_subtotal?: number;
+  bogo_buy_qty?: number;
+  bogo_get_qty?: number;
+  bogo_get_percent?: number;
+  is_active?: boolean;
+}): Promise<Promotion> {
+  const response = await client.apiCall.invoke<Promotion>({
+    url: '/api/v1/entities/promotions',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+// List the merchant's configured promotions (owner-scoped).
+export async function listPromotions(): Promise<{ items: Promotion[]; total: number }> {
+  const response = await client.apiCall.invoke<{ items: Promotion[]; total: number }>({
+    url: '/api/v1/entities/promotions',
+    method: 'GET',
+  });
+  return response.data;
+}
+
+// Preview which promotions a cart would earn, before tendering — so the cashier
+// sees the auto-applied discount up front (AC2). Does not ring a sale.
+export async function previewPromotions(
+  items: Array<{ product_id?: number; price: number; quantity: number }>,
+): Promise<{ total_discount: number; applied: AppliedPromotion[] }> {
+  const response = await client.apiCall.invoke<{ total_discount: number; applied: AppliedPromotion[] }>({
+    url: '/api/v1/pos/promotions/preview',
+    method: 'POST',
+    data: { items },
+  });
+  return response.data;
+}
+
 export async function getTransactions(page = 1, pageSize = 20) {
   const response = await client.apiCall.invoke({
     url: '/api/v1/pos/transactions',

@@ -60,6 +60,7 @@ from services.sale_core import (
 )
 from services.escpos import build_receipt_base64
 from services.production import EmailService, LowStockChecker, PDFInvoiceService, fire_event_background
+from services.promotions import price_cart_promotions
 from services.system_settings import get_effective_tax_rate
 
 logger = logging.getLogger(__name__)
@@ -178,6 +179,15 @@ class TenderInfo(BaseModel):
     status: str = "captured"
 
 
+class AppliedPromotionInfo(BaseModel):
+    """One auto-applied promotion that fired on the sale (ISSUE-058)."""
+
+    promotion_id: Optional[int] = None
+    name: str
+    kind: str
+    amount: float
+
+
 class TransactionResponse(BaseModel):
     id: int
     invoice_number: str
@@ -208,6 +218,10 @@ class TransactionResponse(BaseModel):
     loyalty_points_redeemed: Optional[int] = None
     loyalty_discount: Optional[float] = None
     loyalty_balance: Optional[int] = None
+    # Auto-applied promotions (ISSUE-058): the line/category/BOGO promos this cart
+    # earned, so the cashier sees why the order discount fired. Folded into
+    # ``discount_amount``; null when nothing fired.
+    applied_promotions: Optional[List[AppliedPromotionInfo]] = None
     # Captured tenders (PAY-01): the network/approval proof for each card-like
     # tender, so the receipt can show how the sale was really paid.
     tenders: Optional[List[TenderInfo]] = None
@@ -588,6 +602,19 @@ async def create_transaction(
         loyalty_balance = redemption.remaining_balance
         discount_amount = round(discount_amount + redemption.discount_value, 2)
 
+    # ---- Auto-applied promotions (ISSUE-058, P2 pricing) ----
+    # Line/category/BOGO promotions the merchant configured fire on their own when
+    # the cart meets their conditions, on top of any coded/manual/loyalty discount.
+    # The promotion discount folds into ``discount_amount`` so it reduces the taxable
+    # base exactly like the order discount — composing with VAT. ``applied_promotions``
+    # surfaces on the response so the cashier sees which promos the cart earned.
+    promo_result = await price_cart_promotions(db, owner_id, client.id, data.items)
+    applied_promotions = promo_result.applied
+    if promo_result.total_discount > 0:
+        discount_amount = round(discount_amount + promo_result.total_discount, 2)
+    # Never let stacked discounts push the taxable base below zero.
+    discount_amount = round(min(discount_amount, subtotal), 2)
+
     taxable_amount = subtotal - discount_amount
     # MA-05: the master's global VAT rate is authoritative; the request rate is
     # only a fallback for installs with no global rate configured.
@@ -751,6 +778,12 @@ async def create_transaction(
         loyalty_points_redeemed=loyalty_points_redeemed or None,
         loyalty_discount=loyalty_discount or None,
         loyalty_balance=loyalty_balance,
+        applied_promotions=[
+            AppliedPromotionInfo(
+                promotion_id=p.promotion_id, name=p.name, kind=p.kind, amount=p.amount
+            )
+            for p in applied_promotions
+        ] or None,
         tenders=[
             TenderInfo(
                 tender_type=row["tender_type"],
