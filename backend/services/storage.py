@@ -164,6 +164,34 @@ class StorageService:
             logger.error(f"Failed to create upload URL: {e}")
             raise
 
+    async def store_export(
+        self, request: FileUpDownRequest, content: bytes, content_type: str = "text/csv"
+    ) -> FileUpDownResponse:
+        """Store an export in object storage and return a presigned download URL.
+
+        Closes the round-trip ISSUE-080 needs: get a presigned upload URL, PUT
+        the bytes straight to it, then hand back a presigned download URL so the
+        merchant can retrieve the stored file. This is the real consumer that
+        keeps storage from being an upload-only façade.
+        """
+        upload = await self.create_upload_url(request)
+        if not upload.upload_url:
+            raise ValueError("ObjectStorage did not return an upload URL")
+        await self._aput_to_url(upload.upload_url, content, content_type)
+        return await self.create_download_url(request)
+
+    async def _aput_to_url(self, url: str, content: bytes, content_type: str) -> None:
+        """PUT raw bytes to a presigned URL (the single byte-upload chokepoint).
+
+        Kept separate from ``_arequest_oss_service`` (which talks JSON to the OSS
+        gateway) because a presigned PUT carries the object body, not a JSON
+        envelope, and goes to a different host."""
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.put(
+                url, content=content, headers={"Content-Type": content_type}
+            )
+            response.raise_for_status()
+
     async def create_download_url(self, request: FileUpDownRequest) -> FileUpDownResponse:
         """
         Create presigned URL for file download with access URL.

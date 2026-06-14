@@ -1333,17 +1333,30 @@ async def export_transactions_csv(
         raise HTTPException(status_code=403, detail="Only clients can export reports")
 
     client_id = role_info["entity_id"]
-    start_date = datetime.now(timezone.utc) - timedelta(days=days)
+    csv_content, row_count = await _build_transactions_csv(db, client_id, days)
 
+    storage_upload_url = await _export_storage_upload_url(f"transactions-{client_id}-{days}d.csv")
+    return {
+        "csv_content": csv_content,
+        "row_count": row_count,
+        "storage_upload_url": storage_upload_url,
+    }
+
+
+async def _build_transactions_csv(db: AsyncSession, client_id: str, days: int) -> tuple[str, int]:
+    """Render the merchant's transactions CSV for a window — the shared body
+    behind both the inline export and the stored-to-object-storage export.
+
+    OPS-05: stream rows through a server-side cursor and write each as we go,
+    rather than materializing the whole period into a Python list first.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=days)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
         "Invoice Number", "Date", "Subtotal", "VAT", "Discount",
         "Total", "Payment Method", "Status", "Customer Name", "Customer Phone"
     ])
-
-    # OPS-05: stream the rows through a server-side cursor and write each as we
-    # go, rather than materializing the whole period into a Python list first.
     row_count = 0
     result = await db.stream_scalars(
         select(Transactions).where(
@@ -1371,12 +1384,52 @@ async def export_transactions_csv(
             t.customer_phone or "",
         ])
         row_count += 1
+    return output.getvalue(), row_count
 
-    storage_upload_url = await _export_storage_upload_url(f"transactions-{client_id}-{days}d.csv")
+
+@router.get("/api/v1/reports/export-csv/download")
+async def export_transactions_csv_download(
+    days: int = Query(30, ge=1, le=365),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate the transactions CSV, store it in object storage, and return a
+    presigned download URL so the merchant can retrieve the file (ISSUE-080).
+
+    Unlike the inline ``/export-csv`` endpoint this is a true storage round-trip
+    (generate → store → download URL). When object storage is unconfigured it
+    degrades to a clear 503 — never an unhandled 500."""
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can export reports")
+    if not StorageService.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Object storage is not configured; export download is unavailable.",
+        )
+
+    client_id = role_info["entity_id"]
+    csv_content, row_count = await _build_transactions_csv(db, client_id, days)
+
+    # Owner-scoped object key: the client_id is baked into a flat key (the OSS
+    # schema sanitizes keys to a basename, so a "/"-prefix would not survive) so
+    # one merchant can never collide with or read another's stored export.
+    object_key = f"export-{client_id}-transactions-{days}d.csv"
+    try:
+        stored = await StorageService().store_export(
+            FileUpDownRequest(bucket_name="pos-exports", object_key=object_key),
+            csv_content.encode("utf-8"),
+            content_type="text/csv",
+        )
+    except ValueError as e:
+        logger.error(f"Export storage failed: {e}")
+        raise HTTPException(status_code=502, detail="Failed to store export in object storage.")
+
     return {
-        "csv_content": output.getvalue(),
+        "object_key": object_key,
+        "download_url": stored.download_url or None,
         "row_count": row_count,
-        "storage_upload_url": storage_upload_url,
     }
 
 
