@@ -24,12 +24,29 @@ from schemas.storage import (
 logger = logging.getLogger(__name__)
 
 
+class StorageNotConfiguredError(RuntimeError):
+    """Object storage is not configured (OSS_SERVICE_URL / OSS_API_KEY absent).
+
+    Distinct from a bad request: the caller did nothing wrong, the feature is
+    simply unavailable. Endpoints map this to a clear 503 instead of a 500, and
+    storage-backed features degrade gracefully (ISSUE-030).
+    """
+
+
 class StorageService:
     """Service for handling file upload and display with ObjectStorage service integration."""
 
+    @staticmethod
+    def is_configured() -> bool:
+        """Whether the OSS gateway credentials are present, so callers can
+        degrade gracefully without constructing the service / catching."""
+        return bool(settings.oss_service_url and settings.oss_api_key)
+
     def __init__(self):
         if not settings.oss_service_url or not settings.oss_api_key:
-            raise ValueError("OSS service not configured. Set OSS_SERVICE_URL and OSS_API_KEY.")
+            raise StorageNotConfiguredError(
+                "OSS service not configured. Set OSS_SERVICE_URL and OSS_API_KEY."
+            )
 
         self.headers = {
             "Authorization": f"Bearer {settings.oss_api_key}",

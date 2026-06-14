@@ -75,6 +75,13 @@ class Settings(BaseSettings):
     billing_scheduler_enabled: bool = False
     billing_scheduler_interval_seconds: int = 3600
 
+    # Object storage (OSS) — ISSUE-030. When both are set, StorageService talks
+    # to the external object-storage gateway. When either is absent the service
+    # degrades to a clear 503 (never an unhandled 500), and storage-backed
+    # features (e.g. CSV-export archival) fall back to inline content.
+    oss_service_url: str = ""
+    oss_api_key: str = ""
+
     # Error tracking (Phase E). When sentry_dsn is set AND the optional
     # `sentry-sdk` package is installed, errors are reported to Sentry; otherwise
     # observability is a no-op. See core/observability.py.

@@ -16,6 +16,8 @@ from dependencies.auth import get_current_user
 from dependencies.tenancy import get_owner_id
 from dependencies.features import require_feature
 from services.packages import normalize_feature_tier, parse_feature_tier
+from services.storage import StorageService
+from schemas.storage import FileUpDownRequest
 from schemas.auth import UserResponse
 from models.auth import User
 from models.agents import Agents
@@ -1194,6 +1196,24 @@ async def get_top_products(
     return resp
 
 
+async def _export_storage_upload_url(object_key: str) -> Optional[str]:
+    """Best-effort presigned upload URL for archiving an export to object
+    storage — the real caller that keeps StorageService from being a façade
+    (ISSUE-030). Returns ``None`` when storage is unconfigured or the gateway is
+    unreachable; the export itself never depends on storage being available."""
+    if not StorageService.is_configured():
+        return None
+    try:
+        service = StorageService()
+        resp = await service.create_upload_url(
+            FileUpDownRequest(bucket_name="pos-exports", object_key=object_key)
+        )
+        return resp.upload_url or None
+    except Exception as e:  # storage must never break the export
+        logger.warning(f"Export storage upload URL unavailable: {e}")
+        return None
+
+
 @router.get("/api/v1/reports/export-csv")
 async def export_transactions_csv(
     days: int = Query(30, ge=1, le=365),
@@ -1246,7 +1266,12 @@ async def export_transactions_csv(
         ])
         row_count += 1
 
-    return {"csv_content": output.getvalue(), "row_count": row_count}
+    storage_upload_url = await _export_storage_upload_url(f"transactions-{client_id}-{days}d.csv")
+    return {
+        "csv_content": output.getvalue(),
+        "row_count": row_count,
+        "storage_upload_url": storage_upload_url,
+    }
 
 
 # ============================================================
