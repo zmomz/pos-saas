@@ -9,11 +9,19 @@
  * Auth is local email/password: the JWT issued by the backend is stored in
  * localStorage and attached as a Bearer token on every request.
  */
-import axios, { AxiosInstance, Method } from 'axios';
+import axios, { AxiosInstance, InternalAxiosRequestConfig, Method } from 'axios';
 import { getAPIBaseURL } from './config';
 
 const TOKEN_KEY = 'pos_auth_token';
 const LOGIN_PATH = '/login';
+
+// A request we've already retried once after a refresh — guards against an
+// infinite refresh→replay loop when the replayed request still 401s.
+type RetriableConfig = InternalAxiosRequestConfig & { _retry?: boolean };
+
+// Coalesce concurrent 401s onto a single in-flight refresh so a burst of
+// expired requests triggers exactly one POST /auth/refresh.
+let refreshPromise: Promise<boolean> | null = null;
 
 // ---------- Token storage ----------
 export function getToken(): string | null {
@@ -53,17 +61,38 @@ function makeHttp(): AxiosInstance {
     return config;
   });
   // Phase 3: handle production-hardening responses gracefully.
-  //  - 401 after token revocation/expiry → clear the session and bounce to login
-  //    (skip auth probe endpoints, which callers handle, and avoid redirect loops).
+  //  - 401 after token expiry → attempt one silent refresh + replay before
+  //    clearing the session, so a valid refresh token keeps the user signed in
+  //    past the access-token boundary (ISSUE-041). On refresh failure (or a
+  //    second 401 after replay) clear the session and bounce to login. Auth
+  //    probe endpoints are skipped (callers handle them) to avoid loops.
   //  - 429 rate-limited → broadcast an event the UI can toast on.
   http.interceptors.response.use(
     (response) => response,
-    (error) => {
+    async (error) => {
       const status = error?.response?.status;
-      const url: string = error?.config?.url ?? '';
+      const config = (error?.config ?? {}) as RetriableConfig;
+      const url: string = config.url ?? '';
       if (status === 401) {
         const isAuthProbe = url.includes('/api/v1/auth/me') || url.includes('/api/v1/auth/login');
         const onLogin = typeof window !== 'undefined' && window.location.pathname === LOGIN_PATH;
+        if (!isAuthProbe && !onLogin && !config._retry) {
+          config._retry = true;
+          // Lazy import avoids a static cycle (auth.ts imports token storage from here).
+          const { authApi } = await import('./auth');
+          refreshPromise = refreshPromise ?? authApi.refreshAccessToken();
+          let refreshed = false;
+          try {
+            refreshed = await refreshPromise;
+          } finally {
+            refreshPromise = null;
+          }
+          if (refreshed) {
+            // Replay the original request; the request interceptor re-attaches
+            // the freshly-stored access token.
+            return http.request(config);
+          }
+        }
         if (!isAuthProbe && !onLogin) {
           clearToken();
           if (typeof window !== 'undefined') {
