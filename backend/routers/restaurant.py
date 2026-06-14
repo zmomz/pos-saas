@@ -336,6 +336,23 @@ class SettleResponse(BaseModel):
     receipt_base64: Optional[str] = None
     ticket_status: str = "settled"
     table_freed: bool = False
+    # ISSUE-070: False when this was a partial settlement that left an unpaid
+    # remainder on a still-open ticket; True for a full settle (default).
+    fully_settled: bool = True
+
+
+class PartialSettleRequest(SettleRequest):
+    """Settle part of a ticket into its own ZATCA invoice (ISSUE-070).
+
+    Selects the subset to bill — exactly one of ``seat_no`` (that seat's still-unpaid
+    lines) or ``item_ids`` (specific unpaid lines). The tenders/tip/customer fields
+    behave exactly as a full settle, but against the subset's ``amount_due``. The
+    unpaid remainder stays on the open ticket; billing the last of it closes the
+    ticket and frees the table.
+    """
+
+    item_ids: Optional[List[int]] = None
+    seat_no: Optional[int] = None
 
 
 # ---------- Modifier group / modifier / combo schemas (F-056) ----------
@@ -1365,6 +1382,163 @@ async def settle_ticket_endpoint(
         receipt_base64=receipt_base64,
         ticket_status=ticket.status or "settled",
         table_freed=ticket.table_id is not None,
+        fully_settled=True,
+    )
+
+
+@router.post(
+    "/order-tickets/{ticket_id}/settle-partial", response_model=SettleResponse
+)
+async def settle_ticket_partial_endpoint(
+    ticket_id: int,
+    data: PartialSettleRequest,
+    background_tasks: BackgroundTasks,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Settle part of a ticket into its own ZATCA invoice (ISSUE-070).
+
+    Bills a subset of the ticket — a seat's lines (``seat_no``) or specific lines
+    (``item_ids``) — through the **same** atomic sale core a full settle uses. The
+    unpaid remainder stays on the open ticket and the table stays occupied; billing
+    the last unpaid line closes the ticket and frees the table. A declined card
+    rolls the whole partial back (402): nothing billed, the remainder untouched.
+    """
+    service = RestaurantService(db)
+    vat_rate = await get_effective_tax_rate(db, 15.0)
+    tip = round(float(data.tip_amount or 0), 2)
+    if tip < 0:
+        raise HTTPException(status_code=400, detail="tip_amount cannot be negative")
+
+    # Authoritative amount due for the chosen subset, so tenders validate against it
+    # before any fiscal side effect.
+    try:
+        check = await service.compute_partial_check(
+            ticket_id,
+            user_id=client.user_id,
+            vat_rate=vat_rate,
+            item_ids=data.item_ids,
+            seat_no=data.seat_no,
+            tip_amount=tip,
+        )
+    except ValueError as e:
+        # A closed/void ticket is a conflict; a bad selection is a bad request.
+        status = 409 if "settled or voided" in str(e) else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    if check is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    amount_due = check["amount_due"]
+
+    payment_breakdown_json: Optional[str] = None
+    payment_method = data.payment_method
+    if data.payments:
+        paid_total = round(sum(p.amount for p in data.payments), 2)
+        if abs(paid_total - amount_due) > 0.01:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Payment breakdown total {paid_total:.2f} does not match "
+                    f"amount due {amount_due:.2f}"
+                ),
+            )
+
+        def _redacted(p: "SettlePayment") -> dict:
+            d = p.model_dump()
+            if d.get("gift_card_code"):
+                d["gift_card_code"] = "****" + str(d["gift_card_code"])[-4:]
+            return d
+
+        payment_breakdown_json = json.dumps(
+            [_redacted(p) for p in data.payments], ensure_ascii=False
+        )
+        methods = [p.method for p in data.payments]
+        payment_method = "mixed" if len(set(methods)) > 1 else methods[0]
+
+    tender_specs = _settle_tender_specs(data, amount_due)
+    buyer_vat = (data.customer_vat_number or "").strip() or None
+
+    try:
+        settled = await service.settle_partial(
+            ticket_id,
+            client.user_id,
+            client,
+            vat_rate,
+            item_ids=data.item_ids,
+            seat_no=data.seat_no,
+            tender_specs=tender_specs,
+            tip_amount=tip,
+            payment_method=payment_method,
+            payment_breakdown_json=payment_breakdown_json,
+            customer_name=data.customer_name,
+            customer_vat_number=buyer_vat,
+            allow_negative_stock=data.allow_negative_stock,
+        )
+    except ValueError as e:
+        status = 409 if "settled or voided" in str(e) else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    if settled is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+
+    result = settled["result"]
+    chk = settled["check"]
+    ticket = settled["ticket"]
+    fully_settled = settled["fully_settled"]
+    txn = result.transaction
+
+    if result.document_id is not None:
+        background_tasks.add_task(
+            zatca_sale.report_document_background, result.document_id, client.id
+        )
+
+    template = await load_default_template(db, client.user_id)
+    receipt_base64 = build_receipt_base64(
+        seller_name=client.business_name or "Business",
+        vat_number=client.vat_number or "",
+        invoice_number=txn.invoice_number,
+        issue_date=(txn.created_at.strftime("%Y-%m-%d %H:%M") if txn.created_at else ""),
+        line_items=[
+            {
+                "name": ln["name"],
+                "name_ar": None,
+                "quantity": ln["qty"],
+                "price": ln["unit_price"],
+                "discount": 0,
+            }
+            for ln in chk["lines"]
+        ],
+        subtotal=chk["subtotal"],
+        discount=0,
+        vat_amount=chk["vat_amount"],
+        total_amount=chk["total_amount"],
+        tip_amount=chk["tip_amount"],
+        service_charge=chk["service_charge"]["amount"],
+        zatca_qr=result.stamped_qr or "",
+        template=template,
+    )
+
+    return SettleResponse(
+        ticket_id=ticket_id,
+        transaction_id=txn.id,
+        invoice_number=txn.invoice_number,
+        subtotal=chk["subtotal"],
+        vat_amount=chk["vat_amount"],
+        total_amount=chk["total_amount"],
+        service_charge=chk["service_charge"]["amount"],
+        tip_amount=chk["tip_amount"],
+        amount_due=chk["amount_due"],
+        zatca_document_id=result.document_id,
+        zatca_status="signed" if result.document_id is not None else "disabled",
+        zatca_qr=result.stamped_qr,
+        zatca_qr_base64=(
+            zatca_service_mod.render_qr_png_base64(result.stamped_qr)
+            if result.stamped_qr
+            else None
+        ),
+        receipt_base64=receipt_base64,
+        # Open while anything is still unpaid; settled once the remainder clears.
+        ticket_status=ticket.status or ("settled" if fully_settled else "open"),
+        table_freed=fully_settled and ticket.table_id is not None,
+        fully_settled=fully_settled,
     )
 
 

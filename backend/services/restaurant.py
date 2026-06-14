@@ -607,6 +607,19 @@ class RestaurantService:
         )
         return result.scalars().all()
 
+    async def _unsettled_items(
+        self, ticket_id: int, user_id: str
+    ) -> List[OrderTicketItems]:
+        """The ticket's unpaid remainder — lines no prior partial settlement billed.
+
+        A partial settlement (ISSUE-070) stamps the lines it invoices with
+        ``settled_at``; everything that still bills (check, split, full settle) reads
+        the remainder through here so a paid line is never charged twice.
+        """
+        return [
+            i for i in await self.list_items(ticket_id, user_id) if i.settled_at is None
+        ]
+
     async def get_item(self, item_id: int, user_id: str) -> Optional[OrderTicketItems]:
         result = await self.db.execute(
             select(OrderTicketItems).where(
@@ -922,7 +935,9 @@ class RestaurantService:
             return None
         if strategy not in SPLIT_STRATEGIES:
             raise ValueError(f"Invalid split strategy. Allowed: {', '.join(SPLIT_STRATEGIES)}")
-        items = [i for i in await self.list_items(ticket_id, user_id)]
+        # Divide only the unpaid remainder — lines a prior partial already billed
+        # (ISSUE-070) are not part of what's left to split.
+        items = await self._unsettled_items(ticket_id, user_id)
         total = round(sum(float(i.line_total or 0) for i in items), 2)
 
         shares: List[Dict[str, Any]] = []
@@ -1004,11 +1019,32 @@ class RestaurantService:
         ticket = await self.get_ticket(ticket_id, user_id)
         if not ticket:
             return None
+        # Only the unpaid remainder is billable: lines a prior partial settlement
+        # (ISSUE-070) already invoiced carry ``settled_at`` and drop out here, so the
+        # check (and the full settle that consumes it) never re-bills a paid line.
+        items = await self._unsettled_items(ticket_id, user_id)
+        return self._check_for_items(ticket_id, ticket, items, vat_rate, tip_amount)
+
+    def _check_for_items(
+        self,
+        ticket_id: int,
+        ticket: "OrderTickets",
+        items: List["OrderTicketItems"],
+        vat_rate: float,
+        tip_amount: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Compute the bill for a specific set of lines — the cart the settle path
+        consumes (F-061). Shared by the full check (all unpaid lines) and a partial
+        settlement (ISSUE-070), which passes only the seat's / chosen lines.
+
+        The service charge is the ticket's % applied to *these* lines' pre-VAT goods
+        subtotal, so each partial pays service charge on exactly its own goods —
+        outside the VAT base, like a tip. Raises ``ValueError`` on a negative tip.
+        """
         tip = round(float(tip_amount or 0), 2)
         if tip < 0:
             raise ValueError("tip_amount cannot be negative")
 
-        items = await self.list_items(ticket_id, user_id)
         # Goods subtotal = the taxable base (modifier/combo pricing already folded
         # into each line_total). Voided lines never reach here — they are deleted.
         subtotal = round(sum(float(i.line_total or 0) for i in items), 2)
@@ -1270,7 +1306,10 @@ class RestaurantService:
             return None
         if (ticket.status or "open") in CLOSED_TICKET_STATUSES:
             raise ValueError("Ticket is already settled or voided")
-        items = await self.list_items(ticket_id, user_id)
+        # The full settle clears the unpaid remainder — lines a prior partial
+        # settlement (ISSUE-070) already billed are excluded so they aren't charged
+        # twice; the close still frees the table.
+        items = await self._unsettled_items(ticket_id, user_id)
         if not items:
             raise ValueError("Cannot settle an empty ticket")
 
@@ -1281,6 +1320,11 @@ class RestaurantService:
         # atomically with the fiscal sale below. execute_sale commits once; a
         # declined card raises before that commit, leaving the ticket open and the
         # table occupied (nothing here is persisted).
+        from datetime import datetime
+
+        now = datetime.now()
+        for i in items:
+            i.settled_at = now
         ticket.status = "settled"
         if ticket.table_id is not None:
             table = await self.get_table(ticket.table_id, user_id)
@@ -1317,6 +1361,164 @@ class RestaurantService:
         )
         logger.info(f"Settled ticket {ticket_id} -> invoice {result.transaction.invoice_number}")
         return {"result": result, "check": check, "ticket": ticket}
+
+    def _resolve_partial_items(
+        self,
+        unsettled: List["OrderTicketItems"],
+        item_ids: Optional[List[int]],
+        seat_no: Optional[int],
+    ) -> List["OrderTicketItems"]:
+        """Pick the subset of the unpaid remainder a partial settlement bills (ISSUE-070).
+
+        **By seat:** every unpaid line carrying ``seat_no``. **By item:** the unpaid
+        lines whose ids are listed. Exactly one selector must be given. Raises
+        ``ValueError`` if neither/both are given, if the selection is empty (nothing
+        unpaid matches), or if an ``item_ids`` entry isn't an unpaid line on this
+        ticket (already paid, voided, or another ticket's) — so a caller can't bill
+        a line twice or reach across tickets.
+        """
+        has_items = bool(item_ids)
+        has_seat = seat_no is not None
+        if has_items == has_seat:
+            raise ValueError("Provide exactly one of item_ids or seat_no")
+
+        if has_seat:
+            target = [i for i in unsettled if i.seat_no == seat_no]
+            if not target:
+                raise ValueError(f"No unsettled items for seat {seat_no}")
+            return target
+
+        by_id = {i.id: i for i in unsettled}
+        target = []
+        for iid in item_ids:
+            item = by_id.get(iid)
+            if item is None:
+                raise ValueError(f"Item {iid} is not an unsettled line on this ticket")
+            target.append(item)
+        return target
+
+    async def compute_partial_check(
+        self,
+        ticket_id: int,
+        user_id: str,
+        vat_rate: float,
+        *,
+        item_ids: Optional[List[int]] = None,
+        seat_no: Optional[int] = None,
+        tip_amount: float = 0.0,
+    ) -> Optional[Dict[str, Any]]:
+        """The bill for the subset a partial settlement will charge (ISSUE-070).
+
+        Lets the router validate split tenders against the partial's ``amount_due``
+        before any fiscal side effect runs. Returns ``None`` if the ticket isn't
+        found; raises ``ValueError`` on a closed ticket or an invalid selection.
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        if (ticket.status or "open") in CLOSED_TICKET_STATUSES:
+            raise ValueError("Ticket is already settled or voided")
+        unsettled = await self._unsettled_items(ticket_id, user_id)
+        target = self._resolve_partial_items(unsettled, item_ids, seat_no)
+        return self._check_for_items(ticket_id, ticket, target, vat_rate, tip_amount)
+
+    async def settle_partial(
+        self,
+        ticket_id: int,
+        user_id: str,
+        client: Any,
+        vat_rate: float,
+        *,
+        item_ids: Optional[List[int]] = None,
+        seat_no: Optional[int] = None,
+        tender_specs: List[Dict[str, Any]],
+        tip_amount: float = 0.0,
+        payment_method: str = "cash",
+        payment_breakdown_json: Optional[str] = None,
+        customer_name: Optional[str] = None,
+        customer_vat_number: Optional[str] = None,
+        allow_negative_stock: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Settle part of a ticket into its own ZATCA invoice (ISSUE-070).
+
+        Bills the chosen subset (a seat's lines, or specific items) through the very
+        same atomic ``execute_sale`` path a full settle uses — tender capture, stock
+        deduction (incl. BOM/combo expansion), ECDSA stamp. The billed lines are
+        stamped ``settled_at`` so they drop off the unpaid remainder; the ticket
+        stays ``open`` and the table stays occupied while anything is still unpaid.
+        Clearing the **last** unpaid line closes the ticket and frees the table —
+        the remainder's final partial settles exactly like the full path.
+
+        **Atomic:** the line stamps + any close are staged in this session, so a
+        declined card raises before ``execute_sale``'s single commit and nothing
+        persists. Returns ``{"result", "check", "ticket", "fully_settled"}``, or
+        ``None`` if the ticket isn't found; raises ``ValueError`` for a closed ticket
+        or an invalid selection.
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        if (ticket.status or "open") in CLOSED_TICKET_STATUSES:
+            raise ValueError("Ticket is already settled or voided")
+
+        unsettled = await self._unsettled_items(ticket_id, user_id)
+        target = self._resolve_partial_items(unsettled, item_ids, seat_no)
+        check = self._check_for_items(ticket_id, ticket, target, vat_rate, tip_amount)
+        lines = await self._cart_lines(target, user_id)
+
+        # Stage the line stamps + (when this clears the remainder) the close in THIS
+        # session so they commit atomically with the fiscal sale. A declined card
+        # raises before execute_sale's commit — nothing here persists.
+        from datetime import datetime
+
+        now = datetime.now()
+        target_ids = {i.id for i in target}
+        for i in target:
+            i.settled_at = now
+        fully_settled = all(i.id in target_ids for i in unsettled)
+        if fully_settled:
+            ticket.status = "settled"
+            if ticket.table_id is not None:
+                table = await self.get_table(ticket.table_id, user_id)
+                if table is not None and table.current_ticket_id == ticket.id:
+                    table.state = "free"
+                    table.current_ticket_id = None
+
+        from services.sale_core import NormalizedCart, execute_sale
+
+        result = await execute_sale(
+            self.db,
+            NormalizedCart(
+                user_id=user_id,
+                client=client,
+                lines=lines,
+                subtotal=check["subtotal"],
+                discount_amount=0.0,
+                vat_rate=check["vat_rate"],
+                vat_amount=check["vat_amount"],
+                total_amount=check["total_amount"],
+                tender_specs=tender_specs,
+                payment_method=payment_method,
+                payment_breakdown_json=payment_breakdown_json,
+                tip_amount=check["tip_amount"],
+                service_charge=check["service_charge"]["amount"],
+                customer_name=customer_name or ticket.customer_name,
+                buyer_vat=customer_vat_number,
+                branch_id=ticket.branch_id,
+                allow_negative_stock=allow_negative_stock,
+                expand_bom=True,
+            ),
+        )
+        logger.info(
+            f"Partially settled ticket {ticket_id} "
+            f"(fully={fully_settled}) -> invoice {result.transaction.invoice_number}"
+        )
+        return {
+            "result": result,
+            "check": check,
+            "ticket": ticket,
+            "fully_settled": fully_settled,
+        }
 
     async def all_day_fired_count(self, user_id: str) -> Dict[str, Any]:
         """All-day count of fired items the caller owns (RST-02).

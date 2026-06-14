@@ -379,5 +379,9 @@ class OrderTicketItems(Base):
     notes = Column(String, nullable=True)
     # Serialized modifier selection (F-056 fills this in; stored as JSON text).
     modifiers = Column(String, nullable=True)
+    # Set when a prior partial settlement (ISSUE-070) already billed this line into
+    # its own fiscal invoice. NULL = still on the unpaid remainder; the check/split/
+    # settle paths only ever see unpaid lines, so a line is never billed twice.
+    settled_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
