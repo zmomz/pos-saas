@@ -60,6 +60,7 @@ async def _docs(client_id: int):
                 "transaction_id": d.transaction_id,
                 "document_type": d.document_type,
                 "icv": d.icv,
+                "invoice_uuid": d.invoice_uuid,
                 "invoice_hash": d.invoice_hash,
                 "previous_hash": d.previous_hash,
                 "stamp": d.stamp,
@@ -135,6 +136,55 @@ async def test_sale_is_signed_stamped_and_qr_rendered(client):
     assert zatca.verify_stamp(pub, doc["invoice_hash"], doc["stamp"])
     # tag 6 in the QR re-hashes to the archived invoice hash.
     assert tags[6] == base64.b64decode(doc["invoice_hash"])
+
+
+async def test_sale_produces_signed_ubl_with_uuid_and_c14n_hash(client):
+    """C2 / ISSUE-015: a completed sale archives a gateway-valid document — the
+    signed XML carries an enveloped ds:Signature in UBLExtensions, the persisted
+    invoice_uuid equals the document's cbc:UUID, and the invoice hash is taken
+    over the C14N invoice (not the raw string)."""
+    import xml.etree.ElementTree as ET
+
+    from services import zatca
+
+    DS = "http://www.w3.org/2000/09/xmldsig#"
+    EXT = "urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2"
+    UBL = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
+    CAC = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+    CBC = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+    # Reserialize with the invoice's own prefixes so removing the signature
+    # reconstructs the original document (C14N preserves prefixes).
+    ET.register_namespace("", UBL)
+    ET.register_namespace("cac", CAC)
+    ET.register_namespace("cbc", CBC)
+
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    await _set_vat(client_id)
+    pid = await add_product(client_id, user["id"], name="Cola", quantity=10, price=10.0)
+    await _sale(client, headers, pid)
+
+    doc = (await _docs(client_id))[0]
+    signed = doc["signed_xml"]
+
+    # AC1: the submitted document is the signed UBL, not the plain one.
+    root = ET.fromstring(signed.encode("utf-8"))
+    exts = root.find(f"{{{EXT}}}UBLExtensions")
+    assert exts is not None
+    assert exts.find(f".//{{{DS}}}Signature") is not None
+    assert (exts.findtext(f".//{{{DS}}}SignatureValue") or "").strip()
+
+    # AC3: cbc:UUID is non-empty and equals the persisted invoice_uuid.
+    uuid_text = root.findtext(f"{{{UBL}}}UUID") or root.findtext(f"{{{CBC}}}UUID")
+    assert doc["invoice_uuid"]
+    assert uuid_text == doc["invoice_uuid"]
+
+    # AC2: invoice_hash is the digest of the C14N invoice (sans signature).
+    root.remove(exts)
+    recomputed = zatca.invoice_hash_b64(
+        zatca.canonicalize_invoice_xml(ET.tostring(root, encoding="unicode"))
+    )
+    assert recomputed == doc["invoice_hash"]
 
 
 def _embedded_pih(signed_xml: str) -> str:

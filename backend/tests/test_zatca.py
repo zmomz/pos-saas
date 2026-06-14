@@ -217,3 +217,75 @@ async def test_non_client_cannot_access(client):
     _, token, _ = await register_user(client)  # plain user, no client row
     resp = await client.get("/api/v1/zatca/status", headers=auth_headers(token))
     assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# C2 / ISSUE-015: signed UBL (C14N hash + XAdES signature + persisted UUID)
+# ---------------------------------------------------------------------------
+def test_canonicalize_normalizes_namespace_and_attribute_order():
+    """The invoice hash must be over the C14N form so the gateway can recompute
+    it: two serializations that differ only in namespace-declaration order and
+    attribute order canonicalize — and therefore hash — identically."""
+    xml_a = (
+        '<Invoice xmlns="urn:inv" xmlns:cbc="urn:cbc">'
+        '<cbc:ID b="2" a="1">INV-1</cbc:ID></Invoice>'
+    )
+    xml_b = (
+        '<Invoice xmlns:cbc="urn:cbc" xmlns="urn:inv">'
+        '<cbc:ID a="1" b="2">INV-1</cbc:ID></Invoice>'
+    )
+    assert xml_a != xml_b
+    assert zatca.canonicalize_invoice_xml(xml_a) == zatca.canonicalize_invoice_xml(xml_b)
+    assert (
+        zatca.invoice_hash_b64(zatca.canonicalize_invoice_xml(xml_a))
+        == zatca.invoice_hash_b64(zatca.canonicalize_invoice_xml(xml_b))
+    )
+
+
+def _key_for_signing() -> str:
+    key_pem, _ = zatca.generate_egs_keypair_and_csr(
+        common_name="A", organization_name="A", organization_unit="1",
+        vat_number="300000000000003", egs_serial="1-A|2-B|3-C",
+    )
+    return key_pem
+
+
+def test_build_signed_xml_injects_ds_signature_inside_ubl_extensions():
+    """The document submitted to Fatoora must carry an enveloped XAdES signature
+    inside ``ext:UBLExtensions`` — not the plain UBL. The signature element must
+    sit under UBLExtensions and carry a non-empty SignatureValue + the cert."""
+    import xml.etree.ElementTree as ET
+    from datetime import datetime, timezone
+
+    DS = "http://www.w3.org/2000/09/xmldsig#"
+    EXT = "urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2"
+
+    unsigned = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"'
+        ' xmlns:cbc="urn:cbc"><cbc:ID>INV-7</cbc:ID></Invoice>'
+    )
+    key_pem = _key_for_signing()
+    inv_hash = zatca.invoice_hash_b64(zatca.canonicalize_invoice_xml(unsigned))
+
+    signed = zatca.build_signed_xml(
+        unsigned_xml=unsigned,
+        private_key_pem=key_pem,
+        invoice_hash_b64=inv_hash,
+        signing_time=datetime(2026, 6, 14, 9, 0, 0, tzinfo=timezone.utc),
+    )
+
+    # Original invoice body is preserved verbatim.
+    assert "INV-7" in signed
+    root = ET.fromstring(signed.encode("utf-8"))
+    exts = root.find(f"{{{EXT}}}UBLExtensions")
+    assert exts is not None, "UBLExtensions not injected"
+    sig = exts.find(f".//{{{DS}}}Signature")
+    assert sig is not None, "ds:Signature is not inside UBLExtensions"
+    sig_value = sig.findtext(f"{{{DS}}}SignatureValue")
+    assert sig_value and sig_value.strip(), "empty ds:SignatureValue"
+    cert = sig.findtext(f".//{{{DS}}}X509Certificate")
+    assert cert and cert.strip(), "no signing certificate in KeyInfo"
+    # The invoice reference digest is the invoice hash (over C14N).
+    digest = sig.findtext(f".//{{{DS}}}Reference/{{{DS}}}DigestValue")
+    assert digest == inv_hash

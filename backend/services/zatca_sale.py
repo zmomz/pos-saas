@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
@@ -149,9 +150,12 @@ async def sign_transaction(
 ) -> Tuple[ZatcaDocuments, str]:
     """Sign ``txn`` in-place and archive a ``ZatcaDocuments`` row.
 
-    Builds the UBL invoice, computes the canonical hash, produces a **real**
-    ECDSA stamp, advances the per-client PIH chain, writes the stamped QR TLV +
-    its PNG onto the transaction, and returns ``(document, stamped_qr_tlv)``.
+    Builds the UBL invoice, computes the hash over its **C14N** form, produces a
+    **real** ECDSA stamp, injects an enveloped XAdES ``ds:Signature`` so the
+    archived/submitted ``signed_xml`` is the *signed* UBL (not the plain one),
+    persists the invoice UUID, advances the per-client PIH chain, writes the
+    stamped QR TLV + its PNG onto the transaction, and returns
+    ``(document, stamped_qr_tlv)``.
     Runs inside the caller's transaction (no commit) so it is atomic with the
     sale. For a credit note (POS-07) pass ``invoice_type_code="381"`` and
     ``billing_reference`` set to the original invoice number.
@@ -195,6 +199,10 @@ async def sign_transaction(
     # and never bleed across tenants (C1). Never sourced from process state.
     previous_hash = creds.pih or zatca.INITIAL_PIH
 
+    # One UUID, persisted and embedded — the cbc:UUID, ZatcaDocuments.invoice_uuid
+    # and the value submitted to Fatoora must all be this same string (C2).
+    invoice_uuid = str(uuid.uuid4())
+
     xml = zatca_service.generate_xml_invoice(
         seller_name=seller_name,
         seller_vat=seller_vat,
@@ -211,11 +219,25 @@ async def sign_transaction(
         invoice_type_name=invoice_type_name,
         billing_reference_id=billing_reference,
         previous_hash=previous_hash,
+        invoice_uuid=invoice_uuid,
     )
 
-    inv_hash = zatca.invoice_hash_b64(xml.encode("utf-8"))
+    # Hash over the C14N invoice so Fatoora's recomputed digest matches ours (C2).
+    inv_hash = zatca.invoice_hash_b64(zatca.canonicalize_invoice_xml(xml))
     key_pem = zatca.decrypt_secret(creds.private_key_enc)
     stamp = zatca.sign_invoice_hash(key_pem, inv_hash)
+
+    # Inject the enveloped XAdES ds:Signature so the archived/submitted document
+    # is the *signed* UBL, not the plain one (C2). Use the issued production CSID
+    # when onboarded, else a self-signed cert minted from the EGS key.
+    signing_time = issued if issued.tzinfo else issued.replace(tzinfo=timezone.utc)
+    signed_xml = zatca.build_signed_xml(
+        unsigned_xml=xml,
+        private_key_pem=key_pem,
+        invoice_hash_b64=inv_hash,
+        signing_time=signing_time,
+        certificate_b64=getattr(creds, "production_csid", None) or None,
+    )
 
     stamped_qr = zatca.build_stamped_qr_tlv(
         seller_name=seller_name,
@@ -233,13 +255,14 @@ async def sign_transaction(
         client_id=client.id,
         transaction_id=txn.id,
         invoice_number=txn.invoice_number,
+        invoice_uuid=invoice_uuid,
         document_type=document_type,
         invoice_subtype=invoice_subtype,
         icv=icv,
         invoice_hash=inv_hash,
         previous_hash=previous_hash,
         stamp=stamp,
-        signed_xml=xml,
+        signed_xml=signed_xml,
         status="signed",
         retention_until=_retention_until(),
     )

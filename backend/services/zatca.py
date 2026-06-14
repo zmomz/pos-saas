@@ -240,6 +240,214 @@ def invoice_hash_b64(canonical_xml: bytes) -> str:
     return base64.b64encode(hashlib.sha256(canonical_xml).digest()).decode("ascii")
 
 
+def canonicalize_invoice_xml(xml: str) -> bytes:
+    """C14N (REC-xml-c14n-20010315) serialization of the UBL invoice, as bytes.
+
+    ZATCA recomputes the invoice hash on its side and compares it to the
+    submitted value, so the hash MUST be taken over the *canonical* form — not
+    the raw string the generator happened to emit. Canonicalization erases
+    insignificant differences (namespace-declaration order, attribute order,
+    empty-element form) that would otherwise make the gateway's recomputed digest
+    diverge from ours and reject the document. Hashing the raw string — what the
+    pre-fix path did — is exactly that latent divergence.
+    """
+    from xml.etree.ElementTree import canonicalize
+
+    return canonicalize(xml_data=xml).encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Enveloped XAdES signature (ds:Signature in ext:UBLExtensions)
+# ---------------------------------------------------------------------------
+# XML-DSig / XAdES / UBL signature namespaces, per the ZATCA Phase-2 spec.
+DS_NS = "http://www.w3.org/2000/09/xmldsig#"
+XADES_NS = "http://uri.etsi.org/01903/v1.3.2#"
+UBL_EXT_NS = "urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2"
+UBL_SIG_NS = "urn:oasis:names:specification:ubl:schema:xsd:CommonSignatureComponents-2"
+UBL_SAC_NS = "urn:oasis:names:specification:ubl:schema:xsd:SignatureAggregateComponents-2"
+UBL_SBC_NS = "urn:oasis:names:specification:ubl:schema:xsd:SignatureBasicComponents-2"
+_CBC_NS = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+
+_C14N_ALGO = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315"
+_SHA256_ALGO = "http://www.w3.org/2001/04/xmlenc#sha256"
+_ECDSA_SHA256_ALGO = "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256"
+_ENVELOPED_ALGO = "http://www.w3.org/2000/09/xmldsig#enveloped-signature"
+
+# Stable, human-readable prefixes for the spliced signature block (ElementTree
+# otherwise emits ns0/ns1…). Process-global but idempotent and serialization-only.
+def _register_signature_prefixes() -> None:
+    from xml.etree.ElementTree import register_namespace
+
+    for prefix, uri in (
+        ("ext", UBL_EXT_NS),
+        ("sig", UBL_SIG_NS),
+        ("sac", UBL_SAC_NS),
+        ("sbc", UBL_SBC_NS),
+        ("ds", DS_NS),
+        ("xades", XADES_NS),
+        ("cbc", _CBC_NS),
+    ):
+        register_namespace(prefix, uri)
+
+
+_register_signature_prefixes()
+
+
+def _c14n_digest_b64(element) -> str:
+    """SHA-256 (base64) of the C14N serialization of an ElementTree element."""
+    from xml.etree.ElementTree import canonicalize, tostring
+
+    canonical = canonicalize(xml_data=tostring(element, encoding="unicode"))
+    return base64.b64encode(hashlib.sha256(canonical.encode("utf-8")).digest()).decode("ascii")
+
+
+def _self_signed_certificate(private_key, signing_time):
+    """A self-signed X509 cert from the EGS key, used when no production CSID is
+    issued yet (local-only signing). The signature still carries a real cert so
+    its KeyInfo/SigningCertificate structure is well-formed."""
+    from datetime import timedelta
+
+    from cryptography import x509
+    from cryptography.x509.oid import NameOID
+
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "POS EGS")])
+    return (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(private_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(signing_time)
+        .not_valid_after(signing_time + timedelta(days=365 * 5))
+        .sign(private_key, hashes.SHA256())
+    )
+
+
+def _resolve_certificate(private_key, certificate_b64, signing_time):
+    """Load the issued ZATCA cert (production CSID, base64 DER or PEM) when
+    present, else mint a self-signed cert from the EGS key."""
+    from cryptography import x509
+
+    if certificate_b64:
+        der = base64.b64decode(certificate_b64)
+        try:
+            return x509.load_der_x509_certificate(der)
+        except ValueError:
+            return x509.load_pem_x509_certificate(der)
+    return _self_signed_certificate(private_key, signing_time)
+
+
+def build_signed_xml(
+    *,
+    unsigned_xml: str,
+    private_key_pem: str,
+    invoice_hash_b64: str,
+    signing_time,
+    certificate_b64: Optional[str] = None,
+) -> str:
+    """Inject an enveloped XAdES ``ds:Signature`` into the UBL invoice.
+
+    The plain UBL is what the pre-fix path stored and submitted, so Fatoora
+    received an *unsigned* document. This builds the ZATCA signature structure —
+    a ``ds:Signature`` (SignedInfo referencing the invoice digest + the XAdES
+    SignedProperties, the ECDSA SignatureValue over the canonical SignedInfo, and
+    a KeyInfo carrying the signing cert) wrapped in
+    ``ext:UBLExtensions/.../sac:SignatureInformation`` — and splices it in as the
+    Invoice's first child. The invoice body is left byte-for-byte intact so the
+    hash already taken over it (``invoice_hash_b64``, computed over C14N) stays
+    the document's authoritative digest, and the PIH chain element is untouched.
+
+    ``signing_time`` is a timezone-aware datetime; ``certificate_b64`` is the
+    issued production CSID when onboarded, else a self-signed cert is minted.
+    """
+    import xml.etree.ElementTree as ET
+    from cryptography.hazmat.primitives import serialization
+
+    DS = f"{{{DS_NS}}}"
+    XADES = f"{{{XADES_NS}}}"
+    EXT = f"{{{UBL_EXT_NS}}}"
+    SIG = f"{{{UBL_SIG_NS}}}"
+    SAC = f"{{{UBL_SAC_NS}}}"
+    SBC = f"{{{UBL_SBC_NS}}}"
+    CBC = f"{{{_CBC_NS}}}"
+
+    private_key = serialization.load_pem_private_key(private_key_pem.encode("utf-8"), password=None)
+    cert = _resolve_certificate(private_key, certificate_b64, signing_time)
+    cert_b64 = base64.b64encode(cert.public_bytes(serialization.Encoding.DER)).decode("ascii")
+    cert_digest = base64.b64encode(hashlib.sha256(cert_b64.encode("utf-8")).digest()).decode("ascii")
+    signing_time_str = signing_time.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # XAdES SignedProperties — signing time + the signing-certificate reference.
+    signed_props = ET.Element(XADES + "SignedProperties")
+    signed_props.set("Id", "xadesSignedProperties")
+    ssp = ET.SubElement(signed_props, XADES + "SignedSignatureProperties")
+    ET.SubElement(ssp, XADES + "SigningTime").text = signing_time_str
+    cert_el = ET.SubElement(ET.SubElement(ssp, XADES + "SigningCertificate"), XADES + "Cert")
+    cert_digest_el = ET.SubElement(cert_el, XADES + "CertDigest")
+    ET.SubElement(cert_digest_el, DS + "DigestMethod").set("Algorithm", _SHA256_ALGO)
+    ET.SubElement(cert_digest_el, DS + "DigestValue").text = cert_digest
+    issuer_serial = ET.SubElement(cert_el, XADES + "IssuerSerial")
+    ET.SubElement(issuer_serial, DS + "X509IssuerName").text = cert.issuer.rfc4514_string()
+    ET.SubElement(issuer_serial, DS + "X509SerialNumber").text = str(cert.serial_number)
+    signed_props_digest = _c14n_digest_b64(signed_props)
+
+    # SignedInfo — reference #1 is the invoice (digest = the C14N invoice hash),
+    # reference #2 binds the XAdES SignedProperties.
+    signed_info = ET.Element(DS + "SignedInfo")
+    ET.SubElement(signed_info, DS + "CanonicalizationMethod").set("Algorithm", _C14N_ALGO)
+    ET.SubElement(signed_info, DS + "SignatureMethod").set("Algorithm", _ECDSA_SHA256_ALGO)
+    inv_ref = ET.SubElement(signed_info, DS + "Reference")
+    inv_ref.set("Id", "invoiceSignedData")
+    inv_ref.set("URI", "")
+    transforms = ET.SubElement(inv_ref, DS + "Transforms")
+    ET.SubElement(transforms, DS + "Transform").set("Algorithm", _ENVELOPED_ALGO)
+    ET.SubElement(transforms, DS + "Transform").set("Algorithm", _C14N_ALGO)
+    ET.SubElement(inv_ref, DS + "DigestMethod").set("Algorithm", _SHA256_ALGO)
+    ET.SubElement(inv_ref, DS + "DigestValue").text = invoice_hash_b64
+    sp_ref = ET.SubElement(signed_info, DS + "Reference")
+    sp_ref.set("Type", "http://uri.etsi.org/01903#SignedProperties")
+    sp_ref.set("URI", "#xadesSignedProperties")
+    ET.SubElement(sp_ref, DS + "DigestMethod").set("Algorithm", _SHA256_ALGO)
+    ET.SubElement(sp_ref, DS + "DigestValue").text = signed_props_digest
+
+    # SignatureValue — ECDSA-SHA256 over the canonical SignedInfo.
+    canonical_signed_info = ET.canonicalize(xml_data=ET.tostring(signed_info, encoding="unicode"))
+    signature_value = base64.b64encode(
+        private_key.sign(canonical_signed_info.encode("utf-8"), ec.ECDSA(hashes.SHA256()))
+    ).decode("ascii")
+
+    # ds:Signature
+    signature = ET.Element(DS + "Signature")
+    signature.set("Id", "signature")
+    signature.append(signed_info)
+    ET.SubElement(signature, DS + "SignatureValue").text = signature_value
+    x509_data = ET.SubElement(ET.SubElement(signature, DS + "KeyInfo"), DS + "X509Data")
+    ET.SubElement(x509_data, DS + "X509Certificate").text = cert_b64
+    qualifying = ET.SubElement(ET.SubElement(signature, DS + "Object"), XADES + "QualifyingProperties")
+    qualifying.set("Target", "signature")
+    qualifying.append(signed_props)
+
+    # UBL signature wrapper
+    ubl_exts = ET.Element(EXT + "UBLExtensions")
+    extension = ET.SubElement(ubl_exts, EXT + "UBLExtension")
+    content = ET.SubElement(extension, EXT + "ExtensionContent")
+    ubl_sigs = ET.SubElement(content, SIG + "UBLDocumentSignatures")
+    sig_info = ET.SubElement(ubl_sigs, SAC + "SignatureInformation")
+    ET.SubElement(sig_info, CBC + "ID").text = "urn:oasis:names:specification:ubl:signature:1"
+    ET.SubElement(sig_info, SBC + "ReferencedSignatureID").text = (
+        "urn:oasis:names:specification:ubl:signature:Invoice"
+    )
+    sig_info.append(signature)
+
+    ext_block = ET.tostring(ubl_exts, encoding="unicode")
+
+    # Splice the signature block in as the Invoice's first child, leaving the
+    # invoice body byte-for-byte intact (so its C14N hash is unchanged).
+    start = unsigned_xml.index("<Invoice")
+    insert_at = unsigned_xml.index(">", start) + 1
+    return unsigned_xml[:insert_at] + ext_block + unsigned_xml[insert_at:]
+
+
 def sign_invoice_hash(private_key_pem: str, invoice_hash_base64: str) -> str:
     """Produce the cryptographic stamp: ECDSA-SHA256 over the invoice hash.
 

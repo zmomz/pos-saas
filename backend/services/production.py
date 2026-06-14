@@ -214,6 +214,7 @@ class ZATCAService:
         invoice_type_name: str = "0100000",
         billing_reference_id: Optional[str] = None,  # original invoice no. for 381
         previous_hash: Optional[str] = None,
+        invoice_uuid: Optional[str] = None,
     ) -> str:
         """Generate ZATCA Phase 2 compliant UBL 2.1 XML invoice.
 
@@ -227,6 +228,10 @@ class ZATCAService:
         (``creds.pih`` / ``INITIAL_PIH`` for the first invoice). The fiscal chain
         is never held on this process-global service — passing it explicitly is
         what keeps interleaved tenants' chains from bleeding into each other (C1).
+
+        ``invoice_uuid`` sets ``cbc:UUID``; the caller persists the same value so
+        the embedded UUID, the stored ``ZatcaDocuments.invoice_uuid`` and the
+        UUID submitted to Fatoora all agree (a fresh UUID is minted if omitted).
         """
         # Root element
         invoice = Element("Invoice")
@@ -242,9 +247,11 @@ class ZATCAService:
         inv_id = SubElement(invoice, "cbc:ID")
         inv_id.text = invoice_number
 
-        # UUID
+        # UUID — the caller persists this same value on ZatcaDocuments so the
+        # cbc:UUID embedded here equals the stored invoice_uuid (and what is
+        # submitted to Fatoora). Falls back to a fresh UUID for standalone use.
         inv_uuid = SubElement(invoice, "cbc:UUID")
-        inv_uuid.text = str(uuid.uuid4())
+        inv_uuid.text = invoice_uuid or str(uuid.uuid4())
 
         # Issue Date & Time
         issue_date_el = SubElement(invoice, "cbc:IssueDate")
