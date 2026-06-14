@@ -30,13 +30,15 @@ interface Branding {
   company_name: string;
   logo_url: string;
   primary_color: string;
-  package_type: string;
-  client_slots: number;
-  used_slots: number;
 }
 
 export default function AgentDashboard() {
   const [clients, setClients] = useState<ClientItem[]>([]);
+  // H9 (ISSUE-023): real slot economics from GET /agent/clients. `remainingSlots`
+  // is the agent's free capacity; `totalClients` is the count of provisioned
+  // clients (each occupies a slot), so capacity = remaining + used.
+  const [remainingSlots, setRemainingSlots] = useState(0);
+  const [totalClients, setTotalClients] = useState(0);
   const [branding, setBranding] = useState<Branding | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -89,7 +91,10 @@ export default function AgentDashboard() {
     try {
       const [clientData, brandData] = await Promise.all([getAgentClients(), getAgentBranding()]);
       // API returns { items, total, remaining_slots }; tolerate array/clients shapes too.
-      setClients(Array.isArray(clientData) ? clientData : (clientData?.items || clientData?.clients || []));
+      const items = Array.isArray(clientData) ? clientData : (clientData?.items || clientData?.clients || []);
+      setClients(items);
+      setRemainingSlots(clientData?.remaining_slots ?? 0);
+      setTotalClients(clientData?.total ?? items.length);
       setBranding(brandData);
     } catch (err) {
       console.error('Failed to load:', err);
@@ -262,7 +267,8 @@ export default function AgentDashboard() {
     email_receipts: { icon: Mail, tone: 'bg-violet/10 text-violet', label: t('email_receipts') || 'Email receipts', desc: t('auto_send') || 'Auto-send' },
   };
 
-  const remainingSlots = (branding?.client_slots || 0) - (branding?.used_slots || 0);
+  // Total slot capacity = free slots + provisioned clients (each holds a slot).
+  const slotCapacity = remainingSlots + totalClients;
   const activeClients = clients.filter((c) => c.is_active);
   const totalMonthlyRevenue = activeClients.reduce((sum, c) => sum + (c.subscription_fee || 0), 0);
   const avgRevenuePerClient = activeClients.length > 0 ? totalMonthlyRevenue / activeClients.length : 0;
@@ -324,7 +330,7 @@ export default function AgentDashboard() {
           tone="warning"
           label={t('remaining_slots') || 'Remaining Slots'}
           value={remainingSlots}
-          valueSmall={branding?.client_slots ? `of ${branding.client_slots}` : undefined}
+          valueSmall={slotCapacity ? `of ${slotCapacity}` : undefined}
         />
       </div>
 
