@@ -17,6 +17,16 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // ISSUE-026: contract type-tests (`*.test-d.ts`) that assert the drift-prone
+    // api.ts return signatures. `ignoreSourceErrors` scopes failures to the
+    // type-tests themselves so the long tail of pre-existing, unrelated source
+    // type errors does not gate this guard — what we enforce is that reading a
+    // non-existent field off these typed responses fails the type-check.
+    typecheck: {
+      tsconfig: './tsconfig.app.json',
+      include: ['src/**/*.test-d.{ts,tsx}'],
+      ignoreSourceErrors: true,
+    },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],

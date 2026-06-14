@@ -90,8 +90,8 @@ export default function AgentDashboard() {
   async function loadData() {
     try {
       const [clientData, brandData] = await Promise.all([getAgentClients(), getAgentBranding()]);
-      // API returns { items, total, remaining_slots }; tolerate array/clients shapes too.
-      const items = Array.isArray(clientData) ? clientData : (clientData?.items || clientData?.clients || []);
+      // API returns AgentClientsResponse { items, total, remaining_slots } (typed in api.ts).
+      const items = clientData?.items || [];
       setClients(items);
       setRemainingSlots(clientData?.remaining_slots ?? 0);
       setTotalClients(clientData?.total ?? items.length);

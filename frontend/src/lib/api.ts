@@ -72,8 +72,33 @@ export async function getMasterEconomics(): Promise<MasterEconomics> {
 }
 
 // Agent endpoints
-export async function getAgentClients(skip = 0, limit = 50) {
-  const response = await client.apiCall.invoke({
+// ISSUE-023/026 (H9): GET /agent/clients returns AgentClientsResponse
+// `{ items, total, remaining_slots }` (routers/tenant.py). The Remaining-Slots
+// tile reads `remaining_slots`/`total` from here — the explicit signature stops
+// the UI from silently sourcing slot counts off the branding payload again.
+export interface AgentClientListItem {
+  id: number;
+  business_name: string;
+  email: string;
+  phone?: string | null;
+  subscription_fee?: number | null;
+  is_active: boolean;
+  zatca_enabled: boolean;
+  language_preference: string;
+  created_at?: string | null;
+}
+
+export interface AgentClientsResponse {
+  items: AgentClientListItem[];
+  total: number;
+  remaining_slots: number;
+}
+
+export async function getAgentClients(
+  skip = 0,
+  limit = 50,
+): Promise<AgentClientsResponse> {
+  const response = await client.apiCall.invoke<AgentClientsResponse>({
     url: '/api/v1/tenant/agent/clients',
     method: 'GET',
     data: { skip, limit },
@@ -797,10 +822,30 @@ export async function getProducts() {
   return response.data;
 }
 
-export async function getPackages() {
+// ISSUE-024/026 (U1.1): GET /api/v1/packages/list returns PackageListResponse
+// `{ items, total }`, each package carrying `suggested_retail_price` (the field
+// MasterDashboard's retail-price line reads). Mirrors backend PackageResponse.
+export interface Package {
+  id: number;
+  name: string;
+  client_slots: number;
+  wholesale_price: number;
+  suggested_retail_price?: number | null;
+  is_active: boolean;
+  features?: string[] | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface PackageListResponse {
+  items: Package[];
+  total: number;
+}
+
+export async function getPackages(): Promise<PackageListResponse> {
   // H1: the generic /api/v1/entities/packages scaffold was removed; the only
   // package surface is the master-gated listing in routers/features.py.
-  const response = await client.apiCall.invoke({
+  const response = await client.apiCall.invoke<PackageListResponse>({
     url: '/api/v1/packages/list',
     method: 'GET',
     data: {},
@@ -819,13 +864,46 @@ export async function getAgentPublicProfile(agentId: string) {
 }
 
 // Product Management
-export async function getProductsList(category?: string, search?: string) {
+// ISSUE-021/026 (H6): GET /api/v1/products/list returns ProductListResponse
+// `{ items, total }`. The explicit signature is the durable guard — reading the
+// old drifted `products` key (which left the catalog table permanently empty) is
+// now a tsc compile error. Mirrors backend ProductResponse in routers/features.py.
+export interface ProductListItem {
+  id: number;
+  client_id: number;
+  name: string;
+  name_ar?: string | null;
+  barcode?: string | null;
+  price: number;
+  cost_price?: number | null;
+  quantity: number;
+  reorder_point: number;
+  reorder_quantity: number;
+  category?: string | null;
+  vat_rate?: number | null;
+  is_active: boolean;
+  is_weighted: boolean;
+  is_open_price: boolean;
+  unit_label?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ProductListResponse {
+  items: ProductListItem[];
+  total: number;
+}
+
+export async function getProductsList(
+  category?: string,
+  search?: string,
+): Promise<ProductListResponse> {
   const params: Record<string, string> = {};
   if (category) params.category = category;
   if (search) params.search = search;
   const queryString = new URLSearchParams(params).toString();
   const url = queryString ? `/api/v1/products/list?${queryString}` : '/api/v1/products/list';
-  const response = await client.apiCall.invoke({
+  const response = await client.apiCall.invoke<ProductListResponse>({
     url,
     method: 'GET',
     data: {},
@@ -1714,8 +1792,27 @@ export async function setBranchStock(branchId: number, productId: number, quanti
 }
 
 // Expense Management
-export async function getExpenses() {
-  const response = await client.entities.expenses.query({
+// ISSUE-022/026: the generic entity list wraps rows as `{ items, total }`.
+// Mirrors backend Expenses (models/expenses.py). Explicit signature so the page
+// reads `items` (reading a wrong key is a tsc error).
+export interface Expense {
+  id: number;
+  user_id?: string;
+  category: string;
+  amount: number;
+  description?: string | null;
+  expense_date?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ExpenseListResponse {
+  items: Expense[];
+  total: number;
+}
+
+export async function getExpenses(): Promise<ExpenseListResponse> {
+  const response = await client.entities.expenses.query<ExpenseListResponse>({
     query: {},
     sort: '-created_at',
     limit: 200,
@@ -1806,8 +1903,32 @@ export async function validateDiscount(
   return response.data;
 }
 
-export async function getDiscounts() {
-  const response = await client.entities.discounts.query({
+// ISSUE-025/026 (U3.5): discount rows carry `usage_count` (the redemption tally),
+// never `used_count`. Mirrors backend Discounts (models/discounts.py). The
+// explicit signature makes the "Total Uses" rollup read the real field.
+export interface Discount {
+  id: number;
+  user_id?: string;
+  code: string;
+  type: string;
+  value: number;
+  min_purchase?: number | null;
+  is_active?: boolean | null;
+  usage_count?: number | null;
+  max_uses?: number | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface DiscountListResponse {
+  items: Discount[];
+  total: number;
+}
+
+export async function getDiscounts(): Promise<DiscountListResponse> {
+  const response = await client.entities.discounts.query<DiscountListResponse>({
     query: {},
     limit: 200,
   });

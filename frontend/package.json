@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "vitest run --typecheck.only",
     "test:e2e": "playwright test",
     "postinstall": "echo 'Dependencies installed successfully'"
   },
