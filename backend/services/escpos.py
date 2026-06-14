@@ -41,8 +41,15 @@ _FONT_PATH = os.path.join(
 )
 
 # 80mm thermal heads are 576 dots wide at 203dpi (a multiple of 8, so no row
-# padding is needed for the raster command).
+# padding is needed for the raster command); 58mm heads have a 384-dot printable
+# area. Both are multiples of 8. 80mm stays the default (ISSUE-046 / H26).
 _WIDTH_PX = 576
+_WIDTH_58MM_PX = 384
+_PAPER_WIDTH_PX = {"80mm": _WIDTH_PX, "58mm": _WIDTH_58MM_PX}
+
+# The ASCII text fallback's character width per paper size (degraded path only):
+# ~12 dots/char at the fallback font, so 576/48 ≈ 42 chars on 80mm, 32 on 58mm.
+_PAPER_TEXT_WIDTH = {"80mm": 42, "58mm": 32}
 
 # Always-Arabic receipt labels (mirrors the A4 invoice's label set).
 _L = {
@@ -100,12 +107,19 @@ def _template_settings(template: object) -> dict:
 
     fs = t.get("font_size")
     fs = fs.lower() if isinstance(fs, str) else "medium"
+    ps = t.get("paper_size")
+    ps = ps.lower() if isinstance(ps, str) else "80mm"
     return {
         "header_text": (t.get("header_text") or "").strip(),
         "footer_text": (t.get("footer_text") or "").strip(),
         "show_logo": _flag("show_logo"),
         "show_qr_code": _flag("show_qr_code"),
         "font_scale": _FONT_SCALE.get(fs, 1.0),
+        # ISSUE-046: the printable raster width in dots, and the matching ASCII
+        # column count for the degraded text fallback. Unknown sizes (e.g. "A4",
+        # which never reaches the thermal path) fall back to 80mm.
+        "width_px": _PAPER_WIDTH_PX.get(ps, _WIDTH_PX),
+        "text_width": _PAPER_TEXT_WIDTH.get(ps, 42),
     }
 
 
@@ -287,6 +301,11 @@ def _render_receipt_image(
 
     settings = settings or _template_settings(None)
     scale = settings["font_scale"]
+    width = settings["width_px"]
+    # On a narrow 58mm head every font scales down with the paper so the same
+    # content still fits across the 384-dot width without clipping (ISSUE-046).
+    paper_scale = width / _WIDTH_PX
+    scale = scale * paper_scale
     f_title = ImageFont.truetype(_FONT_PATH, int(40 * scale))
     f_big = ImageFont.truetype(_FONT_PATH, int(30 * scale))
     f_norm = ImageFont.truetype(_FONT_PATH, int(26 * scale))
@@ -297,7 +316,7 @@ def _render_receipt_image(
     # the font multiplier (taller fonts need a taller canvas) plus headroom for
     # an optional custom header line.
     est_h = int((640 + len(line_items or []) * 150) * max(scale, 1.0)) + 120
-    img = Image.new("1", (_WIDTH_PX, est_h), 1)  # 1 == white background
+    img = Image.new("1", (width, est_h), 1)  # 1 == white background
     draw = ImageDraw.Draw(img)
     y = margin
 
@@ -309,14 +328,14 @@ def _render_receipt_image(
         nonlocal y
         t = _shape(text)
         w = draw.textlength(t, font=font)
-        draw.text(((_WIDTH_PX - w) / 2, y), t, font=font, fill=0)
+        draw.text(((width - w) / 2, y), t, font=font, fill=0)
         y += row_h(font)
 
     def right(text, font) -> None:
         nonlocal y
         t = _shape(text)
         w = draw.textlength(t, font=font)
-        draw.text((_WIDTH_PX - margin - w, y), t, font=font, fill=0)
+        draw.text((width - margin - w, y), t, font=font, fill=0)
         y += row_h(font)
 
     def lr(right_text, left_text, font) -> None:
@@ -324,14 +343,14 @@ def _render_receipt_image(
         nonlocal y
         rt = _shape(right_text)
         rw = draw.textlength(rt, font=font)
-        draw.text((_WIDTH_PX - margin - rw, y), rt, font=font, fill=0)
+        draw.text((width - margin - rw, y), rt, font=font, fill=0)
         draw.text((margin, y), str(left_text), font=font, fill=0)
         y += row_h(font)
 
     def rule() -> None:
         nonlocal y
         y += 2
-        draw.line([(margin, y), (_WIDTH_PX - margin, y)], fill=0, width=2)
+        draw.line([(margin, y), (width - margin, y)], fill=0, width=2)
         y += 12
 
     # ---- header ----
@@ -386,7 +405,7 @@ def _render_receipt_image(
         )
     rule()
 
-    return img.crop((0, 0, _WIDTH_PX, min(y + margin, est_h)))
+    return img.crop((0, 0, width, min(y + margin, est_h)))
 
 
 def _render_footer_image(settings: dict = None):
@@ -399,15 +418,16 @@ def _render_footer_image(settings: dict = None):
     from PIL import Image, ImageDraw, ImageFont
 
     settings = settings or _template_settings(None)
+    width = settings["width_px"]
     text = settings["footer_text"] or _L["thanks"]
-    font = ImageFont.truetype(_FONT_PATH, int(26 * settings["font_scale"]))
+    font = ImageFont.truetype(_FONT_PATH, int(26 * settings["font_scale"] * (width / _WIDTH_PX)))
     ascent, descent = font.getmetrics()
     h = ascent + descent + 16
-    img = Image.new("1", (_WIDTH_PX, h), 1)
+    img = Image.new("1", (width, h), 1)
     draw = ImageDraw.Draw(img)
     t = _shape(text)
     w = draw.textlength(t, font=font)
-    draw.text(((_WIDTH_PX - w) / 2, 8), t, font=font, fill=0)
+    draw.text(((width - w) / 2, 8), t, font=font, fill=0)
     return img
 
 
@@ -559,7 +579,7 @@ def build_receipt(
             tip_amount=tip_amount,
             service_charge=service_charge,
             proforma=proforma,
-            width=width,
+            width=settings["text_width"],
             settings=settings,
         )
 
@@ -609,7 +629,10 @@ def _render_kot_image(
     from PIL import Image, ImageDraw, ImageFont
 
     settings = settings or _template_settings(None)
-    scale = settings["font_scale"]
+    width = settings["width_px"]
+    # Scale the ticket fonts down with a narrow 58mm head so courses/modifiers
+    # still fit across the 384-dot width without clipping (ISSUE-046).
+    scale = settings["font_scale"] * (width / _WIDTH_PX)
     f_title = ImageFont.truetype(_FONT_PATH, int(42 * scale))
     f_course = ImageFont.truetype(_FONT_PATH, int(32 * scale))
     f_item = ImageFont.truetype(_FONT_PATH, int(34 * scale))
@@ -618,7 +641,7 @@ def _render_kot_image(
     margin = 12
     n_items = sum(len(c.get("items") or []) for c in courses or [])
     est_h = int((360 + len(courses or []) * 60 + n_items * 130) * max(scale, 1.0)) + 120
-    img = Image.new("1", (_WIDTH_PX, est_h), 1)
+    img = Image.new("1", (width, est_h), 1)
     draw = ImageDraw.Draw(img)
     y = margin
 
@@ -630,28 +653,28 @@ def _render_kot_image(
         nonlocal y
         t = _shape(text)
         w = draw.textlength(t, font=font)
-        draw.text(((_WIDTH_PX - w) / 2, y), t, font=font, fill=0)
+        draw.text(((width - w) / 2, y), t, font=font, fill=0)
         y += row_h(font)
 
     def right(text, font, indent: int = 0) -> None:
         nonlocal y
         t = _shape(text)
         w = draw.textlength(t, font=font)
-        draw.text((_WIDTH_PX - margin - indent - w, y), t, font=font, fill=0)
+        draw.text((width - margin - indent - w, y), t, font=font, fill=0)
         y += row_h(font)
 
     def lr(right_text, left_text, font) -> None:
         nonlocal y
         rt = _shape(right_text)
         rw = draw.textlength(rt, font=font)
-        draw.text((_WIDTH_PX - margin - rw, y), rt, font=font, fill=0)
+        draw.text((width - margin - rw, y), rt, font=font, fill=0)
         draw.text((margin, y), str(left_text), font=font, fill=0)
         y += row_h(font)
 
     def rule() -> None:
         nonlocal y
         y += 2
-        draw.line([(margin, y), (_WIDTH_PX - margin, y)], fill=0, width=2)
+        draw.line([(margin, y), (width - margin, y)], fill=0, width=2)
         y += 12
 
     # ---- header ----
@@ -682,7 +705,7 @@ def _render_kot_image(
                 right(f"» {note}", f_small, indent=28)
         rule()
 
-    return img.crop((0, 0, _WIDTH_PX, min(y + margin, est_h)))
+    return img.crop((0, 0, width, min(y + margin, est_h)))
 
 
 def _append_kot_text_fallback(
@@ -767,7 +790,7 @@ def build_kot(
             order_ref=order_ref,
             table_label=table_label,
             courses=courses,
-            width=width,
+            width=settings["text_width"],
         )
 
     b.feed(3).cut()
