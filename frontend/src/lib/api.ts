@@ -3043,6 +3043,9 @@ export interface SettleResult {
   receipt_base64?: string | null;
   ticket_status: string;
   table_freed: boolean;
+  // ISSUE-070: false when a partial settlement left an unpaid remainder on a
+  // still-open ticket; true (or absent) for a full settle.
+  fully_settled?: boolean;
 }
 
 // Settle a ticket into a real ZATCA invoice via the shared atomic sale core. A
@@ -3072,6 +3075,34 @@ export async function settleTicket(
 ): Promise<SettleResult> {
   const res = await client.apiCall.invoke<SettleResult>({
     url: `/api/v1/restaurant/order-tickets/${ticketId}/settle`,
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+// Settle PART of a ticket into its own ZATCA invoice (ISSUE-070), leaving the
+// unpaid remainder on the still-open ticket. Bills exactly one subset: a single
+// seat's lines (`seat_no`) or specific lines (`item_ids`). Mints a real invoice
+// through the SAME atomic sale core as the full settle; billing the last unpaid
+// line closes the ticket and frees the table (`fully_settled: true`).
+export async function settleTicketPartial(
+  ticketId: number,
+  data: {
+    item_ids?: number[];
+    seat_no?: number;
+    payment_method?: string;
+    tip_amount?: number;
+    customer_name?: string;
+    customer_vat_number?: string;
+    payment_simulate?: string;
+    payment_token?: string;
+    payment_terminal_id?: number;
+    payment_gift_card_code?: string;
+  }
+): Promise<SettleResult> {
+  const res = await client.apiCall.invoke<SettleResult>({
+    url: `/api/v1/restaurant/order-tickets/${ticketId}/settle-partial`,
     method: 'POST',
     data,
   });

@@ -29,6 +29,7 @@ import {
   setServiceCharge,
   printTicketCheck,
   settleTicket,
+  settleTicketPartial,
   type OrderTicket as OrderTicketT,
   type TicketItem,
   type RestaurantTable,
@@ -135,6 +136,12 @@ export default function OrderTicket() {
   const [settleTip, setSettleTip] = useState(0);
   const [settled, setSettled] = useState<SettleResult | null>(null);
   const [settleError, setSettleError] = useState<string | null>(null);
+  // Partial settlement (ISSUE-070): the server can bill the WHOLE remainder
+  // (full /settle) or a subset — a single seat's lines or specific lines — each
+  // subset minting its own ZATCA invoice and leaving the rest open.
+  const [settleScope, setSettleScope] = useState<'full' | 'seat' | 'item'>('full');
+  const [settleSeat, setSettleSeat] = useState<number | undefined>(undefined);
+  const [settleItemIds, setSettleItemIds] = useState<Set<number>>(new Set());
 
   // Connectivity badge (UX-02 offline state).
   useEffect(() => {
@@ -341,14 +348,29 @@ export default function OrderTicket() {
   }
 
   // Settle the ticket into a real ZATCA invoice via the shared sale core (F-059).
+  // A partial scope (ISSUE-070) bills only a seat / chosen lines through the
+  // settle-partial endpoint, leaving the unpaid remainder on the open ticket.
   async function handleSettle() {
     setSubmitting(true);
     setSettleError(null);
     try {
-      const res = await settleTicket(ticketId, {
-        payment_method: settleMethod,
-        tip_amount: settleTip || 0,
-      });
+      const res =
+        settleScope === 'seat'
+          ? await settleTicketPartial(ticketId, {
+              seat_no: settleSeat,
+              payment_method: settleMethod,
+              tip_amount: settleTip || 0,
+            })
+          : settleScope === 'item'
+            ? await settleTicketPartial(ticketId, {
+                item_ids: Array.from(settleItemIds),
+                payment_method: settleMethod,
+                tip_amount: settleTip || 0,
+              })
+            : await settleTicket(ticketId, {
+                payment_method: settleMethod,
+                tip_amount: settleTip || 0,
+              });
       setSettled(res);
       setSettleOpen(false);
       await load();
@@ -405,6 +427,24 @@ export default function OrderTicket() {
 
   const grandTotal = items.reduce((sum, i) => sum + (i.line_total || 0), 0);
   const freeTables = tables.filter((tb) => (tb.state || 'free') === 'free');
+
+  // Partial-settlement helpers (ISSUE-070): distinct seats on the ticket, the
+  // selected subset's goods total (a pre-settle estimate — the authoritative
+  // amount_due, incl. VAT proration, comes back on the minted invoice), and
+  // whether the current scope selection is settle-able.
+  const seatNumbers = Array.from(
+    new Set(items.map((i) => i.seat_no).filter((s): s is number => s != null))
+  ).sort((a, b) => a - b);
+  const settleBase =
+    settleScope === 'seat'
+      ? items.filter((i) => i.seat_no === settleSeat).reduce((s, i) => s + (i.line_total || 0), 0)
+      : settleScope === 'item'
+        ? items.filter((i) => settleItemIds.has(i.id)).reduce((s, i) => s + (i.line_total || 0), 0)
+        : check?.amount_due ?? grandTotal;
+  const canSettle =
+    settleScope === 'full' ||
+    (settleScope === 'seat' && settleSeat != null) ||
+    (settleScope === 'item' && settleItemIds.size > 0);
 
   return (
     <div className="space-y-6">
@@ -596,7 +636,9 @@ export default function OrderTicket() {
           <CardContent className="p-4 flex items-center gap-3">
             <CheckCircle2 className="h-5 w-5 text-green-400 shrink-0" />
             <div className="text-sm">
-              <p className="text-green-300 font-semibold">{t('settled_ok')}</p>
+              <p className="text-green-300 font-semibold">
+                {settled.fully_settled === false ? t('partial_settled_ok') : t('settled_ok')}
+              </p>
               <p className="text-slate-400">
                 {t('invoice_no')}: {settled.invoice_number} ·{' '}
                 {t('amount_due')}: {settled.amount_due.toFixed(2)}
@@ -629,6 +671,9 @@ export default function OrderTicket() {
               onClick={() => {
                 setSettleError(null);
                 setSettleTip(0);
+                setSettleScope('full');
+                setSettleSeat(undefined);
+                setSettleItemIds(new Set());
                 setSettleOpen(true);
               }}
               disabled={items.length === 0}
@@ -914,9 +959,92 @@ export default function OrderTicket() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-slate-400">{t('settle_desc')}</p>
+
+            {/* Settle scope (ISSUE-070): the whole remainder, one seat, or chosen lines */}
+            <div>
+              <label htmlFor="settle-scope" className="text-sm text-slate-400 mb-1 block">
+                {t('settle_scope')}
+              </label>
+              <select
+                id="settle-scope"
+                aria-label={t('settle_scope')}
+                value={settleScope}
+                onChange={(e) => {
+                  setSettleScope(e.target.value as 'full' | 'seat' | 'item');
+                  setSettleSeat(undefined);
+                  setSettleItemIds(new Set());
+                  setSettleTip(0);
+                }}
+                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              >
+                <option value="full">{t('scope_full')}</option>
+                {seatNumbers.length > 0 && <option value="seat">{t('scope_seat')}</option>}
+                <option value="item">{t('scope_item')}</option>
+              </select>
+            </div>
+
+            {/* By seat — pick which seat's lines to bill */}
+            {settleScope === 'seat' && (
+              <div>
+                <label htmlFor="settle-seat" className="text-sm text-slate-400 mb-1 block">
+                  {t('choose_seat')}
+                </label>
+                <select
+                  id="settle-seat"
+                  aria-label={t('choose_seat')}
+                  value={settleSeat ?? ''}
+                  onChange={(e) => setSettleSeat(e.target.value ? parseInt(e.target.value) : undefined)}
+                  className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                >
+                  <option value="">—</option>
+                  {seatNumbers.map((s) => (
+                    <option key={s} value={s}>
+                      {t('seat')} {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* By item — tick the exact lines to bill */}
+            {settleScope === 'item' && (
+              <div className="space-y-1.5">
+                <span className="text-sm text-slate-400 block">{t('choose_items')}</span>
+                {items.map((item) => (
+                  <label
+                    key={item.id}
+                    className="flex items-center justify-between gap-2 rounded-md bg-slate-700/40 px-3 py-2 text-sm text-slate-300 cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`${item.qty} × ${item.name || `#${item.product_id}`}`}
+                        checked={settleItemIds.has(item.id)}
+                        onChange={() =>
+                          setSettleItemIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(item.id)) next.delete(item.id);
+                            else next.add(item.id);
+                            return next;
+                          })
+                        }
+                      />
+                      {item.qty} × {item.name || `#${item.product_id}`}
+                      {item.seat_no != null && (
+                        <span className="text-xs text-slate-400">
+                          ({t('seat')} {item.seat_no})
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-slate-400">{(item.line_total || 0).toFixed(2)}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+
             <div className="flex items-center justify-between text-white font-semibold">
               <span>{t('amount_due')}</span>
-              <span>{(check?.amount_due ?? grandTotal).toFixed(2)}</span>
+              <span>{settleBase.toFixed(2)}</span>
             </div>
             <div>
               <label className="text-sm text-slate-400 mb-1 block">{t('payment_method')}</label>
@@ -947,7 +1075,7 @@ export default function OrderTicket() {
               />
               <div className="flex gap-2 mt-2">
                 {[10, 15, 20].map((pct) => {
-                  const base = check?.amount_due ?? grandTotal;
+                  const base = settleBase;
                   return (
                     <Button
                       key={pct}
@@ -966,12 +1094,12 @@ export default function OrderTicket() {
             {settleTip > 0 && (
               <div className="flex items-center justify-between text-white font-semibold">
                 <span>{t('total_with_tip')}</span>
-                <span>{((check?.amount_due ?? grandTotal) + settleTip).toFixed(2)}</span>
+                <span>{(settleBase + settleTip).toFixed(2)}</span>
               </div>
             )}
             <Button
               onClick={handleSettle}
-              disabled={submitting}
+              disabled={submitting || !canSettle}
               className="w-full bg-green-600 hover:bg-green-700 text-white"
             >
               {submitting ? t('loading') : t('settle')}
