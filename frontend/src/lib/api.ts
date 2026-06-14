@@ -1911,6 +1911,70 @@ export async function deletePrinter(id: number): Promise<void> {
   });
 }
 
+// ISSUE-048 (H26): the merchant's receipt-template knobs the ESC/POS renderer
+// honors at print time (#45 wired `load_default_template` into build_receipt /
+// build_kot). The designer UI edits these; the default template (`is_default`)
+// is the one the renderer loads.
+export type FontSize = 'small' | 'medium' | 'large';
+
+export interface ReceiptTemplate {
+  id: number;
+  name: string;
+  header_text?: string | null;
+  footer_text?: string | null;
+  show_logo?: boolean | null;
+  show_vat_details?: boolean | null;
+  show_qr_code?: boolean | null;
+  paper_size?: string | null;
+  font_size?: string | null;
+  is_default?: boolean | null;
+}
+
+export interface ReceiptTemplateInput {
+  name: string;
+  header_text?: string | null;
+  footer_text?: string | null;
+  show_logo?: boolean;
+  show_vat_details?: boolean;
+  show_qr_code?: boolean;
+  paper_size?: string;
+  font_size?: string;
+  is_default?: boolean;
+}
+
+// List the merchant's receipt templates (owner-scoped). Unwraps the paginated
+// entity envelope to the plain array the designer works with.
+export async function listReceiptTemplates(): Promise<ReceiptTemplate[]> {
+  const response = await client.apiCall.invoke<{ items: ReceiptTemplate[] }>({
+    url: '/api/v1/entities/receipt_templates',
+    method: 'GET',
+  });
+  return response.data?.items ?? [];
+}
+
+export async function createReceiptTemplate(
+  data: ReceiptTemplateInput,
+): Promise<ReceiptTemplate> {
+  const response = await client.apiCall.invoke<ReceiptTemplate>({
+    url: '/api/v1/entities/receipt_templates',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function updateReceiptTemplate(
+  id: number,
+  data: Partial<ReceiptTemplateInput>,
+): Promise<ReceiptTemplate> {
+  const response = await client.apiCall.invoke<ReceiptTemplate>({
+    url: `/api/v1/entities/receipt_templates/${id}`,
+    method: 'PUT',
+    data,
+  });
+  return response.data;
+}
+
 // Designate THE main branch (exactly one). The backend unsets the previous
 // main atomically, so callers just reload after this resolves (ISSUE-062).
 export async function setMainBranch(branchId: number) {
