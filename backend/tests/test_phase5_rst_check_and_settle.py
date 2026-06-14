@@ -352,6 +352,109 @@ async def test_settle_twice_is_rejected(client):
 
 
 # ---------------------------------------------------------------------------
+# Settling a combo deducts each component product's stock (ISSUE-032, H23).
+# A combo line carries product_id=None and priced at its bundle price; without
+# expansion the sale charges the bundle but decrements NO stock (silent oversell).
+# ---------------------------------------------------------------------------
+async def test_settle_depletes_combo_components(client):
+    user, token, client_id = await make_client_account(client, business_type="restaurant")
+    await _set_vat(client_id)
+    headers = auth_headers(token)
+    table_id = await _make_table(client, token, name="C1")
+    ticket_id = await _open_dine_in(client, token, table_id)
+    burger = await add_product(client_id, user["id"], name="Burger", quantity=20, price=30.0)
+    fries = await add_product(client_id, user["id"], name="Fries", quantity=20, price=12.0)
+    drink = await add_product(client_id, user["id"], name="Cola", quantity=20, price=8.0)
+
+    # A meal: 1 burger + 1 fries + 2 drinks, sold as a bundle for 39.
+    combo = await client.post(
+        "/api/v1/restaurant/combos",
+        json={
+            "name": "Meal Deal",
+            "bundle_price": 39.0,
+            "components": [
+                {"product_id": burger, "qty": 1},
+                {"product_id": fries, "qty": 1},
+                {"product_id": drink, "qty": 2},
+            ],
+        },
+        headers=headers,
+    )
+    assert combo.status_code == 201, combo.text
+
+    # Two meals on the ticket.
+    line = await client.post(
+        f"/api/v1/restaurant/order-tickets/{ticket_id}/items",
+        json={"combo_id": combo.json()["id"], "qty": 2},
+        headers=headers,
+    )
+    assert line.status_code == 201, line.text
+
+    resp = await client.post(
+        f"/api/v1/restaurant/order-tickets/{ticket_id}/settle",
+        json={"payment_method": "cash"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    # Each component deducts exactly once: qty_per × 2 meals.
+    assert await get_product_quantity(burger) == 18  # 20 - 1*2
+    assert await get_product_quantity(fries) == 18  # 20 - 1*2
+    assert await get_product_quantity(drink) == 16  # 20 - 2*2
+
+
+# ---------------------------------------------------------------------------
+# A combo whose component is BOM-backed deducts the component AND its recipe,
+# each exactly once — combo expansion composes with BOM without double-counting
+# (ISSUE-032 AC2/AC3, coordinates with the deplete-double-deduct trap #104).
+# ---------------------------------------------------------------------------
+async def test_settle_combo_component_bom_deducts_once(client):
+    user, token, client_id = await make_client_account(client, business_type="restaurant")
+    await _set_vat(client_id)
+    headers = auth_headers(token)
+    table_id = await _make_table(client, token, name="C2")
+    ticket_id = await _open_dine_in(client, token, table_id)
+    burger = await add_product(client_id, user["id"], name="Burger", quantity=100, price=25.0)
+    patty = await add_product(client_id, user["id"], name="Patty", quantity=10, price=0.0)
+
+    # The burger is itself BOM-backed: 2 patties per burger.
+    bom = await client.post(
+        f"/api/v1/restaurant/products/{burger}/bom",
+        json={"component_product_id": patty, "qty_per": 2},
+        headers=headers,
+    )
+    assert bom.status_code == 201, bom.text
+
+    # A combo of 1 burger, three meals on the ticket.
+    combo = await client.post(
+        "/api/v1/restaurant/combos",
+        json={
+            "name": "Burger Combo",
+            "bundle_price": 20.0,
+            "components": [{"product_id": burger, "qty": 1}],
+        },
+        headers=headers,
+    )
+    assert combo.status_code == 201, combo.text
+    line = await client.post(
+        f"/api/v1/restaurant/order-tickets/{ticket_id}/items",
+        json={"combo_id": combo.json()["id"], "qty": 3},
+        headers=headers,
+    )
+    assert line.status_code == 201, line.text
+
+    resp = await client.post(
+        f"/api/v1/restaurant/order-tickets/{ticket_id}/settle",
+        json={"payment_method": "cash"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    # Burger deducts once (3), and its recipe expands once (3×2 = 6 patties) —
+    # not twice. No double-count when combo expansion meets BOM depletion.
+    assert await get_product_quantity(burger) == 97  # 100 - 3
+    assert await get_product_quantity(patty) == 4  # 10 - 6
+
+
+# ---------------------------------------------------------------------------
 # A split settlement whose tenders don't sum to amount_due is rejected.
 # ---------------------------------------------------------------------------
 async def test_settle_split_mismatch_rejected(client):

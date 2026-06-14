@@ -307,6 +307,9 @@ class OrderTicketItems(Base):
     client_id = Column(Integer, nullable=True, index=True)
     ticket_id = Column(Integer, nullable=False, index=True)
     product_id = Column(Integer, nullable=True, index=True)
+    # A combo/bundle line carries combo_id (and product_id is None); at settle the
+    # line expands into its component products so stock deducts (F-056 / ISSUE-032).
+    combo_id = Column(Integer, nullable=True, index=True)
     variant_id = Column(Integer, nullable=True)
     name = Column(String, nullable=True)
     qty = Column(Float, nullable=False, default=1, server_default="1")

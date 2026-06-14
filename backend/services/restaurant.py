@@ -457,6 +457,7 @@ class RestaurantService:
                 client_id=client_id,
                 ticket_id=ticket.id,
                 product_id=product_id,
+                combo_id=combo_id,
                 variant_id=data.get("variant_id"),
                 name=name,
                 qty=qty,
@@ -821,17 +822,34 @@ class RestaurantService:
         }
 
     # --------------------------------------------------- check + settle (F-059)
-    def _cart_lines(self, items: List[OrderTicketItems]) -> List["SettleLine"]:
+    async def _cart_lines(
+        self, items: List[OrderTicketItems], user_id: str
+    ) -> List["SettleLine"]:
         """Normalize a ticket's lines into the cart-line shape the sale core needs.
 
         Each line's unit price is derived from its ``line_total`` (which already
         folds in modifier/combo pricing) so the rung-up receipt lines re-sum to the
         goods subtotal the invoice is stamped on.
+
+        A **combo** line carries ``combo_id`` (and ``product_id=None``); on its own
+        it would charge the bundle but deduct no stock — a silent oversell (H23,
+        ISSUE-032). So it is expanded here into one cart line per component product
+        (qty = component qty × line qty), which the sale core then deducts (and
+        BOM-expands) exactly once. The bundle price is allocated across the
+        components so the rung-up lines still re-sum to the same goods subtotal.
         """
         lines: List[SettleLine] = []
         for i in items:
             qty = float(i.qty or 0)
             line_total = float(i.line_total or 0)
+            combo_id = getattr(i, "combo_id", None)
+            if combo_id is not None:
+                expanded = await self._expand_combo_line(combo_id, qty, line_total, user_id)
+                if expanded:
+                    lines.extend(expanded)
+                    continue
+                # Combo deleted or has no components: keep the single (non-deducting)
+                # line so the charge/receipt is preserved rather than silently lost.
             unit = round(line_total / qty, 4) if qty else round(line_total, 4)
             lines.append(
                 SettleLine(
@@ -844,6 +862,63 @@ class RestaurantService:
                 )
             )
         return lines
+
+    async def _expand_combo_line(
+        self, combo_id: int, line_qty: float, line_total: float, user_id: str
+    ) -> Optional[List["SettleLine"]]:
+        """Expand a combo line into one cart line per component product (ISSUE-032).
+
+        Returns ``None`` when the combo can't be expanded (deleted, or no valid
+        components), so the caller can keep the original line. The bundle's
+        ``line_total`` is allocated across components in proportion to their catalog
+        price so the expanded lines re-sum to the same goods subtotal.
+        """
+        combo = await self.get_combo(combo_id, user_id)
+        if combo is None:
+            return None
+        components = self._normalize_components(self._load_components(combo))
+        if not components:
+            return None
+
+        metas: List[tuple] = []
+        weights: List[float] = []
+        for comp in components:
+            pid = comp["product_id"]
+            comp_qty = float(comp.get("qty") or 1)
+            product = await self._owned_product(pid, user_id)
+            price = float(product.price) if product is not None else 0.0
+            name = product.name if product is not None else f"product:{pid}"
+            metas.append((pid, comp_qty, name))
+            weights.append(price * comp_qty)
+
+        allocations = self._allocate(line_total, weights)
+        expanded: List[SettleLine] = []
+        for (pid, comp_qty, name), alloc in zip(metas, allocations):
+            q = round(comp_qty * line_qty, 4)
+            unit = round(alloc / q, 4) if q else 0.0
+            expanded.append(
+                SettleLine(product_id=pid, name=name, price=unit, quantity=q)
+            )
+        return expanded
+
+    @staticmethod
+    def _allocate(total: float, weights: List[float]) -> List[float]:
+        """Split ``total`` across ``weights`` to cents; the last absorbs the remainder.
+
+        Falls back to an equal split when the weights are all zero (free components),
+        so the allocation always sums back to ``total`` exactly.
+        """
+        total = round(float(total), 2)
+        n = len(weights)
+        if n == 0:
+            return []
+        wsum = sum(weights)
+        if wsum > 0:
+            allocs = [round(total * w / wsum, 2) for w in weights]
+        else:
+            allocs = [round(total / n, 2) for _ in weights]
+        allocs[-1] = round(total - sum(allocs[:-1]), 2)
+        return allocs
 
     async def build_proforma(
         self,
@@ -965,7 +1040,7 @@ class RestaurantService:
             raise ValueError("Cannot settle an empty ticket")
 
         check = await self.compute_check(ticket_id, user_id, vat_rate, tip_amount)
-        lines = self._cart_lines(items)
+        lines = await self._cart_lines(items, user_id)
 
         # Stage the ticket close + table free in THIS session so they commit
         # atomically with the fiscal sale below. execute_sale commits once; a
