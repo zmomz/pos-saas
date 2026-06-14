@@ -20,9 +20,12 @@ table is unit-testable in isolation; ``run_client_dunning`` / ``run_agent_dunnin
 wrap it with the real charge attempt, persistence, an audit row, and a best-effort
 Arabic reminder notice (PRN-09).
 
-There is no always-on scheduler on the standalone deployment, so the sweep is
-agent-triggered (``POST /tenant/agent/billing/run-dunning``) — the same
-operator-drains-the-backlog pattern used by the ZATCA reconcile sweep (F-020).
+The sweep runs two ways: an agent can drain their own backlog on demand
+(``POST /tenant/agent/billing/run-dunning`` -> ``run_agent_dunning``, the same
+operator-drains-the-backlog pattern as the ZATCA reconcile sweep, F-020), and an
+always-on background scheduler (ISSUE-052, ``services.billing_scheduler``) runs
+the platform-wide ``run_global_dunning`` on an interval so overdue subscriptions
+advance with no manual trigger.
 """
 import logging
 from dataclasses import dataclass
@@ -223,6 +226,62 @@ async def run_client_dunning(
         "attempts": transition.attempts,
         "grace_deadline": grace_deadline,
     }
+
+
+async def run_global_dunning(
+    db,
+    *,
+    actor_user_id: str = "system:billing-scheduler",
+    now: Optional[datetime] = None,
+) -> dict:
+    """Run the dunning/retry sweep across EVERY agent's overdue merchants in one
+    pass — the always-on scheduler's entry point (ISSUE-052).
+
+    Unlike :func:`run_agent_dunning` (owner-scoped to one calling agent), this is
+    platform-wide: it drains the whole backlog without a manual agent trigger. Each
+    merchant's owning agent row is resolved (and cached) so the commission split
+    still routes correctly. Idempotent: a recovered merchant's ``next_billing_date``
+    moves into the future and a suspended one becomes terminal, so a re-run selects
+    nothing already settled this period; the per-period Stripe idempotency key
+    (``dun-{id}-{period_start}``) blocks a double-charge within the same day.
+    Commits the whole batch once.
+    """
+    now = now or datetime.now(timezone.utc)
+    today = now.date().isoformat()
+
+    rows = (
+        await db.execute(
+            select(Clients).where(
+                Clients.subscription_fee.isnot(None),
+                Clients.subscription_fee > 0,
+                Clients.subscription_status.in_(ACTIVE_STATES),
+                or_(
+                    Clients.subscription_status.in_(("past_due", "dunning")),
+                    Clients.next_billing_date.is_(None),
+                    Clients.next_billing_date <= today,
+                ),
+            )
+        )
+    ).scalars().all()
+
+    agent_cache: dict = {}
+    summary = {"processed": 0, "recovered": 0, "past_due": 0, "dunning": 0, "suspended": 0}
+    for merchant in rows:
+        agent_row = None
+        if merchant.agent_id is not None:
+            if merchant.agent_id not in agent_cache:
+                agent_cache[merchant.agent_id] = (
+                    await db.execute(select(Agents).where(Agents.id == merchant.agent_id))
+                ).scalar_one_or_none()
+            agent_row = agent_cache[merchant.agent_id]
+        result = await run_client_dunning(
+            db, merchant, actor_user_id=actor_user_id, agent_row=agent_row, now=now
+        )
+        summary["processed"] += 1
+        summary[result["action"]] = summary.get(result["action"], 0) + 1
+
+    await db.commit()
+    return summary
 
 
 async def run_agent_dunning(

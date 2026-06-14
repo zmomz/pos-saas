@@ -87,11 +87,22 @@ async def lifespan(app: FastAPI):
     await initialize_database(skip_create_all=migrated)
     await initialize_mock_data()
     await initialize_admin_user()
+
+    # Always-on billing scheduler (ISSUE-052): a config-gated background task that
+    # runs the platform-wide dunning/retry sweep on an interval, so overdue
+    # subscriptions advance without a manual agent trigger. No-op unless
+    # BILLING_SCHEDULER_ENABLED.
+    from services.billing_scheduler import start_billing_scheduler
+
+    start_billing_scheduler()
     # MODULE_STARTUP_END
 
     logger.info("=== Application startup completed successfully ===")
     yield
     # MODULE_SHUTDOWN_START
+    from services.billing_scheduler import stop_billing_scheduler
+
+    await stop_billing_scheduler()
     await close_database()
     # MODULE_SHUTDOWN_END
 

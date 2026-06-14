@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     zatca_encryption_key: str = ""
     zatca_retention_years: int = 6
 
+    # Always-on billing scheduler (ISSUE-052). When enabled, a background task
+    # runs the platform-wide dunning/retry sweep every
+    # billing_scheduler_interval_seconds. Off by default so dev/CI never spawns an
+    # unattended subscription charger.
+    billing_scheduler_enabled: bool = False
+    billing_scheduler_interval_seconds: int = 3600
+
     # Error tracking (Phase E). When sentry_dsn is set AND the optional
     # `sentry-sdk` package is installed, errors are reported to Sentry; otherwise
     # observability is a no-op. See core/observability.py.
