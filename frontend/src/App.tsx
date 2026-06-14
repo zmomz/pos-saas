@@ -41,6 +41,7 @@ import ZatcaStatus from './pages/ZatcaStatus';
 import ChannelOrders from './pages/ChannelOrders';
 import GiftCardManagement from './pages/GiftCardManagement';
 import PrinterSettings from './pages/PrinterSettings';
+import DevicesSettings from './pages/DevicesSettings';
 import ReceiptTemplateDesigner from './pages/ReceiptTemplateDesigner';
 import CustomerDisplay from './pages/CustomerDisplay';
 import ForceResetPassword from './pages/ForceResetPassword';
@@ -134,6 +135,7 @@ const AppRoutes = () => (
       <Route path="/zatca" element={<ZatcaStatus />} />
       <Route path="/gift-cards" element={<GiftCardManagement />} />
       <Route path="/printers" element={<PrinterSettings />} />
+      <Route path="/devices" element={<DevicesSettings />} />
       <Route path="/receipt-template" element={<ReceiptTemplateDesigner />} />
     </Route>
 
