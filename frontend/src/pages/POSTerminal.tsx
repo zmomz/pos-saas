@@ -178,6 +178,14 @@ export default function POSTerminal() {
   const [barcodeInput, setBarcodeInput] = useState('');
   const [barcodeMessage, setBarcodeMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  // ISSUE-076: price / stock check. When on, a scan/SKU entry only LOOKS UP the
+  // product's price and on-hand stock (via the same /resolve-barcode endpoint)
+  // instead of adding it to the cart.
+  const [priceCheckMode, setPriceCheckMode] = useState(false);
+  const [priceCheckResult, setPriceCheckResult] = useState<
+    { found: true; name: string; price: number; quantity?: number | null } | { found: false } | null
+  >(null);
+
   // POS-06: free-text product name search (complements barcode/SKU lookup).
   const [searchQuery, setSearchQuery] = useState('');
   // Category filter chips (handoff). 'all' shows everything.
@@ -500,6 +508,25 @@ export default function POSTerminal() {
     return false;
   }
 
+  // ISSUE-076: resolve a scanned/typed code to a product OR variant SKU and show
+  // its current price and on-hand stock WITHOUT touching the cart. The server is
+  // authoritative for both the price and the on-hand quantity (it resolves
+  // variants too), so the lookup always goes through /resolve-barcode.
+  async function lookupPriceStock(code: string): Promise<void> {
+    const barcode = code.trim();
+    if (!barcode) return;
+    try {
+      const res = await resolveBarcode(barcode);
+      if (res.kind !== 'none' && res.product_id) {
+        setPriceCheckResult({ found: true, name: res.name, price: res.price, quantity: res.quantity });
+        return;
+      }
+    } catch (err) {
+      console.error('Price check failed:', err);
+    }
+    setPriceCheckResult({ found: false });
+  }
+
   // Camera barcode scanning via the native BarcodeDetector API (POS-06). Falls
   // back gracefully with a message when the browser/device doesn't support it.
   async function toggleCameraScan() {
@@ -525,6 +552,11 @@ export default function POSTerminal() {
         try {
           const codes = await detector.detect(video);
           if (codes.length > 0) {
+            if (priceCheckMode) {
+              // ISSUE-076: a scan in price-check mode looks up price/stock only.
+              await lookupPriceStock(codes[0].rawValue);
+              stop(); setCameraScanning(false); return;
+            }
             const found = await lookupAndAdd(codes[0].rawValue);
             if (found) { stop(); setCameraScanning(false); return; }
           }
@@ -544,7 +576,11 @@ export default function POSTerminal() {
   // Barcode scan handler
   function handleBarcodeScan(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter' && barcodeInput.trim()) {
-      void lookupAndAdd(barcodeInput.trim());
+      if (priceCheckMode) {
+        void lookupPriceStock(barcodeInput.trim());
+      } else {
+        void lookupAndAdd(barcodeInput.trim());
+      }
       setBarcodeInput('');
     }
   }
@@ -1485,6 +1521,16 @@ export default function POSTerminal() {
             />
             <Button
               type="button"
+              variant={priceCheckMode ? 'default' : 'outline'}
+              onClick={() => { setPriceCheckMode((v) => !v); setPriceCheckResult(null); }}
+              className="shrink-0 border-border"
+              title={t('price_check')}
+              aria-pressed={priceCheckMode}
+            >
+              <Tag className="w-4 h-4" />
+            </Button>
+            <Button
+              type="button"
               variant={cameraScanning ? 'default' : 'outline'}
               onClick={toggleCameraScan}
               className="shrink-0 border-border"
@@ -1493,6 +1539,21 @@ export default function POSTerminal() {
               <Camera className="w-4 h-4" />
             </Button>
           </div>
+          {priceCheckMode && priceCheckResult && (
+            <div className="mt-2 rounded border border-brand-700 bg-brand-900/30 px-3 py-2 text-sm">
+              {priceCheckResult.found ? (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-foreground">{priceCheckResult.name}</span>
+                  <span className="text-brand-300 font-bold">{SAR(priceCheckResult.price)}</span>
+                  <span className="text-muted-foreground">
+                    {t('on_hand')}: {priceCheckResult.quantity ?? 0}
+                  </span>
+                </div>
+              ) : (
+                <span className="text-red-400">{t('price_check_none')}</span>
+              )}
+            </div>
+          )}
           {barcodeMessage && (
             <div className={`absolute top-full mt-1 start-0 text-xs px-3 py-1.5 rounded ${
               barcodeMessage.type === 'success'
