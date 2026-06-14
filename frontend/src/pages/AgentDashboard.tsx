@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getAgentClients, getAgentBranding, getAgentRevenue, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, type AgentRevenue } from '@/lib/api';
+import { client, getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, type AgentRevenue, type CommissionStatement } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import StatTile from '@/components/dashboard/StatTile';
@@ -68,6 +68,11 @@ export default function AgentDashboard() {
   const [revenue, setRevenue] = useState<AgentRevenue | null>(null);
   const [revenueLoading, setRevenueLoading] = useState(true);
   const [revenueError, setRevenueError] = useState(false);
+  // RSL-02 (ISSUE-055): per-period commission statements with line items by
+  // client — loaded independently so a failure only affects this panel.
+  const [statements, setStatements] = useState<CommissionStatement[]>([]);
+  const [statementsLoading, setStatementsLoading] = useState(true);
+  const [statementsError, setStatementsError] = useState(false);
   // Dunning sweep (CL-06)
   const [dunningBusy, setDunningBusy] = useState(false);
   const [dunningResult, setDunningResult] = useState<string | null>(null);
@@ -77,6 +82,7 @@ export default function AgentDashboard() {
   useEffect(() => {
     loadData();
     loadRevenue();
+    loadStatements();
   }, []);
 
   async function loadData() {
@@ -102,6 +108,20 @@ export default function AgentDashboard() {
       setRevenueError(true);
     } finally {
       setRevenueLoading(false);
+    }
+  }
+
+  async function loadStatements() {
+    setStatementsLoading(true);
+    setStatementsError(false);
+    try {
+      const data = await getAgentCommissionStatements();
+      setStatements(data.statements || []);
+    } catch (err) {
+      console.error('Failed to load commission statements:', err);
+      setStatementsError(true);
+    } finally {
+      setStatementsLoading(false);
     }
   }
 
@@ -338,6 +358,64 @@ export default function AgentDashboard() {
                 <div className="text-xs font-medium text-muted-foreground">{t('revenue_net_margin') || 'Net margin'}</div>
                 <div className="mt-1.5 text-[21px] font-extrabold tracking-tight tabular-nums text-success">{formatMoney(revenue.net, language)}</div>
               </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Commission statements (RSL-02, ISSUE-055) — one per billing period,
+          with line items by client; each reconciles (collected = owed + net). */}
+      <Card className="rounded-2xl border-border shadow-card">
+        <CardContent className="p-6" data-testid="commission-statements">
+          <div className="mb-3.5 flex items-center justify-between">
+            <h2 className="text-base font-bold tracking-tight text-foreground">{t('commission_statements') || 'Commission statements'}</h2>
+            <span className="text-[12.5px] text-muted-foreground">{t('per_billing_period') || 'Per billing period'}</span>
+          </div>
+          {statementsLoading ? (
+            <div className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</div>
+          ) : statementsError ? (
+            <div role="alert" className="flex flex-col items-start gap-2">
+              <p className="text-sm text-danger">{t('statements_load_error') || 'Could not load statements.'}</p>
+              <Button variant="outline" size="sm" onClick={loadStatements}>{t('retry') || 'Retry'}</Button>
+            </div>
+          ) : statements.length === 0 ? (
+            <p className="py-2 text-sm text-muted-foreground">{t('statements_empty') || 'No commission statements yet.'}</p>
+          ) : (
+            <div className="space-y-4">
+              {statements.map((stmt) => (
+                <div key={`${stmt.period_start}-${stmt.period_end}`} className="overflow-hidden rounded-xl border border-border">
+                  <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/40 px-4 py-2.5">
+                    <div className="text-sm font-semibold text-foreground">
+                      {stmt.period_start} <span className="text-muted-foreground">→</span> {stmt.period_end}
+                    </div>
+                    <div className="flex items-center gap-4 text-[12.5px] tabular-nums">
+                      <span className="text-muted-foreground">{t('revenue_collected') || 'Collected'}: <span className="font-semibold text-foreground">{formatMoney(stmt.collected, language)}</span></span>
+                      <span className="text-muted-foreground">{t('revenue_platform_owed') || 'Owed'}: <span className="font-semibold text-warning">{formatMoney(stmt.master_owed, language)}</span></span>
+                      <span className="text-muted-foreground">{t('revenue_net_margin') || 'Net'}: <span className="font-semibold text-success">{formatMoney(stmt.net, language)}</span></span>
+                    </div>
+                  </div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border text-[12px] text-muted-foreground">
+                        <th className="px-4 py-2 text-start font-medium">{t('client') || 'Client'}</th>
+                        <th className="px-4 py-2 text-end font-medium">{t('revenue_collected') || 'Collected'}</th>
+                        <th className="px-4 py-2 text-end font-medium">{t('revenue_platform_owed') || 'Owed'}</th>
+                        <th className="px-4 py-2 text-end font-medium">{t('revenue_net_margin') || 'Net'}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stmt.by_client.map((line) => (
+                        <tr key={line.client_id} className="border-b border-border last:border-0">
+                          <td className="px-4 py-2 text-foreground">{line.business_name || `#${line.client_id}`}</td>
+                          <td className="px-4 py-2 text-end tabular-nums text-foreground">{formatMoney(line.collected, language)}</td>
+                          <td className="px-4 py-2 text-end tabular-nums text-warning">{formatMoney(line.master_owed, language)}</td>
+                          <td className="px-4 py-2 text-end tabular-nums text-success">{formatMoney(line.net, language)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
             </div>
           )}
         </CardContent>

@@ -5,6 +5,7 @@ import {
   getPackages,
   generateDiscountCodes,
   redeemDiscountCode,
+  getAgentCommissionStatements,
 } from './api';
 
 // T-F: assert the POS checkout payload the app actually sends — the layer where
@@ -129,5 +130,51 @@ describe('unique discount codes', () => {
     expect(captured).toEqual({ code: 'ABCDE23456', subtotal: 100 });
     expect(out.valid).toBe(true);
     expect(out.discount_amount).toBe(10);
+  });
+});
+
+// ISSUE-055: periodic agent commission statements — the helper reads the
+// per-period statement endpoint for the agent dashboard.
+describe('getAgentCommissionStatements', () => {
+  it('reads /tenant/agent/commission/statements', async () => {
+    let hit = false;
+    server.use(
+      http.get(
+        'http://127.0.0.1:8000/api/v1/tenant/agent/commission/statements',
+        () => {
+          hit = true;
+          return HttpResponse.json({
+            statements: [
+              {
+                period_start: '2026-06-01',
+                period_end: '2026-07-01',
+                billing_cycle: 'monthly',
+                collected: 15,
+                master_owed: 8,
+                net: 7,
+                payments: 1,
+                by_client: [
+                  {
+                    client_id: 3,
+                    business_name: 'Corner Shop',
+                    collected: 15,
+                    master_owed: 8,
+                    net: 7,
+                    payments: 1,
+                  },
+                ],
+              },
+            ],
+          });
+        }
+      )
+    );
+
+    const out = await getAgentCommissionStatements();
+
+    expect(hit).toBe(true);
+    expect(out.statements).toHaveLength(1);
+    expect(out.statements[0].period_start).toBe('2026-06-01');
+    expect(out.statements[0].by_client[0].business_name).toBe('Corner Shop');
   });
 });

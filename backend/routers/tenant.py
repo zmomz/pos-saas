@@ -638,6 +638,139 @@ async def get_agent_revenue(
     )
 
 
+# ---------- Periodic commission statements (RSL-02, ISSUE-055) ----------
+class CommissionStatementLine(BaseModel):
+    """One client's contribution to a period statement. ``collected ==
+    master_owed + net`` by construction (the split reconciles)."""
+
+    client_id: int
+    business_name: str
+    collected: float
+    master_owed: float
+    net: float
+    payments: int
+
+
+class CommissionStatement(BaseModel):
+    """An agent's commission for one billing period, broken down by client.
+
+    ``period_start``/``period_end`` identify the billing window the underlying
+    payments covered; ``billing_cycle`` is monthly/yearly. The period totals are
+    the sum of ``by_client`` (which is the sum of the period's ledger rows), so a
+    statement always reconciles: ``collected == master_owed + net``."""
+
+    period_start: str
+    period_end: str
+    billing_cycle: str
+    collected: float
+    master_owed: float
+    net: float
+    payments: int
+    by_client: List[CommissionStatementLine] = []
+
+
+class CommissionStatementsResponse(BaseModel):
+    statements: List[CommissionStatement] = []
+
+
+@router.get("/agent/commission/statements", response_model=CommissionStatementsResponse)
+async def get_agent_commission_statements(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: per-period commission statements from the split ledger (RSL-02).
+
+    One statement per (period_start, period_end) billing window, each with line
+    items by client, summing back to the underlying ``commission_ledger`` rows so
+    it reconciles. Aggregated in SQL (no load-everything, OPS-05) and scoped to
+    the caller's own agent rows — one agent can never see another agent's
+    statements (SEC-02). A client/master gets 403. Newest period first.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    agent_id = role_info["entity_id"]
+
+    # Aggregate to (period, client) in SQL; the period statement is the sum of its
+    # client lines (built below). A null period_start degrades to "" so unstamped
+    # legacy rows still group into a single bucket rather than vanishing.
+    rows = (
+        await db.execute(
+            select(
+                func.coalesce(Commission_ledger.period_start, ""),
+                func.coalesce(Commission_ledger.period_end, ""),
+                func.coalesce(Commission_ledger.billing_cycle, ""),
+                Commission_ledger.client_id,
+                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
+                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
+                func.coalesce(func.sum(Commission_ledger.agent_net), 0.0),
+                func.count(Commission_ledger.id),
+            )
+            .where(Commission_ledger.agent_id == agent_id)
+            .group_by(
+                Commission_ledger.period_start,
+                Commission_ledger.period_end,
+                Commission_ledger.billing_cycle,
+                Commission_ledger.client_id,
+            )
+        )
+    ).all()
+
+    # Resolve business names for every client appearing in the breakdown (one query).
+    names: dict = {}
+    client_ids = {r[3] for r in rows}
+    if client_ids:
+        for cid, bname in (
+            await db.execute(
+                select(Clients.id, Clients.business_name).where(Clients.id.in_(client_ids))
+            )
+        ).all():
+            names[cid] = bname
+
+    # Fold the (period, client) rows into one statement per period, accumulating
+    # the period totals as we attach each client line.
+    statements: dict = {}
+    for ps, pe, cycle, cid, collected, master_owed, net, cnt in rows:
+        key = (ps, pe, cycle)
+        stmt = statements.get(key)
+        if stmt is None:
+            stmt = statements[key] = CommissionStatement(
+                period_start=ps,
+                period_end=pe,
+                billing_cycle=cycle,
+                collected=0.0,
+                master_owed=0.0,
+                net=0.0,
+                payments=0,
+                by_client=[],
+            )
+        line_collected = round(float(collected or 0), 2)
+        line_master = round(float(master_owed or 0), 2)
+        line_net = round(float(net or 0), 2)
+        line_payments = int(cnt or 0)
+        stmt.by_client.append(
+            CommissionStatementLine(
+                client_id=cid,
+                business_name=names.get(cid, ""),
+                collected=line_collected,
+                master_owed=line_master,
+                net=line_net,
+                payments=line_payments,
+            )
+        )
+        stmt.collected = round(stmt.collected + line_collected, 2)
+        stmt.master_owed = round(stmt.master_owed + line_master, 2)
+        stmt.net = round(stmt.net + line_net, 2)
+        stmt.payments += line_payments
+
+    # Newest period first (by period_start, then period_end).
+    ordered = sorted(
+        statements.values(), key=lambda s: (s.period_start, s.period_end), reverse=True
+    )
+    return CommissionStatementsResponse(statements=ordered)
+
+
 # ---------- Master platform economics (MA-08 / RSL-08 / RPT-09, F-023) ----------
 class AgentEconomics(BaseModel):
     """One agent's contribution to the platform economics rollup (the master's

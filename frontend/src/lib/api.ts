@@ -118,6 +118,42 @@ export async function getAgentRevenue(): Promise<AgentRevenue> {
   return response.data;
 }
 
+// RSL-02 (ISSUE-055): per-period commission statements for the agent, each with
+// line items by client. collected == master_owed + net within every line and
+// period total (the split reconciles).
+export interface CommissionStatementLine {
+  client_id: number;
+  business_name: string;
+  collected: number;
+  master_owed: number;
+  net: number;
+  payments: number;
+}
+
+export interface CommissionStatement {
+  period_start: string;
+  period_end: string;
+  billing_cycle: string;
+  collected: number;
+  master_owed: number;
+  net: number;
+  payments: number;
+  by_client: CommissionStatementLine[];
+}
+
+export interface CommissionStatements {
+  statements: CommissionStatement[];
+}
+
+export async function getAgentCommissionStatements(): Promise<CommissionStatements> {
+  const response = await client.apiCall.invoke<CommissionStatements>({
+    url: '/api/v1/tenant/agent/commission/statements',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 export interface CreatedClient {
   id: number;
   business_name: string;
