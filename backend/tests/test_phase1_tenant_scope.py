@@ -271,10 +271,13 @@ async def test_owner_audit_query_returns_staff_actions(client):
     resp = await client.get("/api/v1/entities/audit_logs", headers=auth_headers(owner_token))
     assert resp.status_code == 200, resp.text
     items = resp.json()["items"]
+    # The action is normalized to a verb and the actor's email is resolved
+    # (ISSUE-027), while the staff member remains the attributed actor.
     staff_creates = [
         a for a in items
-        if a["action"].startswith("POST /api/v1/entities/expenses")
+        if a["action"] == "create"
         and a["user_id"] == staff_login["id"]
+        and a["user_email"] == staff_login["email"]
     ]
     assert staff_creates, f"owner did not see staff action; got {items}"
 

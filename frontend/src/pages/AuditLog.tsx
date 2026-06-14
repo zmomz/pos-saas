@@ -21,7 +21,48 @@ interface AuditEntry {
   created_at?: string;
 }
 
-const ACTION_TYPES = ['all', 'login', 'logout', 'create', 'update', 'delete', 'sale', 'export', 'other'];
+// Normalized verbs the backend emits (services/audit_logs.normalize_action) plus
+// the `all` sentinel. `auth_failure` surfaces failed-auth attempts.
+const ACTION_TYPES = [
+  'all',
+  'login',
+  'logout',
+  'create',
+  'update',
+  'delete',
+  'sale',
+  'export',
+  'auth_failure',
+  'other',
+];
+
+// Human-readable label for a normalized verb (e.g. `auth_failure` → "Auth Failure").
+function actionLabel(action: string): string {
+  if (action === 'all') return 'All Actions';
+  return action
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+// Tailwind classes for an action badge, by verb. Destructive/security verbs are
+// red, additive green, mutating yellow, auth login brand; everything else neutral.
+function actionBadgeClass(action: string): string {
+  switch (action) {
+    case 'delete':
+    case 'auth_failure':
+      return 'bg-red-600/20 text-red-400';
+    case 'create':
+      return 'bg-green-600/20 text-green-400';
+    case 'update':
+      return 'bg-yellow-600/20 text-yellow-400';
+    case 'sale':
+    case 'login':
+      return 'bg-brand-600/20 text-brand-400';
+    default:
+      return 'bg-slate-600/20 text-slate-400';
+  }
+}
 
 export default function AuditLog() {
   const [logs, setLogs] = useState<AuditEntry[]>([]);
@@ -97,8 +138,8 @@ export default function AuditLog() {
           </SelectTrigger>
           <SelectContent className="bg-slate-800 border-slate-600">
             {ACTION_TYPES.map((action) => (
-              <SelectItem key={action} value={action} className="text-white hover:bg-slate-700 capitalize">
-                {action === 'all' ? 'All Actions' : action.charAt(0).toUpperCase() + action.slice(1)}
+              <SelectItem key={action} value={action} className="text-white hover:bg-slate-700">
+                {actionLabel(action)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -151,19 +192,11 @@ export default function AuditLog() {
                   <td className="p-3">{log.user_email || '—'}</td>
                   <td className="p-3">
                     <span
-                      className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        log.action === 'delete'
-                          ? 'bg-red-600/20 text-red-400'
-                          : log.action === 'create'
-                          ? 'bg-green-600/20 text-green-400'
-                          : log.action === 'update'
-                          ? 'bg-yellow-600/20 text-yellow-400'
-                          : log.action === 'login'
-                          ? 'bg-brand-600/20 text-brand-400'
-                          : 'bg-slate-600/20 text-slate-400'
-                      }`}
+                      className={`px-2 py-0.5 rounded text-xs font-medium ${actionBadgeClass(
+                        log.action
+                      )}`}
                     >
-                      {log.action}
+                      {actionLabel(log.action)}
                     </span>
                   </td>
                   <td className="p-3 max-w-[300px] truncate">{log.details || '—'}</td>

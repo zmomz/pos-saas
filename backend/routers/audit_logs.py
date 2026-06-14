@@ -25,7 +25,12 @@ class Audit_logsResponse(BaseModel):
     """Entity response schema"""
     id: int
     user_id: str
+    # The actor's email, resolved from ``user_id`` so the AuditLog User column
+    # shows who acted rather than a bare id (None if the user row is gone).
+    user_email: Optional[str] = None
     owner_user_id: Optional[str] = None
+    # Normalized verb (create/update/delete/sale/export/auth_failure/other) the UI
+    # badges and the action filter match against — see services.audit_logs.
     action: str
     details: Optional[str] = None
     ip_address: Optional[str] = None
@@ -70,12 +75,13 @@ async def query_audit_logss(
                 raise HTTPException(status_code=400, detail="Invalid query JSON format")
         
         result = await service.get_list(
-            skip=skip, 
+            skip=skip,
             limit=limit,
             query_dict=query_dict,
             sort=sort,
             owner_user_id=scope.owner_user_id,
         )
+        result["items"] = await service.render_rows(result["items"])
         logger.debug(f"Found {result['total']} audit_logss")
         return result
     except HTTPException:
@@ -114,6 +120,7 @@ async def query_audit_logss_all(
             query_dict=query_dict,
             sort=sort
         )
+        result["items"] = await service.render_rows(result["items"])
         logger.debug(f"Found {result['total']} audit_logss")
         return result
     except HTTPException:
@@ -140,8 +147,8 @@ async def get_audit_logs(
         if not result:
             logger.warning(f"Audit_logs with id {id} not found")
             raise HTTPException(status_code=404, detail="Audit_logs not found")
-        
-        return result
+
+        return (await service.render_rows([result]))[0]
     except HTTPException:
         raise
     except Exception as e:

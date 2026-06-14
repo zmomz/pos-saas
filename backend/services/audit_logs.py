@@ -9,6 +9,38 @@ from models.audit_logs import Audit_logs
 logger = logging.getLogger(__name__)
 
 
+def normalize_action(raw: Optional[str]) -> str:
+    """Map a stored verbose audit action to a normalized verb the UI badges/filters on.
+
+    The audit middleware records the raw ``METHOD /path`` of each mutation (e.g.
+    ``POST /api/v1/entities/products``) and ``AUTH_FAILURE …`` for failed-auth
+    attempts. The AuditLog page colours/filters by verb, so the read API maps the
+    stored string to one of: ``create`` / ``update`` / ``delete`` / ``sale`` /
+    ``export`` / ``auth_failure`` / ``other``. The stored compliance row is left
+    untouched — this is a read-side projection only.
+    """
+    if not raw:
+        return "other"
+    text = raw.strip()
+    if text.upper().startswith("AUTH_FAILURE"):
+        return "auth_failure"
+    parts = text.split()
+    method = parts[0].upper() if parts else ""
+    path = parts[1].lower() if len(parts) > 1 else ""
+    if "export" in path:
+        return "export"
+    if method == "POST":
+        # POS checkout records a sale rather than a generic create.
+        if "/pos/transaction" in path or "/pos/sale" in path:
+            return "sale"
+        return "create"
+    if method in ("PUT", "PATCH"):
+        return "update"
+    if method == "DELETE":
+        return "delete"
+    return "other"
+
+
 # ------------------ Service Layer ------------------
 class Audit_logsService:
     """Service layer for Audit_logs operations"""
@@ -148,6 +180,41 @@ class Audit_logsService:
             await self.db.rollback()
             logger.error(f"Error deleting audit_logs {obj_id}: {str(e)}")
             raise
+
+    async def _email_map(self, user_ids: List[Optional[str]]) -> Dict[str, str]:
+        """Resolve a set of actor ``user_id``s to their emails in one query."""
+        from models.auth import User
+
+        ids = {uid for uid in user_ids if uid}
+        if not ids:
+            return {}
+        result = await self.db.execute(
+            select(User.id, User.email).where(User.id.in_(ids))
+        )
+        return {row[0]: row[1] for row in result.all()}
+
+    async def render_rows(self, rows: List[Audit_logs]) -> List[Dict[str, Any]]:
+        """Project stored audit rows to the shape the AuditLog page renders.
+
+        Resolves the actor's ``user_email`` (so the User column isn't a bare id)
+        and normalizes ``action`` to a verb (so badges/filters work), leaving the
+        underlying compliance rows untouched.
+        """
+        emails = await self._email_map([r.user_id for r in rows])
+        return [
+            {
+                "id": r.id,
+                "user_id": r.user_id,
+                "user_email": emails.get(r.user_id),
+                "owner_user_id": r.owner_user_id,
+                "action": normalize_action(r.action),
+                "details": r.details,
+                "ip_address": r.ip_address,
+                "created_at": r.created_at,
+                "updated_at": r.updated_at,
+            }
+            for r in rows
+        ]
 
     async def get_by_field(self, field_name: str, field_value: Any) -> Optional[Audit_logs]:
         """Get audit_logs by any field"""
