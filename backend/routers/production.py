@@ -34,6 +34,10 @@ from models.cash_movements import Cash_movements  # noqa: F401
 # open/close/reconciliation endpoints below reference it lazily; the deleted
 # entities/shifts CRUD scaffold (H20, #5) used to be its only startup importer.
 from models.shifts import Shifts  # noqa: F401
+# Imported so the loyalty_transactions ledger table registers on Base.metadata at
+# startup (ISSUE-028 / C4). The loyalty admin endpoints below reference it lazily.
+from models.loyalty_transactions import Loyalty_transactions  # noqa: F401
+from models.customers import Customers  # noqa: F401
 from services.production import (
     AnalyticsService,
     BulkImportService,
@@ -124,6 +128,26 @@ class LoyaltyRedeemRequest(BaseModel):
     customer_id: int
     points_to_redeem: int
     redemption_value: float = Field(default=0.1, description="SAR value per point")
+
+
+class LoyaltyConfigRequest(BaseModel):
+    """Loyalty-program settings as the admin page (LoyaltyProgram.tsx) models them.
+
+    ``min_points_redeem`` is the page's name for the model's
+    ``min_redemption_points`` — reconciled in the endpoint.
+    """
+
+    points_per_sar: float = Field(default=1.0, ge=0)
+    redemption_rate: float = Field(default=0.1, ge=0)
+    min_points_redeem: int = Field(default=100, ge=0)
+    is_active: bool = True
+
+
+class LoyaltyAdjustRequest(BaseModel):
+    customer_id: int
+    type: str = Field(description="'add' or 'deduct'")
+    points: int = Field(ge=0)
+    reason: Optional[str] = None
 
 
 class BulkImportRequest(BaseModel):
@@ -985,6 +1009,244 @@ async def get_loyalty_balance(
         "points_balance": loyalty.points_balance or 0,
         "total_earned": loyalty.total_earned or 0,
         "total_redeemed": loyalty.total_redeemed or 0,
+    }
+
+
+# =============================================================================
+# Loyalty Admin Endpoints (ISSUE-028 / C4) — back the LoyaltyProgram page
+# =============================================================================
+def _config_payload(program) -> dict:
+    """Map a ``Loyalty_programs`` row to the admin page's config shape."""
+    return {
+        "id": program.id,
+        "points_per_sar": program.points_per_sar or 0,
+        "redemption_rate": program.redemption_rate or 0,
+        "min_points_redeem": program.min_redemption_points or 0,
+        "is_active": bool(program.is_active),
+    }
+
+
+@router.get("/loyalty/config", dependencies=[Depends(require_feature("loyalty"))])
+async def get_loyalty_config(
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the merchant's loyalty-program config (most recent), or nulls if none."""
+    from models.loyalty_programs import Loyalty_programs
+
+    result = await db.execute(
+        select(Loyalty_programs)
+        .where(Loyalty_programs.user_id == owner_id)
+        .order_by(Loyalty_programs.id.desc())
+    )
+    program = result.scalars().first()
+    if not program:
+        # No program yet — the page keeps its defaults (it checks points_per_sar != null).
+        return {
+            "id": None,
+            "points_per_sar": None,
+            "redemption_rate": None,
+            "min_points_redeem": None,
+            "is_active": False,
+        }
+    return _config_payload(program)
+
+
+@router.post("/loyalty/config", dependencies=[Depends(require_feature("loyalty"))])
+async def save_loyalty_config(
+    data: LoyaltyConfigRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upsert the merchant's loyalty-program config (single program per merchant)."""
+    from models.loyalty_programs import Loyalty_programs
+    from routers.pos import get_client_for_user
+
+    result = await db.execute(
+        select(Loyalty_programs)
+        .where(Loyalty_programs.user_id == owner_id)
+        .order_by(Loyalty_programs.id.desc())
+    )
+    program = result.scalars().first()
+
+    if program:
+        await db.execute(
+            update(Loyalty_programs)
+            .where(Loyalty_programs.id == program.id)
+            .values(
+                points_per_sar=data.points_per_sar,
+                redemption_rate=data.redemption_rate,
+                min_redemption_points=data.min_points_redeem,
+                is_active=data.is_active,
+            )
+        )
+        await db.commit()
+        await db.refresh(program)
+    else:
+        client = await get_client_for_user(db, owner_id)
+        program = Loyalty_programs(
+            user_id=owner_id,
+            client_id=client.id,
+            name="Rewards",
+            points_per_sar=data.points_per_sar,
+            redemption_rate=data.redemption_rate,
+            min_redemption_points=data.min_points_redeem,
+            is_active=data.is_active,
+        )
+        db.add(program)
+        await db.commit()
+        await db.refresh(program)
+
+    return _config_payload(program)
+
+
+@router.get("/loyalty/balances", dependencies=[Depends(require_feature("loyalty"))])
+async def list_loyalty_balances(
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the merchant's customer point balances, joined to the customer name."""
+    from models.customers import Customers
+    from models.loyalty_points import Loyalty_points
+
+    result = await db.execute(
+        select(Loyalty_points, Customers.name)
+        .outerjoin(Customers, Customers.id == Loyalty_points.customer_id)
+        .where(Loyalty_points.user_id == owner_id)
+        .order_by(Loyalty_points.updated_at.desc())
+    )
+    rows = result.all()
+    items = [
+        {
+            "id": lp.id,
+            "customer_id": lp.customer_id,
+            "customer_name": name or f"Customer #{lp.customer_id}",
+            "points_balance": lp.points_balance or 0,
+            "total_earned": lp.total_earned or 0,
+            "total_redeemed": lp.total_redeemed or 0,
+            "last_activity": lp.updated_at.isoformat() if lp.updated_at else None,
+        }
+        for lp, name in rows
+    ]
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/loyalty/transactions", dependencies=[Depends(require_feature("loyalty"))])
+async def list_loyalty_transactions(
+    limit: int = Query(default=50, ge=1, le=500),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the merchant's loyalty-point ledger, newest first."""
+    from models.customers import Customers
+    from models.loyalty_transactions import Loyalty_transactions
+
+    result = await db.execute(
+        select(Loyalty_transactions, Customers.name)
+        .outerjoin(Customers, Customers.id == Loyalty_transactions.customer_id)
+        .where(Loyalty_transactions.user_id == owner_id)
+        .order_by(Loyalty_transactions.id.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    items = [
+        {
+            "id": tx.id,
+            "customer_id": tx.customer_id,
+            "customer_name": name or f"Customer #{tx.customer_id}",
+            "type": tx.type,
+            "points": tx.points,
+            "description": tx.description,
+            "created_at": tx.created_at.isoformat() if tx.created_at else None,
+        }
+        for tx, name in rows
+    ]
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/loyalty/adjust", dependencies=[Depends(require_feature("loyalty"))])
+async def adjust_loyalty_points(
+    data: LoyaltyAdjustRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually credit ('add') or debit ('deduct') a customer's points + log it.
+
+    Writes a ``loyalty_transactions`` ledger entry alongside the balance change so
+    the adjustment is auditable in the Points History tab.
+    """
+    from models.loyalty_points import Loyalty_points
+    from models.loyalty_transactions import Loyalty_transactions
+    from routers.pos import get_client_for_user
+
+    if data.type not in ("add", "deduct"):
+        raise HTTPException(status_code=400, detail="type must be 'add' or 'deduct'")
+    if data.points <= 0:
+        raise HTTPException(status_code=400, detail="points must be positive")
+
+    client = await get_client_for_user(db, owner_id)
+
+    result = await db.execute(
+        select(Loyalty_points).where(
+            Loyalty_points.user_id == owner_id,
+            Loyalty_points.customer_id == data.customer_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    current = (row.points_balance or 0) if row else 0
+    delta = data.points if data.type == "add" else -data.points
+
+    if current + delta < 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Insufficient points. Available: {current}, requested deduct: {data.points}",
+        )
+
+    new_balance = current + delta
+    if row:
+        await db.execute(
+            update(Loyalty_points)
+            .where(Loyalty_points.id == row.id)
+            .values(
+                points_balance=new_balance,
+                total_earned=(row.total_earned or 0) + (data.points if data.type == "add" else 0),
+                total_redeemed=(row.total_redeemed or 0) + (data.points if data.type == "deduct" else 0),
+            )
+        )
+    else:
+        db.add(
+            Loyalty_points(
+                user_id=owner_id,
+                client_id=client.id,
+                customer_id=data.customer_id,
+                points_balance=new_balance,
+                total_earned=data.points if data.type == "add" else 0,
+                total_redeemed=data.points if data.type == "deduct" else 0,
+            )
+        )
+
+    db.add(
+        Loyalty_transactions(
+            user_id=owner_id,
+            client_id=client.id,
+            customer_id=data.customer_id,
+            type=data.type,
+            points=data.points,
+            description=data.reason,
+        )
+    )
+    await db.commit()
+
+    return {
+        "customer_id": data.customer_id,
+        "type": data.type,
+        "points": data.points,
+        "points_balance": new_balance,
     }
 
 
