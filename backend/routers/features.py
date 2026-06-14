@@ -17,6 +17,7 @@ from core.database import get_db, db_manager
 from dependencies.auth import get_current_user
 from dependencies.tenancy import get_owner_id
 from dependencies.features import require_feature
+from services.notifications import NotificationDispatcher
 from services.packages import normalize_feature_tier, parse_feature_tier
 from services.storage import StorageService
 from schemas.storage import FileUpDownRequest
@@ -3237,6 +3238,17 @@ async def _upsert_notification(
             dedupe_key=dedupe_key,
             is_read=False,
         ))
+        # ISSUE-077: a *newly* appearing alert is delivered out-of-band over the
+        # user's enabled channels (the dispatcher honors their notification prefs).
+        # Only on first appearance — re-materialization of an existing alert
+        # refreshes the row in place above and never re-sends. Best-effort: a
+        # delivery hiccup must never blank the in-app feed.
+        try:
+            await NotificationDispatcher.dispatch(
+                db, user_id, type=type, title=title, message=message
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Notification delivery failed for %s: %s", dedupe_key, exc)
 
 
 async def _materialize_notifications(db: AsyncSession, user_id: str, client_id: int) -> None:
