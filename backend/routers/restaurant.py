@@ -1119,33 +1119,6 @@ async def settle_ticket_endpoint(
     )
 
 
-@router.post("/order-tickets/{ticket_id}/deplete-stock")
-async def deplete_ticket_stock(
-    ticket_id: int,
-    allow_negative_stock: bool = Query(False),
-    client: Clients = Depends(get_restaurant_client),
-    db: AsyncSession = Depends(get_db),
-):
-    """Atomically deplete the BOM components of a ticket's sold lines (F-062).
-
-    Every BOM-backed line expands into ``qty_per × qty_sold`` component deductions,
-    applied and committed together — a shortfall rolls the whole depletion back
-    (no partial deduction). The settle path (F-059) later calls this hand-off; it
-    is exposed here as the directly-testable depletion path the slice ships.
-    """
-    service = RestaurantService(db)
-    try:
-        result = await service.deplete_ticket_stock(
-            ticket_id, user_id=client.user_id, allow_negative_stock=allow_negative_stock
-        )
-    except ValueError as e:
-        # Insufficient component stock — sale would oversell.
-        raise HTTPException(status_code=400, detail=str(e))
-    if result is None:
-        raise HTTPException(status_code=404, detail="Order ticket not found")
-    return result
-
-
 @router.get("/all-day-count")
 async def all_day_fired_count(
     client: Clients = Depends(get_restaurant_client),

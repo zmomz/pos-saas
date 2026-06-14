@@ -325,6 +325,51 @@ async def test_settle_depletes_bom_components(client):
 
 
 # ---------------------------------------------------------------------------
+# Settle is the SINGLE stock-depletion path (ISSUE-104, U4.1). The standalone
+# /deplete-stock hand-off was a redundant second depletion of the very same BOM
+# components the atomic settle already deducts — running both double-deducted
+# every component. The settle path owns depletion exactly once; the redundant
+# endpoint is gone, so it can never run alongside settle to double-deduct.
+# ---------------------------------------------------------------------------
+async def test_deplete_stock_endpoint_removed_so_settle_depletes_once(client):
+    user, token, client_id = await make_client_account(client, business_type="restaurant")
+    await _set_vat(client_id)
+    headers = auth_headers(token)
+    table_id = await _make_table(client, token, name="B9")
+    ticket_id = await _open_dine_in(client, token, table_id)
+    burger = await add_product(client_id, user["id"], name="Burger", quantity=100, price=25.0)
+    patty = await add_product(client_id, user["id"], name="Patty", quantity=10, price=0.0)
+
+    bom = await client.post(
+        f"/api/v1/restaurant/products/{burger}/bom",
+        json={"component_product_id": patty, "qty_per": 2},
+        headers=headers,
+    )
+    assert bom.status_code == 201, bom.text
+    await _add_line(client, token, ticket_id, burger, qty=3)
+
+    # The redundant standalone depletion path no longer exists — it cannot be
+    # invoked to deduct the components a step ahead of (and again during) settle.
+    gone = await client.post(
+        f"/api/v1/restaurant/order-tickets/{ticket_id}/deplete-stock",
+        headers=headers,
+    )
+    # No POST handler at that path anymore (the SPA GET catch-all makes an unknown
+    # POST a 405 rather than a 404); before the fix it returned 200 and deducted.
+    assert gone.status_code in (404, 405), gone.text
+
+    # Settle is the one depletion: each component deducts exactly once.
+    resp = await client.post(
+        f"/api/v1/restaurant/order-tickets/{ticket_id}/settle",
+        json={"payment_method": "cash"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert await get_product_quantity(burger) == 97  # 100 - 3, once
+    assert await get_product_quantity(patty) == 4     # 10 - 6, once
+
+
+# ---------------------------------------------------------------------------
 # A settled ticket cannot be settled again (guards double-billing).
 # ---------------------------------------------------------------------------
 async def test_settle_twice_is_rejected(client):

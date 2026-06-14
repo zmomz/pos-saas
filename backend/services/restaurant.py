@@ -1833,82 +1833,12 @@ class RestaurantService:
                 total += float(component.cost_price or 0) * float(entry.qty_per or 0)
         return round(total, 4)
 
-    async def expand_bom_deductions(
-        self, items: List[tuple], user_id: str
-    ) -> Dict[int, float]:
-        """Expand BOM-backed sold lines into per-component deduction quantities (F-062).
-
-        ``items`` is a list of ``(product_id, qty_sold)``. Each BOM-backed parent
-        contributes ``qty_per × qty_sold`` of every component; quantities for the
-        same component (across lines / shared recipes) are aggregated. A product
-        with no BOM contributes nothing — it is a finished good the standard sale
-        path deducts directly. Returns ``{component_product_id: total_qty}``.
-        """
-        deductions: Dict[int, float] = {}
-        for product_id, qty in items:
-            if product_id is None:
-                continue
-            for entry in await self.list_bom(int(product_id), user_id):
-                add = float(entry.qty_per or 0) * float(qty or 0)
-                cid = entry.component_product_id
-                deductions[cid] = deductions.get(cid, 0.0) + add
-        return deductions
-
-    async def deplete_ticket_stock(
-        self, ticket_id: int, user_id: str, allow_negative_stock: bool = False
-    ) -> Optional[Dict[str, Any]]:
-        """Atomically deplete the BOM components of a ticket's sold lines (F-062).
-
-        The directly-testable depletion path this slice ships (the sale-core /
-        settle slices later call this hand-off at settle time). Every BOM-backed
-        line on the ticket expands into ``qty_per × qty_sold`` component deductions,
-        and they are applied and committed **together**: if any component is short
-        (and ``allow_negative_stock`` is false) a ``ValueError`` is raised and the
-        whole transaction rolls back, so a failed depletion never leaves a partial
-        component deduction. Returns ``None`` if the ticket isn't found.
-        """
-        ticket = await self.get_ticket(ticket_id, user_id)
-        if not ticket:
-            return None
-        items = await self.list_items(ticket_id, user_id)
-        line_items = [(i.product_id, float(i.qty or 0)) for i in items if i.product_id is not None]
-        deductions = await self.expand_bom_deductions(line_items, user_id)
-        depleted: List[Dict[str, Any]] = []
-        try:
-            for component_id, qty in deductions.items():
-                product = await self._owned_product(component_id, user_id)
-                if product is None:
-                    # Component product was deleted — skip (nothing to deduct).
-                    continue
-                available = float(product.quantity or 0)
-                if not allow_negative_stock and available < qty:
-                    # Raise before commit → the whole depletion rolls back, leaving
-                    # no partial deduction (atomic with the sale).
-                    raise ValueError(
-                        f"Insufficient stock for component '{product.name}': "
-                        f"requested {qty}, available {available}"
-                    )
-                new_qty = available - qty
-                if not allow_negative_stock:
-                    new_qty = max(0.0, new_qty)
-                product.quantity = new_qty
-                depleted.append({
-                    "component_product_id": component_id,
-                    "qty": round(qty, 4),
-                    "remaining": round(new_qty, 4),
-                })
-            await self.db.commit()
-            logger.info(
-                f"Depleted {len(depleted)} BOM component(s) for ticket {ticket_id}"
-            )
-            return {"ticket_id": ticket_id, "components_depleted": depleted}
-        except ValueError:
-            await self.db.rollback()
-            raise
-        except Exception as e:
-            await self.db.rollback()
-            logger.error(f"Error depleting BOM stock for ticket {ticket_id}: {str(e)}")
-            raise
+    # BOM depletion is owned by the atomic settle path (F-059): settle_ticket builds
+    # the normalized cart and execute_sale(expand_bom=True) deducts each recipe
+    # component exactly once, inside the same transaction as the fiscal sale. There
+    # is deliberately NO standalone ticket-level depletion method — a second
+    # depletion path would deduct the very same components settle already deducts,
+    # double-counting every recipe component per sale (ISSUE-104, U4.1).
 
     # ----------------------------------------------------------------- helpers
     async def _resolve_modifiers(
