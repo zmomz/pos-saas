@@ -42,7 +42,9 @@ interface Package {
   name: string;
   client_slots: number;
   wholesale_price: number;
-  retail_price_per_client: number;
+  // U1.1: the API (GET /api/v1/packages/list) returns `suggested_retail_price`,
+  // not `retail_price_per_client` — reading the wrong name rendered 0 (ISSUE-024).
+  suggested_retail_price: number;
   features: string;
 }
 
@@ -457,7 +459,7 @@ export default function MasterDashboard() {
               <CardContent className="space-y-2 text-sm text-muted-foreground">
                 <p>{t('client_slots')}: <span className="font-medium text-foreground">{pkg.client_slots}</span></p>
                 <p>{t('wholesale_price')}: <span className="font-medium text-foreground">{formatMoney(pkg.wholesale_price || 0, language)}</span></p>
-                <p>{t('retail_price')}: <span className="font-medium text-foreground">{formatMoney(pkg.retail_price_per_client || 0, language)}</span></p>
+                <p>{t('retail_price')}: <span className="font-medium text-foreground">{formatMoney(pkg.suggested_retail_price || 0, language)}</span></p>
               </CardContent>
             </Card>
           ))}
