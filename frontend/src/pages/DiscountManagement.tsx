@@ -28,7 +28,6 @@ interface Discount {
   value: number;
   min_purchase?: number;
   max_uses?: number;
-  used_count?: number;
   usage_count?: number;
   is_active?: boolean;
   starts_at?: string | null;
@@ -349,7 +348,7 @@ export default function DiscountManagement() {
             <div>
               <p className="text-slate-400 text-sm">Total Uses</p>
               <p className="text-2xl font-bold text-purple-400">
-                {discounts.reduce((sum, d) => sum + (d.used_count || 0), 0)}
+                {discounts.reduce((sum, d) => sum + (d.usage_count || 0), 0)}
               </p>
             </div>
           </CardContent>
@@ -416,7 +415,7 @@ export default function DiscountManagement() {
                     {discount.min_purchase ? `SAR ${discount.min_purchase}` : '—'}
                   </td>
                   <td className="p-3">
-                    {discount.used_count ?? discount.usage_count ?? 0}
+                    {discount.usage_count ?? 0}
                     {discount.max_uses ? ` / ${discount.max_uses}` : ' / ∞'}
                   </td>
                   <td className="p-3">
