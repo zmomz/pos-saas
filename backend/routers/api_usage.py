@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from datetime import datetime, date
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,26 +20,6 @@ router = APIRouter(prefix="/api/v1/entities/api_usage", tags=["api_usage"])
 
 
 # ---------- Pydantic Schemas ----------
-class Api_usageData(BaseModel):
-    """Entity data schema (for create/update)"""
-    agent_id: int = None
-    endpoint: str
-    method: str
-    status_code: int = None
-    response_time_ms: int = None
-    request_date: str = None
-
-
-class Api_usageUpdateData(BaseModel):
-    """Update entity data (partial updates allowed)"""
-    agent_id: Optional[int] = None
-    endpoint: Optional[str] = None
-    method: Optional[str] = None
-    status_code: Optional[int] = None
-    response_time_ms: Optional[int] = None
-    request_date: Optional[str] = None
-
-
 class Api_usageResponse(BaseModel):
     """Entity response schema"""
     id: int
@@ -63,27 +43,6 @@ class Api_usageListResponse(BaseModel):
     total: int
     skip: int
     limit: int
-
-
-class Api_usageBatchCreateRequest(BaseModel):
-    """Batch create request"""
-    items: List[Api_usageData]
-
-
-class Api_usageBatchUpdateItem(BaseModel):
-    """Batch update item"""
-    id: int
-    updates: Api_usageUpdateData
-
-
-class Api_usageBatchUpdateRequest(BaseModel):
-    """Batch update request"""
-    items: List[Api_usageBatchUpdateItem]
-
-
-class Api_usageBatchDeleteRequest(BaseModel):
-    """Batch delete request"""
-    ids: List[int]
 
 
 # ---------- Routes ----------
@@ -187,164 +146,8 @@ async def get_api_usage(
     except Exception as e:
         logger.error(f"Error fetching api_usage {id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-@router.post("", response_model=Api_usageResponse, status_code=201)
-async def create_api_usage(
-    data: Api_usageData,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a new api_usage"""
-    logger.debug(f"Creating new api_usage with data: {data}")
-    
-    service = Api_usageService(db)
-    try:
-        result = await service.create(data.model_dump(), user_id=str(current_user.id))
-        if not result:
-            raise HTTPException(status_code=400, detail="Failed to create api_usage")
-        
-        logger.info(f"Api_usage created successfully with id: {result.id}")
-        return result
-    except ValueError as e:
-        logger.error(f"Validation error creating api_usage: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error creating api_usage: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-@router.post("/batch", response_model=List[Api_usageResponse], status_code=201)
-async def create_api_usages_batch(
-    request: Api_usageBatchCreateRequest,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create multiple api_usages in a single request"""
-    logger.debug(f"Batch creating {len(request.items)} api_usages")
-    
-    service = Api_usageService(db)
-    results = []
-    
-    try:
-        for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=str(current_user.id))
-            if result:
-                results.append(result)
-        
-        logger.info(f"Batch created {len(results)} api_usages successfully")
-        return results
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch create: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch create failed: {str(e)}")
-
-
-@router.put("/batch", response_model=List[Api_usageResponse])
-async def update_api_usages_batch(
-    request: Api_usageBatchUpdateRequest,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update multiple api_usages in a single request (requires ownership)"""
-    logger.debug(f"Batch updating {len(request.items)} api_usages")
-    
-    service = Api_usageService(db)
-    results = []
-    
-    try:
-        for item in request.items:
-            # Only include non-None values for partial updates
-            update_dict = {k: v for k, v in item.updates.model_dump().items() if v is not None}
-            result = await service.update(item.id, update_dict, user_id=str(current_user.id))
-            if result:
-                results.append(result)
-        
-        logger.info(f"Batch updated {len(results)} api_usages successfully")
-        return results
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch update: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch update failed: {str(e)}")
-
-
-@router.put("/{id}", response_model=Api_usageResponse)
-async def update_api_usage(
-    id: int,
-    data: Api_usageUpdateData,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update an existing api_usage (requires ownership)"""
-    logger.debug(f"Updating api_usage {id} with data: {data}")
-
-    service = Api_usageService(db)
-    try:
-        # Only include non-None values for partial updates
-        update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
-        result = await service.update(id, update_dict, user_id=str(current_user.id))
-        if not result:
-            logger.warning(f"Api_usage with id {id} not found for update")
-            raise HTTPException(status_code=404, detail="Api_usage not found")
-        
-        logger.info(f"Api_usage {id} updated successfully")
-        return result
-    except HTTPException:
-        raise
-    except ValueError as e:
-        logger.error(f"Validation error updating api_usage {id}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error updating api_usage {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-@router.delete("/batch")
-async def delete_api_usages_batch(
-    request: Api_usageBatchDeleteRequest,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete multiple api_usages by their IDs (requires ownership)"""
-    logger.debug(f"Batch deleting {len(request.ids)} api_usages")
-    
-    service = Api_usageService(db)
-    deleted_count = 0
-    
-    try:
-        for item_id in request.ids:
-            success = await service.delete(item_id, user_id=str(current_user.id))
-            if success:
-                deleted_count += 1
-        
-        logger.info(f"Batch deleted {deleted_count} api_usages successfully")
-        return {"message": f"Successfully deleted {deleted_count} api_usages", "deleted_count": deleted_count}
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error in batch delete: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Batch delete failed: {str(e)}")
-
-
-@router.delete("/{id}")
-async def delete_api_usage(
-    id: int,
-    current_user: UserResponse = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a single api_usage by ID (requires ownership)"""
-    logger.debug(f"Deleting api_usage with id: {id}")
-    
-    service = Api_usageService(db)
-    try:
-        success = await service.delete(id, user_id=str(current_user.id))
-        if not success:
-            logger.warning(f"Api_usage with id {id} not found for deletion")
-            raise HTTPException(status_code=404, detail="Api_usage not found")
-        
-        logger.info(f"Api_usage {id} deleted successfully")
-        return {"message": "Api_usage deleted successfully", "id": id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting api_usage {id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+# NOTE: This router is intentionally READ-ONLY (finding H3). api_usage rows are a
+# metering ledger: the production metering middleware
+# (middlewares/production.py::_record) is their SOLE writer, inserting the model
+# directly. No create/update/delete/batch endpoint is exposed here — an actor must
+# not be able to fabricate, edit, or delete their own metering history.

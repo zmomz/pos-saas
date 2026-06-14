@@ -241,6 +241,40 @@ async def test_audit_logs_triad_is_read_only(client):
     ).status_code in (404, 405)
 
 
+# ---------------------------------------------------------------- H3 (api_usage)
+async def test_api_usage_triad_is_read_only(client):
+    """H3: api_usage exposed the same POST/PUT/DELETE + /batch surface as the audit
+    log, so an actor could fabricate, edit, or delete their own metering rows.
+    Metering is written solely by the production metering middleware
+    (middlewares/production.py::_record, inserting the model directly); only
+    owner/admin-scoped GET may remain. Every write/delete verb must be gone
+    (404/405); GET must still answer."""
+    _user, token, _ = await register_user(client)
+    headers = auth_headers(token)
+    base = "/api/v1/entities/api_usage"
+    forgery = {"endpoint": "/forged", "method": "GET", "status_code": 200}
+
+    # GET surface remains.
+    listing = await client.get(base, headers=headers)
+    assert listing.status_code == 200, listing.text
+
+    # No write/delete verb is reachable any longer.
+    assert (await client.post(base, json=forgery, headers=headers)).status_code in (404, 405)
+    assert (
+        await client.post(f"{base}/batch", json={"items": [forgery]}, headers=headers)
+    ).status_code in (404, 405)
+    assert (
+        await client.put(f"{base}/1", json={"endpoint": "/edited"}, headers=headers)
+    ).status_code in (404, 405)
+    assert (
+        await client.put(f"{base}/batch", json={"items": []}, headers=headers)
+    ).status_code in (404, 405)
+    assert (await client.delete(f"{base}/1", headers=headers)).status_code in (404, 405)
+    assert (
+        await client.request("DELETE", f"{base}/batch", json={"ids": [1]}, headers=headers)
+    ).status_code in (404, 405)
+
+
 # ---------------------------------------------------------------- isolation
 async def test_client_cannot_read_other_clients_product(client):
     _u, agent_token, _aid = await make_agent_account(client, package_type=5)
