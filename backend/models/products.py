@@ -25,6 +25,10 @@ class Products(Base):
     reorder_point = Column(Integer, nullable=True, default=0, server_default='0')
     reorder_quantity = Column(Integer, nullable=True, default=0, server_default='0')
     category = Column(String, nullable=True)
+    # H7 (ISSUE-038): link a product to the merchant's category tree. The legacy
+    # free-text ``category`` above is kept (denormalised) for display continuity;
+    # ``category_id`` is the real owner-scoped FK that lists/filters resolve against.
+    category_id = Column(Integer, nullable=True)
     vat_rate = Column(Float, nullable=True, default=15.0, server_default='15.0')
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
     # POS-11 (F-011): weighted & open-price configuration.

@@ -36,3 +36,11 @@ window.ResizeObserver = window.ResizeObserver || ResizeObserverStub;
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = vi.fn();
 }
+
+// jsdom lacks the Pointer Capture API that Radix Select uses to open its
+// listbox; stub it so component tests can drive the select with userEvent.
+if (!Element.prototype.hasPointerCapture) {
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.setPointerCapture = vi.fn();
+  Element.prototype.releasePointerCapture = vi.fn();
+}

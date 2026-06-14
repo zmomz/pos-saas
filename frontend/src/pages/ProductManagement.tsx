@@ -30,6 +30,7 @@ import {
   getReorderSuggestions,
   exportProductsCsv,
   importProductsCsv,
+  getCategories,
   type ProductVariant,
   type ReorderSuggestion,
   type CsvImportResult,
@@ -52,6 +53,7 @@ interface Product {
   reorder_point?: number;
   reorder_quantity?: number;
   category?: string;
+  category_id?: number | null;
   vat_rate: number;
   is_active?: boolean;
   // POS-11 (F-011): weighted / open-price configuration.
@@ -94,7 +96,9 @@ interface ProductFormData {
   quantity: string;
   reorder_point: string;
   reorder_quantity: string;
-  category: string;
+  // H7 (ISSUE-038): the linked category id ('' = uncategorised). Sourced from the
+  // merchant's category tree rather than a hardcoded list.
+  category_id: string;
   vat_rate: string;
   // POS-11 (F-011): weighted / open-price configuration.
   is_weighted: boolean;
@@ -102,7 +106,14 @@ interface ProductFormData {
   unit_label: string;
 }
 
-const CATEGORIES = ['Food', 'Beverages', 'Electronics', 'Clothing', 'Other'];
+// H7 (ISSUE-038): the merchant's category tree, loaded from getCategories().
+interface Category {
+  id: number;
+  name: string;
+}
+
+// Sentinel Select value for "no category" (Radix Select disallows an empty value).
+const NO_CATEGORY = 'none';
 
 const emptyForm: ProductFormData = {
   name: '',
@@ -113,7 +124,7 @@ const emptyForm: ProductFormData = {
   quantity: '',
   reorder_point: '',
   reorder_quantity: '',
-  category: 'Food',
+  category_id: '',
   vat_rate: '15',
   is_weighted: false,
   is_open_price: false,
@@ -126,6 +137,8 @@ export default function ProductManagement() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  // H7 (ISSUE-038): the merchant's categories, sourced for the form + filter.
+  const [categories, setCategories] = useState<Category[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -159,7 +172,20 @@ export default function ProductManagement() {
   useEffect(() => {
     loadProducts();
     loadSuggestions();
+    loadCategories();
   }, []);
+
+  // H7 (ISSUE-038): source the category options from the merchant's category tree.
+  async function loadCategories() {
+    try {
+      const data = await getCategories();
+      const items = Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : [];
+      setCategories(items.map((c: { id: number; name: string }) => ({ id: c.id, name: c.name })));
+    } catch (err) {
+      console.error('Failed to load categories:', err);
+      setCategories([]);
+    }
+  }
 
   async function loadSuggestions() {
     setSuggestionsLoading(true);
@@ -178,9 +204,10 @@ export default function ProductManagement() {
   async function loadProducts() {
     setLoading(true);
     try {
-      const category = categoryFilter !== 'all' ? categoryFilter : undefined;
+      // H7 (ISSUE-038): filter by the linked category id.
+      const categoryId = categoryFilter !== 'all' ? categoryFilter : undefined;
       const searchTerm = search.trim() || undefined;
-      const data = await getProductsList(category, searchTerm);
+      const data = await getProductsList(categoryId, searchTerm);
       // /products/list returns ProductListResponse { items, total } (ISSUE-021).
       setProducts(Array.isArray(data) ? data : data?.items || []);
     } catch (err) {
@@ -260,7 +287,7 @@ export default function ProductManagement() {
         reorder_quantity: formData.reorder_quantity
           ? parseInt(formData.reorder_quantity, 10)
           : undefined,
-        category: formData.category || undefined,
+        category_id: formData.category_id ? parseInt(formData.category_id, 10) : undefined,
         vat_rate: parseFloat(formData.vat_rate),
         is_weighted: formData.is_weighted,
         is_open_price: formData.is_open_price,
@@ -288,7 +315,7 @@ export default function ProductManagement() {
       quantity: String(product.quantity),
       reorder_point: product.reorder_point ? String(product.reorder_point) : '',
       reorder_quantity: product.reorder_quantity ? String(product.reorder_quantity) : '',
-      category: product.category || 'Other',
+      category_id: product.category_id != null ? String(product.category_id) : '',
       vat_rate: String(product.vat_rate),
       is_weighted: !!product.is_weighted,
       is_open_price: !!product.is_open_price,
@@ -310,7 +337,7 @@ export default function ProductManagement() {
         quantity: parseFloat(formData.quantity),
         reorder_point: formData.reorder_point ? parseInt(formData.reorder_point, 10) : 0,
         reorder_quantity: formData.reorder_quantity ? parseInt(formData.reorder_quantity, 10) : 0,
-        category: formData.category || undefined,
+        category_id: formData.category_id ? parseInt(formData.category_id, 10) : null,
         vat_rate: parseFloat(formData.vat_rate),
         is_weighted: formData.is_weighted,
         is_open_price: formData.is_open_price,
@@ -564,15 +591,27 @@ export default function ProductManagement() {
           <p className="text-xs text-slate-500">{t('weighted_open_price_hint')}</p>
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Category</label>
-          <Select value={formData.category} onValueChange={(v) => handleFormChange('category', v)}>
+          <label className="text-sm text-slate-400 mb-1 block">{t('category')}</label>
+          <Select
+            value={formData.category_id || NO_CATEGORY}
+            onValueChange={(v) =>
+              handleFormChange('category_id', v === NO_CATEGORY ? '' : v)
+            }
+          >
             <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
-              <SelectValue />
+              <SelectValue placeholder={t('category')} />
             </SelectTrigger>
             <SelectContent className="bg-slate-800 border-slate-600">
-              {CATEGORIES.map((cat) => (
-                <SelectItem key={cat} value={cat} className="text-white hover:bg-slate-700">
-                  {cat}
+              <SelectItem value={NO_CATEGORY} className="text-white hover:bg-slate-700">
+                {t('no_category')}
+              </SelectItem>
+              {categories.map((cat) => (
+                <SelectItem
+                  key={cat.id}
+                  value={String(cat.id)}
+                  className="text-white hover:bg-slate-700"
+                >
+                  {cat.name}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -722,15 +761,19 @@ export default function ProductManagement() {
           />
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
             <SelectTrigger className="w-40 bg-slate-800 border-slate-600 text-white">
-              <SelectValue placeholder="Category" />
+              <SelectValue placeholder={t('category')} />
             </SelectTrigger>
             <SelectContent className="bg-slate-800 border-slate-600">
               <SelectItem value="all" className="text-white hover:bg-slate-700">
-                All Categories
+                {t('all_categories')}
               </SelectItem>
-              {CATEGORIES.map((cat) => (
-                <SelectItem key={cat} value={cat} className="text-white hover:bg-slate-700">
-                  {cat}
+              {categories.map((cat) => (
+                <SelectItem
+                  key={cat.id}
+                  value={String(cat.id)}
+                  className="text-white hover:bg-slate-700"
+                >
+                  {cat.name}
                 </SelectItem>
               ))}
             </SelectContent>

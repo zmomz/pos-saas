@@ -21,6 +21,7 @@ from models.auth import User
 from models.agents import Agents
 from models.clients import Clients
 from models.products import Products
+from models.categories import Categories
 from models.transactions import Transactions
 from models.packages import Packages
 from models.notifications import Notifications
@@ -71,6 +72,8 @@ class ProductCreateRequest(BaseModel):
     reorder_point: Optional[int] = 0
     reorder_quantity: Optional[int] = 0
     category: Optional[str] = None
+    # H7 (ISSUE-038): assign a real category from the merchant's tree.
+    category_id: Optional[int] = None
     vat_rate: Optional[float] = 15.0
     # POS-11 (F-011): weighted / open-price configuration.
     is_weighted: Optional[bool] = False
@@ -88,6 +91,8 @@ class ProductUpdateRequest(BaseModel):
     reorder_point: Optional[int] = None
     reorder_quantity: Optional[int] = None
     category: Optional[str] = None
+    # H7 (ISSUE-038): reassign the linked category.
+    category_id: Optional[int] = None
     vat_rate: Optional[float] = None
     is_active: Optional[bool] = None
     # POS-11 (F-011): weighted / open-price configuration.
@@ -108,6 +113,8 @@ class ProductResponse(BaseModel):
     reorder_point: int = 0
     reorder_quantity: int = 0
     category: Optional[str] = None
+    # H7 (ISSUE-038): the linked category id (None when uncategorised).
+    category_id: Optional[int] = None
     vat_rate: Optional[float] = None
     is_active: bool
     # POS-11 (F-011): weighted / open-price configuration.
@@ -136,9 +143,29 @@ class ProductListResponse(BaseModel):
     total: int
 
 
+async def _resolve_category_name(
+    db: AsyncSession, owner_id: str, category_id: Optional[int]
+) -> Optional[str]:
+    """H7 (ISSUE-038): validate ``category_id`` belongs to the merchant and return
+    its name (denormalised onto the product for display). A non-owned / unknown id
+    is rejected with 400 so a product can only be linked to a *real* category."""
+    if category_id is None:
+        return None
+    result = await db.execute(
+        select(Categories).where(
+            and_(Categories.id == category_id, Categories.user_id == owner_id)
+        )
+    )
+    category = result.scalar_one_or_none()
+    if not category:
+        raise HTTPException(status_code=400, detail="Category not found")
+    return category.name
+
+
 @router.get("/api/v1/products/list", response_model=ProductListResponse)
 async def list_products(
     category: Optional[str] = Query(None),
+    category_id: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -146,7 +173,11 @@ async def list_products(
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """List products for current client with optional filters."""
+    """List products for current client with optional filters.
+
+    H7 (ISSUE-038): ``category_id`` filters by the linked category tree; the legacy
+    free-text ``category`` filter is retained for backward compatibility.
+    """
     role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access products")
@@ -154,6 +185,8 @@ async def list_products(
     client_id = role_info["entity_id"]
     query = select(Products).where(Products.client_id == client_id)
 
+    if category_id is not None:
+        query = query.where(Products.category_id == category_id)
     if category:
         query = query.where(Products.category == category)
     if search:
@@ -161,6 +194,8 @@ async def list_products(
 
     # Count
     count_query = select(func.count(Products.id)).where(Products.client_id == client_id)
+    if category_id is not None:
+        count_query = count_query.where(Products.category_id == category_id)
     if category:
         count_query = count_query.where(Products.category == category)
     if search:
@@ -187,6 +222,7 @@ async def list_products(
             reorder_point=p.reorder_point or 0,
             reorder_quantity=p.reorder_quantity or 0,
             category=p.category,
+            category_id=p.category_id,
             vat_rate=p.vat_rate,
             is_active=p.is_active if p.is_active is not None else True,
             is_weighted=bool(p.is_weighted),
@@ -215,6 +251,10 @@ async def create_product(
 
     client_id = role_info["entity_id"]
 
+    # H7 (ISSUE-038): a linked category id wins — its name is denormalised onto the
+    # legacy ``category`` string so existing list/display paths keep working.
+    linked_name = await _resolve_category_name(db, owner_id, data.category_id)
+
     product = Products(
         user_id=owner_id,
         client_id=client_id,
@@ -226,7 +266,8 @@ async def create_product(
         quantity=data.quantity or 0,
         reorder_point=data.reorder_point or 0,
         reorder_quantity=data.reorder_quantity or 0,
-        category=data.category,
+        category=linked_name if data.category_id is not None else data.category,
+        category_id=data.category_id,
         vat_rate=data.vat_rate if data.vat_rate is not None else 15.0,
         is_active=True,
         # POS-11 (F-011): weighted / open-price configuration.
@@ -250,6 +291,7 @@ async def create_product(
         reorder_point=product.reorder_point or 0,
         reorder_quantity=product.reorder_quantity or 0,
         category=product.category,
+        category_id=product.category_id,
         vat_rate=product.vat_rate,
         is_active=True,
         is_weighted=bool(product.is_weighted),
@@ -285,6 +327,12 @@ async def update_product(
         raise HTTPException(status_code=404, detail="Product not found")
 
     update_data = data.model_dump(exclude_unset=True)
+    # H7 (ISSUE-038): reassigning the linked category re-denormalises its name onto
+    # the legacy ``category`` string (and validates owner-scoped existence).
+    if "category_id" in update_data and update_data["category_id"] is not None:
+        update_data["category"] = await _resolve_category_name(
+            db, owner_id, update_data["category_id"]
+        )
     if update_data:
         await db.execute(
             update(Products)
@@ -306,6 +354,7 @@ async def update_product(
         reorder_point=product.reorder_point or 0,
         reorder_quantity=product.reorder_quantity or 0,
         category=product.category,
+        category_id=product.category_id,
         vat_rate=product.vat_rate,
         is_active=product.is_active if product.is_active is not None else True,
         is_weighted=bool(product.is_weighted),

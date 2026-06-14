@@ -934,6 +934,7 @@ export interface ProductListItem {
   reorder_point: number;
   reorder_quantity: number;
   category?: string | null;
+  category_id?: number | null;
   vat_rate?: number | null;
   is_active: boolean;
   is_weighted: boolean;
@@ -949,11 +950,14 @@ export interface ProductListResponse {
 }
 
 export async function getProductsList(
-  category?: string,
+  categoryId?: number | string,
   search?: string,
 ): Promise<ProductListResponse> {
   const params: Record<string, string> = {};
-  if (category) params.category = category;
+  // H7 (ISSUE-038): filter by the linked category id, not the legacy free-text name.
+  if (categoryId !== undefined && categoryId !== '' && categoryId !== 'all') {
+    params.category_id = String(categoryId);
+  }
   if (search) params.search = search;
   const queryString = new URLSearchParams(params).toString();
   const url = queryString ? `/api/v1/products/list?${queryString}` : '/api/v1/products/list';
@@ -975,6 +979,8 @@ export async function createProduct(data: {
   reorder_point?: number;
   reorder_quantity?: number;
   category?: string;
+  // H7 (ISSUE-038): link to a real category from the merchant's tree.
+  category_id?: number;
   vat_rate?: number;
   // POS-11 (F-011): weighted / open-price configuration.
   is_weighted?: boolean;
