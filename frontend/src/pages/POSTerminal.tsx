@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, type MyPermissions, type TenderInfo, type HeldTicket } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem } from '@/lib/api';
 import { CUSTOMER_DISPLAY_KEY, buildCustomerDisplayPayload, paidCustomerDisplayPayload } from '@/lib/customerDisplay';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
@@ -15,7 +15,7 @@ import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import ErrorState from '@/components/states/ErrorState';
 import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon } from 'lucide-react';
 
-interface Product {
+export interface Product {
   id: number;
   name: string;
   name_ar?: string;
@@ -30,7 +30,7 @@ interface Product {
   unit_label?: string;
 }
 
-interface CartItem {
+export interface CartItem {
   // For a variant line (INV-04) `product` is a synthesized entry carrying the
   // variant's price/name; `product.id` stays the parent product id (sent as
   // product_id) and `variantId` identifies the variant SKU.
@@ -53,6 +53,53 @@ function lineUnitPrice(item: CartItem): number {
 
 function cartKeyFor(productId: number, variantId?: number): string {
   return variantId ? `v${variantId}` : `p${productId}`;
+}
+
+// POS-10 / INV-04 (ISSUE-031): serialize a cart line into the held-ticket payload.
+// Carries `variant_id` and the effective (open) unit price so a recalled line restores
+// exactly what was parked — otherwise a held variant SKU collapses to its parent
+// product at catalog price and the recalled sale deducts the parent's stock.
+export function holdLineFromCart(item: CartItem): {
+  product_id: number;
+  name: string;
+  name_ar?: string;
+  price: number;
+  quantity: number;
+  variant_id?: number;
+} {
+  return {
+    product_id: item.product.id,
+    name: item.product.name,
+    name_ar: item.product.name_ar,
+    price: lineUnitPrice(item),
+    quantity: item.quantity,
+    variant_id: item.variantId,
+  };
+}
+
+// POS-10 / INV-04 (ISSUE-031): rebuild a cart line from a recalled held item. Restores
+// the variant id (so the sale deducts the variant's stock, not the parent's), the held
+// open price, and a variant-distinct cart key so sibling variants stay separate lines.
+// Prefers the live product for full sku/category/barcode, but a variant line keeps the
+// held price (the live lookup resolves the *parent*, whose price is the parent's).
+export function cartLineFromHeld(it: HeldItem, products: Product[]): CartItem {
+  const variantId = it.variant_id ?? undefined;
+  const live = products.find((p) => p.id === it.product_id);
+  const product: Product = live
+    ? variantId
+      ? { ...live, price: it.price }
+      : live
+    : { id: it.product_id, name: it.name, name_ar: it.name_ar, price: it.price };
+  // POS-11: a recalled open-price line restores the cashier's entered price; a
+  // fixed-price line tracks the current catalog price (unitPrice left undefined).
+  const unitPrice = !variantId && live?.is_open_price ? it.price : undefined;
+  return {
+    product,
+    quantity: it.quantity,
+    variantId,
+    unitPrice,
+    key: cartKeyFor(it.product_id, variantId),
+  };
 }
 
 interface Receipt {
@@ -294,13 +341,7 @@ export default function POSTerminal() {
     try {
       const customer = customers.find((c) => String(c.id) === selectedCustomerId);
       await holdSale({
-        items: cart.map((item) => ({
-          product_id: item.product.id,
-          name: item.product.name,
-          name_ar: item.product.name_ar,
-          price: lineUnitPrice(item),
-          quantity: item.quantity,
-        })),
+        items: cart.map(holdLineFromCart),
         label: customer?.name || undefined,
         customer_name: customer?.name,
         branch_id:
@@ -325,18 +366,9 @@ export default function POSTerminal() {
   async function handleRecall(heldId: number) {
     try {
       const recalled = await recallSale(heldId);
-      // Rebuild cart items, preferring the live product (full sku/category/barcode)
-      // and falling back to the snapshot stored on the held ticket.
-      const restored: CartItem[] = recalled.items.map((it) => {
-        const live = products.find((p) => p.id === it.product_id);
-        const product: Product = live || {
-          id: it.product_id,
-          name: it.name,
-          name_ar: it.name_ar,
-          price: it.price,
-        };
-        return { product, quantity: it.quantity, key: cartKeyFor(it.product_id) };
-      });
+      // Rebuild cart items via the shared serialization helper so a recalled variant
+      // SKU keeps its variant_id, open price, and distinct cart key (ISSUE-031).
+      const restored: CartItem[] = recalled.items.map((it) => cartLineFromHeld(it, products));
       setCart(restored);
       if (recalled.branch_id) setSelectedBranchId(String(recalled.branch_id));
       setShowHeld(false);

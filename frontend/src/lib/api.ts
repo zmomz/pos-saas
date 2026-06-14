@@ -465,6 +465,10 @@ export interface HeldItem {
   price: number;
   quantity: number;
   discount?: number;
+  // INV-04 (F-033): when the held line is a product *variant* SKU, this carries the
+  // variant id so recall restores the variant (not the parent) — without it the
+  // recalled sale deducts the parent product's stock (ISSUE-031 / H28).
+  variant_id?: number;
 }
 
 export interface HeldTicket {
@@ -490,7 +494,14 @@ export interface RecalledTicket {
 }
 
 export async function holdSale(data: {
-  items: { product_id: number; name: string; name_ar?: string; price: number; quantity: number }[];
+  items: {
+    product_id: number;
+    name: string;
+    name_ar?: string;
+    price: number;
+    quantity: number;
+    variant_id?: number;
+  }[];
   label?: string;
   customer_name?: string;
   customer_phone?: string;

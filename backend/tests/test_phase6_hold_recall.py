@@ -14,16 +14,29 @@ These tests prove:
   held tickets (SEC-02);
 * an empty cart cannot be held.
 """
+from sqlalchemy import select
+
 from conftest import (
     add_product,
     auth_headers,
     get_product_quantity,
     make_client_account,
 )
+from core.database import db_manager
+from models.product_variants import Product_variants
 
 
 def _items(pid, *, price=10.0, qty=2):
     return [{"product_id": pid, "name": "Cola", "price": price, "quantity": qty}]
+
+
+async def _variant_qty(variant_id: int) -> int:
+    async with db_manager.async_session_maker() as db:
+        return (
+            await db.execute(
+                select(Product_variants.quantity).where(Product_variants.id == variant_id)
+            )
+        ).scalar_one()
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +82,65 @@ async def test_hold_lists_then_recall_restores_and_clears(client):
 
     # Recalling an already-recalled ticket is a 404.
     assert (await client.post(f"/api/v1/pos/recall/{held_id}", headers=headers)).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-031 (H28): a held variant SKU round-trips its variant_id, so the recalled
+# sale deducts the *variant's* stock — not the parent product's.
+# ---------------------------------------------------------------------------
+async def test_held_variant_roundtrips_variant_id_and_deducts_variant_stock(client):
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    # Parent product has its own stock (20); the variant has an independent stock (8).
+    pid = await add_product(client_id, user["id"], name="T-Shirt", quantity=20, price=50.0)
+    variant = (
+        await client.post(
+            "/api/v1/entities/product_variants",
+            json={
+                "client_id": client_id,
+                "product_id": pid,
+                "name": "Red / Large",
+                "barcode": "TSHIRT-RED-L",
+                "price": 55.0,
+                "quantity": 8,
+            },
+            headers=headers,
+        )
+    ).json()["id"]
+
+    # Hold a cart line for the VARIANT SKU.
+    held = (
+        await client.post(
+            "/api/v1/pos/hold",
+            json={
+                "items": [{
+                    "product_id": pid,
+                    "variant_id": variant,
+                    "name": "Red / Large",
+                    "price": 55.0,
+                    "quantity": 2,
+                }],
+            },
+            headers=headers,
+        )
+    ).json()
+
+    # Recall returns the line with its variant_id intact (the bug dropped it).
+    recalled = (
+        await client.post(f"/api/v1/pos/recall/{held['id']}", headers=headers)
+    ).json()
+    assert recalled["items"][0]["variant_id"] == variant
+
+    # Ring up the recalled line — the VARIANT's stock falls (8 → 6); the parent's
+    # 20 is untouched.
+    sale = await client.post(
+        "/api/v1/pos/transaction",
+        json={"items": recalled["items"], "payment_method": "cash"},
+        headers=headers,
+    )
+    assert sale.status_code == 200, sale.text
+    assert await _variant_qty(variant) == 6
+    assert await get_product_quantity(pid) == 20
 
 
 # ---------------------------------------------------------------------------
