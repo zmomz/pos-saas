@@ -129,6 +129,10 @@ export default function OrderTicket() {
   // Check + settle (F-059): turn the ticket into money and a compliant invoice.
   const [settleOpen, setSettleOpen] = useState(false);
   const [settleMethod, setSettleMethod] = useState('cash');
+  // Gratuity entered at settle (POS-13/F-012). Rides on TOP of the invoice total
+  // — never part of the VAT base — and is shipped to the settle endpoint, which
+  // records it on the sale and renders it on the receipt outside the tax base.
+  const [settleTip, setSettleTip] = useState(0);
   const [settled, setSettled] = useState<SettleResult | null>(null);
   const [settleError, setSettleError] = useState<string | null>(null);
 
@@ -341,7 +345,10 @@ export default function OrderTicket() {
     setSubmitting(true);
     setSettleError(null);
     try {
-      const res = await settleTicket(ticketId, { payment_method: settleMethod });
+      const res = await settleTicket(ticketId, {
+        payment_method: settleMethod,
+        tip_amount: settleTip || 0,
+      });
       setSettled(res);
       setSettleOpen(false);
       await load();
@@ -621,6 +628,7 @@ export default function OrderTicket() {
               size="sm"
               onClick={() => {
                 setSettleError(null);
+                setSettleTip(0);
                 setSettleOpen(true);
               }}
               disabled={items.length === 0}
@@ -924,6 +932,43 @@ export default function OrderTicket() {
                 <option value="stcpay">STC Pay</option>
               </select>
             </div>
+            <div>
+              <label htmlFor="settle-tip" className="text-sm text-slate-400 mb-1 block">
+                {t('tip')}
+              </label>
+              <Input
+                id="settle-tip"
+                type="number"
+                min={0}
+                step="0.01"
+                value={settleTip || ''}
+                onChange={(e) => setSettleTip(Math.max(0, Number(e.target.value) || 0))}
+                className="bg-slate-700 border-slate-600 text-white"
+              />
+              <div className="flex gap-2 mt-2">
+                {[10, 15, 20].map((pct) => {
+                  const base = check?.amount_due ?? grandTotal;
+                  return (
+                    <Button
+                      key={pct}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSettleTip(Number(((base * pct) / 100).toFixed(2)))}
+                      className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                    >
+                      {pct}%
+                    </Button>
+                  );
+                })}
+              </div>
+            </div>
+            {settleTip > 0 && (
+              <div className="flex items-center justify-between text-white font-semibold">
+                <span>{t('total_with_tip')}</span>
+                <span>{((check?.amount_due ?? grandTotal) + settleTip).toFixed(2)}</span>
+              </div>
+            )}
             <Button
               onClick={handleSettle}
               disabled={submitting}
