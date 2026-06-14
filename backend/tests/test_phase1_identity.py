@@ -179,6 +179,19 @@ async def test_no_permissions_entity_crud_route_is_mounted(client):
     assert not offenders, f"orphaned permissions CRUD route(s) still mounted: {sorted(offenders)}"
 
 
+async def test_no_shifts_entity_crud_route_is_mounted(client):
+    """H20: the generic /api/v1/entities/shifts CRUD scaffold mounted full
+    create/update/HARD-DELETE + /batch, letting any authenticated client PUT/
+    DELETE arbitrary shift fields. The real shift lifecycle (open/close/
+    movements/reconciliation) lives in production.py and is the only path the UI
+    calls; the model (models/shifts.py) is kept. This triad must not be mounted."""
+    from main import app
+
+    mounted = {getattr(r, "path", "") for r in app.routes}
+    offenders = {p for p in mounted if p.startswith("/api/v1/entities/shifts")}
+    assert not offenders, f"orphaned shifts CRUD route(s) still mounted: {sorted(offenders)}"
+
+
 # ---------------------------------------------------------------- C-6
 async def test_transactions_triad_is_read_only(client):
     _user, token, _ = await register_user(client)

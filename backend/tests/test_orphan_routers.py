@@ -49,7 +49,6 @@ ALLOWLIST = {
     "api_usage.py": "generic entity triad (API metering, backend-written)",
     "loyalty_points.py": "generic entity triad (loyalty driven by /api/v1/pos)",
     "loyalty_programs.py": "generic entity triad (loyalty config)",
-    "shifts.py": "generic entity triad (shift ops via /api/v1/production + pos)",
     "transactions.py": "generic entity triad (sales written via /api/v1/pos)",
     # Backend-internal: no frontend caller by design.
     "health.py": "liveness/DB probe (/database/health), ops-internal",
@@ -99,6 +98,14 @@ REMOVED_BACKEND = [
     _BACKEND / "services" / "clients.py",
     _ROUTERS_DIR / "client_features.py",
     _BACKEND / "services" / "client_features.py",
+    # H20: the generic shifts CRUD scaffold mounted full create/update/HARD-DELETE
+    # + /batch at /api/v1/entities/shifts, letting any authenticated client PUT/
+    # DELETE arbitrary shift fields. The real shift lifecycle (open/close/
+    # movements/reconciliation) lives in production.py and is the only path the UI
+    # calls; the model (models/shifts.py) is kept — only the orphaned router/
+    # service are removed.
+    _ROUTERS_DIR / "shifts.py",
+    _BACKEND / "services" / "shifts.py",
 ]
 REMOVED_FRONTEND = [
     _FRONTEND_SRC / "pages" / "AuthCallback.tsx",

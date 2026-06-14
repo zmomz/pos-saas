@@ -30,6 +30,10 @@ from models.stock_adjustments import Stock_adjustments  # noqa: F401
 # Imported so the cash_movements table registers on Base.metadata at startup
 # (FIN-04 / POS-09 / F-044 drawer pay-in/pay-out/cash-drop tied to the shift).
 from models.cash_movements import Cash_movements  # noqa: F401
+# Imported so the shifts table registers on Base.metadata at startup. The shift
+# open/close/reconciliation endpoints below reference it lazily; the deleted
+# entities/shifts CRUD scaffold (H20, #5) used to be its only startup importer.
+from models.shifts import Shifts  # noqa: F401
 from services.production import (
     AnalyticsService,
     BulkImportService,
