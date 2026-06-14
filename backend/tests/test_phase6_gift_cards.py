@@ -16,6 +16,7 @@ from conftest import (
     make_client_account,
 )
 from core.database import db_manager
+from models.gift_card_ledger import GiftCardLedger
 from models.gift_cards import Gift_cards
 from models.payment_tenders import PaymentTenders
 from models.transactions import Transactions
@@ -58,6 +59,26 @@ async def _txn_count(client_id: int) -> int:
                 )
             )
         ).scalar() or 0
+
+
+async def _ledger_for_card(card_id: int):
+    async with db_manager.async_session_maker() as db:
+        rows = (
+            await db.execute(
+                select(GiftCardLedger)
+                .where(GiftCardLedger.gift_card_id == card_id)
+                .order_by(GiftCardLedger.id)
+            )
+        ).scalars().all()
+        return [
+            {
+                "entry_type": r.entry_type,
+                "amount": r.amount,
+                "balance_after": r.balance_after,
+                "transaction_id": r.transaction_id,
+            }
+            for r in rows
+        ]
 
 
 async def _tenders_for_txn(txn_id: int):
@@ -278,3 +299,159 @@ async def test_split_cash_plus_gift_card(client):
     assert await _card_balance(card["id"]) == 50.0
     # The stored breakdown redacts the bearer code (last 4 only).
     assert card["code"] not in (body.get("payment_breakdown") or "")
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-057: void freezes the card and records a ledger entry
+# ---------------------------------------------------------------------------
+async def test_gift_card_void_freezes_balance_and_records(client):
+    _user, token, _client_id = await make_client_account(client)
+    card = await _issue_card(client, token, 200.0)
+
+    resp = await client.post(
+        f"/api/v1/gift-cards/{card['id']}/void", headers=auth_headers(token)
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "void"
+    assert body["balance"] == 200.0  # frozen, not zeroed
+
+    # Persisted + recorded.
+    assert await _card_status(card["id"]) == "void"
+    assert await _card_balance(card["id"]) == 200.0
+    ledger = await _ledger_for_card(card["id"])
+    assert ledger == [
+        {"entry_type": "void", "amount": 0.0, "balance_after": 200.0, "transaction_id": None}
+    ]
+
+
+async def test_voided_gift_card_cannot_be_redeemed(client):
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    pid = await add_product(client_id, user["id"], name="Vase", quantity=10, price=100.0)
+
+    card = await _issue_card(client, token, 500.0)
+    await client.post(f"/api/v1/gift-cards/{card['id']}/void", headers=headers)
+
+    resp = await client.post(
+        "/api/v1/pos/transaction",
+        json={
+            "items": [{"product_id": pid, "name": "Vase", "price": 100.0, "quantity": 1}],
+            "payment_method": "giftcard",
+            "payment_gift_card_code": card["code"],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert await _card_balance(card["id"]) == 500.0  # untouched
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-057: reload tops up the balance and records a ledger entry
+# ---------------------------------------------------------------------------
+async def test_gift_card_reload_increases_balance_and_records(client):
+    _user, token, _client_id = await make_client_account(client)
+    card = await _issue_card(client, token, 50.0)
+
+    resp = await client.post(
+        f"/api/v1/gift-cards/{card['id']}/reload",
+        json={"amount": 30.0},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["balance"] == 80.0
+    assert body["status"] == "active"
+
+    assert await _card_balance(card["id"]) == 80.0
+    ledger = await _ledger_for_card(card["id"])
+    assert ledger == [
+        {"entry_type": "reload", "amount": 30.0, "balance_after": 80.0, "transaction_id": None}
+    ]
+
+
+async def test_reloading_a_redeemed_card_reactivates_it(client):
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    pid = await add_product(client_id, user["id"], name="Bowl", quantity=10, price=100.0)
+
+    card = await _issue_card(client, token, 115.0)  # exactly one sale total
+    await client.post(
+        "/api/v1/pos/transaction",
+        json={
+            "items": [{"product_id": pid, "name": "Bowl", "price": 100.0, "quantity": 1}],
+            "payment_method": "giftcard",
+            "payment_gift_card_code": card["code"],
+        },
+        headers=headers,
+    )
+    assert await _card_status(card["id"]) == "redeemed"
+
+    resp = await client.post(
+        f"/api/v1/gift-cards/{card['id']}/reload",
+        json={"amount": 40.0},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "active"
+    assert await _card_balance(card["id"]) == 40.0
+
+
+async def test_cannot_reload_a_voided_card(client):
+    _user, token, _client_id = await make_client_account(client)
+    card = await _issue_card(client, token, 50.0)
+    await client.post(f"/api/v1/gift-cards/{card['id']}/void", headers=auth_headers(token))
+
+    resp = await client.post(
+        f"/api/v1/gift-cards/{card['id']}/reload",
+        json={"amount": 30.0},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 400, resp.text
+    assert await _card_balance(card["id"]) == 50.0  # untouched
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-057: refund-to-card increases the balance and records a refund entry
+# ---------------------------------------------------------------------------
+async def test_gift_card_refund_to_card_increases_balance_and_records(client):
+    _user, token, _client_id = await make_client_account(client)
+    card = await _issue_card(client, token, 20.0)
+
+    resp = await client.post(
+        f"/api/v1/gift-cards/{card['id']}/refund",
+        json={"amount": 115.0, "transaction_id": 4242},
+        headers=auth_headers(token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["balance"] == 135.0
+
+    assert await _card_balance(card["id"]) == 135.0
+    ledger = await _ledger_for_card(card["id"])
+    assert ledger == [
+        {"entry_type": "refund", "amount": 115.0, "balance_after": 135.0, "transaction_id": 4242}
+    ]
+
+
+# ---------------------------------------------------------------------------
+# ISSUE-057: owner-scoping (SEC-02) on the management operations
+# ---------------------------------------------------------------------------
+async def test_void_reload_refund_are_owner_scoped(client):
+    _user_a, token_a, _client_a = await make_client_account(client)
+    card = await _issue_card(client, token_a, 100.0)
+
+    _user_b, token_b, _client_b = await make_client_account(client)
+    headers_b = auth_headers(token_b)
+
+    for path, payload in (
+        (f"/api/v1/gift-cards/{card['id']}/void", None),
+        (f"/api/v1/gift-cards/{card['id']}/reload", {"amount": 10.0}),
+        (f"/api/v1/gift-cards/{card['id']}/refund", {"amount": 10.0}),
+    ):
+        resp = await client.post(path, json=payload, headers=headers_b)
+        assert resp.status_code == 404, f"{path}: {resp.text}"
+
+    # A's card is completely untouched by B's attempts.
+    assert await _card_balance(card["id"]) == 100.0
+    assert await _card_status(card["id"]) == "active"
+    assert await _ledger_for_card(card["id"]) == []

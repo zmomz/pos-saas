@@ -321,6 +321,57 @@ export async function getGiftCardBalance(code: string): Promise<GiftCardBalance>
   return response.data;
 }
 
+export interface GiftCardLedgerEntry {
+  id: number;
+  entry_type: string;
+  amount: number;
+  balance_after: number;
+  transaction_id?: number | null;
+  note?: string | null;
+  created_at?: string;
+}
+
+// ISSUE-057: cancel a card — freezes its balance and makes it unredeemable.
+export async function voidGiftCard(cardId: number): Promise<GiftCard> {
+  const response = await client.apiCall.invoke<GiftCard>({
+    url: `/api/v1/gift-cards/${cardId}/void`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+// ISSUE-057: top up a card's balance (reactivates a previously exhausted card).
+export async function reloadGiftCard(cardId: number, amount: number): Promise<GiftCard> {
+  const response = await client.apiCall.invoke<GiftCard>({
+    url: `/api/v1/gift-cards/${cardId}/reload`,
+    method: 'POST',
+    data: { amount },
+  });
+  return response.data;
+}
+
+// ISSUE-057: refund a sale's value back onto a card, increasing its balance.
+export async function refundToGiftCard(
+  cardId: number,
+  amount: number,
+  transactionId?: number,
+): Promise<GiftCard> {
+  const response = await client.apiCall.invoke<GiftCard>({
+    url: `/api/v1/gift-cards/${cardId}/refund`,
+    method: 'POST',
+    data: { amount, transaction_id: transactionId },
+  });
+  return response.data;
+}
+
+export async function getGiftCardLedger(cardId: number): Promise<GiftCardLedgerEntry[]> {
+  const response = await client.apiCall.invoke<GiftCardLedgerEntry[]>({
+    url: `/api/v1/gift-cards/${cardId}/ledger`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
 export interface RefundResult {
   credit_note_id: number;
   original_transaction_id: number;

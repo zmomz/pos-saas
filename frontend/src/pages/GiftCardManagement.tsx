@@ -8,6 +8,8 @@ import PermissionDenied from '@/components/states/PermissionDenied';
 import {
   issueGiftCard,
   listGiftCards,
+  reloadGiftCard,
+  voidGiftCard,
   type GiftCard,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
@@ -36,6 +38,48 @@ export default function GiftCardManagement() {
   const [expiry, setExpiry] = useState('');
   const [issuing, setIssuing] = useState(false);
   const [issueMsg, setIssueMsg] = useState<string | null>(null);
+
+  // Per-row management state (ISSUE-057): which card is reloading + its top-up amount.
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [reloadId, setReloadId] = useState<number | null>(null);
+  const [reloadAmount, setReloadAmount] = useState('');
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  function patchCard(updated: GiftCard) {
+    setCards((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+  }
+
+  async function handleVoid(id: number) {
+    setBusyId(id);
+    setActionMsg(null);
+    try {
+      patchCard(await voidGiftCard(id));
+      setActionMsg(t('gift_card_voided'));
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setActionMsg(detail || t('gift_card_action_failed'));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleReload(id: number) {
+    const value = Number(reloadAmount);
+    if (!value || value <= 0) return;
+    setBusyId(id);
+    setActionMsg(null);
+    try {
+      patchCard(await reloadGiftCard(id, value));
+      setActionMsg(t('gift_card_reloaded'));
+      setReloadId(null);
+      setReloadAmount('');
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setActionMsg(detail || t('gift_card_action_failed'));
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -138,6 +182,12 @@ export default function GiftCardManagement() {
         </Button>
       </div>
 
+      {actionMsg && (
+        <p className="text-sm text-slate-300" role="status">
+          {actionMsg}
+        </p>
+      )}
+
       {/* Issue a new card (CRM-03) */}
       <Card className="bg-slate-800 border-slate-700">
         <CardContent className="p-4 space-y-3">
@@ -202,6 +252,7 @@ export default function GiftCardManagement() {
                   <th className="text-start p-3">{t('status')}</th>
                   <th className="text-start p-3">{t('gift_card_expiry')}</th>
                   <th className="text-start p-3">{t('date')}</th>
+                  <th className="text-end p-3">{t('gift_card_actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -222,6 +273,56 @@ export default function GiftCardManagement() {
                     </td>
                     <td className="p-3 text-slate-400">
                       {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
+                    </td>
+                    <td className="p-3">
+                      {c.status === 'void' ? (
+                        <span className="text-slate-500 text-xs">—</span>
+                      ) : reloadId === c.id ? (
+                        <div className="flex items-center justify-end gap-2">
+                          <Input
+                            dir="ltr"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={reloadAmount}
+                            onChange={(e) => setReloadAmount(e.target.value)}
+                            placeholder={t('gift_card_reload_amount')}
+                            className="bg-slate-900 border-slate-600 text-white h-8 w-32"
+                          />
+                          <Button
+                            size="sm"
+                            onClick={() => handleReload(c.id)}
+                            disabled={busyId === c.id || !(Number(reloadAmount) > 0)}
+                            className="bg-pink-600 hover:bg-pink-700 text-white"
+                          >
+                            {t('gift_card_reload')}
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setReloadId(c.id);
+                              setReloadAmount('');
+                            }}
+                            disabled={busyId === c.id}
+                            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                          >
+                            {t('gift_card_reload')}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleVoid(c.id)}
+                            disabled={busyId === c.id}
+                            className="border-red-700 text-red-400 hover:bg-red-900/30"
+                          >
+                            {t('gift_card_void')}
+                          </Button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

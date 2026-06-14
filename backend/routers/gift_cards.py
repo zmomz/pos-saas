@@ -86,6 +86,28 @@ class GiftCardBalanceResponse(BaseModel):
     is_redeemable: bool
 
 
+class ReloadGiftCardRequest(BaseModel):
+    amount: float
+
+
+class RefundToGiftCardRequest(BaseModel):
+    amount: float
+    transaction_id: Optional[int] = None
+
+
+class GiftCardLedgerEntryResponse(BaseModel):
+    id: int
+    entry_type: str
+    amount: float
+    balance_after: float
+    transaction_id: Optional[int] = None
+    note: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
 def _to_response(card: Gift_cards) -> GiftCardResponse:
     return GiftCardResponse(
         id=card.id,
@@ -174,3 +196,82 @@ async def gift_card_balance(
         expiry_date=card.expiry_date,
         is_redeemable=redeemable,
     )
+
+
+@router.post("/{card_id}/void", response_model=GiftCardResponse)
+async def void_gift_card(
+    card_id: int,
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a gift card — freeze its balance and make it unredeemable (SEC-02).
+
+    The balance is preserved (frozen, not zeroed) for the audit trail; the card can
+    no longer be redeemed. Foreign/unknown ids are a 404 so one client cannot void
+    another's card.
+    """
+    await _client_for_user(db, owner_id)
+    service = GiftCardsService(db)
+    try:
+        card = await service.void(card_id, owner_id)
+    except GiftCardError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not card:
+        raise HTTPException(status_code=404, detail="Gift card not found")
+    return _to_response(card)
+
+
+@router.post("/{card_id}/reload", response_model=GiftCardResponse)
+async def reload_gift_card(
+    card_id: int,
+    data: ReloadGiftCardRequest,
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Top up a card's balance (owner-scoped). Reactivates a previously exhausted card."""
+    await _client_for_user(db, owner_id)
+    service = GiftCardsService(db)
+    try:
+        card = await service.reload(card_id, data.amount, owner_id)
+    except GiftCardError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not card:
+        raise HTTPException(status_code=404, detail="Gift card not found")
+    return _to_response(card)
+
+
+@router.post("/{card_id}/refund", response_model=GiftCardResponse)
+async def refund_to_gift_card(
+    card_id: int,
+    data: RefundToGiftCardRequest,
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Refund a sale's value back onto a gift card (owner-scoped), recorded as a refund."""
+    await _client_for_user(db, owner_id)
+    service = GiftCardsService(db)
+    try:
+        card = await service.refund_to_card(
+            card_id, data.amount, owner_id, transaction_id=data.transaction_id
+        )
+    except GiftCardError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not card:
+        raise HTTPException(status_code=404, detail="Gift card not found")
+    return _to_response(card)
+
+
+@router.get("/{card_id}/ledger", response_model=List[GiftCardLedgerEntryResponse])
+async def gift_card_ledger(
+    card_id: int,
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """The card's management-movement audit rows (void/reload/refund), oldest first."""
+    await _client_for_user(db, owner_id)
+    service = GiftCardsService(db)
+    card = await service.get_by_id(card_id, owner_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Gift card not found")
+    entries = await service.list_ledger(card_id, owner_id)
+    return [GiftCardLedgerEntryResponse.model_validate(e) for e in entries]

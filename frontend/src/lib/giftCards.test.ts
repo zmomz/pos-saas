@@ -4,6 +4,9 @@ import {
   createTransaction,
   issueGiftCard,
   getGiftCardBalance,
+  voidGiftCard,
+  reloadGiftCard,
+  refundToGiftCard,
 } from './api';
 
 // CRM-03 / PRC-05 (F-038): lock the gift-card API surface — the wrappers the page
@@ -73,5 +76,45 @@ describe('gift card api wrappers', () => {
 
     expect(captured!.payment_method).toBe('giftcard');
     expect(captured!.payment_gift_card_code).toBe('GC-ABCDEF123456');
+  });
+
+  // ISSUE-057: void / reload / refund-to-card management wrappers.
+  it('voidGiftCard posts to the void endpoint and returns the frozen card', async () => {
+    server.use(
+      http.post(`${BASE}/api/v1/gift-cards/9/void`, () =>
+        HttpResponse.json({ id: 9, code: 'GC-X', currency: 'SAR', initial_balance: 200, balance: 200, status: 'void' })
+      )
+    );
+    const card = await voidGiftCard(9);
+    expect(card.status).toBe('void');
+    expect(card.balance).toBe(200);
+  });
+
+  it('reloadGiftCard posts the amount and returns the topped-up card', async () => {
+    let body: Record<string, unknown> | null = null;
+    server.use(
+      http.post(`${BASE}/api/v1/gift-cards/9/reload`, async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ id: 9, code: 'GC-X', currency: 'SAR', initial_balance: 50, balance: 80, status: 'active' });
+      })
+    );
+    const card = await reloadGiftCard(9, 30);
+    expect(body!.amount).toBe(30);
+    expect(card.balance).toBe(80);
+    expect(card.status).toBe('active');
+  });
+
+  it('refundToGiftCard posts the amount and transaction_id', async () => {
+    let body: Record<string, unknown> | null = null;
+    server.use(
+      http.post(`${BASE}/api/v1/gift-cards/9/refund`, async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ id: 9, code: 'GC-X', currency: 'SAR', initial_balance: 20, balance: 135, status: 'active' });
+      })
+    );
+    const card = await refundToGiftCard(9, 115, 4242);
+    expect(body!.amount).toBe(115);
+    expect(body!.transaction_id).toBe(4242);
+    expect(card.balance).toBe(135);
   });
 });
