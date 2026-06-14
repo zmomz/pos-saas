@@ -173,7 +173,8 @@ export default function ProductManagement() {
       const category = categoryFilter !== 'all' ? categoryFilter : undefined;
       const searchTerm = search.trim() || undefined;
       const data = await getProductsList(category, searchTerm);
-      setProducts(Array.isArray(data) ? data : data?.products || []);
+      // /products/list returns ProductListResponse { items, total } (ISSUE-021).
+      setProducts(Array.isArray(data) ? data : data?.items || []);
     } catch (err) {
       console.error('Failed to load products:', err);
       setProducts([]);
