@@ -1,5 +1,6 @@
 import json
 import logging
+import secrets
 from typing import List, Optional
 
 from datetime import datetime, date
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from services.auth import AuthService
 from services.staff_members import Staff_membersService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
@@ -28,6 +30,7 @@ class Staff_membersData(BaseModel):
     phone: str = None
     role: str
     is_active: bool = None
+    password: Optional[str] = None  # optional initial login password; auto-generated if omitted
 
 
 class Staff_membersUpdateData(BaseModel):
@@ -50,6 +53,9 @@ class Staff_membersResponse(BaseModel):
     is_active: Optional[bool] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # Set only on creation when a login was freshly provisioned: the one-time temp
+    # password the merchant relays to the staff member. Never persisted/re-served.
+    temp_password: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -82,6 +88,36 @@ class Staff_membersBatchUpdateRequest(BaseModel):
 class Staff_membersBatchDeleteRequest(BaseModel):
     """Batch delete request"""
     ids: List[int]
+
+
+async def _provision_staff_login(
+    db: AsyncSession, email: Optional[str], password: Optional[str]
+) -> Optional[str]:
+    """Ensure an auth ``User`` exists for a staff member's email so they can log in.
+
+    Tenancy resolves a cashier back to the owning merchant by matching the staff
+    row's ``email`` to a ``User.email`` — but nothing created that user, so the
+    login never existed (ISSUE-033). On staff create we provision (or link) it:
+
+    * no email             → directory-only entry, no login (returns ``None``);
+    * email already a user → link to the existing account, no new password (``None``);
+    * otherwise            → create a least-privilege ``User`` with a temp password
+      (caller-supplied or generated) flagged ``must_change_password``; return the
+      generated password once so the merchant can relay it (``None`` if supplied).
+    """
+    if not email:
+        return None
+
+    auth = AuthService(db)
+    if await auth.get_user_by_email(email):
+        return None  # already a login; tenancy will map it to the owner by email
+
+    generated = password is None
+    secret = password or secrets.token_urlsafe(9)
+    user = await auth.create_user(email=email, password=secret, name=None, role="user")
+    user.must_change_password = True
+    await db.commit()
+    return secret if generated else None
 
 
 # ---------- Routes ----------
@@ -201,12 +237,19 @@ async def create_staff_members(
     
     service = Staff_membersService(db)
     try:
-        result = await service.create(data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
+        payload = data.model_dump()
+        password = payload.pop("password", None)  # not a Staff_members column
+        result = await service.create(payload, user_id=(scope.owner_user_id or str(current_user.id)))
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create staff_members")
-        
+
+        # Provision the auth login so the staff member can actually sign in (#33).
+        temp_password = await _provision_staff_login(db, data.email, password)
+
         logger.info(f"Staff_members created successfully with id: {result.id}")
-        return result
+        response = Staff_membersResponse.model_validate(result)
+        response.temp_password = temp_password
+        return response
     except ValueError as e:
         logger.error(f"Validation error creating staff_members: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -230,10 +273,14 @@ async def create_staff_memberss_batch(
     
     try:
         for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
+            payload = item_data.model_dump()
+            password = payload.pop("password", None)  # not a Staff_members column
+            result = await service.create(payload, user_id=(scope.owner_user_id or str(current_user.id)))
             if result:
+                # Provision the login so batch-imported staff can sign in too (#33).
+                await _provision_staff_login(db, item_data.email, password)
                 results.append(result)
-        
+
         logger.info(f"Batch created {len(results)} staff_memberss successfully")
         return results
     except Exception as e:

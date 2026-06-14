@@ -20,6 +20,7 @@ import {
 import { getStaffMembers, createStaffMember, updateStaffMember, deleteStaffMember } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { UserCheck, UserX, Users } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface StaffMember {
   id: string;
@@ -86,7 +87,7 @@ export default function StaffManagement() {
   async function handleAddStaff() {
     setSubmitting(true);
     try {
-      await createStaffMember({
+      const created = await createStaffMember({
         name: formData.name,
         email: formData.email || undefined,
         phone: formData.phone || undefined,
@@ -96,6 +97,16 @@ export default function StaffManagement() {
       setAddOpen(false);
       setFormData(emptyForm);
       await loadStaff();
+      // A freshly provisioned login returns a one-time temp password the merchant
+      // must relay to the staff member — it is never shown again (#33).
+      const tempPassword = (created as { temp_password?: string } | undefined)?.temp_password;
+      if (tempPassword) {
+        toast.success(t('staff_login_created') || 'Login created — share this password', {
+          description: `${formData.email}: ${tempPassword}`,
+          duration: Infinity,
+          closeButton: true,
+        });
+      }
     } catch (err) {
       console.error('Failed to create staff:', err);
     } finally {
