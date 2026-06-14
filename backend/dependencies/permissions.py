@@ -1,22 +1,30 @@
 """Granular permission enforcement (Phase 3 — SRS permissions).
 
-The ``permissions`` table stores per-user grant/deny rows (``permission_key`` +
-``is_granted``). Before this module those rows were stored but never enforced.
-``require_permission`` turns a key into an enforced gate a route can depend on.
+The ``permissions`` table stores per-user override rows (``permission_key`` +
+``is_granted``). ``require_permission`` turns a key into an enforced gate a route
+can depend on; ``has_permission`` is the resolver behind it.
 
-Semantics — **grant by default, explicit deny wins** (mirrors
-``dependencies.features.require_feature`` so the two behave consistently):
+Resolution order for ``has_permission(db, user_id, key)``:
 
-* The platform **master** (``role == "admin"``) bypasses all permission checks.
-* Otherwise the caller is allowed **unless** an explicit ``is_granted = False``
-  row exists for ``(user_id, permission_key)``.
+1. **Explicit override wins.** A ``Permissions`` row for ``(user_id, key)`` is
+   honoured verbatim — an explicit deny revokes a capability, an explicit grant
+   restores one — so an operator can tune an individual login either way.
+2. **Otherwise the staff role default applies (ISSUE-034).** A logged-in *staff
+   member* (resolved by matching their login email to a ``Staff_members`` row)
+   is allowed a **managed** key (``pos.refund`` / ``pos.void`` / ``pos.discount``
+   / ``pos.price_override``) only where :data:`ROLE_PERMISSIONS` grants it to
+   their role. A cashier is denied these by default; a manager/admin is allowed.
+3. **Everyone else keeps grant-by-default.** Account owners (client/agent) and
+   the platform **master** (``role == "admin"``, also short-circuited in
+   ``require_permission``) are not staff sub-accounts, so they retain every
+   capability unless an explicit deny row revokes it. Non-managed keys are
+   likewise allowed by default for everyone.
 
-This keeps account owners (client/agent) and existing flows working out of the
-box, while letting an operator revoke a specific capability (e.g. ``pos.refund``)
-from a sub-account by writing a deny row. To run a stricter deny-by-default
-policy for a key, seed an explicit deny and grant it only where wanted.
+This means a real merchant's staff get permissions enforced *by role* out of the
+box — the prior behaviour only ever denied hand-seeded deny rows (H12).
 """
 import logging
+from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
@@ -30,8 +38,76 @@ from schemas.auth import UserResponse
 logger = logging.getLogger(__name__)
 
 
+# ---- Role → permission default map (ISSUE-034, H12) -------------------------
+# "Managed" keys are the sensitive POS capabilities gated by staff role. Any key
+# outside this set stays grant-by-default for staff too, so the map only ever
+# tightens the sensitive surface rather than silently denying unrelated keys.
+MANAGED_PERMISSION_KEYS = frozenset(
+    {"pos.refund", "pos.void", "pos.discount", "pos.price_override"}
+)
+
+# The default capabilities each staff role grants. A role absent from the map is
+# treated as the least-privilege "cashier" (basic sale only). "admin" here is the
+# staff-level role (owner-equivalent operator), distinct from the platform master
+# ``User.role == "admin"`` which bypasses checks entirely.
+ROLE_PERMISSIONS: dict[str, frozenset] = {
+    "cashier": frozenset(),
+    "manager": MANAGED_PERMISSION_KEYS,
+    "admin": MANAGED_PERMISSION_KEYS,
+}
+
+
+def role_allows(role: str, permission_key: str) -> bool:
+    """Whether a staff ``role`` grants ``permission_key`` by default.
+
+    Unmanaged keys are always allowed; a managed key is allowed only when the
+    role's default grant set includes it. An unknown role falls back to the
+    least-privilege ``cashier`` defaults.
+    """
+    if permission_key not in MANAGED_PERMISSION_KEYS:
+        return True
+    granted = ROLE_PERMISSIONS.get(role, ROLE_PERMISSIONS["cashier"])
+    return permission_key in granted
+
+
+async def _staff_role_for_user(db: AsyncSession, user_id: str) -> Optional[str]:
+    """Resolve a login to its staff role, or ``None`` if it is not a sub-account.
+
+    A staff member's login email matches a ``Staff_members`` row whose
+    ``user_id`` is the *owning* merchant (the same mapping tenancy uses). If the
+    matched row belongs to the caller themselves (``staff.user_id == user_id``)
+    the account is the owner, not a staff sub-account, and keeps grant-by-default.
+    """
+    from models.auth import User
+    from models.staff_members import Staff_members
+
+    user = (
+        await db.execute(select(User).where(User.id == str(user_id)))
+    ).scalar_one_or_none()
+    if user is None or not user.email:
+        return None
+    # ``Staff_members.email`` is not unique, so resolve to the first match rather
+    # than ``scalar_one_or_none`` (which would raise if an email were ever
+    # duplicated) — permission resolution must never break the request.
+    staff = (
+        await db.execute(
+            select(Staff_members)
+            .where(Staff_members.email == user.email)
+            .order_by(Staff_members.id.asc())
+            .limit(1)
+        )
+    ).scalars().first()
+    if staff is None or staff.user_id == str(user_id):
+        return None
+    return staff.role
+
+
 async def has_permission(db: AsyncSession, user_id: str, permission_key: str) -> bool:
-    """Return whether ``user_id`` is allowed to use ``permission_key``."""
+    """Return whether ``user_id`` is allowed to use ``permission_key``.
+
+    See the module docstring for the resolution order: explicit override →
+    staff-role default → grant-by-default.
+    """
     result = await db.execute(
         select(Permissions.is_granted).where(
             Permissions.user_id == str(user_id),
@@ -39,8 +115,16 @@ async def has_permission(db: AsyncSession, user_id: str, permission_key: str) ->
         )
     )
     flag = result.scalar_one_or_none()
-    # No row => not explicitly denied => allowed.
-    return flag is not False
+    if flag is not None:
+        # Explicit per-user override (deny or grant) wins over the role default.
+        return flag
+
+    # No override: a staff sub-account is gated by its role; anyone else (owner /
+    # agent / master / non-staff) keeps grant-by-default.
+    role = await _staff_role_for_user(db, str(user_id))
+    if role is None:
+        return True
+    return role_allows(role, permission_key)
 
 
 async def get_effective_permissions(db: AsyncSession, current_user: UserResponse) -> dict:

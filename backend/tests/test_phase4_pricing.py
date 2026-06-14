@@ -194,7 +194,6 @@ async def test_manual_discount_denied_without_permission(client):
         db.add(
             Permissions(
                 user_id=user["id"],
-                role="client",
                 permission_key="pos.discount",
                 is_granted=False,
             )

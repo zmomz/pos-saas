@@ -69,7 +69,7 @@ async def _set_permission(user_id: str, key: str, granted: bool):
             existing.is_granted = granted
         else:
             db.add(
-                Permissions(user_id=str(user_id), role="client", permission_key=key, is_granted=granted)
+                Permissions(user_id=str(user_id), permission_key=key, is_granted=granted)
             )
         await db.commit()
 

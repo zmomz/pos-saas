@@ -71,8 +71,11 @@ class PermissionCheckRequest(BaseModel):
 
 class PermissionGrantRequest(BaseModel):
     target_user_id: str
-    role: str
     permission_key: str
+    # Deprecated/ignored: role no longer lives on a per-user override row — the
+    # role→permission defaults are in dependencies.permissions.ROLE_PERMISSIONS
+    # (ISSUE-034). Accepted for backward compatibility, never persisted.
+    role: Optional[str] = None
 
 
 class PermissionRevokeRequest(BaseModel):
@@ -190,25 +193,22 @@ async def check_permission(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Check if the current user (or target user) has a specific permission."""
-    from models.permissions import Permissions
+    """Check if the current user (or target user) has a specific permission.
+
+    Delegates to the canonical resolver so the answer reflects both explicit
+    overrides and the staff role→permission defaults (ISSUE-034), not just the
+    presence of an explicit grant row.
+    """
+    from dependencies.permissions import has_permission
 
     check_user_id = data.target_user_id or str(current_user.id)
 
-    result = await db.execute(
-        select(Permissions).where(
-            Permissions.user_id == check_user_id,
-            Permissions.permission_key == data.permission_key,
-            Permissions.is_granted == True,  # noqa: E712
-        )
-    )
-    permission = result.scalar_one_or_none()
+    granted = await has_permission(db, check_user_id, data.permission_key)
 
     return {
         "user_id": check_user_id,
         "permission_key": data.permission_key,
-        "is_granted": permission is not None,
-        "role": permission.role if permission else None,
+        "is_granted": granted,
     }
 
 
@@ -233,7 +233,6 @@ async def list_permissions(
         "permissions": [
             {
                 "id": p.id,
-                "role": p.role,
                 "permission_key": p.permission_key,
                 "granted_by": p.granted_by,
             }
@@ -270,13 +269,12 @@ async def grant_permission(
         await db.execute(
             update(Permissions)
             .where(Permissions.id == perm.id)
-            .values(is_granted=True, granted_by=str(current_user.id), role=data.role)
+            .values(is_granted=True, granted_by=str(current_user.id))
         )
     else:
         # Create new
         new_perm = Permissions(
             user_id=data.target_user_id,
-            role=data.role,
             permission_key=data.permission_key,
             is_granted=True,
             granted_by=str(current_user.id),

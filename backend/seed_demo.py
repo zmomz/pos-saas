@@ -312,15 +312,16 @@ async def seed() -> None:
                 defaults={"user_id": mid, "name": name, "role": role, "is_active": True},
                 label=f"staff_member ({role}: {email})",
             )
-            # Demonstrate a restricted role: deny the cashier the refund capability
-            # (permissions are grant-by-default; an explicit deny wins).
+            # The cashier role already denies pos.refund/void/discount by default
+            # (ROLE_PERMISSIONS, ISSUE-034). Seed an explicit grant override to
+            # demonstrate that an operator can restore a single capability — here,
+            # letting this demo cashier process price overrides.
             if role == "cashier":
                 await get_or_create(
                     db, Permissions,
-                    lookup={"user_id": staff_user.id, "permission_key": "pos.refund"},
-                    defaults={"role": "cashier", "is_granted": False,
-                              "granted_by": "seed_demo"},
-                    label="permission deny (cashier: pos.refund)",
+                    lookup={"user_id": staff_user.id, "permission_key": "pos.price_override"},
+                    defaults={"is_granted": True, "granted_by": "seed_demo"},
+                    label="permission grant (cashier: pos.price_override)",
                 )
 
 

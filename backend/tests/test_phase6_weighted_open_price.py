@@ -63,7 +63,7 @@ async def _deny(user_id: str, key: str) -> None:
     async with db_manager.async_session_maker() as db:
         db.add(
             Permissions(
-                user_id=user_id, role="client", permission_key=key, is_granted=False
+                user_id=user_id, permission_key=key, is_granted=False
             )
         )
         await db.commit()
