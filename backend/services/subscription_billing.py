@@ -46,6 +46,26 @@ def apply_coupon(
     return round(max(net, 0.0), 2)
 
 
+def compute_proration(
+    old_fee: float, new_fee: float, days_remaining: int, cycle_days: int
+) -> float:
+    """Pro-rated charge (positive) or credit (negative) for a mid-cycle plan change
+    (ISSUE-053).
+
+    When the subscription fee changes partway through an already-paid billing
+    period, only the unused remainder of the period is re-priced: the difference
+    ``new_fee - old_fee`` is scaled by the fraction of the cycle still remaining
+    (``days_remaining / cycle_days``). An upgrade yields a charge, a downgrade a
+    credit. The fraction is clamped to ``[0, 1]`` so a stale/over-long remaining
+    count never bills more than a whole cycle and an elapsed period bills nothing.
+    Rounded to 2 decimals to match the recorded payment amount.
+    """
+    if cycle_days <= 0:
+        return 0.0
+    fraction = max(0.0, min(1.0, float(days_remaining) / float(cycle_days)))
+    return round((float(new_fee) - float(old_fee)) * fraction, 2)
+
+
 def is_in_trial(trial_end: Optional[str], today: date) -> bool:
     """True when a trial is configured and has not yet ended (ISSUE-054).
 

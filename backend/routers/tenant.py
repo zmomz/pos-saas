@@ -1541,6 +1541,22 @@ def _advance_billing_date(start: datetime, cycle: str) -> str:
     return (start + timedelta(days=days)).date().isoformat()
 
 
+def _days_remaining_in_period(next_billing_date: Optional[str]) -> int:
+    """Days from today until ``next_billing_date`` (ISO date); 0 if unset/elapsed.
+
+    Drives mid-cycle proration (ISSUE-053): the share of the current billing
+    period still unused. A missing or unparseable date — or one already in the
+    past — means no remaining period, hence no proration.
+    """
+    if not next_billing_date:
+        return 0
+    try:
+        end = datetime.fromisoformat(next_billing_date).date()
+    except ValueError:
+        return 0
+    return max((end - datetime.now(timezone.utc).date()).days, 0)
+
+
 async def _client_for_current_user(db: AsyncSession, user_id: str) -> Clients:
     result = await db.execute(select(Clients).where(Clients.user_id == str(user_id)))
     merchant = result.scalar_one_or_none()
@@ -1886,8 +1902,41 @@ async def update_client_subscription(
         values["coupon_duration_remaining"] = max(int(data.coupon_duration or 0), 0)
     if data.trial_end is not None:
         values["trial_end"] = data.trial_end or None
+
+    # Proration (ISSUE-053): a mid-cycle subscription_fee change bills/credits the
+    # pro-rated difference for the unused remainder of the current billing period.
+    # The next full invoice then bills the new fee in full (the pay path reads the
+    # updated subscription_fee). No proration when nothing has been billed yet (no
+    # next_billing_date) or the current period has already elapsed.
+    proration = None
+    old_fee = float(merchant.subscription_fee or 0)
+    if data.subscription_fee is not None and float(data.subscription_fee) != old_fee:
+        cycle = values.get("billing_cycle") or merchant.billing_cycle or "monthly"
+        cycle_days = 365 if cycle == "yearly" else 30
+        days_remaining = _days_remaining_in_period(merchant.next_billing_date)
+        if days_remaining > 0:
+            from services.subscription_billing import compute_proration
+
+            amount = compute_proration(
+                old_fee, float(data.subscription_fee), days_remaining, cycle_days
+            )
+            if amount != 0:
+                proration = Subscription_payments(
+                    user_id=merchant.user_id,
+                    client_id=merchant.id,
+                    amount=amount,
+                    billing_cycle=cycle,
+                    period_start=datetime.now(timezone.utc).date().isoformat(),
+                    period_end=merchant.next_billing_date,
+                    method="proration",
+                    note=f"Mid-cycle plan change {old_fee:g} -> {float(data.subscription_fee):g}",
+                )
+
     if values:
         await db.execute(update(Clients).where(Clients.id == client_id).values(**values))
+    if proration is not None:
+        db.add(proration)
+    if values or proration is not None:
         await db.commit()
         await db.refresh(merchant)
     return await _subscription_payload(db, merchant)
