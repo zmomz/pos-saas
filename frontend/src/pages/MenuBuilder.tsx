@@ -20,10 +20,14 @@ import {
   createCombo,
   deleteCombo,
   getProducts,
+  getProductModifierGroups,
+  attachModifierGroup,
+  detachModifierGroup,
   type ModifierGroup,
   type Modifier,
   type Combo,
   type ComboComponentRef,
+  type ProductModifierGroup,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { UtensilsCrossed, Plus, Trash2, WifiOff, AlertTriangle, Lock, Layers } from 'lucide-react';
@@ -41,6 +45,11 @@ export default function MenuBuilder() {
   const [modsByGroup, setModsByGroup] = useState<Record<number, Modifier[]>>({});
   const [combos, setCombos] = useState<Combo[]>([]);
   const [products, setProducts] = useState<ProductLite[]>([]);
+  const [attachedByProduct, setAttachedByProduct] = useState<Record<number, ProductModifierGroup[]>>(
+    {}
+  );
+  // Per-product selection in the "attach a group" dropdown.
+  const [attachChoice, setAttachChoice] = useState<Record<number, number | ''>>({});
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -91,14 +100,23 @@ export default function MenuBuilder() {
     try {
       const [grps, cmb, prods] = await Promise.all([getModifierGroups(), getCombos(), getProducts()]);
       const safeGroups = Array.isArray(grps) ? grps : [];
+      const safeProducts = Array.isArray(prods) ? (prods as ProductLite[]) : [];
       setGroups(safeGroups);
       setCombos(Array.isArray(cmb) ? cmb : []);
-      setProducts(Array.isArray(prods) ? (prods as ProductLite[]) : []);
+      setProducts(safeProducts);
       // Pull each group's modifiers for display.
       const entries = await Promise.all(
         safeGroups.map(async (g) => [g.id, await getModifiers(g.id).catch(() => [])] as const)
       );
       setModsByGroup(Object.fromEntries(entries));
+      // Pull each product's attached modifier groups for the attach/detach UI.
+      const attachEntries = await Promise.all(
+        safeProducts.map(
+          async (p) =>
+            [p.id, await getProductModifierGroups(p.id).then((r) => r.items).catch(() => [])] as const
+        )
+      );
+      setAttachedByProduct(Object.fromEntries(attachEntries));
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       if (status === 403) setDenied(true);
@@ -157,6 +175,33 @@ export default function MenuBuilder() {
       await load();
     } catch (err) {
       console.error('Failed to create combo:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleAttachGroup(productId: number) {
+    const groupId = attachChoice[productId];
+    if (!groupId) return;
+    setSubmitting(true);
+    try {
+      await attachModifierGroup(productId, groupId);
+      setAttachChoice((c) => ({ ...c, [productId]: '' }));
+      await load();
+    } catch (err) {
+      console.error('Failed to attach modifier group:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleDetachGroup(productId: number, groupId: number) {
+    setSubmitting(true);
+    try {
+      await detachModifierGroup(productId, groupId);
+      await load();
+    } catch (err) {
+      console.error('Failed to detach modifier group:', err);
     } finally {
       setSubmitting(false);
     }
@@ -349,6 +394,91 @@ export default function MenuBuilder() {
                 </CardContent>
               </Card>
             ))}
+          </div>
+        )}
+      </div>
+
+      {/* Product modifiers — attach/detach groups to products (ISSUE-040) */}
+      <div>
+        <h3 className="text-white font-semibold mb-2">{t('product_modifiers')}</h3>
+        {products.length === 0 ? (
+          <Card className="bg-slate-800 border-slate-700">
+            <CardContent className="p-8 text-center">
+              <UtensilsCrossed className="h-10 w-10 text-slate-600 mx-auto mb-2" />
+              <p className="text-slate-400 text-sm">{t('no_products_for_modifiers')}</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {products.map((p) => {
+              const attached = attachedByProduct[p.id] || [];
+              const attachedIds = new Set(attached.map((g) => g.id));
+              const available = groups.filter((g) => !attachedIds.has(g.id));
+              return (
+                <Card
+                  key={p.id}
+                  data-testid={`product-mods-${p.id}`}
+                  className="bg-slate-800 border-slate-700"
+                >
+                  <CardContent className="p-4">
+                    <div className="mb-2">
+                      <span className="text-white font-medium">{p.name}</span>
+                    </div>
+                    {attached.length === 0 ? (
+                      <p className="text-xs text-slate-500 mb-2">{t('no_attached_groups')}</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {attached.map((g) => (
+                          <Badge
+                            key={g.id}
+                            className="bg-brand-500/20 text-brand-300 flex items-center gap-1"
+                          >
+                            {g.name}
+                            <button
+                              onClick={() => handleDetachGroup(p.id, g.id)}
+                              disabled={submitting}
+                              className="hover:text-red-400"
+                              aria-label={`${t('detach')} ${g.name}`}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <select
+                        aria-label={`${t('attach_group')} — ${p.name}`}
+                        value={attachChoice[p.id] ?? ''}
+                        onChange={(e) =>
+                          setAttachChoice((c) => ({
+                            ...c,
+                            [p.id]: e.target.value ? parseInt(e.target.value) : '',
+                          }))
+                        }
+                        disabled={available.length === 0}
+                        className="flex-1 rounded-md bg-slate-700 border border-slate-600 text-white text-sm px-2 py-1.5 disabled:opacity-50"
+                      >
+                        <option value="">{t('attach_group')}</option>
+                        {available.map((g) => (
+                          <option key={g.id} value={g.id}>
+                            {g.name}
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        size="sm"
+                        onClick={() => handleAttachGroup(p.id)}
+                        disabled={submitting || !attachChoice[p.id]}
+                        className="bg-brand-600 hover:bg-brand-700 text-white"
+                      >
+                        <Plus className="h-3.5 w-3.5 mr-1" /> {t('attach')}
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
       </div>
