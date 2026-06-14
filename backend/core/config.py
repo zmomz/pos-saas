@@ -41,6 +41,14 @@ class Settings(BaseSettings):
     # Disable in production once the master account and provisioning are set up.
     allow_registration: bool = True
 
+    # Login brute-force protection (ISSUE-043). Failed logins are counted per
+    # (identifier, IP); once login_max_attempts failures accumulate within
+    # login_attempt_window_minutes the pair is locked out for
+    # login_lockout_minutes. A successful login clears the counter.
+    login_max_attempts: int = 5
+    login_lockout_minutes: int = 15
+    login_attempt_window_minutes: int = 15
+
     # ZATCA Phase-2 (Fatoora) e-invoicing.
     #   zatca_environment: sandbox | simulation | production (selects the
     #     Fatoora gateway + CSR template). Network calls are skipped (503)

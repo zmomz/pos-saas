@@ -5,7 +5,7 @@ from core.auth import AccessTokenError, decode_access_token
 from core.config import settings
 from core.database import get_db
 from dependencies.auth import get_bearer_token, get_current_user
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from schemas.auth import (
     LoginRequest,
@@ -16,6 +16,12 @@ from schemas.auth import (
     UserResponse,
 )
 from services.auth import AuthService
+from services.login_throttle import (
+    LoginLockedOut,
+    assert_login_allowed,
+    clear_login_attempts,
+    register_failed_login,
+)
 from services.token_revocation import is_token_revoked, revoke_token
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,16 +64,33 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """Authenticate with email + password and return an access token."""
+async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    """Authenticate with email + password and return an access token.
+
+    Repeated failed logins for the same (identifier, IP) are throttled to blunt
+    credential-stuffing — see ``services.login_throttle`` for the policy.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+
+    try:
+        await assert_login_allowed(db, payload.email, client_ip)
+    except LoginLockedOut as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please try again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
     service = AuthService(db)
     user = await service.authenticate(payload.email, payload.password)
     if not user:
+        await register_failed_login(db, payload.email, client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
+    await clear_login_attempts(db, payload.email, client_ip)
     token, expires_at, _ = await service.issue_app_token(user)
     refresh_token = service.issue_refresh_token(user)
     return LoginResponse(
