@@ -55,7 +55,9 @@ ALLOWLIST = {
     "settings.py": "admin runtime key-value settings (/api/v1/admin/settings)",
     # Wire-later (F-054 operator decision; IB §8 orphan ledger):
     "storage.py": "object storage — kept for a later AG-07 exports wire-up",
-    "receipt_templates.py": "AG-07 branded-printables editor — WIRE-UP gap (not dead)",
+    # receipt_templates.py was wired into the frontend by the ReceiptTemplateDesigner
+    # page (#48, /api/v1/entities/receipt_templates), so its allowlist entry is no
+    # longer stale-honest — it is now a referenced router and must not be listed.
 }
 
 # Files this finding (and F-006) removed; re-mounting any of them is a regression.

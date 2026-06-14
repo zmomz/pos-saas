@@ -570,11 +570,21 @@ async def execute_sale(db: AsyncSession, cart: NormalizedCart) -> SaleResult:
     variant_items = [it for it in cart.lines if getattr(it, "variant_id", None)]
     product_items = [it for it in cart.lines if not getattr(it, "variant_id", None)]
     if variant_items:
-        from services.product_variants import deduct_variant_inventory
+        # A branch-tagged variant sale draws from that branch's variant ledger
+        # (ISSUE-067); otherwise the variant's client-level façade quantity.
+        if cart.branch_id:
+            from services.variant_branch_stock import deduct_variant_branch_inventory
 
-        await deduct_variant_inventory(
-            db, client.id, variant_items, bool(cart.allow_negative_stock)
-        )
+            await deduct_variant_branch_inventory(
+                db, user_id, client.id, int(cart.branch_id), variant_items,
+                bool(cart.allow_negative_stock),
+            )
+        else:
+            from services.product_variants import deduct_variant_inventory
+
+            await deduct_variant_inventory(
+                db, client.id, variant_items, bool(cart.allow_negative_stock)
+            )
     if cart.branch_id:
         from services.branch_stock import deduct_branch_inventory
 

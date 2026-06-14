@@ -29,6 +29,7 @@ from models.product_branch_stock import Product_branch_stock  # noqa: F401
 # Imported so the variant table registers on Base.metadata at startup
 # (services.product_variants is only imported lazily inside handlers).
 from models.product_variants import Product_variants  # noqa: F401
+from models.variant_branch_stock import Variant_branch_stock  # noqa: F401
 from services import loyalty as loyalty_service
 from services.discounts import (
     DiscountsService,
@@ -1321,9 +1322,18 @@ async def _restore_stock(
     variant_items = [it for it in items if it.get("variant_id")]
     product_items = [it for it in items if not it.get("variant_id")]
     if variant_items:
-        from services.product_variants import restore_variant_inventory
+        # A branch-tagged variant sale drew from that branch's variant ledger
+        # (ISSUE-067), so credit it back there — never the client-level façade.
+        if branch_id:
+            from services.variant_branch_stock import restore_variant_branch_inventory
 
-        await restore_variant_inventory(db, client_id, variant_items)
+            await restore_variant_branch_inventory(
+                db, user_id, client_id, int(branch_id), variant_items
+            )
+        else:
+            from services.product_variants import restore_variant_inventory
+
+            await restore_variant_inventory(db, client_id, variant_items)
     if branch_id:
         from services.branch_stock import restore_branch_inventory
 
@@ -1996,5 +2006,54 @@ async def set_branch_stock_endpoint(
     return {
         "branch_id": branch_id,
         "product_id": row.product_id,
+        "quantity": row.quantity,
+    }
+
+
+# ---------- Per-branch variant stock ledger (ISSUE-067) ----------
+class VariantBranchStockSetRequest(BaseModel):
+    variant_id: int
+    quantity: int
+
+
+@router.get("/branches/{branch_id}/variant-stock")
+async def get_branch_variant_stock(
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the per-branch variant-stock ledger for a branch (INV-03 × INV-04)."""
+    from services.variant_branch_stock import list_variant_branch_stock
+
+    client = await get_client_for_user(db, owner_id)
+    rows = await list_variant_branch_stock(db, client.id, branch_id)
+    return {
+        "branch_id": branch_id,
+        "items": [
+            {"variant_id": r.variant_id, "quantity": r.quantity} for r in rows
+        ],
+        "total": len(rows),
+    }
+
+
+@router.put("/branches/{branch_id}/variant-stock")
+async def set_branch_variant_stock_endpoint(
+    branch_id: int,
+    data: VariantBranchStockSetRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Allocate/adjust a variant's stock for a specific branch."""
+    from services.variant_branch_stock import set_variant_branch_stock
+
+    client = await get_client_for_user(db, owner_id)
+    row = await set_variant_branch_stock(
+        db, owner_id, client.id, branch_id, data.variant_id, data.quantity
+    )
+    return {
+        "branch_id": branch_id,
+        "variant_id": row.variant_id,
         "quantity": row.quantity,
     }
