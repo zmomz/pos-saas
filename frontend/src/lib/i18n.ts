@@ -166,6 +166,9 @@ const translations: Record<Language, Record<string, string>> = {
     no_other_tickets: 'No other open tickets to merge.',
     // F-056 — modifiers, modifier groups & combos
     menu_builder: 'Menu builder',
+    catalog_modifiers: 'Modifiers & combos',
+    group_name: 'Group name',
+    combo_name: 'Combo name',
     modifier_groups: 'Modifier groups',
     add_modifier_group: 'Add modifier group',
     no_modifier_groups: 'No modifier groups yet. Add one to surface choices on items.',
@@ -891,6 +894,9 @@ const translations: Record<Language, Record<string, string>> = {
     no_other_tickets: 'لا توجد طلبات مفتوحة أخرى للدمج.',
     // F-056 — الإضافات ومجموعات الإضافات والوجبات
     menu_builder: 'منشئ القائمة',
+    catalog_modifiers: 'الإضافات والوجبات',
+    group_name: 'اسم المجموعة',
+    combo_name: 'اسم الوجبة',
     modifier_groups: 'مجموعات الإضافات',
     add_modifier_group: 'إضافة مجموعة إضافات',
     no_modifier_groups: 'لا توجد مجموعات إضافات بعد. أضف واحدة لإظهار الخيارات على الأصناف.',
@@ -1556,6 +1562,9 @@ const translations: Record<Language, Record<string, string>> = {
     no_other_tickets: 'मर्ज करने के लिए कोई अन्य खुला टिकट नहीं।',
     // F-056 — मॉडिफ़ायर, मॉडिफ़ायर समूह और कॉम्बो
     menu_builder: 'मेन्यू बिल्डर',
+    catalog_modifiers: 'मॉडिफ़ायर और कॉम्बो',
+    group_name: 'समूह नाम',
+    combo_name: 'कॉम्बो नाम',
     modifier_groups: 'मॉडिफ़ायर समूह',
     add_modifier_group: 'मॉडिफ़ायर समूह जोड़ें',
     no_modifier_groups: 'अभी कोई मॉडिफ़ायर समूह नहीं। आइटम पर विकल्प दिखाने के लिए एक जोड़ें।',
@@ -2180,6 +2189,9 @@ const translations: Record<Language, Record<string, string>> = {
     no_other_tickets: 'ضم کرنے کے لیے کوئی اور کھلا ٹکٹ نہیں۔',
     // F-056 — موڈیفائرز، موڈیفائر گروپس اور کومبو
     menu_builder: 'مینو بلڈر',
+    catalog_modifiers: 'موڈیفائرز اور کومبو',
+    group_name: 'گروپ کا نام',
+    combo_name: 'کومبو کا نام',
     modifier_groups: 'موڈیفائر گروپس',
     add_modifier_group: 'موڈیفائر گروپ شامل کریں',
     no_modifier_groups: 'ابھی کوئی موڈیفائر گروپ نہیں۔ آئٹمز پر اختیارات دکھانے کے لیے ایک شامل کریں۔',

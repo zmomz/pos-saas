@@ -36,6 +36,7 @@ import BranchManagement from './pages/BranchManagement';
 import FloorMap from './pages/FloorMap';
 import OrderTicket from './pages/OrderTicket';
 import MenuBuilder from './pages/MenuBuilder';
+import CatalogModifiers from './pages/CatalogModifiers';
 import KDS from './pages/KDS';
 import ZatcaStatus from './pages/ZatcaStatus';
 import ChannelOrders from './pages/ChannelOrders';
@@ -130,6 +131,7 @@ const AppRoutes = () => (
       <Route path="/floor" element={<FloorMap />} />
       <Route path="/floor/ticket/:ticketId" element={<OrderTicket />} />
       <Route path="/menu-builder" element={<MenuBuilder />} />
+      <Route path="/catalog-modifiers" element={<CatalogModifiers />} />
       <Route path="/kds" element={<KDS />} />
       <Route path="/channels" element={<ChannelOrders />} />
       <Route path="/zatca" element={<ZatcaStatus />} />

@@ -3215,6 +3215,119 @@ export async function deleteCombo(comboId: number) {
   return res.data;
 }
 
+// ---------- Catalog modifiers & combos for ANY merchant (ISSUE-066) ----------
+// The same modifier-group / modifier / product-attach / combo primitives as the
+// restaurant menu-builder above, but on the ``/api/v1/catalog`` surface that has
+// NO restaurant business-type/feature gate — so a retail merchant can build
+// gift-wrap modifiers and bundle combos. Defined here (separate functions, same
+// types) so the page can target the catalog surface without the 403 gate, while
+// the restaurant menu-builder keeps using ``/api/v1/restaurant``.
+export async function getCatalogModifierGroups(): Promise<ModifierGroup[]> {
+  const res = await client.apiCall.invoke<ModifierGroup[]>({
+    url: '/api/v1/catalog/modifier-groups',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function createCatalogModifierGroup(data: {
+  name: string;
+  name_ar?: string;
+  required?: boolean;
+  min_select?: number;
+  max_select?: number;
+}): Promise<ModifierGroup> {
+  const res = await client.apiCall.invoke<ModifierGroup>({
+    url: '/api/v1/catalog/modifier-groups',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function deleteCatalogModifierGroup(groupId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/catalog/modifier-groups/${groupId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function createCatalogModifier(
+  groupId: number,
+  data: { name: string; name_ar?: string; price_delta?: number }
+): Promise<Modifier> {
+  const res = await client.apiCall.invoke<Modifier>({
+    url: `/api/v1/catalog/modifier-groups/${groupId}/modifiers`,
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function getCatalogProductModifierGroups(
+  productId: number
+): Promise<{ items: ProductModifierGroup[]; total: number }> {
+  const res = await client.apiCall.invoke<{ items: ProductModifierGroup[]; total: number }>({
+    url: `/api/v1/catalog/products/${productId}/modifier-groups`,
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function attachCatalogModifierGroup(productId: number, groupId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/catalog/products/${productId}/modifier-groups/${groupId}`,
+    method: 'POST',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function detachCatalogModifierGroup(productId: number, groupId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/catalog/products/${productId}/modifier-groups/${groupId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getCatalogCombos(): Promise<Combo[]> {
+  const res = await client.apiCall.invoke<Combo[]>({
+    url: '/api/v1/catalog/combos',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function createCatalogCombo(data: {
+  name: string;
+  name_ar?: string;
+  bundle_price: number;
+  components: ComboComponentRef[];
+}): Promise<Combo> {
+  const res = await client.apiCall.invoke<Combo>({
+    url: '/api/v1/catalog/combos',
+    method: 'POST',
+    data,
+  });
+  return res.data;
+}
+
+export async function deleteCatalogCombo(comboId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/catalog/combos/${comboId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return res.data;
+}
+
 // ---------- KDS / KOT + real-time kitchen channel (F-057) ----------
 // A manager defines prep-stations; firing a course (F-055) materializes one KDS
 // card per relevant station and pushes it to the board over SSE (≤1s). A cook

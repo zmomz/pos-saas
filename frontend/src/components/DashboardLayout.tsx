@@ -73,6 +73,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: ChefHat, label: 'kds', path: '/kds' },
     { icon: ShoppingBag, label: 'products', path: '/products' },
     { icon: FolderTree, label: 'categories', path: '/categories' },
+    { icon: Package, label: 'catalog_modifiers', path: '/catalog-modifiers' },
     { icon: UserCheck, label: 'customers', path: '/customers' },
     { icon: Users, label: 'staff', path: '/staff' },
     { icon: Receipt, label: 'expenses', path: '/expenses' },

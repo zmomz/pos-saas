@@ -71,7 +71,11 @@ router = APIRouter(prefix="/api/v1/pos", tags=["pos"])
 
 # ---------- Pydantic Schemas ----------
 class CartItem(BaseModel):
-    product_id: int
+    # Optional because a *combo* line (ISSUE-066) carries ``combo_id`` and no single
+    # product_id — it is expanded into its component product lines before the sale
+    # so each component's stock is deducted (ISSUE-032 parity). A normal catalog
+    # line always carries product_id.
+    product_id: Optional[int] = None
     name: str
     # Arabic product name carried into items_json so the always-Arabic thermal
     # receipt prints the Arabic line name (PRN-01 / L10N-06, F-021). Optional —
@@ -88,6 +92,11 @@ class CartItem(BaseModel):
     # is the variant's id. The sale then decrements *that variant's* stock
     # independently of sibling variants, instead of the parent product's quantity.
     variant_id: Optional[int] = None
+    # ISSUE-066: a retail combo line. The bundle is rung up at ``price`` × ``quantity``
+    # but deducts no stock on its own; before the sale it is expanded into one line
+    # per component product (component-qty × line-qty) so the component stock is
+    # depleted exactly like the restaurant settle path (ISSUE-032).
+    combo_id: Optional[int] = None
 
 
 class PaymentEntry(BaseModel):
@@ -440,6 +449,60 @@ async def resolve_barcode(
     return BarcodeResolution(kind="none")
 
 
+async def expand_combo_lines(
+    db: AsyncSession, user_id: str, items: List["CartItem"]
+) -> List["CartItem"]:
+    """Replace each combo line with its component product lines (ISSUE-066/032).
+
+    A combo line (``combo_id`` set, ``product_id`` ``None``) prices the bundle but
+    deducts no stock on its own — a silent oversell. Here it is expanded into one
+    line per component product (qty = component-qty × line-qty), its ``line_total``
+    allocated across the components in proportion to catalog price, so the expanded
+    lines re-sum to the same goods subtotal AND the sale core then deducts each
+    component's stock. Non-combo lines pass through unchanged; a combo that is
+    deleted / has no valid components keeps its original (non-deducting) line so the
+    charge is preserved rather than silently dropped. Reuses ``RestaurantService``
+    so retail and the restaurant settle path expand combos identically.
+    """
+    if not any(getattr(it, "combo_id", None) for it in items):
+        return list(items)
+
+    from services.restaurant import RestaurantService
+
+    service = RestaurantService(db)
+    out: List["CartItem"] = []
+    for it in items:
+        combo_id = getattr(it, "combo_id", None)
+        if combo_id is None:
+            out.append(it)
+            continue
+        combo = await service.get_combo(int(combo_id), user_id)
+        components = (
+            service._normalize_components(service._load_components(combo)) if combo else []
+        )
+        if not components:
+            out.append(it)
+            continue
+        line_qty = float(it.quantity or 0)
+        line_total = round(float(it.price or 0) * line_qty - float(it.discount or 0), 2)
+        metas: List[tuple] = []
+        weights: List[float] = []
+        for comp in components:
+            pid = comp["product_id"]
+            comp_qty = float(comp.get("qty") or 1)
+            product = await service._owned_product(pid, user_id)
+            price = float(product.price) if product is not None else 0.0
+            name = product.name if product is not None else f"product:{pid}"
+            metas.append((pid, comp_qty, name))
+            weights.append(price * comp_qty)
+        allocations = service._allocate(line_total, weights)
+        for (pid, comp_qty, name), alloc in zip(metas, allocations):
+            q = round(comp_qty * line_qty, 4)
+            unit = round(alloc / q, 4) if q else 0.0
+            out.append(CartItem(product_id=pid, name=name, price=unit, quantity=q))
+    return out
+
+
 # ---------- Endpoints ----------
 @router.post("/transaction", response_model=TransactionResponse)
 async def create_transaction(
@@ -654,12 +717,20 @@ async def create_transaction(
     # persisted (F-001 / POS atomicity). The same core mints the restaurant settle
     # invoice (F-059) and aggregator-ingest sale (F-060). The tenders must capture
     # the full amount due (invoice total + tip, F-012).
+    # ---- Combo expansion (ISSUE-066) ----
+    # Expand any combo line into its component product lines NOW — after the
+    # override/discount/promotion gates ran on the original cart (a combo line has
+    # no product_id so it never trips the price-override gate) and right before the
+    # sale core. The components re-sum to the bundle price, so subtotal/VAT/total
+    # are unchanged, and the sale core deducts each component's stock (ISSUE-032).
+    sale_lines = await expand_combo_lines(db, owner_id, data.items)
+
     result = await execute_sale(
         db,
         NormalizedCart(
             user_id=owner_id,
             client=client,
-            lines=data.items,
+            lines=sale_lines,
             subtotal=subtotal,
             discount_amount=discount_amount,
             discount_code=(discount_code or None),
@@ -714,7 +785,7 @@ async def create_transaction(
     # After the sale is durably persisted, notify the merchant about any sold
     # product that has fallen to/below the threshold. Never blocks or fails the
     # sale — alert dispatch is in stub/log mode until SMTP is configured.
-    await _maybe_send_low_stock_alerts(db, client, data.items, background_tasks, owner_id)
+    await _maybe_send_low_stock_alerts(db, client, sale_lines, background_tasks, owner_id)
 
     return TransactionResponse(
         id=transaction.id,
