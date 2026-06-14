@@ -17,10 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
-from dependencies.auth import get_current_user
+from dependencies.tenancy import TenantScope, get_tenant_scope
 from models.client_features import Client_features
-from models.clients import Clients
-from schemas.auth import UserResponse
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +57,14 @@ async def is_feature_enabled(db: AsyncSession, client_id: int, feature_name: str
     return flag is not False
 
 
-async def _client_id_for_user(db: AsyncSession, user_id: str) -> int:
-    result = await db.execute(select(Clients.id).where(Clients.user_id == str(user_id)))
-    client_id = result.scalar_one_or_none()
-    if client_id is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only clients can use this feature")
-    return client_id
-
-
 def require_feature(feature_name: str):
     """Build a dependency that 403s when ``feature_name`` is disabled for the client.
+
+    Entitlements belong to the **owning merchant**, not the login identity, so the
+    gate resolves the client via the tenant scope (``scope.client_id``) — a staff
+    cashier inherits their merchant's feature flags rather than being 403'd for
+    having no ``Clients`` row of their own (U0.2). A non-client caller (agent /
+    master, ``client_id is None``) is rejected as before.
 
     Usage::
 
@@ -76,11 +72,15 @@ def require_feature(feature_name: str):
     """
 
     async def _dependency(
-        current_user: UserResponse = Depends(get_current_user),
+        scope: TenantScope = Depends(get_tenant_scope),
         db: AsyncSession = Depends(get_db),
     ) -> None:
-        client_id = await _client_id_for_user(db, str(current_user.id))
-        if not await is_feature_enabled(db, client_id, feature_name):
+        if scope.client_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only clients can use this feature",
+            )
+        if not await is_feature_enabled(db, scope.client_id, feature_name):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"The '{feature_name}' feature is disabled for your account.",

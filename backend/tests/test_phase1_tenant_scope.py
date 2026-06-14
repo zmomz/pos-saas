@@ -25,6 +25,7 @@ from conftest import (
     auth_headers,
     make_agent_account,
     make_client_account,
+    make_client_under_agent,
     make_master_account,
     unique_email,
 )
@@ -127,6 +128,51 @@ async def test_staff_member_resolves_to_owning_client(client):
     assert scope.role == "client"
     assert scope.owner_user_id == owner["id"]
     assert scope.client_id == owner_client_id
+
+
+async def _set_feature(client, agent_token, client_id, feature_name, is_enabled):
+    """Drive the agent's per-client feature toggle (mirrors test_phase6_feature_gating)."""
+    return await client.post(
+        f"/api/v1/tenant/agent/clients/{client_id}/features",
+        json={"feature_name": feature_name, "is_enabled": is_enabled},
+        headers=auth_headers(agent_token),
+    )
+
+
+@pytest.mark.asyncio
+async def test_staff_inherits_owners_feature_entitlement(client):
+    """U0.2: a staff cashier reaches a ``require_feature``-gated route their owner is
+    entitled to. ``require_feature`` resolved the client off the *caller's* user_id,
+    so a cashier (no ``Clients`` row of their own) was 403'd on every gated route the
+    merchant had paid for. It must resolve entitlements against the owning merchant.
+    """
+    _au, _agent_token, agent_id = await make_agent_account(client)
+    owner, _owner_token, _client_id = await make_client_under_agent(client, agent_id)
+
+    # The cashier (separate login under the merchant) hits an inventory-gated route.
+    _staff, staff_token = await _make_staff_login(client, owner["id"])
+    resp = await client.get(
+        "/api/v1/inventory/alerts", headers=auth_headers(staff_token)
+    )
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_staff_blocked_when_owners_feature_disabled(client):
+    """The inherited entitlement is the owner's: if the agent has disabled the
+    feature for the merchant, the merchant's staff is still 403'd (the gate resolves
+    the owning client, so a sub-user cannot bypass a disabled feature)."""
+    _au, agent_token, agent_id = await make_agent_account(client)
+    owner, _owner_token, client_id = await make_client_under_agent(client, agent_id)
+
+    toggle = await _set_feature(client, agent_token, client_id, "inventory", False)
+    assert toggle.status_code == 200, toggle.text
+
+    _staff, staff_token = await _make_staff_login(client, owner["id"])
+    resp = await client.get(
+        "/api/v1/inventory/alerts", headers=auth_headers(staff_token)
+    )
+    assert resp.status_code == 403, resp.text
 
 
 @pytest.mark.asyncio
