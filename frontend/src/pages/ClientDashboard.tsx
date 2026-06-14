@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { client, getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
+import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import StatCard from '@/components/dashboard/StatCard';
@@ -57,11 +57,6 @@ export default function ClientDashboard() {
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleLogout() {
-    await client.auth.logout();
-    navigate('/');
   }
 
   async function handlePaySubscription() {

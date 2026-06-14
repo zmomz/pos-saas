@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, getAuditLogs, type MasterEconomics } from '@/lib/api';
+import { getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, getAuditLogs, type MasterEconomics } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
@@ -188,11 +188,6 @@ export default function MasterDashboard() {
     } finally {
       setSavingTax(false);
     }
-  }
-
-  async function handleLogout() {
-    await client.auth.logout();
-    navigate('/');
   }
 
   const totalAgents = agents.length;

@@ -4,7 +4,7 @@
  * It reproduces the exact surface the app relies on:
  *   client.apiCall.invoke({ url, method, data })
  *   client.entities.<name>.{ query, queryAll, create, update, delete }
- *   client.auth.{ me, login, toLogin, logout }
+ *   client.auth.{ me, login, toLogin }
  *
  * Auth is local email/password: the JWT issued by the backend is stored in
  * localStorage and attached as a Bearer token on every request.
@@ -222,17 +222,11 @@ const auth = {
   toLogin(): void {
     window.location.assign(LOGIN_PATH);
   },
-
-  /** Clear the session and return to the login screen. */
-  async logout(): Promise<void> {
-    try {
-      await http.post('/api/v1/auth/logout');
-    } catch {
-      /* ignore */
-    }
-    clearToken();
-    window.location.assign(LOGIN_PATH);
-  },
+  // NB: no `logout` here. Logout goes through the canonical `authApi.logout()`
+  // (see lib/auth.ts), reached via `useAuth().logout()` in DashboardLayout, so
+  // the refresh-token jti is revoked server-side and both localStorage keys are
+  // cleared. A divergent bodyless shim here POSTed no refresh token and left
+  // `pos_refresh_token` behind, leaving the session resurrectable (ISSUE-042).
 };
 
 /** GET a binary response (e.g. a generated PDF) as a Blob, with auth attached. */

@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { client, getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, type AgentRevenue, type CommissionStatement } from '@/lib/api';
+import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, type AgentRevenue, type CommissionStatement } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import StatTile from '@/components/dashboard/StatTile';
@@ -249,11 +249,6 @@ export default function AgentDashboard() {
       console.error('Set feature failed:', err);
       setFeatureState((prev) => ({ ...prev, [featureName]: !next }));
     }
-  }
-
-  async function handleLogout() {
-    await client.auth.logout();
-    navigate('/');
   }
 
   // Toggleable features matching the backend require_feature() gates (AG-03).
