@@ -36,7 +36,14 @@ class Stock_transfers(Base):
     # Denormalized name captured at transfer time (the ledger keys off product_id).
     product_name = Column(String, nullable=True)
     quantity = Column(Integer, nullable=False, default=0, server_default="0")
-    # draft / sent / received (a one-step transfer lands in ``received``).
+    # draft / in_transit / received. A one-step transfer lands directly in
+    # ``received``; a two-phase transfer (#61) sits in ``in_transit`` between
+    # dispatch and receive.
     status = Column(String, nullable=False, default="received", server_default="received")
+    # Two-phase transfer (#61): the quantity actually booked in at the destination
+    # on receive, and the dispatched−received shortfall (in-transit shrink). Null
+    # until a two-phase transfer is received; a one-step transfer leaves them null.
+    received_quantity = Column(Integer, nullable=True)
+    discrepancy = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

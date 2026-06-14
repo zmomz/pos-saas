@@ -789,6 +789,60 @@ export async function getBranchTransfers(params?: {
   return response.data;
 }
 
+// ISSUE-061: two-phase transfer (dispatch → receive). Stock leaves the source on
+// dispatch (in_transit) and lands at the destination only on receive; a short
+// receive records the dispatched−received discrepancy.
+export interface DispatchedTransfer {
+  id: number;
+  from_branch_id: number;
+  to_branch_id: number;
+  product_id: number;
+  product_name?: string | null;
+  quantity: number;
+  status: string;
+  from_branch_quantity: number;
+}
+
+export interface ReceivedTransfer {
+  id: number;
+  from_branch_id: number;
+  to_branch_id: number;
+  product_id: number;
+  product_name?: string | null;
+  quantity: number;
+  received_quantity: number;
+  discrepancy: number;
+  status: string;
+  to_branch_quantity: number;
+}
+
+export async function dispatchBranchTransfer(data: {
+  from_branch_id: number;
+  to_branch_id: number;
+  product_id?: number;
+  product_name?: string;
+  quantity: number;
+}): Promise<DispatchedTransfer> {
+  const response = await client.apiCall.invoke<DispatchedTransfer>({
+    url: '/api/v1/production/branches/transfer/dispatch',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function receiveBranchTransfer(
+  transferId: number,
+  receivedQuantity?: number,
+): Promise<ReceivedTransfer> {
+  const response = await client.apiCall.invoke<ReceivedTransfer>({
+    url: `/api/v1/production/branches/transfer/${transferId}/receive`,
+    method: 'POST',
+    data: receivedQuantity == null ? {} : { received_quantity: receivedQuantity },
+  });
+  return response.data;
+}
+
 // Phase 3: the caller's effective permission grants/denies, so the UI can
 // hide/disable actions (e.g. refund) the staff member lacks. Master accounts
 // come back with is_master=true and gate nothing.

@@ -1429,6 +1429,198 @@ async def transfer_branch_stock(
     }
 
 
+class StockReceiveRequest(BaseModel):
+    # The quantity actually booked in at the destination. Defaults to the full
+    # dispatched quantity; a smaller figure records an in-transit discrepancy.
+    received_quantity: Optional[int] = None
+
+
+@router.post("/branches/transfer/dispatch")
+async def dispatch_branch_stock(
+    data: StockTransferRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 1 of a two-phase transfer: ship stock out of the source (INV-05, #61).
+
+    Decrements the source branch ledger by N and writes an ``in_transit``
+    ``stock_transfers`` row. The destination is **not** credited yet — it lands only
+    when the shipment is received (:func:`receive_branch_stock`). Owner-scoped
+    (SEC-02); insufficient source stock → 400.
+    """
+    from models.branches import Branches
+    from models.clients import Clients
+    from models.products import Products
+    from models.stock_transfers import Stock_transfers as StockTransfers
+    from services.branch_stock import get_or_init_row
+
+    client = (
+        await db.execute(select(Clients).where(Clients.user_id == owner_id))
+    ).scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=403, detail="Only clients can transfer stock")
+
+    qty = int(data.quantity or 0)
+    if qty <= 0:
+        raise HTTPException(status_code=400, detail="Transfer quantity must be positive")
+    if int(data.from_branch_id) == int(data.to_branch_id):
+        raise HTTPException(status_code=400, detail="Source and destination branches must differ")
+
+    branch_rows = (
+        await db.execute(
+            select(Branches).where(
+                Branches.user_id == owner_id,
+                Branches.id.in_([int(data.from_branch_id), int(data.to_branch_id)]),
+            )
+        )
+    ).scalars().all()
+    found_ids = {b.id for b in branch_rows}
+    if int(data.from_branch_id) not in found_ids or int(data.to_branch_id) not in found_ids:
+        raise HTTPException(status_code=404, detail="Branch not found")
+
+    prod_query = select(Products).where(Products.client_id == client.id)
+    if data.product_id is not None:
+        prod_query = prod_query.where(Products.id == int(data.product_id))
+    elif (data.product_name or "").strip():
+        prod_query = prod_query.where(Products.name == data.product_name.strip())
+    else:
+        raise HTTPException(status_code=400, detail="A product_id or product_name is required")
+    product = (await db.execute(prod_query)).scalars().first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    # Ship: decrement the source only. The destination is credited on receive.
+    src = await get_or_init_row(
+        db, owner_id, client.id, int(data.from_branch_id), product
+    )
+    if (src.quantity or 0) < qty:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient stock for '{product.name}' at the source branch: "
+                f"requested {qty}, available {src.quantity or 0}"
+            ),
+        )
+    src.quantity = (src.quantity or 0) - qty
+
+    record = StockTransfers(
+        user_id=owner_id,
+        client_id=client.id,
+        from_branch_id=int(data.from_branch_id),
+        to_branch_id=int(data.to_branch_id),
+        product_id=product.id,
+        product_name=product.name,
+        quantity=qty,
+        status="in_transit",
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+
+    return {
+        "id": record.id,
+        "from_branch_id": record.from_branch_id,
+        "to_branch_id": record.to_branch_id,
+        "product_id": record.product_id,
+        "product_name": record.product_name,
+        "quantity": record.quantity,
+        "status": record.status,
+        "from_branch_quantity": src.quantity,
+    }
+
+
+@router.post("/branches/transfer/{transfer_id}/receive")
+async def receive_branch_stock(
+    transfer_id: int,
+    data: StockReceiveRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Phase 2 of a two-phase transfer: book an in-transit shipment in (INV-05, #61).
+
+    Credits the destination branch with the received quantity (default: the full
+    dispatched quantity) and closes the transfer (``received``). When fewer units
+    arrive than were dispatched, the shortfall is recorded on the transfer as
+    ``discrepancy`` — the destination is credited only what actually arrived; the
+    source already shed the full dispatched quantity. Owner-scoped (SEC-02); a
+    transfer that is not ``in_transit`` → 400.
+    """
+    from models.clients import Clients
+    from models.products import Products
+    from models.stock_transfers import Stock_transfers as StockTransfers
+    from services.branch_stock import get_or_init_row
+
+    client = (
+        await db.execute(select(Clients).where(Clients.user_id == owner_id))
+    ).scalar_one_or_none()
+    if not client:
+        raise HTTPException(status_code=403, detail="Only clients can transfer stock")
+
+    # Owner-scoped fetch — a client can only receive its own transfers (SEC-02).
+    record = (
+        await db.execute(
+            select(StockTransfers).where(
+                StockTransfers.id == int(transfer_id),
+                StockTransfers.user_id == owner_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not record:
+        raise HTTPException(status_code=404, detail="Transfer not found")
+    if record.status != "in_transit":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Transfer is not in transit (status: {record.status})",
+        )
+
+    dispatched = int(record.quantity or 0)
+    received = data.received_quantity if data.received_quantity is not None else dispatched
+    received = int(received)
+    if received < 0:
+        raise HTTPException(status_code=400, detail="Received quantity cannot be negative")
+    if received > dispatched:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Received quantity ({received}) exceeds dispatched ({dispatched})",
+        )
+
+    product = (
+        await db.execute(
+            select(Products).where(
+                Products.id == record.product_id, Products.client_id == client.id
+            )
+        )
+    ).scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    dst = await get_or_init_row(
+        db, owner_id, client.id, int(record.to_branch_id), product
+    )
+    dst.quantity = (dst.quantity or 0) + received
+
+    record.received_quantity = received
+    record.discrepancy = dispatched - received
+    record.status = "received"
+    await db.commit()
+    await db.refresh(record)
+
+    return {
+        "id": record.id,
+        "from_branch_id": record.from_branch_id,
+        "to_branch_id": record.to_branch_id,
+        "product_id": record.product_id,
+        "product_name": record.product_name,
+        "quantity": record.quantity,
+        "received_quantity": record.received_quantity,
+        "discrepancy": record.discrepancy,
+        "status": record.status,
+        "to_branch_quantity": dst.quantity,
+    }
+
+
 @router.get("/branches/transfers")
 async def list_branch_transfers(
     branch_id: Optional[int] = None,
