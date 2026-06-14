@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, productImageSrc, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
 import { CUSTOMER_DISPLAY_KEY, buildCustomerDisplayPayload, paidCustomerDisplayPayload } from '@/lib/customerDisplay';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoneyAr, toArabicDigits } from '@/lib/format';
@@ -28,6 +28,8 @@ export interface Product {
   is_weighted?: boolean;
   is_open_price?: boolean;
   unit_label?: string;
+  // ISSUE-065 (P2 catalog): served URL of the product image (POS tile grid).
+  image_url?: string | null;
 }
 
 export interface CartItem {
@@ -1531,9 +1533,19 @@ export default function POSTerminal() {
                       {inCart}
                     </span>
                   )}
-                  <div className={`flex h-20 items-center justify-center rounded-xl text-2xl font-extrabold ${tintFor(product.category)}`}>
-                    {product.name?.charAt(0)?.toUpperCase() || '?'}
-                  </div>
+                  {/* ISSUE-065: show the product image when set; otherwise fall
+                      back to the category-tinted name initial. */}
+                  {productImageSrc(product.image_url) ? (
+                    <img
+                      src={productImageSrc(product.image_url)}
+                      alt={product.name}
+                      className="h-20 w-full rounded-xl object-cover"
+                    />
+                  ) : (
+                    <div className={`flex h-20 items-center justify-center rounded-xl text-2xl font-extrabold ${tintFor(product.category)}`}>
+                      {product.name?.charAt(0)?.toUpperCase() || '?'}
+                    </div>
+                  )}
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-foreground">{product.name}</div>
                     <div className="mt-0.5 font-bold tabular-nums text-brand-700">

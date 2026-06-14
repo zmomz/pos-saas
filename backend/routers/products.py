@@ -78,6 +78,8 @@ class ProductsResponse(BaseModel):
     is_weighted: Optional[bool] = None
     is_open_price: Optional[bool] = None
     unit_label: Optional[str] = None
+    # ISSUE-065 (P2 catalog): served URL of the product image (POS tile grid).
+    image_url: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

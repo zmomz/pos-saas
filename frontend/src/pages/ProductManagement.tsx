@@ -32,6 +32,8 @@ import {
   exportProductsCsv,
   importProductsCsv,
   getCategories,
+  uploadProductImage,
+  productImageSrc,
   type ProductVariant,
   type ReorderSuggestion,
   type CsvImportResult,
@@ -61,6 +63,8 @@ interface Product {
   is_weighted?: boolean;
   is_open_price?: boolean;
   unit_label?: string;
+  // ISSUE-065 (P2 catalog): served URL of the product image.
+  image_url?: string | null;
 }
 
 // INV-08 (F-035): a product is low when on-hand <= its reorder point (when set),
@@ -388,6 +392,20 @@ export default function ProductManagement() {
       await loadSuggestions();
     } catch (err) {
       console.error('Failed to restore product:', err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // ISSUE-065 (P2 catalog): upload an image for a product; the served URL is
+  // persisted and surfaces in the catalog table + the POS tile grid.
+  async function handleImageUpload(product: Product, file: File) {
+    setSubmitting(true);
+    try {
+      await uploadProductImage(product.id, file);
+      await loadProducts();
+    } catch (err) {
+      console.error('Failed to upload product image:', err);
     } finally {
       setSubmitting(false);
     }
@@ -903,13 +921,27 @@ export default function ProductManagement() {
                 pagedProducts.map((product) => (
                   <tr key={product.id} className="border-t border-slate-700 text-slate-300">
                     <td className="p-3">
-                      <div>
-                        <span className="text-white font-medium">{product.name}</span>
-                        {product.name_ar && (
-                          <span className="block text-xs text-slate-400" dir="rtl">
-                            {product.name_ar}
+                      <div className="flex items-center gap-3">
+                        {/* ISSUE-065: image thumbnail, or the name initial fallback. */}
+                        {productImageSrc(product.image_url) ? (
+                          <img
+                            src={productImageSrc(product.image_url)}
+                            alt={product.name}
+                            className="h-10 w-10 shrink-0 rounded-lg object-cover"
+                          />
+                        ) : (
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-slate-700 text-sm font-semibold text-slate-300">
+                            {product.name?.charAt(0)?.toUpperCase() || '?'}
                           </span>
                         )}
+                        <div>
+                          <span className="text-white font-medium">{product.name}</span>
+                          {product.name_ar && (
+                            <span className="block text-xs text-slate-400" dir="rtl">
+                              {product.name_ar}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="p-3">
@@ -962,6 +994,21 @@ export default function ProductManagement() {
                         >
                           Edit
                         </Button>
+                        {/* ISSUE-065: upload a product image (catalog + POS tile). */}
+                        <label className="inline-flex cursor-pointer items-center rounded-md border border-slate-600 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
+                          {t('image')}
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                            className="hidden"
+                            disabled={submitting}
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) handleImageUpload(product, file);
+                              e.target.value = '';
+                            }}
+                          />
+                        </label>
                         {product.is_active === false ? (
                           <Button
                             size="sm"

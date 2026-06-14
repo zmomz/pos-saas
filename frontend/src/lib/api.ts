@@ -940,6 +940,9 @@ export interface ProductListItem {
   is_weighted: boolean;
   is_open_price: boolean;
   unit_label?: string | null;
+  // ISSUE-065 (P2 catalog): served URL of the product image (catalog + POS tile
+  // grid). May be a relative ``/uploads/...`` path — resolve via productImageSrc().
+  image_url?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -1025,6 +1028,20 @@ export async function restoreProduct(productId: number) {
     data: {},
   });
   return response.data;
+}
+
+// ISSUE-065 (P2 catalog): upload a product image. Returns the updated product
+// (its ``image_url`` is the served URL). Mirrors the agent-logo upload (AG-01).
+export async function uploadProductImage(productId: number, file: File): Promise<ProductListItem> {
+  return uploadMultipart<ProductListItem>(`/api/v1/products/${productId}/image`, file);
+}
+
+// ISSUE-065: resolve a product ``image_url`` for an <img> src. The backend serves
+// images from a relative ``/uploads/...`` path; prefix the API origin so the POS
+// (which may run on another origin) can load it. Absolute URLs pass through.
+export function productImageSrc(imageUrl?: string | null): string | undefined {
+  if (!imageUrl) return undefined;
+  return imageUrl.startsWith('http') ? imageUrl : `${getAPIBaseURL()}${imageUrl}`;
 }
 
 // ISSUE-064: catalog CSV export/import. Export streams the merchant's catalog as

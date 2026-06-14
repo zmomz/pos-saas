@@ -2,10 +2,12 @@ import csv
 import io
 import json
 import logging
+import os
+import secrets
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select, func, update, and_, or_, case
@@ -123,6 +125,8 @@ class ProductResponse(BaseModel):
     is_weighted: bool = False
     is_open_price: bool = False
     unit_label: Optional[str] = None
+    # ISSUE-065 (P2 catalog): served URL of the product image (None when unset).
+    image_url: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -242,6 +246,7 @@ async def list_products(
             is_weighted=bool(p.is_weighted),
             is_open_price=bool(p.is_open_price),
             unit_label=p.unit_label,
+            image_url=p.image_url,
             created_at=p.created_at,
             updated_at=p.updated_at,
         )
@@ -311,6 +316,7 @@ async def create_product(
         is_weighted=bool(product.is_weighted),
         is_open_price=bool(product.is_open_price),
         unit_label=product.unit_label,
+        image_url=product.image_url,
         created_at=product.created_at,
         updated_at=product.updated_at,
     )
@@ -374,6 +380,104 @@ async def update_product(
         is_weighted=bool(product.is_weighted),
         is_open_price=bool(product.is_open_price),
         unit_label=product.unit_label,
+        image_url=product.image_url,
+        created_at=product.created_at,
+        updated_at=product.updated_at,
+    )
+
+
+# ISSUE-065 (P2 catalog): product image upload. Mirrors the agent-logo pattern
+# (AG-01, tenant.py): the file is stored locally under ``uploads/products/`` and
+# served from ``/uploads``; the S3-backed object store (routers/storage.py,
+# ISSUE-030) remains available for cloud deployments.
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PRODUCT_IMAGE_DIR = os.path.join(_BACKEND_ROOT, "uploads", "products")
+_ALLOWED_IMAGE_TYPES = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
+_MAX_IMAGE_BYTES = 2 * 1024 * 1024  # 2 MB
+
+
+@router.post("/api/v1/products/{product_id}/image", response_model=ProductResponse)
+async def upload_product_image(
+    product_id: int,
+    file: UploadFile = File(...),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload an image for one of the client's products (ISSUE-065).
+
+    Validates the declared image type (PNG/JPEG/WebP/GIF) and a 2 MB size cap,
+    stores the file under ``uploads/products/``, and persists the served URL on
+    the product so the catalog and POS tile grid can render it. Owner-scoped: a
+    client can only attach an image to a product they own.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can upload product images")
+
+    client_id = role_info["entity_id"]
+
+    result = await db.execute(
+        select(Products).where(
+            and_(Products.id == product_id, Products.client_id == client_id)
+        )
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    ext = _ALLOWED_IMAGE_TYPES.get((file.content_type or "").lower())
+    if not ext:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported image type. Use PNG, JPEG, WebP, or GIF.",
+        )
+
+    contents = await file.read()
+    if len(contents) > _MAX_IMAGE_BYTES:
+        raise HTTPException(status_code=413, detail="Image exceeds the 2 MB size limit")
+    if not contents:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    os.makedirs(_PRODUCT_IMAGE_DIR, exist_ok=True)
+    filename = f"product-{product_id}-{secrets.token_hex(6)}.{ext}"
+    with open(os.path.join(_PRODUCT_IMAGE_DIR, filename), "wb") as fh:
+        fh.write(contents)
+
+    image_url = f"/uploads/products/{filename}"
+    await db.execute(
+        update(Products)
+        .where(and_(Products.id == product_id, Products.client_id == client_id))
+        .values(image_url=image_url)
+    )
+    await db.commit()
+    await db.refresh(product)
+
+    return ProductResponse(
+        id=product.id,
+        client_id=product.client_id,
+        name=product.name,
+        name_ar=product.name_ar,
+        barcode=product.barcode,
+        price=product.price,
+        cost_price=product.cost_price,
+        quantity=product.quantity or 0,
+        reorder_point=product.reorder_point or 0,
+        reorder_quantity=product.reorder_quantity or 0,
+        category=product.category,
+        category_id=product.category_id,
+        vat_rate=product.vat_rate,
+        is_active=product.is_active if product.is_active is not None else True,
+        is_weighted=bool(product.is_weighted),
+        is_open_price=bool(product.is_open_price),
+        unit_label=product.unit_label,
+        image_url=product.image_url,
         created_at=product.created_at,
         updated_at=product.updated_at,
     )
@@ -466,6 +570,7 @@ async def restore_product(
         is_weighted=bool(product.is_weighted),
         is_open_price=bool(product.is_open_price),
         unit_label=product.unit_label,
+        image_url=product.image_url,
         created_at=product.created_at,
         updated_at=product.updated_at,
     )

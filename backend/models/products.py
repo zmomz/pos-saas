@@ -41,5 +41,9 @@ class Products(Base):
     is_weighted = Column(Boolean, nullable=True, default=False, server_default='false')
     is_open_price = Column(Boolean, nullable=True, default=False, server_default='false')
     unit_label = Column(String, nullable=True)
+    # ISSUE-065 (P2 catalog): served URL of the product image (catalog + POS tile
+    # grid). The file is stored under ``uploads/products/`` and served from
+    # ``/uploads``; NULL means "no image" (the tile falls back to its initial).
+    image_url = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
