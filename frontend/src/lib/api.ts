@@ -3177,6 +3177,49 @@ export async function reportPendingZatcaDocuments(): Promise<ZatcaReportPendingR
   return res.data;
 }
 
+// ---------- ZATCA onboarding wizard (ISSUE-018) ----------
+// The three Fatoora onboarding steps surfaced for the in-app wizard: generate
+// the EGS keypair + CSR, exchange the CSR + portal OTP for a compliance CSID,
+// then promote it to a production CSID. Each is client-scoped server-side.
+
+export interface ZatcaCsrResult {
+  csr_pem: string;
+  csr_base64: string;
+  public_key_pem: string;
+}
+
+export interface ZatcaOnboardResult {
+  onboarded: boolean;
+  message: string;
+}
+
+export async function onboardGenerateCsr(): Promise<ZatcaCsrResult> {
+  const res = await client.apiCall.invoke<ZatcaCsrResult>({
+    url: '/api/v1/zatca/onboard/csr',
+    method: 'POST',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function onboardComplianceCsid(otp: string): Promise<ZatcaOnboardResult> {
+  const res = await client.apiCall.invoke<ZatcaOnboardResult>({
+    url: '/api/v1/zatca/onboard/compliance-csid',
+    method: 'POST',
+    data: { otp },
+  });
+  return res.data;
+}
+
+export async function onboardProductionCsid(): Promise<ZatcaOnboardResult> {
+  const res = await client.apiCall.invoke<ZatcaOnboardResult>({
+    url: '/api/v1/zatca/onboard/production-csid',
+    method: 'POST',
+    data: {},
+  });
+  return res.data;
+}
+
 // ---------- Omnichannel — Salla connector (OMN-01..03, F-046) ----------
 // Connect the merchant's Salla store, read the connection status, and list the
 // online orders that were imported as POS sales (decrementing the shared stock).

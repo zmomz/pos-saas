@@ -12,6 +12,22 @@ import ZatcaStatus from './ZatcaStatus';
 
 const SUMMARY = 'http://127.0.0.1:8000/api/v1/zatca/documents/summary';
 const DOCS = 'http://127.0.0.1:8000/api/v1/zatca/documents';
+const STATUS = 'http://127.0.0.1:8000/api/v1/zatca/status';
+
+// The embedded onboarding wizard (ISSUE-018) fetches /status on mount; a default
+// handler keeps the page tests focused on the document-status behaviors.
+function statusHandler(onboarded = true) {
+  return http.get(STATUS, () =>
+    HttpResponse.json({
+      environment: 'sandbox',
+      has_csr: onboarded,
+      onboarded,
+      gateway_configured: true,
+      pih: null,
+      documents: 0,
+    })
+  );
+}
 
 function renderPage() {
   return render(
@@ -54,13 +70,38 @@ describe('ZatcaStatus (F-019 / ZA-08)', () => {
           gateway_configured: false,
         })
       ),
-      http.get(DOCS, () => HttpResponse.json({ items: [], total: 0 }))
+      http.get(DOCS, () => HttpResponse.json({ items: [], total: 0 })),
+      statusHandler(false)
     );
 
     renderPage();
 
     expect(await screen.findByText('No fiscal documents yet')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('embeds the onboarding wizard while onboarding is incomplete (ISSUE-018)', async () => {
+    server.use(
+      http.get(SUMMARY, () =>
+        HttpResponse.json({
+          total: 0,
+          by_status: {},
+          pending: 0,
+          failed: 0,
+          stuck: 0,
+          needs_attention: false,
+          onboarded: false,
+          gateway_configured: true,
+        })
+      ),
+      http.get(DOCS, () => HttpResponse.json({ items: [], total: 0 })),
+      statusHandler(false)
+    );
+
+    renderPage();
+
+    expect(await screen.findByText('Set up ZATCA e-invoicing')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Generate CSR' })).toBeInTheDocument();
   });
 
   it('surfaces a stuck-document alert with a reconcile action when documents are stuck', async () => {

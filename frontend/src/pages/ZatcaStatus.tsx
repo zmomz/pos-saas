@@ -4,6 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import ZatcaOnboarding from './ZatcaOnboarding';
 import {
   getZatcaDocumentSummary,
   getZatcaDocuments,
@@ -175,6 +176,9 @@ export default function ZatcaStatus() {
           {summary?.gateway_configured ? t('zatca_gateway_configured') : t('zatca_gateway_unconfigured')}
         </Badge>
       </div>
+
+      {/* In-app onboarding wizard (ISSUE-018) — only while onboarding is incomplete. */}
+      {summary && !summary.onboarded && <ZatcaOnboarding onComplete={load} />}
 
       {/* Stuck-document alert (ZA-08 alerting) */}
       {summary?.needs_attention && (
