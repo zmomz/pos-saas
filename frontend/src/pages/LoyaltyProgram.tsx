@@ -19,6 +19,7 @@ interface LoyaltyConfig {
   points_per_sar: number;
   redemption_rate: number;
   min_points_redeem: number;
+  points_expiry_days: number;
   is_active: boolean;
 }
 
@@ -27,6 +28,7 @@ interface CustomerLoyalty {
   customer_name: string;
   customer_id: string;
   points_balance: number;
+  available_points?: number;
   total_earned: number;
   total_redeemed: number;
   last_activity?: string;
@@ -45,6 +47,7 @@ const defaultConfig: LoyaltyConfig = {
   points_per_sar: 1,
   redemption_rate: 0.1,
   min_points_redeem: 100,
+  points_expiry_days: 0,
   is_active: true,
 };
 
@@ -214,7 +217,7 @@ export default function LoyaltyProgram() {
           </Button>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <div>
               <label className="text-xs text-slate-400 block mb-1">Points per SAR spent</label>
               {configEditing ? (
@@ -237,6 +240,14 @@ export default function LoyaltyProgram() {
                 <Input type="number" value={config.min_points_redeem} onChange={(e) => setConfig((c) => ({ ...c, min_points_redeem: parseInt(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
               ) : (
                 <p className="text-white font-medium text-lg">{config.min_points_redeem}</p>
+              )}
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 block mb-1">Points Expiry (days, 0 = never)</label>
+              {configEditing ? (
+                <Input type="number" value={config.points_expiry_days} onChange={(e) => setConfig((c) => ({ ...c, points_expiry_days: parseInt(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
+              ) : (
+                <p className="text-white font-medium text-lg">{config.points_expiry_days ? config.points_expiry_days : 'Never'}</p>
               )}
             </div>
             <div>
@@ -281,6 +292,7 @@ export default function LoyaltyProgram() {
               <tr className="text-slate-400">
                 <th className="p-3 text-start">Customer</th>
                 <th className="p-3 text-start">Balance</th>
+                <th className="p-3 text-start">Available</th>
                 <th className="p-3 text-start">Total Earned</th>
                 <th className="p-3 text-start">Total Redeemed</th>
                 <th className="p-3 text-start">Last Activity</th>
@@ -290,7 +302,7 @@ export default function LoyaltyProgram() {
             <tbody>
               {customerBalances.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-slate-500">No loyalty members yet</td>
+                  <td colSpan={7} className="p-6 text-center text-slate-500">No loyalty members yet</td>
                 </tr>
               ) : (
                 customerBalances.map((cust) => (
@@ -298,6 +310,11 @@ export default function LoyaltyProgram() {
                     <td className="p-3 text-white font-medium">{cust.customer_name}</td>
                     <td className="p-3">
                       <span className="text-yellow-400 font-bold">{cust.points_balance?.toLocaleString()}</span> pts
+                    </td>
+                    <td className="p-3">
+                      <span className="text-brand-400 font-bold">
+                        {(cust.available_points ?? cust.points_balance)?.toLocaleString()}
+                      </span> pts
                     </td>
                     <td className="p-3 text-green-400">{cust.total_earned?.toLocaleString()}</td>
                     <td className="p-3 text-red-400">{cust.total_redeemed?.toLocaleString()}</td>

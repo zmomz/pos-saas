@@ -154,6 +154,8 @@ class LoyaltyConfigRequest(BaseModel):
     points_per_sar: float = Field(default=1.0, ge=0)
     redemption_rate: float = Field(default=0.1, ge=0)
     min_points_redeem: int = Field(default=100, ge=0)
+    # Points expire this many days after being earned; 0 = never (ISSUE-044).
+    points_expiry_days: int = Field(default=0, ge=0)
     is_active: bool = True
 
 
@@ -1143,6 +1145,7 @@ async def earn_loyalty_points(
 ):
     """Earn loyalty points from a transaction."""
     from models.loyalty_points import Loyalty_points
+    from models.loyalty_transactions import Loyalty_transactions
 
     points_earned = int(data.transaction_amount * data.points_rate)
 
@@ -1173,6 +1176,19 @@ async def earn_loyalty_points(
         )
         db.add(new_loyalty)
 
+    # Record the earn leg on the ledger (ISSUE-044) so the balance is auditable
+    # and the points carry a dated origin the expiry window measures against.
+    if points_earned > 0:
+        db.add(
+            Loyalty_transactions(
+                user_id=owner_id,
+                customer_id=data.customer_id,
+                type="earned",
+                points=points_earned,
+                description="Earned on sale",
+            )
+        )
+
     await db.commit()
 
     return {
@@ -1192,6 +1208,7 @@ async def redeem_loyalty_points(
 ):
     """Redeem loyalty points for a customer."""
     from models.loyalty_points import Loyalty_points
+    from models.loyalty_transactions import Loyalty_transactions
 
     result = await db.execute(
         select(Loyalty_points).where(
@@ -1218,6 +1235,17 @@ async def redeem_loyalty_points(
         update(Loyalty_points)
         .where(Loyalty_points.id == loyalty.id)
         .values(points_balance=new_balance, total_redeemed=new_total_redeemed)
+    )
+
+    # Record the redeem leg on the ledger (ISSUE-044).
+    db.add(
+        Loyalty_transactions(
+            user_id=owner_id,
+            customer_id=data.customer_id,
+            type="redeemed",
+            points=data.points_to_redeem,
+            description="Redeemed for discount",
+        )
     )
     await db.commit()
 
@@ -1273,6 +1301,7 @@ def _config_payload(program) -> dict:
         "points_per_sar": program.points_per_sar or 0,
         "redemption_rate": program.redemption_rate or 0,
         "min_points_redeem": program.min_redemption_points or 0,
+        "points_expiry_days": program.points_expiry_days or 0,
         "is_active": bool(program.is_active),
     }
 
@@ -1299,6 +1328,7 @@ async def get_loyalty_config(
             "points_per_sar": None,
             "redemption_rate": None,
             "min_points_redeem": None,
+            "points_expiry_days": None,
             "is_active": False,
         }
     return _config_payload(program)
@@ -1330,6 +1360,7 @@ async def save_loyalty_config(
                 points_per_sar=data.points_per_sar,
                 redemption_rate=data.redemption_rate,
                 min_redemption_points=data.min_points_redeem,
+                points_expiry_days=data.points_expiry_days,
                 is_active=data.is_active,
             )
         )
@@ -1344,6 +1375,7 @@ async def save_loyalty_config(
             points_per_sar=data.points_per_sar,
             redemption_rate=data.redemption_rate,
             min_redemption_points=data.min_points_redeem,
+            points_expiry_days=data.points_expiry_days,
             is_active=data.is_active,
         )
         db.add(program)
@@ -1359,9 +1391,36 @@ async def list_loyalty_balances(
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """List the merchant's customer point balances, joined to the customer name."""
+    """List the merchant's customer point balances, joined to the customer name.
+
+    ``available_points`` is the usable balance derived from the ledger after
+    aging out credits older than the program's expiry window (ISSUE-044); the
+    stored ``points_balance`` remains the lifetime earned-minus-redeemed figure.
+    """
     from models.customers import Customers
     from models.loyalty_points import Loyalty_points
+    from models.loyalty_programs import Loyalty_programs
+    from models.loyalty_transactions import Loyalty_transactions
+    from services.loyalty_points import compute_usable_balance
+
+    # The merchant's expiry policy (0/None = points never expire).
+    prog_res = await db.execute(
+        select(Loyalty_programs.points_expiry_days)
+        .where(Loyalty_programs.user_id == owner_id)
+        .order_by(Loyalty_programs.id.desc())
+    )
+    expiry_days = prog_res.scalars().first() or 0
+
+    # All of this merchant's ledger movements, bucketed by customer, for the
+    # expiry-aware balance computation.
+    tx_res = await db.execute(
+        select(Loyalty_transactions).where(Loyalty_transactions.user_id == owner_id)
+    )
+    ledger: dict = {}
+    for tx in tx_res.scalars().all():
+        ledger.setdefault(tx.customer_id, []).append(
+            {"type": tx.type, "points": tx.points, "created_at": tx.created_at}
+        )
 
     result = await db.execute(
         select(Loyalty_points, Customers.name)
@@ -1376,6 +1435,9 @@ async def list_loyalty_balances(
             "customer_id": lp.customer_id,
             "customer_name": name or f"Customer #{lp.customer_id}",
             "points_balance": lp.points_balance or 0,
+            "available_points": compute_usable_balance(
+                ledger.get(lp.customer_id, []), expiry_days=expiry_days
+            ),
             "total_earned": lp.total_earned or 0,
             "total_redeemed": lp.total_redeemed or 0,
             "last_activity": lp.updated_at.isoformat() if lp.updated_at else None,

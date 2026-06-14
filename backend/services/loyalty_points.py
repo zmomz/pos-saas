@@ -1,5 +1,6 @@
 import logging
-from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, Iterable, List
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,6 +8,53 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.loyalty_points import Loyalty_points
 
 logger = logging.getLogger(__name__)
+
+# Ledger entry types that add points (a "credit"/lot) vs. spend them (a "debit").
+CREDIT_TYPES = frozenset({"earned", "add"})
+DEBIT_TYPES = frozenset({"redeemed", "deduct"})
+
+
+def compute_usable_balance(
+    entries: Iterable[Dict[str, Any]],
+    expiry_days: int = 0,
+    now: Optional[datetime] = None,
+) -> int:
+    """Usable point balance from a customer's ledger, aging out expired credits.
+
+    ``entries`` is an iterable of ledger movements, each a mapping with ``type``
+    (one of earned/add/redeemed/deduct), ``points`` (positive magnitude) and
+    ``created_at`` (a ``datetime``). They are processed oldest-first.
+
+    Each credit forms a dated *lot*; debits consume the oldest lots first (FIFO),
+    mirroring how points-programs spend the points closest to expiring. A lot
+    whose ``created_at`` is older than ``expiry_days`` contributes nothing to the
+    usable balance. ``expiry_days`` of 0 (or falsy) means points never expire.
+
+    This is the canonical balance the admin "balances" view surfaces and the
+    redeem path could guard against — derived purely from the ledger so it is
+    auditable (AC1) and ages out (AC2).
+    """
+    ordered = sorted(entries, key=lambda e: (e["created_at"] is None, e["created_at"]))
+    lots: List[List[Any]] = []  # each [created_at, remaining_points]
+    for entry in ordered:
+        etype = entry["type"]
+        points = entry["points"] or 0
+        if etype in CREDIT_TYPES:
+            lots.append([entry["created_at"], points])
+        elif etype in DEBIT_TYPES:
+            need = points
+            for lot in lots:
+                if need <= 0:
+                    break
+                take = min(lot[1], need)
+                lot[1] -= take
+                need -= take
+
+    if expiry_days and expiry_days > 0:
+        now = now or datetime.now()
+        cutoff = now - timedelta(days=expiry_days)
+        return sum(rem for created, rem in lots if created is not None and created >= cutoff)
+    return sum(rem for _, rem in lots)
 
 
 # ------------------ Service Layer ------------------

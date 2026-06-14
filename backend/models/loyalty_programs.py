@@ -14,6 +14,9 @@ class Loyalty_programs(Base):
     points_per_sar = Column(Float, nullable=True)
     redemption_rate = Column(Float, nullable=True)
     min_redemption_points = Column(Integer, nullable=True)
+    # Points age out this many days after they are earned (ISSUE-044). 0/NULL =
+    # points never expire.
+    points_expiry_days = Column(Integer, nullable=True)
     is_active = Column(Boolean, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
