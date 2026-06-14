@@ -1,5 +1,3 @@
-import base64
-import hashlib
 import json
 import logging
 import uuid
@@ -235,47 +233,10 @@ class TransactionListResponse(BaseModel):
 
 
 # ---------- ZATCA QR Helper ----------
-def generate_zatca_tlv(
-    seller_name: str,
-    vat_number: str,
-    timestamp: str,
-    total_with_vat: str,
-    vat_amount: str,
-) -> str:
-    """
-    Generate ZATCA-compliant QR code data using TLV (Tag-Length-Value) encoding.
-    Tags:
-      1 = Seller Name
-      2 = VAT Registration Number
-      3 = Timestamp (ISO 8601)
-      4 = Invoice Total (with VAT)
-      5 = VAT Amount
-    Each TLV: 1 byte tag + 1 byte length + value bytes (UTF-8)
-    Result is base64 encoded.
-    """
-    tlv_data = bytearray()
-
-    fields = [
-        (1, seller_name),
-        (2, vat_number),
-        (3, timestamp),
-        (4, total_with_vat),
-        (5, vat_amount),
-    ]
-
-    for tag, value in fields:
-        value_bytes = value.encode("utf-8")
-        tlv_data.append(tag)
-        tlv_data.append(len(value_bytes))
-        tlv_data.extend(value_bytes)
-
-    return base64.b64encode(bytes(tlv_data)).decode("utf-8")
-
-
-def generate_zatca_hash(invoice_data: dict) -> str:
-    """Generate SHA-256 hash of the invoice data for integrity verification."""
-    data_str = json.dumps(invoice_data, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(data_str.encode("utf-8")).hexdigest()
+# The legacy in-router ``generate_zatca_tlv`` / ``generate_zatca_hash`` helpers
+# were removed (ISSUE-016): the real, stamped 8-tag QR TLV and the C14N invoice
+# hash are produced by the canonical signer ``services.zatca_sale.sign_transaction``
+# on the atomic sale path. There is one signing/QR implementation, not two.
 
 
 # ---------- Helper: Saudi-real tender capture (PAY-01/05) ----------

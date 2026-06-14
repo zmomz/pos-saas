@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     zatca_api_base_url: str = ""
     zatca_encryption_key: str = ""
     zatca_retention_years: int = 6
+    # ISSUE-016 (C2 gating): live Fatoora submission is OFF by default. Every sale
+    # is still signed, stamped, hash-chained and archived locally, but documents
+    # fail closed to "pending" instead of being POSTed to the gateway until an
+    # operator has validated the signed UBL against a Fatoora sandbox and flips
+    # this on. Prevents silently emitting invoices a live gateway would reject.
+    zatca_live_submission_enabled: bool = False
 
     # Always-on billing scheduler (ISSUE-052). When enabled, a background task
     # runs the platform-wide dunning/retry sweep every

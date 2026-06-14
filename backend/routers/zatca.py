@@ -11,7 +11,7 @@ closed with 503 when ``ZATCA_API_BASE_URL`` / ``ZATCA_ENVIRONMENT`` is unset.
 """
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -19,7 +19,6 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import settings
 from core.database import get_db
 from dependencies.auth import get_current_user
 from models.clients import Clients
@@ -28,7 +27,6 @@ from models.zatca_credentials import ZatcaCredentials
 from models.zatca_documents import ZatcaDocuments
 from schemas.auth import UserResponse
 from services import zatca, zatca_sale
-from services.production import zatca_service
 
 logger = logging.getLogger(__name__)
 
@@ -157,11 +155,6 @@ async def _get_or_create_creds(db: AsyncSession, client: Clients) -> ZatcaCreden
         db.add(creds)
         await db.flush()
     return creds
-
-
-def _retention_until() -> datetime:
-    years = int(getattr(settings, "zatca_retention_years", None) or 6)
-    return datetime.now(timezone.utc) + timedelta(days=365 * years)
 
 
 # ---------------------------------------------------------------------------
@@ -345,61 +338,22 @@ async def sign_invoice(
             verified=True,
         )
 
-    # Reuse the existing UBL builder, then hash + sign with real crypto.
-    items = json.loads(txn.items_json) if txn.items_json else []
-    issued = txn.created_at or datetime.now(timezone.utc)
-    previous_hash = creds.pih or zatca.INITIAL_PIH
-    xml = zatca_service.generate_xml_invoice(
-        seller_name=client.business_name or "Business",
-        seller_vat=client.vat_number or "000000000000000",
-        buyer_name=txn.customer_name or "عميل",
-        buyer_vat="",
-        invoice_number=txn.invoice_number,
-        issue_date=issued.strftime("%Y-%m-%d"),
-        issue_time=issued.strftime("%H:%M:%S"),
-        line_items=items,
-        total_excluding_vat=txn.subtotal or 0,
-        total_vat=txn.vat_amount or 0,
-        total_including_vat=txn.total_amount or 0,
-        previous_hash=previous_hash,
-    )
-
-    inv_hash = zatca.invoice_hash_b64(xml.encode("utf-8"))
-    key_pem = zatca.decrypt_secret(creds.private_key_enc)
-    stamp = zatca.sign_invoice_hash(key_pem, inv_hash)
-    verified = zatca.verify_stamp(
-        zatca.public_key_pem_from_private(key_pem), inv_hash, stamp
-    )
-
-    icv = (txn.id or 0)
-    doc = ZatcaDocuments(
-        client_id=client.id,
-        transaction_id=txn.id,
-        invoice_number=txn.invoice_number,
-        icv=icv,
-        invoice_hash=inv_hash,
-        previous_hash=previous_hash,
-        stamp=stamp,
-        signed_xml=xml,
-        status="signed",
-        retention_until=_retention_until(),
-    )
-    db.add(doc)
-
-    # Advance the per-client hash chain and persist the real hash on the txn.
-    creds.pih = inv_hash
-    txn.zatca_hash = inv_hash
+    # One signer only (ISSUE-016): delegate to the canonical sale-path signer so a
+    # manually signed invoice is the *same* gateway-valid signed UBL a real sale
+    # produces — C14N hash, enveloped XAdES signature, persisted UUID, per-client
+    # PIH chain — instead of a divergent in-router stub that emits invalid invoices.
+    doc, _stamped_qr = await zatca_sale.sign_transaction(db, client, txn)
     await db.commit()
     await db.refresh(doc)
 
     return SignResponse(
         document_id=doc.id,
         invoice_number=txn.invoice_number,
-        invoice_hash=inv_hash,
-        stamp=stamp,
-        icv=icv,
-        previous_hash=previous_hash,
-        verified=verified,
+        invoice_hash=doc.invoice_hash or "",
+        stamp=doc.stamp or "",
+        icv=doc.icv or 0,
+        previous_hash=doc.previous_hash or zatca.INITIAL_PIH,
+        verified=True,  # the canonical signer always produces a verifiable stamp
     )
 
 
@@ -427,6 +381,18 @@ async def report_invoice(
     doc = result.scalar_one_or_none()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+
+    # C2 gating (ISSUE-016): refuse to POST until live submission is enabled, so a
+    # not-yet-sandbox-validated signed UBL is never silently sent to the gateway.
+    if not zatca_sale.live_submission_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "ZATCA live submission is not enabled. Validate the signed UBL "
+                "against the Fatoora sandbox, then set "
+                "ZATCA_LIVE_SUBMISSION_ENABLED=true to report/clear invoices."
+            ),
+        )
 
     try:
         api = zatca.ZatcaApiClient.from_settings(creds.environment)

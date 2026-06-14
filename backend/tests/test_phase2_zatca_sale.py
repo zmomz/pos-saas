@@ -453,6 +453,8 @@ async def test_reporting_retries_on_5xx_then_reports(client, monkeypatch):
     await _sale(client, headers, pid)
 
     # Configure a (mock) gateway and stub the HTTP client so no network is hit.
+    # Live submission is gated off by default (ISSUE-016) — enable it for this test.
+    monkeypatch.setattr(zatca_sale.settings, "zatca_live_submission_enabled", True)
     monkeypatch.setattr(zatca, "resolve_base_url", lambda environment=None: "http://mock-fatoora")
     calls = {"n": 0}
 
@@ -552,6 +554,8 @@ async def _report_capturing_clearance(client_id: int, doc_id: int, monkeypatch):
             captured["clearance"] = kwargs.get("clearance")
             return {"status": "OK"}
 
+    # Live submission is gated off by default (ISSUE-016) — enable it for this test.
+    monkeypatch.setattr(zatca_sale.settings, "zatca_live_submission_enabled", True)
     monkeypatch.setattr(zatca, "resolve_base_url", lambda environment=None: "http://mock-fatoora")
     monkeypatch.setattr(
         zatca.ZatcaApiClient, "from_settings",
@@ -783,6 +787,8 @@ def test_pdf_buyer_block_renders_vat_when_present(monkeypatch):
 # ---------------------------------------------------------------------------
 def _mock_accepting_gateway(monkeypatch):
     """Patch ZATCA to a configured Fatoora that accepts every submission."""
+    # Live submission is gated off by default (ISSUE-016) — enable it for the sweep.
+    monkeypatch.setattr(zatca_sale.settings, "zatca_live_submission_enabled", True)
     monkeypatch.setattr(zatca, "resolve_base_url", lambda environment=None: "http://mock-fatoora")
 
     class _FakeApi:

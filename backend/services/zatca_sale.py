@@ -41,6 +41,18 @@ def _retention_until() -> datetime:
     return datetime.now(timezone.utc) + timedelta(days=365 * years)
 
 
+def live_submission_enabled() -> bool:
+    """ISSUE-016 (C2 gating): is live Fatoora submission turned on?
+
+    Off by default. While off, a fully onboarded client with a configured gateway
+    still does **not** POST — documents fail closed to ``pending`` and are
+    reconcilable later (``report_pending_documents``) once an operator has
+    validated the signed UBL against a Fatoora sandbox and enabled submission.
+    This is the single, central gate every submission path consults.
+    """
+    return bool(getattr(settings, "zatca_live_submission_enabled", False))
+
+
 # ---------------------------------------------------------------------------
 # ZA-06 — B2B clearance vs B2C reporting routing
 # ---------------------------------------------------------------------------
@@ -303,7 +315,11 @@ async def report_document(
         clearance = getattr(doc, "invoice_subtype", None) == "standard"
 
     gateway_ready = (
-        creds is not None
+        # C2 gating (ISSUE-016): never POST until submission is explicitly enabled,
+        # so an un-validated signed UBL is archived "pending" rather than rejected
+        # by a live gateway. Reconcilable later via report_pending_documents.
+        live_submission_enabled()
+        and creds is not None
         and creds.onboarded
         and creds.production_csid
         and creds.production_secret_enc
