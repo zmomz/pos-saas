@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { User, Globe, Bell, Palette, Shield, Sun, Moon } from 'lucide-react';
-import { getUserPreferences, saveUserPreferences, type NotificationPrefs } from '@/lib/api';
+import { changePassword, getUserPreferences, saveUserPreferences, type NotificationPrefs } from '@/lib/api';
 
 export default function UserProfile() {
   const { language, setLanguage, t } = useLanguage();
@@ -20,6 +20,14 @@ export default function UserProfile() {
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Local change-password control (ISSUE-097): replaces the atoms.dev
+  // "managed by auth provider" placeholder now that auth is local.
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmNewPassword, setConfirmNewPassword] = useState('');
+  const [pwSaving, setPwSaving] = useState(false);
+  const [pwError, setPwError] = useState<string | null>(null);
+  const [pwSuccess, setPwSuccess] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +67,34 @@ export default function UserProfile() {
       setTimeout(() => setSaved(false), 2000);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleChangePassword() {
+    setPwError(null);
+    setPwSuccess(false);
+    if (newPassword.length < 8) {
+      setPwError(t('password_too_short'));
+      return;
+    }
+    if (newPassword !== confirmNewPassword) {
+      setPwError(t('passwords_do_not_match'));
+      return;
+    }
+    setPwSaving(true);
+    try {
+      await changePassword(currentPassword, newPassword);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmNewPassword('');
+      setPwSuccess(true);
+      setTimeout(() => setPwSuccess(false), 3000);
+    } catch (err) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setPwError(detail || (err instanceof Error ? err.message : t('change_password_failed')));
+    } finally {
+      setPwSaving(false);
     }
   }
 
@@ -206,13 +242,38 @@ export default function UserProfile() {
             </div>
             <Badge className="bg-green-500/20 text-green-400">Active</Badge>
           </div>
-          <div className="flex items-center justify-between py-2 border-t border-slate-700">
-            <div>
-              <p className="text-white text-sm font-medium">Change Password</p>
-              <p className="text-slate-400 text-xs">Managed by authentication provider</p>
-            </div>
-            <Button size="sm" variant="outline" disabled className="border-slate-600 text-slate-500">
-              Via Auth Provider
+          <div className="py-2 border-t border-slate-700 space-y-3">
+            <p className="text-white text-sm font-medium">{t('change_password')}</p>
+            <Input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder={t('current_password')}
+              className="bg-slate-700 border-slate-600 text-white max-w-sm"
+            />
+            <Input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder={t('new_password')}
+              className="bg-slate-700 border-slate-600 text-white max-w-sm"
+            />
+            <Input
+              type="password"
+              value={confirmNewPassword}
+              onChange={(e) => setConfirmNewPassword(e.target.value)}
+              placeholder={t('confirm_password')}
+              className="bg-slate-700 border-slate-600 text-white max-w-sm"
+            />
+            {pwError && <p className="text-sm text-red-400">{pwError}</p>}
+            {pwSuccess && <p className="text-sm text-green-400">{t('password_changed')}</p>}
+            <Button
+              size="sm"
+              onClick={handleChangePassword}
+              disabled={pwSaving}
+              className="bg-brand-600 hover:bg-brand-700 text-white"
+            >
+              {pwSaving ? t('saving') : t('change_password')}
             </Button>
           </div>
         </CardContent>
