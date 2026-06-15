@@ -1,13 +1,14 @@
 /**
- * Local drop-in replacement for the former `@metagptx/web-sdk` client.
+ * Local HTTP client (formerly the `@metagptx/web-sdk` drop-in `atomsClient`).
  *
  * It reproduces the exact surface the app relies on:
  *   client.apiCall.invoke({ url, method, data })
  *   client.entities.<name>.{ query, queryAll, create, update, delete }
- *   client.auth.{ me, login, toLogin }
  *
- * Auth is local email/password: the JWT issued by the backend is stored in
- * localStorage and attached as a Bearer token on every request.
+ * Auth is local email/password and lives entirely in `lib/auth.ts` (`authApi`):
+ * the JWT issued by the backend is stored in localStorage (token helpers below)
+ * and attached as a Bearer token on every request. The old SDK `auth` shim
+ * (`me`/`login`/`toLogin`) was migration cruft with no callers and is gone.
  */
 import axios, { AxiosInstance, InternalAxiosRequestConfig, Method } from 'axios';
 import { getAPIBaseURL } from './config';
@@ -194,40 +195,13 @@ const entities = new Proxy({} as Record<string, Entity>, {
 });
 
 // ---------- Auth ----------
-const auth = {
-  /** Fetch the current user; returns { data: null } when unauthenticated. */
-  async me<T = unknown>(): Promise<SdkResponse<T | null>> {
-    if (!getToken()) return { data: null };
-    try {
-      const res = await http.get<T>('/api/v1/auth/me');
-      return { data: res.data };
-    } catch {
-      return { data: null };
-    }
-  },
-
-  /**
-   * Post-redirect handler retained for backwards compatibility. If a token was
-   * passed back in the URL fragment (#token=...), store it; then go home.
-   */
-  async login(): Promise<void> {
-    const hash = window.location.hash?.replace(/^#/, '') ?? '';
-    const params = new URLSearchParams(hash);
-    const token = params.get('token');
-    if (token) setToken(token);
-    window.location.replace('/');
-  },
-
-  /** Send the user to the login screen. */
-  toLogin(): void {
-    window.location.assign(LOGIN_PATH);
-  },
-  // NB: no `logout` here. Logout goes through the canonical `authApi.logout()`
-  // (see lib/auth.ts), reached via `useAuth().logout()` in DashboardLayout, so
-  // the refresh-token jti is revoked server-side and both localStorage keys are
-  // cleared. A divergent bodyless shim here POSTed no refresh token and left
-  // `pos_refresh_token` behind, leaving the session resurrectable (ISSUE-042).
-};
+// There is no `auth` shim on the client. All auth (login / refresh / logout /
+// current-user) flows through the canonical `authApi` in lib/auth.ts, reached
+// via `useAuth()`. The former SDK shims (`me`/`login`/`toLogin`/`logout`) were
+// migration cruft with no callers — a divergent `logout` here POSTed no refresh
+// token and left the session resurrectable (ISSUE-042); `me`/`login`/`toLogin`
+// were dead (ISSUE-095). Token storage helpers (getToken/setToken/clearToken,
+// above) are the only auth surface this module owns.
 
 /** GET a binary response (e.g. a generated PDF) as a Blob, with auth attached. */
 export async function getBlob(url: string): Promise<Blob> {
@@ -248,7 +222,6 @@ export function createClient() {
   return {
     apiCall: { invoke },
     entities,
-    auth,
   };
 }
 

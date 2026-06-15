@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { getAPIBaseURL } from './config';
-import { setToken, clearToken, getToken } from './atomsClient';
+import { setToken, clearToken, getToken } from './apiClient';
 
 export interface AuthUser {
   id: string;

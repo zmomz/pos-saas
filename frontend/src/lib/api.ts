@@ -1,4 +1,4 @@
-import { createClient, uploadMultipart, getBlob, getToken } from './atomsClient';
+import { createClient, uploadMultipart, getBlob, getToken } from './apiClient';
 import { getAPIBaseURL } from './config';
 
 export const client = createClient();

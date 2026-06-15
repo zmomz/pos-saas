@@ -56,7 +56,7 @@ const queryClient = new QueryClient();
 
 /**
  * Phase 3: surface production-hardening API responses to the user. The
- * atomsClient interceptor dispatches window events on 429 (rate-limited) and
+ * apiClient interceptor dispatches window events on 429 (rate-limited) and
  * 401-after-revocation; this listener turns them into toasts. The hard redirect
  * to /login on revocation is handled in the interceptor itself.
  */

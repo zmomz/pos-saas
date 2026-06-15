@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import { server, http, HttpResponse } from '../test/msw';
-import { createClient } from './atomsClient';
+import { createClient } from './apiClient';
 import { authApi } from './auth';
 
 // ISSUE-042 (H11) — there must be exactly one logout path, and it must revoke
@@ -19,9 +19,9 @@ afterAll(() => server.close());
 describe('logout (ISSUE-042)', () => {
   it('does not expose the divergent bodyless client.auth.logout shim [AC3]', () => {
     const client = createClient();
-    expect(
-      (client.auth as unknown as { logout?: unknown }).logout
-    ).toBeUndefined();
+    // The whole SDK `auth` shim is gone (ISSUE-095) — so there is no
+    // divergent `client.auth.logout` to drift from the canonical authApi.logout.
+    expect((client as unknown as { auth?: unknown }).auth).toBeUndefined();
   });
 
   it('authApi.logout revokes the refresh token and clears both keys [AC1/AC2]', async () => {

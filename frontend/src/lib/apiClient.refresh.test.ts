@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi, beforeEach } from 'vitest';
 import { server, http, HttpResponse } from '../test/msw';
-import { createClient, getToken } from './atomsClient';
+import { createClient, getToken } from './apiClient';
 
 // ISSUE-041: the 401 interceptor must attempt exactly one silent refresh and
 // replay the original request before clearing the session — so a user with a
