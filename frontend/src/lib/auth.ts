@@ -30,7 +30,9 @@ function clearRefreshToken() {
   localStorage.removeItem(REFRESH_TOKEN_KEY);
 }
 
-export function getRefreshToken(): string | null {
+// Module-private: the only consumers are refreshAccessToken() and logout()
+// below. Nothing outside auth.ts reads the refresh token directly.
+function getRefreshToken(): string | null {
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
 
