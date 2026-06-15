@@ -11,6 +11,8 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { client, receivePurchaseOrder, getBranches } from '@/lib/api';
+import ErrorState from '@/components/states/ErrorState';
+import PermissionDenied from '@/components/states/PermissionDenied';
 import { useLanguage } from '@/lib/i18n';
 import { Truck, Plus, Search, Package, ClipboardList, CheckCircle } from 'lucide-react';
 
@@ -82,6 +84,8 @@ export default function SupplierManagement() {
   const [branches, setBranches] = useState<{ id: string; name: string }[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [denied, setDenied] = useState(false);
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -97,7 +101,7 @@ export default function SupplierManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'suppliers' | 'orders'>('suppliers');
 
-  const { t } = useLanguage();
+  const { t, isRTL } = useLanguage();
 
   useEffect(() => {
     loadData();
@@ -105,6 +109,8 @@ export default function SupplierManagement() {
 
   async function loadData() {
     setLoading(true);
+    setError(false);
+    setDenied(false);
     try {
       const [suppRes, poRes, prodRes, branchData] = await Promise.all([
         client.entities.suppliers.query({ query: {}, limit: 200 }),
@@ -121,10 +127,19 @@ export default function SupplierManagement() {
       setProducts(prodList.map((p: { id: string | number; name: string }) => ({ id: String(p.id), name: p.name })));
       const branchList = Array.isArray(branchData?.items) ? branchData.items : Array.isArray(branchData) ? branchData : [];
       setBranches(branchList.map((b: { id: string | number; name: string }) => ({ id: String(b.id), name: b.name })));
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to load supplier data:', err);
       setSuppliers([]);
       setPurchaseOrders([]);
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      // 403 means the account lacks access to supplier management; show the
+      // in-page permission state rather than a misleading empty table (UX-02).
+      if (status === 403) {
+        setDenied(true);
+      } else {
+        // A real fetch failure must not masquerade as "no suppliers" (UX-02).
+        setError(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -373,32 +388,32 @@ export default function SupplierManagement() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Supplier Name *</label>
-          <Input value={formData.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder="Company name" className="bg-slate-700 border-slate-600 text-white" />
+          <label className="text-sm text-slate-400 mb-1 block">{t('supplier_name')} *</label>
+          <Input value={formData.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder={t('company_name')} className="bg-slate-700 border-slate-600 text-white" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Contact Person</label>
-          <Input value={formData.contact_person} onChange={(e) => handleFormChange('contact_person', e.target.value)} placeholder="Contact name" className="bg-slate-700 border-slate-600 text-white" />
+          <label className="text-sm text-slate-400 mb-1 block">{t('contact_person')}</label>
+          <Input value={formData.contact_person} onChange={(e) => handleFormChange('contact_person', e.target.value)} placeholder={t('contact_name_placeholder')} className="bg-slate-700 border-slate-600 text-white" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Email</label>
+          <label className="text-sm text-slate-400 mb-1 block">{t('email')}</label>
           <Input value={formData.email} onChange={(e) => handleFormChange('email', e.target.value)} placeholder="supplier@example.com" className="bg-slate-700 border-slate-600 text-white" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Phone</label>
+          <label className="text-sm text-slate-400 mb-1 block">{t('phone')}</label>
           <Input value={formData.phone} onChange={(e) => handleFormChange('phone', e.target.value)} placeholder="+966 5xx xxx xxxx" className="bg-slate-700 border-slate-600 text-white" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Payment Terms</label>
-          <Input value={formData.payment_terms} onChange={(e) => handleFormChange('payment_terms', e.target.value)} placeholder="Net 30" className="bg-slate-700 border-slate-600 text-white" />
+          <label className="text-sm text-slate-400 mb-1 block">{t('payment_terms')}</label>
+          <Input value={formData.payment_terms} onChange={(e) => handleFormChange('payment_terms', e.target.value)} placeholder={t('net30')} className="bg-slate-700 border-slate-600 text-white" />
         </div>
         <div>
           <label className="text-sm text-slate-400 mb-1 block">{t('vat_number')}</label>
           <Input value={formData.vat_number} onChange={(e) => handleFormChange('vat_number', e.target.value)} placeholder="300000000000003" className="bg-slate-700 border-slate-600 text-white" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Address</label>
-          <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder="Full address" className="bg-slate-700 border-slate-600 text-white" />
+          <label className="text-sm text-slate-400 mb-1 block">{t('address')}</label>
+          <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder={t('full_address_placeholder')} className="bg-slate-700 border-slate-600 text-white" />
         </div>
         <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
           {submitting ? t('loading') : submitLabel}
@@ -415,25 +430,33 @@ export default function SupplierManagement() {
     );
   }
 
+  if (denied) {
+    return <PermissionDenied />;
+  }
+
+  if (error) {
+    return <ErrorState message={t('suppliers_load_error')} onRetry={loadData} />;
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
             <Truck className="h-8 w-8 text-brand-400" />
             <div>
-              <p className="text-slate-400 text-sm">Total Suppliers</p>
+              <p className="text-slate-400 text-sm">{t('total_suppliers')}</p>
               <p className="text-2xl font-bold text-white">{suppliers.length}</p>
             </div>
           </CardContent>
         </Card>
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
-            <ClipboardList className="h-8 w-8 text-yellow-400" />
+            <ClipboardList className="h-8 w-8 text-amber-400" />
             <div>
-              <p className="text-slate-400 text-sm">Pending Orders</p>
-              <p className="text-2xl font-bold text-yellow-400">
+              <p className="text-slate-400 text-sm">{t('pending_orders')}</p>
+              <p className="text-2xl font-bold text-amber-400">
                 {purchaseOrders.filter((po) => po.status === 'draft' || po.status === 'sent').length}
               </p>
             </div>
@@ -443,7 +466,7 @@ export default function SupplierManagement() {
           <CardContent className="p-4 flex items-center gap-3">
             <CheckCircle className="h-8 w-8 text-green-400" />
             <div>
-              <p className="text-slate-400 text-sm">Received This Month</p>
+              <p className="text-slate-400 text-sm">{t('received_this_month')}</p>
               <p className="text-2xl font-bold text-green-400">
                 {purchaseOrders.filter((po) => {
                   if (po.status !== 'received' || !po.received_date) return false;
@@ -460,10 +483,10 @@ export default function SupplierManagement() {
       {/* Tabs */}
       <div className="flex gap-2">
         <Button variant={activeTab === 'suppliers' ? 'default' : 'outline'} onClick={() => setActiveTab('suppliers')} className={activeTab === 'suppliers' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
-          Suppliers
+          {t('suppliers')}
         </Button>
         <Button variant={activeTab === 'orders' ? 'default' : 'outline'} onClick={() => setActiveTab('orders')} className={activeTab === 'orders' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
-          Purchase Orders
+          {t('purchase_orders')}
         </Button>
       </div>
 
@@ -472,20 +495,20 @@ export default function SupplierManagement() {
           {/* Search + Add */}
           <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search suppliers..." className="pl-10 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500" />
+              <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('search_suppliers')} className="ps-10 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500" />
             </div>
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger asChild>
                 <Button onClick={() => setFormData(emptySupplierForm)} className="bg-brand-600 hover:bg-brand-700 text-white">
-                  <Plus className="h-4 w-4 mr-2" /> Add Supplier
+                  <Plus className="h-4 w-4 me-2" /> {t('add_supplier')}
                 </Button>
               </DialogTrigger>
               <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
-                  <DialogTitle className="text-white">Add New Supplier</DialogTitle>
+                  <DialogTitle className="text-white">{t('add_new_supplier')}</DialogTitle>
                 </DialogHeader>
-                {renderSupplierForm(handleAddSupplier, 'Add Supplier')}
+                {renderSupplierForm(handleAddSupplier, t('add_supplier'))}
               </DialogContent>
             </Dialog>
           </div>
@@ -495,20 +518,20 @@ export default function SupplierManagement() {
             <table className="w-full text-sm">
               <thead className="bg-slate-800">
                 <tr className="text-slate-400">
-                  <th className="p-3 text-start">Name</th>
-                  <th className="p-3 text-start">Contact</th>
-                  <th className="p-3 text-start">Email</th>
-                  <th className="p-3 text-start">Phone</th>
+                  <th className="p-3 text-start">{t('name')}</th>
+                  <th className="p-3 text-start">{t('contact')}</th>
+                  <th className="p-3 text-start">{t('email')}</th>
+                  <th className="p-3 text-start">{t('phone')}</th>
                   <th className="p-3 text-start">{t('vat_number')}</th>
-                  <th className="p-3 text-start">Terms</th>
-                  <th className="p-3 text-start">Status</th>
-                  <th className="p-3 text-start">Actions</th>
+                  <th className="p-3 text-start">{t('terms')}</th>
+                  <th className="p-3 text-start">{t('status')}</th>
+                  <th className="p-3 text-start">{t('actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredSuppliers.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-6 text-center text-slate-500">No suppliers found</td>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">{t('no_suppliers_found')}</td>
                   </tr>
                 ) : (
                   filteredSuppliers.map((supplier) => (
@@ -522,11 +545,11 @@ export default function SupplierManagement() {
                       <td className="p-3">{getStatusBadge(supplier.status || 'active')}</td>
                       <td className="p-3">
                         <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => openEdit(supplier)} className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs">Edit</Button>
+                          <Button size="sm" variant="outline" onClick={() => openEdit(supplier)} className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs">{t('edit')}</Button>
                           <Button size="sm" variant="outline" onClick={() => openCreatePO(supplier)} className="border-brand-600/50 text-brand-400 hover:bg-brand-600/20 text-xs">
-                            <Package className="h-3 w-3 mr-1" /> PO
+                            <Package className="h-3 w-3 me-1" /> {t('po_short')}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => { setSelectedSupplier(supplier); setDeleteOpen(true); }} className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs">Delete</Button>
+                          <Button size="sm" variant="outline" onClick={() => { setSelectedSupplier(supplier); setDeleteOpen(true); }} className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs">{t('delete')}</Button>
                         </div>
                       </td>
                     </tr>
@@ -543,19 +566,19 @@ export default function SupplierManagement() {
           <table className="w-full text-sm">
             <thead className="bg-slate-800">
               <tr className="text-slate-400">
-                <th className="p-3 text-start">Order ID</th>
-                <th className="p-3 text-start">Supplier</th>
-                <th className="p-3 text-start">Items</th>
-                <th className="p-3 text-start">Total</th>
-                <th className="p-3 text-start">Status</th>
-                <th className="p-3 text-start">Date</th>
-                <th className="p-3 text-start">Actions</th>
+                <th className="p-3 text-start">{t('order_id')}</th>
+                <th className="p-3 text-start">{t('supplier')}</th>
+                <th className="p-3 text-start">{t('items_label')}</th>
+                <th className="p-3 text-start">{t('total')}</th>
+                <th className="p-3 text-start">{t('status')}</th>
+                <th className="p-3 text-start">{t('date')}</th>
+                <th className="p-3 text-start">{t('actions')}</th>
               </tr>
             </thead>
             <tbody>
               {purchaseOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500">No purchase orders</td>
+                  <td colSpan={7} className="p-6 text-center text-slate-500">{t('no_purchase_orders')}</td>
                 </tr>
               ) : (
                 purchaseOrders.map((po) => (
@@ -586,7 +609,7 @@ export default function SupplierManagement() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">Edit Supplier</DialogTitle>
+            <DialogTitle className="text-white">{t('edit_supplier')}</DialogTitle>
           </DialogHeader>
           {renderSupplierForm(handleEditSupplier, t('save'))}
         </DialogContent>
@@ -596,7 +619,7 @@ export default function SupplierManagement() {
       <Dialog open={poOpen} onOpenChange={setPoOpen}>
         <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-white">Create Purchase Order - {selectedSupplier?.name}</DialogTitle>
+            <DialogTitle className="text-white">{t('create_purchase_order')} - {selectedSupplier?.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {poForm.items.map((item, idx) => (
@@ -615,11 +638,11 @@ export default function SupplierManagement() {
                   </select>
                 </div>
                 <div className="w-20">
-                  <label className="text-xs text-slate-400">Qty</label>
+                  <label className="text-xs text-slate-400">{t('qty')}</label>
                   <Input type="number" value={item.quantity} onChange={(e) => updatePOItem(idx, 'quantity', parseInt(e.target.value) || 0)} className="bg-slate-700 border-slate-600 text-white text-sm" />
                 </div>
                 <div className="w-24">
-                  <label className="text-xs text-slate-400">Price</label>
+                  <label className="text-xs text-slate-400">{t('price')}</label>
                   <Input type="number" value={item.unit_price} onChange={(e) => updatePOItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="bg-slate-700 border-slate-600 text-white text-sm" />
                 </div>
                 {poForm.items.length > 1 && (
@@ -628,13 +651,13 @@ export default function SupplierManagement() {
               </div>
             ))}
             <Button variant="outline" onClick={addPOItem} className="border-slate-600 text-slate-300 hover:bg-slate-700 text-sm w-full">
-              + Add Item
+              + {t('add_item')}
             </Button>
             <div className="border-t border-slate-700 pt-3">
-              <p className="text-slate-400 text-sm">Total: <span className="text-white font-bold">SAR {poForm.items.reduce((s, i) => s + i.quantity * i.unit_price, 0).toFixed(2)}</span></p>
+              <p className="text-slate-400 text-sm">{t('total')}: <span className="text-white font-bold">SAR {poForm.items.reduce((s, i) => s + i.quantity * i.unit_price, 0).toFixed(2)}</span></p>
             </div>
             <Button onClick={handleCreatePO} disabled={submitting || poForm.items.some((i) => !i.product_id)} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
-              {submitting ? t('loading') : 'Create Purchase Order'}
+              {submitting ? t('loading') : t('create_purchase_order')}
             </Button>
           </div>
         </DialogContent>
@@ -703,15 +726,15 @@ export default function SupplierManagement() {
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent className="bg-slate-800 border-slate-700 text-white">
           <DialogHeader>
-            <DialogTitle className="text-white">Confirm Delete</DialogTitle>
+            <DialogTitle className="text-white">{t('confirm_delete')}</DialogTitle>
           </DialogHeader>
           <p className="text-slate-300">
-            Are you sure you want to delete <strong>{selectedSupplier?.name}</strong>?
+            {t('delete_supplier_confirm')} <strong>{selectedSupplier?.name}</strong>?
           </p>
           <div className="flex gap-3 pt-4">
             <Button variant="outline" onClick={() => setDeleteOpen(false)} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700">{t('cancel')}</Button>
             <Button onClick={handleDeleteSupplier} disabled={submitting} className="flex-1 bg-red-600 hover:bg-red-700 text-white">
-              {submitting ? t('loading') : 'Delete'}
+              {submitting ? t('loading') : t('delete')}
             </Button>
           </div>
         </DialogContent>
