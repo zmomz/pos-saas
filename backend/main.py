@@ -1,7 +1,6 @@
 import importlib
 import logging
 import os
-import pkgutil
 import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -170,12 +169,17 @@ except Exception as _exc:  # pragma: no cover - static serving is best-effort
     logging.getLogger(__name__).warning("Static /uploads mount skipped: %s", _exc)
 
 
-# Auto-discover and include all routers from the local `routers` package
+# Include routers from the local `routers` package, driven by an EXPLICIT
+# allowlist (ISSUE-009) rather than blanket discovery.
 def include_routers_from_package(app: FastAPI, package_name: str = "routers") -> None:
-    """Discover and include all APIRouter objects from a package.
+    """Include the APIRouter objects from the package's registered modules.
 
-    This scans the given package (and subpackages) for module-level variables that
-    are instances of FastAPI's APIRouter. It supports "router", "admin_router" names.
+    Mounting is gated by ``<package>.REGISTERED_MODULES`` — an explicit, reviewed
+    tuple of module short names. A module is imported and mounted ONLY if it is
+    named there; a newly-generated ``routers/*.py`` cannot auto-ship on the API
+    without a conscious decision (the §4 / theme-#1 audit finding). Within each
+    listed module we mount the ``router``/``admin_router`` attributes (APIRouter
+    or a list/tuple thereof).
     """
 
     logger = logging.getLogger(__name__)
@@ -186,15 +190,18 @@ def include_routers_from_package(app: FastAPI, package_name: str = "routers") ->
         logger.debug("Routers package '%s' not loaded: %s", package_name, exc)
         return
 
+    registered = getattr(pkg, "REGISTERED_MODULES", None)
+    if not registered:
+        logger.warning("Package '%s' has no REGISTERED_MODULES allowlist; mounting nothing.", package_name)
+        return
+
     discovered: int = 0
-    for _finder, module_name, is_pkg in pkgutil.walk_packages(pkg.__path__, pkg.__name__ + "."):
-        # Only import leaf modules; subpackages will be walked automatically
-        if is_pkg:
-            continue
+    for short_name in registered:
+        module_name = f"{package_name}.{short_name}"
         try:
             module = importlib.import_module(module_name)
         except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Failed to import module '%s': %s", module_name, exc)
+            logger.warning("Failed to import registered router '%s': %s", module_name, exc)
             continue
 
         # Check for router variable names: router and admin_router
@@ -216,7 +223,7 @@ def include_routers_from_package(app: FastAPI, package_name: str = "routers") ->
                         logger.info("Included router from list: %s.%s[%d]", module_name, attr_name, idx)
 
     if discovered == 0:
-        logger.debug("No routers discovered in package '%s'", package_name)
+        logger.debug("No routers mounted from package '%s'", package_name)
 
 
 # Setup logging before router discovery
