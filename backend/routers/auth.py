@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 from typing import Optional
 
 from core.auth import AccessTokenError, create_mfa_token, decode_access_token
@@ -24,6 +25,9 @@ from schemas.auth import (
     RefreshRequest,
     RefreshResponse,
     RegisterRequest,
+    RevokeSessionsResponse,
+    SessionInfo,
+    SessionListResponse,
     UserResponse,
 )
 from services.auth import AuthService
@@ -35,6 +39,13 @@ from services.login_throttle import (
     clear_login_attempts,
     register_failed_login,
 )
+from services.sessions import (
+    list_active_sessions,
+    record_session,
+    revoke_other_sessions,
+    revoke_session,
+    touch_session,
+)
 from services.token_revocation import is_token_revoked, revoke_token
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,10 +53,32 @@ router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 logger = logging.getLogger(__name__)
 
 
-async def _issue_login_response(service: "AuthService", user) -> LoginResponse:
-    """Mint an access + refresh token pair and shape the standard login payload."""
-    token, expires_at, _ = await service.issue_app_token(user)
-    refresh_token = service.issue_refresh_token(user)
+async def _issue_login_response(
+    service: "AuthService", user, request: Optional[Request] = None
+) -> LoginResponse:
+    """Mint an access + refresh token pair and shape the standard login payload.
+
+    Each pair is bound to a session (ISSUE-083): the refresh token's ``jti`` is
+    recorded as a :class:`UserSession` so the user can list/revoke it, and the
+    access token carries the same value as its ``sid`` claim so the session it
+    belongs to can be flagged "current".
+    """
+    sid = uuid.uuid4().hex
+    token, expires_at, _ = await service.issue_app_token(user, sid=sid)
+    refresh_token = service.issue_refresh_token(user, jti=sid)
+
+    refresh_exp = _refresh_token_exp(refresh_token)
+    user_agent = request.headers.get("user-agent") if request else None
+    ip_address = (request.client.host if request and request.client else None)
+    await record_session(
+        service.db,
+        user_id=user.id,
+        jti=sid,
+        user_agent=user_agent,
+        ip_address=ip_address,
+        expires_at=refresh_exp,
+    )
+
     return LoginResponse(
         token=token,
         expires_at=int(expires_at.timestamp()),
@@ -54,8 +87,16 @@ async def _issue_login_response(service: "AuthService", user) -> LoginResponse:
     )
 
 
+def _refresh_token_exp(refresh_token: str) -> Optional[int]:
+    """Best-effort read of a refresh token's ``exp`` (seconds) for session metadata."""
+    try:
+        return decode_access_token(refresh_token).get("exp")
+    except AccessTokenError:
+        return None
+
+
 @router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)):
+async def register(payload: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Register a new local user and return an access token.
 
     Note: in this multi-tenant POS, self-registered users default to the
@@ -80,7 +121,7 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
-    return await _issue_login_response(service, user)
+    return await _issue_login_response(service, user, request)
 
 
 @router.post("/login")
@@ -121,11 +162,11 @@ async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depe
         ticket = create_mfa_token({"sub": user.id})
         return MfaChallengeResponse(mfa_required=True, mfa_token=ticket)
 
-    return await _issue_login_response(service, user)
+    return await _issue_login_response(service, user, request)
 
 
 @router.post("/login/mfa", response_model=LoginResponse)
-async def login_mfa(payload: MfaLoginRequest, db: AsyncSession = Depends(get_db)):
+async def login_mfa(payload: MfaLoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Complete an MFA login: exchange the challenge ticket + a code for tokens (#81).
 
     ``code`` may be a current TOTP code or a single-use recovery code.
@@ -153,7 +194,7 @@ async def login_mfa(payload: MfaLoginRequest, db: AsyncSession = Depends(get_db)
             detail="Invalid verification code",
         )
 
-    return await _issue_login_response(service, user)
+    return await _issue_login_response(service, user, request)
 
 
 def _is_dev() -> bool:
@@ -232,8 +273,82 @@ async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_
             detail="This session is no longer valid. Please sign in again.",
         )
 
-    token, expires_at, _ = await service.issue_app_token(user)
+    # Keep the new access token bound to the same session (#83) and record use.
+    sid = claims.get("jti")
+    await touch_session(db, sid)
+    token, expires_at, _ = await service.issue_app_token(user, sid=sid)
     return RefreshResponse(token=token, expires_at=int(expires_at.timestamp()))
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+async def list_sessions(
+    current_user: UserResponse = Depends(get_current_user),
+    token: str = Depends(get_bearer_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's active sessions (#83).
+
+    Each session is an issued refresh token; the one the calling access token was
+    minted from is flagged ``current`` (via its ``sid`` claim).
+    """
+    current_sid = None
+    try:
+        current_sid = decode_access_token(token).get("sid")
+    except AccessTokenError:
+        pass
+
+    sessions = await list_active_sessions(db, current_user.id)
+    return SessionListResponse(
+        sessions=[
+            SessionInfo(
+                id=s.jti,
+                current=(s.jti == current_sid),
+                user_agent=s.user_agent,
+                ip_address=s.ip_address,
+                created_at=s.created_at,
+                last_used_at=s.last_used_at,
+            )
+            for s in sessions
+        ]
+    )
+
+
+@router.delete("/sessions/others", response_model=RevokeSessionsResponse)
+async def revoke_other_sessions_endpoint(
+    current_user: UserResponse = Depends(get_current_user),
+    token: str = Depends(get_bearer_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke every session except the caller's current one (#83)."""
+    current_sid = None
+    try:
+        current_sid = decode_access_token(token).get("sid")
+    except AccessTokenError:
+        pass
+
+    revoked = await revoke_other_sessions(db, current_user.id, current_sid)
+    return RevokeSessionsResponse(success=True, revoked=revoked)
+
+
+@router.delete("/sessions/{session_id}", response_model=RevokeSessionsResponse)
+async def revoke_session_endpoint(
+    session_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke one of the caller's sessions by id (#83).
+
+    Revoking blocklists the session's refresh token, so a subsequent
+    ``/auth/refresh`` with it fails. Unknown / already-revoked / not-owned
+    session ids return 404.
+    """
+    ok = await revoke_session(db, current_user.id, session_id)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No such active session.",
+        )
+    return RevokeSessionsResponse(success=True, revoked=1)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -338,6 +453,11 @@ async def logout(
         expires_at=claims.get("exp"),
         reason="logout",
     )
+
+    # Drop the session this access token belongs to (#83) so it no longer shows
+    # as active and its refresh token is blocklisted in one shot.
+    if claims.get("sid") and claims.get("sub"):
+        await revoke_session(db, claims["sub"], claims["sid"])
 
     if body and body.refresh_token:
         try:

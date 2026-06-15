@@ -62,8 +62,15 @@ class AuthService:
         await self.db.refresh(user)
         return user
 
-    async def issue_app_token(self, user: User) -> Tuple[str, datetime, Dict[str, Any]]:
-        """Generate application JWT token for the authenticated user."""
+    async def issue_app_token(
+        self, user: User, sid: Optional[str] = None
+    ) -> Tuple[str, datetime, Dict[str, Any]]:
+        """Generate application JWT token for the authenticated user.
+
+        ``sid`` ties the access token to the session (refresh-token ``jti``) it
+        was minted from, so active-session management (ISSUE-083) can flag the
+        caller's *current* session and exclude it from "revoke all others".
+        """
         try:
             expires_minutes = int(getattr(settings, "jwt_expire_minutes", 1440))
         except (TypeError, ValueError):
@@ -84,17 +91,25 @@ class AuthService:
             claims["name"] = user.name
         if user.last_login:
             claims["last_login"] = user.last_login.isoformat()
+        if sid:
+            claims["sid"] = sid
 
         token = create_access_token(claims, expires_minutes=expires_minutes)
         return token, expires_at, claims
 
-    def issue_refresh_token(self, user: User) -> str:
-        """Generate a long-lived refresh token for the user."""
+    def issue_refresh_token(self, user: User, jti: Optional[str] = None) -> str:
+        """Generate a long-lived refresh token for the user.
+
+        When ``jti`` is supplied it becomes the token's id, so the caller can
+        register a matching :class:`UserSession` and later revoke it (#83).
+        """
         claims: Dict[str, Any] = {
             "sub": user.id,
             "email": user.email,
             "sv": int(getattr(user, "token_version", 0) or 0),
         }
+        if jti:
+            claims["jti"] = jti
         return create_refresh_token(claims)
 
     async def get_user_by_id(self, user_id: str) -> Optional[User]:

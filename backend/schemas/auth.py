@@ -89,6 +89,30 @@ class PasswordResetConfirm(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class SessionInfo(BaseModel):
+    """One active session (an issued refresh token) for the management UI (#83)."""
+
+    id: str  # the session identifier (refresh-token jti) — pass to DELETE to revoke
+    current: bool = False  # True for the session the calling access token belongs to
+    user_agent: Optional[str] = None
+    ip_address: Optional[str] = None
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+
+
+class SessionListResponse(BaseModel):
+    """The caller's active sessions."""
+
+    sessions: list[SessionInfo]
+
+
+class RevokeSessionsResponse(BaseModel):
+    """Result of revoking sessions (single or all-but-current)."""
+
+    success: bool = True
+    revoked: int = 1
+
+
 class NotificationPrefs(BaseModel):
     """Per-user notification toggles. Defaults mirror the prior frontend defaults."""
 
