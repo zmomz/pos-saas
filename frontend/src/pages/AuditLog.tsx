@@ -10,6 +10,8 @@ import {
 } from '@/components/ui/select';
 import { getAuditLogs } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import ErrorState from '@/components/states/ErrorState';
+import PermissionDenied from '@/components/states/PermissionDenied';
 import { Shield, Clock, Filter } from 'lucide-react';
 
 interface AuditEntry {
@@ -36,15 +38,6 @@ const ACTION_TYPES = [
   'other',
 ];
 
-// Human-readable label for a normalized verb (e.g. `auth_failure` → "Auth Failure").
-function actionLabel(action: string): string {
-  if (action === 'all') return 'All Actions';
-  return action
-    .split('_')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-}
-
 // Tailwind classes for an action badge, by verb. Destructive/security verbs are
 // red, additive green, mutating yellow, auth login brand; everything else neutral.
 function actionBadgeClass(action: string): string {
@@ -67,11 +60,20 @@ function actionBadgeClass(action: string): string {
 export default function AuditLog() {
   const [logs, setLogs] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [denied, setDenied] = useState(false);
   const [actionFilter, setActionFilter] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  const { t } = useLanguage();
+  const { t, isRTL } = useLanguage();
+
+  // Translated label for a normalized verb (e.g. `auth_failure` → "Auth Failure").
+  // `all` maps to the catch-all "All Actions" sentinel.
+  function actionLabel(action: string): string {
+    if (action === 'all') return t('audit_all_actions');
+    return t(`audit_act_${action}`);
+  }
 
   useEffect(() => {
     loadLogs();
@@ -79,12 +81,23 @@ export default function AuditLog() {
 
   async function loadLogs() {
     setLoading(true);
+    setError(false);
+    setDenied(false);
     try {
       const data = await getAuditLogs();
       setLogs(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to load audit logs:', err);
       setLogs([]);
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      // 403 means the account lacks access to the audit log; show the in-page
+      // permission state rather than a misleading empty table (UX-02).
+      if (status === 403) {
+        setDenied(true);
+      } else {
+        // A real fetch failure must not masquerade as "no entries" (UX-02).
+        setError(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -107,21 +120,39 @@ export default function AuditLog() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="text-white animate-pulse">{t('loading')}</div>
       </div>
     );
   }
 
+  if (denied) {
+    return (
+      <div dir={isRTL ? 'rtl' : 'ltr'}>
+        <PermissionDenied />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div dir={isRTL ? 'rtl' : 'ltr'}>
+        <ErrorState onRetry={loadLogs} />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Header Card */}
       <Card className="bg-slate-800 border-slate-700">
         <CardContent className="p-4 flex items-center gap-3">
           <Shield className="h-8 w-8 text-brand-400" />
           <div>
-            <h2 className="text-lg font-bold text-white">Audit Log</h2>
-            <p className="text-slate-400 text-sm">{logs.length} total entries</p>
+            <h2 className="text-lg font-bold text-white">{t('audit_log')}</h2>
+            <p className="text-slate-400 text-sm">
+              {logs.length} {t('audit_total_entries')}
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -130,11 +161,11 @@ export default function AuditLog() {
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-slate-400" />
-          <span className="text-sm text-slate-400">Filter:</span>
+          <span className="text-sm text-slate-400">{t('audit_filter')}:</span>
         </div>
         <Select value={actionFilter} onValueChange={setActionFilter}>
           <SelectTrigger className="w-40 bg-slate-800 border-slate-600 text-white">
-            <SelectValue placeholder="Action type" />
+            <SelectValue placeholder={t('audit_action_type')} />
           </SelectTrigger>
           <SelectContent className="bg-slate-800 border-slate-600">
             {ACTION_TYPES.map((action) => (
@@ -148,17 +179,19 @@ export default function AuditLog() {
           <Clock className="h-4 w-4 text-slate-400" />
           <Input
             type="date"
+            dir="ltr"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            placeholder="From"
+            placeholder={t('audit_from')}
             className="w-40 bg-slate-800 border-slate-600 text-white"
           />
           <span className="text-slate-400">—</span>
           <Input
             type="date"
+            dir="ltr"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            placeholder="To"
+            placeholder={t('audit_to')}
             className="w-40 bg-slate-800 border-slate-600 text-white"
           />
         </div>
@@ -169,24 +202,24 @@ export default function AuditLog() {
         <table className="w-full text-sm">
           <thead className="bg-slate-800">
             <tr className="text-slate-400">
-              <th className="p-3 text-start">Timestamp</th>
-              <th className="p-3 text-start">User</th>
-              <th className="p-3 text-start">Action</th>
-              <th className="p-3 text-start">Details</th>
-              <th className="p-3 text-start">IP Address</th>
+              <th className="p-3 text-start">{t('audit_col_timestamp')}</th>
+              <th className="p-3 text-start">{t('audit_col_user')}</th>
+              <th className="p-3 text-start">{t('audit_col_action')}</th>
+              <th className="p-3 text-start">{t('audit_col_details')}</th>
+              <th className="p-3 text-start">{t('audit_col_ip')}</th>
             </tr>
           </thead>
           <tbody>
             {filteredLogs.length === 0 ? (
               <tr>
                 <td colSpan={5} className="p-6 text-center text-slate-500">
-                  No audit entries found
+                  {t('no_audit_entries')}
                 </td>
               </tr>
             ) : (
               filteredLogs.map((log) => (
                 <tr key={log.id} className="border-t border-slate-700 text-slate-300">
-                  <td className="p-3 text-xs whitespace-nowrap">
+                  <td className="p-3 text-xs whitespace-nowrap" dir="ltr">
                     {log.created_at ? new Date(log.created_at).toLocaleString() : '—'}
                   </td>
                   <td className="p-3">{log.user_email || '—'}</td>
@@ -200,7 +233,9 @@ export default function AuditLog() {
                     </span>
                   </td>
                   <td className="p-3 max-w-[300px] truncate">{log.details || '—'}</td>
-                  <td className="p-3 text-xs text-slate-500">{log.ip_address || '—'}</td>
+                  <td className="p-3 text-xs text-slate-500" dir="ltr">
+                    {log.ip_address || '—'}
+                  </td>
                 </tr>
               ))
             )}
