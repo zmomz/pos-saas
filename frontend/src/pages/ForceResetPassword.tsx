@@ -23,7 +23,7 @@ import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
  */
 export default function ForceResetPassword() {
   const { user, refetch, logout } = useAuth();
-  const { t, language, setLanguage } = useLanguage();
+  const { t, language, setLanguage, isRTL } = useLanguage();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -55,11 +55,11 @@ export default function ForceResetPassword() {
   async function handleSubmit() {
     setError(null);
     if (newPassword.length < 8) {
-      setError(t('password_too_short') || 'Password must be at least 8 characters.');
+      setError(t('password_too_short'));
       return;
     }
     if (newPassword !== confirm) {
-      setError(t('passwords_do_not_match') || 'Passwords do not match.');
+      setError(t('passwords_do_not_match'));
       return;
     }
     setSubmitting(true);
@@ -75,24 +75,27 @@ export default function ForceResetPassword() {
     } catch (err) {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(detail || (err instanceof Error ? err.message : 'Failed to change password.'));
+      setError(detail || (err instanceof Error ? err.message : t('change_password_failed')));
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-900 p-4">
+    <div
+      dir={isRTL ? 'rtl' : 'ltr'}
+      className="min-h-screen flex items-center justify-center bg-slate-900 p-4"
+    >
       <Card className="w-full max-w-md bg-slate-800 border-slate-700">
         <CardHeader>
           <CardTitle className="text-white">
-            {t('set_new_password') || 'Set a new password'}
+            {t('set_new_password')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-slate-300">
-            {t('first_login_reset_prompt') ||
-              `Welcome${user?.name ? `, ${user.name}` : ''}. For security you must replace your temporary password before continuing.`}
+            {user?.name ? `${user.name} — ` : ''}
+            {t('first_login_reset_prompt')}
           </p>
 
           {/* CL-02: guided first-login language step. Applies instantly via the
@@ -136,21 +139,21 @@ export default function ForceResetPassword() {
 
           <Input
             type="password"
-            placeholder={t('current_temp_password') || 'Current (temporary) password'}
+            placeholder={t('current_temp_password')}
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
             className="bg-slate-700 border-slate-600 text-white"
           />
           <Input
             type="password"
-            placeholder={t('new_password') || 'New password'}
+            placeholder={t('new_password')}
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             className="bg-slate-700 border-slate-600 text-white"
           />
           <Input
             type="password"
-            placeholder={t('confirm_password') || 'Confirm new password'}
+            placeholder={t('confirm_password')}
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             className="bg-slate-700 border-slate-600 text-white"
@@ -162,14 +165,14 @@ export default function ForceResetPassword() {
               onClick={() => logout()}
               className="border-slate-600 text-slate-300"
             >
-              {t('logout') || 'Logout'}
+              {t('logout')}
             </Button>
             <Button
               onClick={handleSubmit}
               disabled={submitting}
               className="bg-brand-600 hover:bg-brand-700 text-white"
             >
-              {submitting ? (t('saving') || 'Saving...') : (t('save') || 'Save')}
+              {submitting ? t('saving') : t('save')}
             </Button>
           </div>
         </CardContent>

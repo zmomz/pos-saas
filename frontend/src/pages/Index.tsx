@@ -16,7 +16,7 @@ const roleToPath: Record<string, string> = {
 
 export default function Index() {
   const navigate = useNavigate();
-  const { t, language, setLanguage } = useLanguage();
+  const { t, language, setLanguage, isRTL } = useLanguage();
   const { user, loading, login, register } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -45,7 +45,7 @@ export default function Index() {
       }
       // Navigation happens in the effect above once `user` is set.
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed');
+      setError(err instanceof Error ? err.message : t('auth_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -53,14 +53,17 @@ export default function Index() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
+      <div
+        dir={isRTL ? 'rtl' : 'ltr'}
+        className="min-h-screen bg-slate-900 flex items-center justify-center"
+      >
         <div className="text-white text-lg animate-pulse">{t('loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col">
+    <div dir={isRTL ? 'rtl' : 'ltr'} className="min-h-screen bg-slate-900 flex flex-col">
       <header className="flex items-center justify-between p-4 border-b border-slate-700">
         <h1 className="text-xl font-bold text-white">{t('app_name')}</h1>
         <Select value={language} onValueChange={(v) => setLanguage(v as never)}>
@@ -87,7 +90,7 @@ export default function Index() {
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
               {mode === 'register' && (
                 <div className="flex flex-col gap-2">
-                  <Label htmlFor="name" className="text-slate-300">Name</Label>
+                  <Label htmlFor="name" className="text-slate-300">{t('name')}</Label>
                   <Input
                     id="name"
                     value={name}
@@ -108,7 +111,7 @@ export default function Index() {
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="password" className="text-slate-300">{t('password') || 'Password'}</Label>
+                <Label htmlFor="password" className="text-slate-300">{t('password')}</Label>
                 <Input
                   id="password"
                   type="password"
@@ -126,7 +129,7 @@ export default function Index() {
                 disabled={submitting}
                 className="w-full bg-brand-600 hover:bg-brand-700 text-white"
               >
-                {submitting ? t('loading') : mode === 'login' ? t('login') : 'Create account'}
+                {submitting ? t('loading') : mode === 'login' ? t('login') : t('create_account')}
               </Button>
 
               <button
@@ -138,8 +141,8 @@ export default function Index() {
                 className="text-sm text-slate-400 hover:text-slate-200 underline"
               >
                 {mode === 'login'
-                  ? "Don't have an account? Register"
-                  : 'Already have an account? Sign in'}
+                  ? t('dont_have_account')
+                  : t('already_have_account')}
               </button>
             </form>
           </CardContent>
