@@ -26,6 +26,8 @@ import {
   setStaffPermission,
   type StaffPermission,
 } from '@/lib/api';
+import ErrorState from '@/components/states/ErrorState';
+import PermissionDenied from '@/components/states/PermissionDenied';
 import { useLanguage } from '@/lib/i18n';
 import { UserCheck, UserX, Users } from 'lucide-react';
 import { toast } from 'sonner';
@@ -59,6 +61,8 @@ const emptyForm: StaffFormData = {
 export default function StaffManagement() {
   const [staff, setStaff] = useState<StaffMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [denied, setDenied] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -71,7 +75,7 @@ export default function StaffManagement() {
   const [permsHasLogin, setPermsHasLogin] = useState(true);
   const [permsLoading, setPermsLoading] = useState(false);
 
-  const { t } = useLanguage();
+  const { t, isRTL } = useLanguage();
 
   useEffect(() => {
     loadStaff();
@@ -79,12 +83,23 @@ export default function StaffManagement() {
 
   async function loadStaff() {
     setLoading(true);
+    setError(false);
+    setDenied(false);
     try {
       const data = await getStaffMembers();
       setStaff(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []);
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Failed to load staff:', err);
       setStaff([]);
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      // 403 means the account lacks access to staff management; show the in-page
+      // permission state rather than a misleading empty table (UX-02). Any other
+      // failure is a real error, not "no staff".
+      if (status === 403) {
+        setDenied(true);
+      } else {
+        setError(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -224,25 +239,25 @@ export default function StaffManagement() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Name *</label>
+          <label className="text-sm text-slate-400 mb-1 block">{t('name')} *</label>
           <Input
             value={formData.name}
             onChange={(e) => handleFormChange('name', e.target.value)}
-            placeholder="Staff name"
+            placeholder={t('stf_name_ph')}
             className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Email</label>
+          <label className="text-sm text-slate-400 mb-1 block">{t('email')}</label>
           <Input
             value={formData.email}
             onChange={(e) => handleFormChange('email', e.target.value)}
-            placeholder="email@example.com"
+            placeholder={t('stf_email_ph')}
             className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Phone</label>
+          <label className="text-sm text-slate-400 mb-1 block">{t('phone')}</label>
           <Input
             value={formData.phone}
             onChange={(e) => handleFormChange('phone', e.target.value)}
@@ -251,15 +266,15 @@ export default function StaffManagement() {
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Role *</label>
+          <label className="text-sm text-slate-400 mb-1 block">{t('role')} *</label>
           <Select value={formData.role} onValueChange={(v) => handleFormChange('role', v)}>
             <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-slate-800 border-slate-600">
               {STAFF_ROLES.map((role) => (
-                <SelectItem key={role} value={role} className="text-white hover:bg-slate-700 capitalize">
-                  {role.charAt(0).toUpperCase() + role.slice(1)}
+                <SelectItem key={role} value={role} className="text-white hover:bg-slate-700">
+                  {t(`role_${role}`)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -286,15 +301,32 @@ export default function StaffManagement() {
     );
   }
 
+  // A 403 lacks access; any other failure is a real error — show the in-page
+  // state rather than a misleading empty table (UX-02).
+  if (denied) {
+    return (
+      <div dir={isRTL ? 'rtl' : 'ltr'}>
+        <PermissionDenied />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div dir={isRTL ? 'rtl' : 'ltr'}>
+        <ErrorState onRetry={loadStaff} />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-slate-800 border-slate-700">
           <CardContent className="p-4 flex items-center gap-3">
             <Users className="h-8 w-8 text-brand-400" />
             <div>
-              <p className="text-slate-400 text-sm">Total Staff</p>
+              <p className="text-slate-400 text-sm">{t('stf_total_staff')}</p>
               <p className="text-2xl font-bold text-white">{staff.length}</p>
             </div>
           </CardContent>
@@ -327,14 +359,14 @@ export default function StaffManagement() {
               onClick={() => setFormData(emptyForm)}
               className="bg-brand-600 hover:bg-brand-700 text-white"
             >
-              + Add Staff
+              + {t('stf_add_staff')}
             </Button>
           </DialogTrigger>
           <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle className="text-white">Add New Staff Member</DialogTitle>
+              <DialogTitle className="text-white">{t('stf_add_title')}</DialogTitle>
             </DialogHeader>
-            {renderForm(handleAddStaff, 'Add Staff')}
+            {renderForm(handleAddStaff, t('stf_add_staff'))}
           </DialogContent>
         </Dialog>
       </div>
@@ -344,19 +376,19 @@ export default function StaffManagement() {
         <table className="w-full text-sm">
           <thead className="bg-slate-800">
             <tr className="text-slate-400">
-              <th className="p-3 text-start">Name</th>
-              <th className="p-3 text-start">Email</th>
-              <th className="p-3 text-start">Phone</th>
-              <th className="p-3 text-start">Role</th>
+              <th className="p-3 text-start">{t('name')}</th>
+              <th className="p-3 text-start">{t('email')}</th>
+              <th className="p-3 text-start">{t('phone')}</th>
+              <th className="p-3 text-start">{t('role')}</th>
               <th className="p-3 text-start">{t('status')}</th>
-              <th className="p-3 text-start">Actions</th>
+              <th className="p-3 text-start">{t('actions')}</th>
             </tr>
           </thead>
           <tbody>
             {staff.length === 0 ? (
               <tr>
                 <td colSpan={6} className="p-6 text-center text-slate-500">
-                  No staff members found
+                  {t('stf_none')}
                 </td>
               </tr>
             ) : (
@@ -366,8 +398,8 @@ export default function StaffManagement() {
                   <td className="p-3">{member.email || '—'}</td>
                   <td className="p-3">{member.phone || '—'}</td>
                   <td className="p-3">
-                    <Badge className="bg-slate-700 text-slate-300 capitalize">
-                      {member.role}
+                    <Badge className="bg-slate-700 text-slate-300">
+                      {t(`role_${member.role}`)}
                     </Badge>
                   </td>
                   <td className="p-3">
@@ -393,7 +425,7 @@ export default function StaffManagement() {
                             : 'border-green-600/50 text-green-400 hover:bg-green-600/20'
                         }`}
                       >
-                        {member.is_active !== false ? 'Deactivate' : 'Activate'}
+                        {member.is_active !== false ? t('stf_deactivate') : t('stf_activate')}
                       </Button>
                       <Button
                         size="sm"
@@ -409,7 +441,7 @@ export default function StaffManagement() {
                         onClick={() => openEdit(member)}
                         className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
                       >
-                        Edit
+                        {t('edit')}
                       </Button>
                       <Button
                         size="sm"
@@ -417,7 +449,7 @@ export default function StaffManagement() {
                         onClick={() => openDelete(member)}
                         className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
                       >
-                        Delete
+                        {t('delete')}
                       </Button>
                     </div>
                   </td>
@@ -432,7 +464,7 @@ export default function StaffManagement() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">Edit Staff Member</DialogTitle>
+            <DialogTitle className="text-white">{t('stf_edit_title')}</DialogTitle>
           </DialogHeader>
           {renderForm(handleEditStaff, t('save'))}
         </DialogContent>
@@ -442,11 +474,10 @@ export default function StaffManagement() {
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent className="bg-slate-800 border-slate-700 text-white">
           <DialogHeader>
-            <DialogTitle className="text-white">Confirm Delete</DialogTitle>
+            <DialogTitle className="text-white">{t('stf_confirm_delete')}</DialogTitle>
           </DialogHeader>
           <p className="text-slate-300">
-            Are you sure you want to delete <strong>{selectedStaff?.name}</strong>? This action
-            cannot be undone.
+            {t('stf_delete_q')} <strong>{selectedStaff?.name}</strong>? {t('stf_delete_warn')}
           </p>
           <div className="flex gap-3 pt-4">
             <Button
@@ -461,7 +492,7 @@ export default function StaffManagement() {
               disabled={submitting}
               className="flex-1 bg-red-600 hover:bg-red-700 text-white"
             >
-              {submitting ? t('loading') : 'Delete'}
+              {submitting ? t('loading') : t('delete')}
             </Button>
           </div>
         </DialogContent>

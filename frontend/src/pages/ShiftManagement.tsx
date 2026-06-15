@@ -17,6 +17,8 @@ import {
   type CashMovement,
   type CashMovementType,
 } from '@/lib/api';
+import ErrorState from '@/components/states/ErrorState';
+import PermissionDenied from '@/components/states/PermissionDenied';
 import { useLanguage } from '@/lib/i18n';
 import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle } from 'lucide-react';
 
@@ -67,6 +69,8 @@ export default function ShiftManagement() {
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
   const [shiftHistory, setShiftHistory] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [denied, setDenied] = useState(false);
   const [openShiftDialog, setOpenShiftDialog] = useState(false);
   const [closeShiftDialog, setCloseShiftDialog] = useState(false);
   const [openingCash, setOpeningCash] = useState('');
@@ -82,7 +86,7 @@ export default function ShiftManagement() {
   const [movementReason, setMovementReason] = useState('');
   const [movementError, setMovementError] = useState<string | null>(null);
 
-  const { t } = useLanguage();
+  const { t, isRTL } = useLanguage();
 
   useEffect(() => {
     loadShiftData();
@@ -90,6 +94,8 @@ export default function ShiftManagement() {
 
   async function loadShiftData() {
     setLoading(true);
+    setError(false);
+    setDenied(false);
     try {
       const currentRes = await client.apiCall.invoke({
         url: '/api/v1/production/shifts/current',
@@ -114,9 +120,21 @@ export default function ShiftManagement() {
         setCurrentShift(null);
         setMovements([]);
       }
-    } catch {
+    } catch (err: unknown) {
       setCurrentShift(null);
       setMovements([]);
+      // 403 means the account lacks access to shift management; any other failure
+      // is a real error. Either way, surface the in-page state instead of a blank
+      // shift card and stop — the history read would only repeat the failure (UX-02).
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 403) {
+        setDenied(true);
+      } else {
+        setError(true);
+      }
+      setShiftHistory([]);
+      setLoading(false);
+      return;
     }
     try {
       const historyRes = await client.apiCall.invoke({
@@ -241,14 +259,31 @@ export default function ShiftManagement() {
     );
   }
 
+  // A 403 lacks access; any other failure is a real error — show the in-page
+  // state rather than a blank shift card (UX-02).
+  if (denied) {
+    return (
+      <div dir={isRTL ? 'rtl' : 'ltr'}>
+        <PermissionDenied />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div dir={isRTL ? 'rtl' : 'ltr'}>
+        <ErrorState onRetry={loadShiftData} />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Current Shift Status */}
       <Card className="bg-slate-800 border-slate-700">
         <CardHeader>
           <CardTitle className="text-white flex items-center gap-2">
             <Clock className="h-5 w-5 text-brand-400" />
-            Current Shift
+            {t('sm_current_shift')}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -256,29 +291,31 @@ export default function ShiftManagement() {
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                 <div className="bg-slate-700/50 rounded-lg p-3">
-                  <p className="text-slate-400 text-xs">Started</p>
+                  <p className="text-slate-400 text-xs">{t('sm_started')}</p>
                   <p className="text-white font-medium">{new Date(currentShift.opened_at).toLocaleTimeString()}</p>
                 </div>
                 <div className="bg-slate-700/50 rounded-lg p-3">
-                  <p className="text-slate-400 text-xs">Duration</p>
+                  <p className="text-slate-400 text-xs">{t('sm_duration')}</p>
                   <p className="text-white font-medium">{formatDuration(currentShift.opened_at)}</p>
                 </div>
                 <div className="bg-slate-700/50 rounded-lg p-3">
-                  <p className="text-slate-400 text-xs">Opening Cash</p>
+                  <p className="text-slate-400 text-xs">{t('sm_opening_cash')}</p>
                   <p className="text-white font-medium">SAR {currentShift.opening_cash?.toFixed(2)}</p>
                 </div>
                 <div className="bg-slate-700/50 rounded-lg p-3">
-                  <p className="text-slate-400 text-xs">Transactions</p>
+                  <p className="text-slate-400 text-xs">{t('sm_transactions')}</p>
                   <p className="text-white font-medium">{currentShift.transaction_count || 0}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <Badge className="bg-green-500/20 text-green-400">Active</Badge>
-                {currentShift.staff_name && <span className="text-slate-400 text-sm">Staff: {currentShift.staff_name}</span>}
+                <Badge className="bg-green-500/20 text-green-400">{t('active')}</Badge>
+                {currentShift.staff_name && (
+                  <span className="text-slate-400 text-sm">{t('sm_staff')}: {currentShift.staff_name}</span>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={() => setCloseShiftDialog(true)} className="bg-red-600 hover:bg-red-700 text-white">
-                  <StopCircle className="h-4 w-4 mr-2" /> Close Shift
+                  <StopCircle className="h-4 w-4 mr-2" /> {t('sm_close_shift')}
                 </Button>
                 <Button
                   variant="outline"
@@ -333,10 +370,10 @@ export default function ShiftManagement() {
           ) : (
             <div className="text-center py-8">
               <Clock className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400 mb-4">No active shift. Open a new shift to start recording transactions.</p>
+              <p className="text-slate-400 mb-4">{t('sm_no_active_shift')}</p>
               <div className="flex items-center justify-center gap-3">
                 <Button onClick={() => setOpenShiftDialog(true)} className="bg-green-600 hover:bg-green-700 text-white">
-                  <PlayCircle className="h-4 w-4 mr-2" /> Open New Shift
+                  <PlayCircle className="h-4 w-4 mr-2" /> {t('sm_open_new_shift')}
                 </Button>
                 {lastClosedShiftId != null && (
                   <Button
@@ -357,8 +394,8 @@ export default function ShiftManagement() {
       <Card className="bg-slate-800 border-slate-700">
         <CardHeader>
           <CardTitle className="text-white flex items-center gap-2">
-            <History className="h-5 w-5 text-purple-400" />
-            Shift History
+            <History className="h-5 w-5 text-brand-400" />
+            {t('sm_shift_history')}
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -366,20 +403,20 @@ export default function ShiftManagement() {
             <table className="w-full text-sm">
               <thead className="bg-slate-700/50">
                 <tr className="text-slate-400">
-                  <th className="p-3 text-start">Date</th>
-                  <th className="p-3 text-start">Staff</th>
-                  <th className="p-3 text-start">Opening</th>
-                  <th className="p-3 text-start">Closing</th>
-                  <th className="p-3 text-start">Difference</th>
-                  <th className="p-3 text-start">Sales Total</th>
-                  <th className="p-3 text-start">Transactions</th>
+                  <th className="p-3 text-start">{t('sm_date')}</th>
+                  <th className="p-3 text-start">{t('sm_staff')}</th>
+                  <th className="p-3 text-start">{t('sm_opening')}</th>
+                  <th className="p-3 text-start">{t('sm_closing')}</th>
+                  <th className="p-3 text-start">{t('sm_difference')}</th>
+                  <th className="p-3 text-start">{t('sm_sales_total')}</th>
+                  <th className="p-3 text-start">{t('sm_transactions')}</th>
                   <th className="p-3 text-start">{t('z_report')}</th>
                 </tr>
               </thead>
               <tbody>
                 {shiftHistory.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-6 text-center text-slate-500">No shift history</td>
+                    <td colSpan={8} className="p-6 text-center text-slate-500">{t('sm_no_history')}</td>
                   </tr>
                 ) : (
                   shiftHistory.map((shift) => (
@@ -420,22 +457,23 @@ export default function ShiftManagement() {
       <Dialog open={openShiftDialog} onOpenChange={setOpenShiftDialog}>
         <DialogContent className="bg-slate-800 border-slate-700 text-white">
           <DialogHeader>
-            <DialogTitle className="text-white">Open New Shift</DialogTitle>
+            <DialogTitle className="text-white">{t('sm_open_new_shift')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">Opening Cash Amount (SAR)</label>
+              <label className="text-sm text-slate-400 mb-1 block">{t('sm_opening_cash_amount')}</label>
               <Input
                 type="number"
+                dir="ltr"
                 value={openingCash}
                 onChange={(e) => setOpeningCash(e.target.value)}
                 placeholder="0.00"
                 className="bg-slate-700 border-slate-600 text-white text-lg"
               />
             </div>
-            <p className="text-slate-400 text-sm">Count the cash in the drawer and enter the total amount before starting your shift.</p>
+            <p className="text-slate-400 text-sm">{t('sm_opening_hint')}</p>
             <Button onClick={handleOpenShift} disabled={submitting} className="w-full bg-green-600 hover:bg-green-700 text-white">
-              {submitting ? t('loading') : 'Open Shift'}
+              {submitting ? t('loading') : t('sm_open_shift')}
             </Button>
           </div>
         </DialogContent>
@@ -445,29 +483,30 @@ export default function ShiftManagement() {
       <Dialog open={closeShiftDialog} onOpenChange={setCloseShiftDialog}>
         <DialogContent className="bg-slate-800 border-slate-700 text-white">
           <DialogHeader>
-            <DialogTitle className="text-white">Close Shift</DialogTitle>
+            <DialogTitle className="text-white">{t('sm_close_shift')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {currentShift && (
               <div className="bg-slate-700/50 rounded-lg p-4 space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Opening Cash:</span>
+                  <span className="text-slate-400">{t('sm_opening_cash')}:</span>
                   <span className="text-white">SAR {currentShift.opening_cash?.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Sales Total:</span>
+                  <span className="text-slate-400">{t('sm_sales_total')}:</span>
                   <span className="text-white">SAR {currentShift.sales_total?.toFixed(2) || '0.00'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Expected Cash:</span>
+                  <span className="text-slate-400">{t('sm_expected_cash')}:</span>
                   <span className="text-white font-bold">SAR {((currentShift.opening_cash || 0) + (currentShift.sales_total || 0)).toFixed(2)}</span>
                 </div>
               </div>
             )}
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">Actual Closing Cash (SAR)</label>
+              <label className="text-sm text-slate-400 mb-1 block">{t('sm_closing_cash_amount')}</label>
               <Input
                 type="number"
+                dir="ltr"
                 value={closingCash}
                 onChange={(e) => setClosingCash(e.target.value)}
                 placeholder="0.00"
@@ -477,7 +516,7 @@ export default function ShiftManagement() {
             {closingCash && currentShift && (
               <div className="bg-slate-700/50 rounded-lg p-3">
                 <div className="flex justify-between">
-                  <span className="text-slate-400">Difference:</span>
+                  <span className="text-slate-400">{t('sm_difference')}:</span>
                   <span className={
                     (parseFloat(closingCash) - (currentShift.opening_cash || 0) - (currentShift.sales_total || 0)) >= 0
                       ? 'text-green-400 font-bold'
@@ -489,7 +528,7 @@ export default function ShiftManagement() {
               </div>
             )}
             <Button onClick={handleCloseShift} disabled={submitting} className="w-full bg-red-600 hover:bg-red-700 text-white">
-              {submitting ? t('loading') : 'Close Shift'}
+              {submitting ? t('loading') : t('sm_close_shift')}
             </Button>
           </div>
         </DialogContent>
