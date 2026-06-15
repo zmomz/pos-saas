@@ -118,6 +118,25 @@ REMOVED_FRONTEND = [
     _FRONTEND_SRC / "components" / "blog",
 ]
 
+# F-004 / §4 dead code (#8): the ``data_models/*.json`` generator artifacts whose
+# entity routers were deleted as dead/unused (#1–#4 + H20). Nothing in the
+# codebase reads ``data_models/`` at runtime (it is pure scaffold metadata), so a
+# JSON whose router is gone only advertises surface that isn't real. These must
+# stay deleted; the live entity triads still on the ALLOWLIST keep their JSON.
+_DATA_MODELS = _BACKEND / "data_models"
+REMOVED_DATA_MODELS = [
+    _DATA_MODELS / "packages.json",        # router removed in #1
+    _DATA_MODELS / "agents.json",          # router removed in #2
+    _DATA_MODELS / "agent_features.json",  # router removed in #2
+    _DATA_MODELS / "permissions.json",     # router + json removed in #3
+    _DATA_MODELS / "clients.json",         # router removed in #4
+    _DATA_MODELS / "client_features.json", # router removed in #4
+    _DATA_MODELS / "shifts.json",          # router removed (H20)
+]
+# Sanity anchor: a live entity triad whose JSON must NOT be swept up. products.py
+# is a referenced router, so its generator JSON stays.
+_LIVE_DATA_MODEL = _DATA_MODELS / "products.json"
+
 
 def _frontend_source() -> str:
     parts = []
@@ -192,6 +211,21 @@ def test_removed_orphans_stay_removed():
     assert not present, (
         "Removed orphan(s) reappeared — these were deleted as dead code "
         "(F-054 / F-006):\n  " + "\n  ".join(present)
+    )
+
+
+def test_orphaned_data_models_deleted():
+    """§4 (#8): generator JSON for deleted/unused entity routers is gone, but the
+    JSON for live entity triads on the allowlist is left untouched."""
+    present = [str(p.relative_to(_REPO)) for p in REMOVED_DATA_MODELS if p.exists()]
+    assert not present, (
+        "Orphaned data_models JSON reappeared — these advertise surface whose "
+        "router was deleted as dead code (#1–#4, H20):\n  " + "\n  ".join(present)
+    )
+    # Guard against over-deletion: a live triad keeps its scaffold JSON.
+    assert _LIVE_DATA_MODEL.exists(), (
+        "products.json (a live entity triad) must not be deleted — only the "
+        "JSON for deleted/unused routers is in scope for #8"
     )
 
 
