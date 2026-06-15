@@ -43,7 +43,6 @@ REGISTERED_MODULES = (
     "quotations",
     "receipt_templates",
     "restaurant",
-    "settings",
     "staff_members",
     "storage",
     "store_settings",

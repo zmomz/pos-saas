@@ -24,8 +24,8 @@ How it works (pure static analysis — no DB/app boot, fully deterministic):
 The allowlist is intentionally small and reasoned: the generic entity-CRUD
 triads (a documented convention in CLAUDE.md — they expose ``/all`` + ``/batch``
 scaffolding reachable via ``client.entities`` even where the live UI drives them
-through a domain router), two backend-internal routers, and the two modules the
-operator kept for a later AG-07 wire-up (object storage + receipt templates).
+through a domain router), one backend-internal router (the health probe), and
+object storage — kept for a later AG-07 exports wire-up.
 """
 import re
 from pathlib import Path
@@ -52,7 +52,6 @@ ALLOWLIST = {
     "transactions.py": "generic entity triad (sales written via /api/v1/pos)",
     # Backend-internal: no frontend caller by design.
     "health.py": "liveness/DB probe (/database/health), ops-internal",
-    "settings.py": "admin runtime key-value settings (/api/v1/admin/settings)",
     # Wire-later (F-054 operator decision; IB §8 orphan ledger):
     "storage.py": "object storage — kept for a later AG-07 exports wire-up",
     # receipt_templates.py was wired into the frontend by the ReceiptTemplateDesigner
@@ -108,6 +107,13 @@ REMOVED_BACKEND = [
     # service are removed.
     _ROUTERS_DIR / "shifts.py",
     _BACKEND / "services" / "shifts.py",
+    # ISSUE-098 (atoms.dev residue / U6.1): the .env-editor admin router
+    # (/api/v1/admin/settings) let an admin read/write raw backend+frontend .env
+    # files — including JWT_SECRET_KEY and STRIPE_SECRET_KEY — over HTTP. It was
+    # MGX scaffold with no frontend caller (its only client, frontend/src/api/
+    # settings.ts, was itself orphaned and removed alongside it). Live runtime
+    # config lives in store_settings.py / system_settings.py.
+    _ROUTERS_DIR / "settings.py",
 ]
 REMOVED_FRONTEND = [
     _FRONTEND_SRC / "pages" / "AuthCallback.tsx",
@@ -116,6 +122,9 @@ REMOVED_FRONTEND = [
     _FRONTEND_SRC / "lib" / "blog.ts",
     _FRONTEND_SRC / "pages" / "blog",
     _FRONTEND_SRC / "components" / "blog",
+    # ISSUE-098: the orphaned settingsApi client for the deleted .env-editor
+    # router above (imported nowhere app-wide).
+    _FRONTEND_SRC / "api" / "settings.ts",
 ]
 
 # F-004 / §4 dead code (#8): the ``data_models/*.json`` generator artifacts whose

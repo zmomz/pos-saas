@@ -123,7 +123,7 @@ class StorageService:
             logger.error(f"Failed to get object metadata: {e}")
             raise
 
-    async def rename_object(self, request: RenameRequest) -> dict:
+    async def rename_object(self, request: RenameRequest) -> RenameResponse:
         endpoint = f"api/v1/infra/client/oss/buckets/{request.bucket_name}/objects/rename"
         payload = {
             "overwrite_key": request.overwrite_key,
@@ -144,7 +144,7 @@ class StorageService:
             await self._adelete_oss_service(endpoint, payload)
             return DeleteResponse(success=True)
         except Exception as e:
-            logger.error(f"Failed to rename object: {e}")
+            logger.error(f"Failed to delete object: {e}")
             raise
 
     async def create_upload_url(self, request: FileUpDownRequest) -> FileUpDownResponse:
@@ -214,7 +214,7 @@ class StorageService:
             )
 
         except Exception as e:
-            logger.error(f"Failed to create upload URL: {e}")
+            logger.error(f"Failed to create download URL: {e}")
             raise
 
     async def _aget_oss_service(self, endpoint: str, params: dict) -> dict:
@@ -233,7 +233,7 @@ class StorageService:
         params: Optional[dict] = None,
         payload: Optional[dict] = None,
     ) -> Union[dict, list]:
-        """统一的 OSS 服务请求方法"""
+        """Unified OSS service request helper (JSON envelope over the gateway)."""
         url = urljoin(settings.oss_service_url, endpoint)
 
         try:
