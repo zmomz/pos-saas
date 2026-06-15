@@ -69,6 +69,17 @@ def create_refresh_token(claims: Dict[str, Any], expires_minutes: Optional[int] 
     return _create_token(claims, token_type="refresh", expires_minutes=expires_minutes)
 
 
+def create_mfa_token(claims: Dict[str, Any], expires_minutes: int = 5) -> str:
+    """Create a short-lived second-factor ticket (ISSUE-081).
+
+    Issued after a correct password when MFA is enabled; it carries only the
+    ``sub`` and is exchanged at ``/auth/login/mfa`` for a real access token. Its
+    distinct ``type="mfa"`` means it is rejected everywhere an access token is
+    expected, so it cannot reach protected resources on its own.
+    """
+    return _create_token(claims, token_type="mfa", expires_minutes=expires_minutes)
+
+
 def decode_access_token(token: str) -> Dict[str, Any]:
     """Decode and validate JWT access token."""
     if not settings.jwt_secret_key:

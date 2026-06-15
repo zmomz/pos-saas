@@ -85,3 +85,48 @@ class UpdateUserPreferencesRequest(BaseModel):
 
     display_name: Optional[str] = None
     notification_prefs: Optional[NotificationPrefs] = None
+
+
+# ---- MFA (TOTP) — ISSUE-081 ----
+
+
+class MfaEnrollResponse(BaseModel):
+    """Enrollment secret to load into an authenticator app (not yet active)."""
+
+    secret: str  # base32 shared secret
+    otpauth_uri: str  # otpauth://totp/... for QR provisioning
+    enabled: bool = False
+
+
+class MfaCodeRequest(BaseModel):
+    """A submitted TOTP (or recovery) code."""
+
+    code: str
+
+
+class MfaActivateResponse(BaseModel):
+    """Returned once on activation — the user must save these backup codes."""
+
+    enabled: bool = True
+    recovery_codes: list[str]
+
+
+class MfaStatusResponse(BaseModel):
+    """Whether MFA is active for the caller, with remaining recovery-code count."""
+
+    enabled: bool
+    recovery_codes_remaining: int = 0
+
+
+class MfaChallengeResponse(BaseModel):
+    """Returned by /auth/login when the account requires a second factor."""
+
+    mfa_required: bool = True
+    mfa_token: str  # short-lived ticket; exchange at /auth/login/mfa
+
+
+class MfaLoginRequest(BaseModel):
+    """Second-factor exchange: the login challenge ticket + a TOTP/recovery code."""
+
+    mfa_token: str
+    code: str

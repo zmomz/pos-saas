@@ -1,15 +1,22 @@
 import logging
 from typing import Optional
 
-from core.auth import AccessTokenError, decode_access_token
+from core.auth import AccessTokenError, create_mfa_token, decode_access_token
 from core.config import settings
 from core.database import get_db
 from dependencies.auth import get_bearer_token, get_current_user
+from services.mfa import MfaService
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from schemas.auth import (
     LoginRequest,
     LoginResponse,
+    MfaActivateResponse,
+    MfaChallengeResponse,
+    MfaCodeRequest,
+    MfaEnrollResponse,
+    MfaLoginRequest,
+    MfaStatusResponse,
     RefreshRequest,
     RefreshResponse,
     RegisterRequest,
@@ -27,6 +34,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 logger = logging.getLogger(__name__)
+
+
+async def _issue_login_response(service: "AuthService", user) -> LoginResponse:
+    """Mint an access + refresh token pair and shape the standard login payload."""
+    token, expires_at, _ = await service.issue_app_token(user)
+    refresh_token = service.issue_refresh_token(user)
+    return LoginResponse(
+        token=token,
+        expires_at=int(expires_at.timestamp()),
+        refresh_token=refresh_token,
+        user=UserResponse.model_validate(user),
+    )
 
 
 @router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
@@ -53,22 +72,19 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
-    token, expires_at, _ = await service.issue_app_token(user)
-    refresh_token = service.issue_refresh_token(user)
-    return LoginResponse(
-        token=token,
-        expires_at=int(expires_at.timestamp()),
-        refresh_token=refresh_token,
-        user=UserResponse.model_validate(user),
-    )
+    return await _issue_login_response(service, user)
 
 
-@router.post("/login", response_model=LoginResponse)
+@router.post("/login")
 async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Authenticate with email + password and return an access token.
 
     Repeated failed logins for the same (identifier, IP) are throttled to blunt
     credential-stuffing — see ``services.login_throttle`` for the policy.
+
+    If the account has MFA enabled (ISSUE-081), a correct password yields a
+    short-lived ``MfaChallengeResponse`` instead of tokens; the caller must
+    exchange the ticket + a second-factor code at ``/auth/login/mfa``.
     """
     client_ip = request.client.host if request.client else "unknown"
 
@@ -91,14 +107,45 @@ async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depe
         )
 
     await clear_login_attempts(db, payload.email, client_ip)
-    token, expires_at, _ = await service.issue_app_token(user)
-    refresh_token = service.issue_refresh_token(user)
-    return LoginResponse(
-        token=token,
-        expires_at=int(expires_at.timestamp()),
-        refresh_token=refresh_token,
-        user=UserResponse.model_validate(user),
-    )
+
+    # Second-factor gate: an MFA-enabled account gets a challenge, not tokens.
+    if await MfaService(db).is_enabled(user.id):
+        ticket = create_mfa_token({"sub": user.id})
+        return MfaChallengeResponse(mfa_required=True, mfa_token=ticket)
+
+    return await _issue_login_response(service, user)
+
+
+@router.post("/login/mfa", response_model=LoginResponse)
+async def login_mfa(payload: MfaLoginRequest, db: AsyncSession = Depends(get_db)):
+    """Complete an MFA login: exchange the challenge ticket + a code for tokens (#81).
+
+    ``code`` may be a current TOTP code or a single-use recovery code.
+    """
+    try:
+        claims = decode_access_token(payload.mfa_token)
+    except AccessTokenError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=exc.message)
+
+    if claims.get("type") != "mfa":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not a valid second-factor ticket. Start at /auth/login.",
+        )
+
+    user_id = claims.get("sub")
+    service = AuthService(db)
+    user = await service.get_user_by_id(user_id) if user_id else None
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid second-factor ticket")
+
+    if not await MfaService(db).verify_code(user.id, payload.code):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid verification code",
+        )
+
+    return await _issue_login_response(service, user)
 
 
 @router.post("/refresh", response_model=RefreshResponse)
@@ -153,6 +200,53 @@ async def get_my_permissions(
     from dependencies.permissions import get_effective_permissions
 
     return await get_effective_permissions(db, current_user)
+
+
+@router.post("/mfa/enroll", response_model=MfaEnrollResponse)
+async def mfa_enroll(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Begin TOTP enrollment: mint a pending secret + provisioning URI (#81).
+
+    Enrollment is not active until a generated code is verified at
+    ``/auth/mfa/activate``.
+    """
+    service = MfaService(db)
+    secret, uri = await service.begin_enrollment(current_user.id, current_user.email)
+    return MfaEnrollResponse(secret=secret, otpauth_uri=uri, enabled=False)
+
+
+@router.post("/mfa/activate", response_model=MfaActivateResponse)
+async def mfa_activate(
+    payload: MfaCodeRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm enrollment with a TOTP code; enable MFA + return recovery codes (#81)."""
+    service = MfaService(db)
+    codes = await service.activate(current_user.id, payload.code)
+    if codes is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid verification code. Enroll first, then enter the current code.",
+        )
+    return MfaActivateResponse(enabled=True, recovery_codes=codes)
+
+
+@router.get("/mfa/status", response_model=MfaStatusResponse)
+async def mfa_status(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Whether MFA is active for the caller (+ remaining recovery codes) (#81)."""
+    service = MfaService(db)
+    row = await service.get(current_user.id)
+    enabled = bool(row and row.enabled)
+    return MfaStatusResponse(
+        enabled=enabled,
+        recovery_codes_remaining=service._remaining_count(row) if enabled else 0,
+    )
 
 
 class LogoutRequest(BaseModel):

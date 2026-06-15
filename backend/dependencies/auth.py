@@ -68,6 +68,15 @@ async def get_current_user(
             detail="Refresh tokens cannot be used to access resources",
         )
 
+    # Reject any other non-access ticket (e.g. the short-lived MFA second-factor
+    # ticket, ISSUE-081) — only a real access token reaches protected resources.
+    token_type = payload.get("type")
+    if token_type is not None and token_type != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This token cannot be used to access resources",
+        )
+
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication token")
