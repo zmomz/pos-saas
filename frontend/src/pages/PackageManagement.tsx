@@ -15,6 +15,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import ErrorState from '@/components/states/ErrorState';
+import PermissionDenied from '@/components/states/PermissionDenied';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { getPackagesList, createPackage, updatePackage, deletePackage } from '@/lib/api';
 
@@ -63,6 +64,9 @@ export default function PackageManagement() {
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  // UX-02 (F-051): a 403 gets its own in-page permission state rather than
+  // masquerading as a generic load error.
+  const [denied, setDenied] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingPackage, setEditingPackage] = useState<PackageItem | null>(null);
   const [form, setForm] = useState<PackageFormData>(emptyForm);
@@ -77,12 +81,16 @@ export default function PackageManagement() {
     try {
       setLoading(true);
       setLoadError(false);
+      setDenied(false);
       const data = await getPackagesList();
       // The endpoint returns { items, total }; keep a legacy `packages` fallback.
       setPackages(data?.items || data?.packages || []);
-    } catch {
+    } catch (err: unknown) {
       // A failed fetch is an error, not an empty catalog — surface it distinctly.
-      setLoadError(true);
+      // A 403 gets its own permission state rather than a misleading error.
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 403) setDenied(true);
+      else setLoadError(true);
       setPackages([]);
     } finally {
       setLoading(false);
@@ -148,19 +156,6 @@ export default function PackageManagement() {
     }
   }
 
-  const labels = {
-    title: language === 'ar' ? 'إدارة الباقات' : language === 'hi' ? 'पैकेज प्रबंधन' : language === 'ur' ? 'پیکج مینجمنٹ' : 'Package Management',
-    addPackage: language === 'ar' ? 'إضافة باقة' : language === 'hi' ? 'पैकेज जोड़ें' : language === 'ur' ? 'پیکج شامل کریں' : 'Add Package',
-    editPackage: language === 'ar' ? 'تعديل الباقة' : language === 'hi' ? 'पैकेज संपादित करें' : language === 'ur' ? 'پیکج ترمیم کریں' : 'Edit Package',
-    name: language === 'ar' ? 'الاسم' : language === 'hi' ? 'नाम' : language === 'ur' ? 'نام' : 'Name',
-    clientSlots: t('client_slots'),
-    wholesalePrice: t('wholesale_price'),
-    retailPrice: t('retail_price'),
-    confirmDelete: language === 'ar' ? 'تأكيد الحذف؟' : language === 'hi' ? 'हटाने की पुष्टि करें?' : language === 'ur' ? 'حذف کی تصدیق؟' : 'Confirm deactivate?',
-    deactivate: language === 'ar' ? 'تعطيل' : language === 'hi' ? 'निष्क्रिय करें' : language === 'ur' ? 'غیر فعال کریں' : 'Deactivate',
-    noPackages: language === 'ar' ? 'لا توجد باقات' : language === 'hi' ? 'कोई पैकेज नहीं' : language === 'ur' ? 'کوئی پیکج نہیں' : 'No packages found',
-  };
-
   return (
     <div className={`min-h-screen bg-slate-900 text-white ${isRTL ? 'rtl' : 'ltr'}`} dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Header */}
@@ -175,7 +170,7 @@ export default function PackageManagement() {
             >
               <ArrowLeft className="h-5 w-5" />
             </Button>
-            <h1 className="text-xl font-bold">{labels.title}</h1>
+            <h1 className="text-xl font-bold">{t('package_management')}</h1>
           </div>
           <div className="flex items-center gap-3">
             <Select value={language} onValueChange={(val) => setLanguage(val as Language)}>
@@ -194,27 +189,27 @@ export default function PackageManagement() {
               <DialogTrigger asChild>
                 <Button onClick={openAddDialog} className="bg-brand-600 text-white hover:bg-brand-700">
                   <Plus className="mr-2 h-4 w-4" />
-                  {labels.addPackage}
+                  {t('add_package')}
                 </Button>
               </DialogTrigger>
               <DialogContent className="border-slate-700 bg-slate-800 text-white">
                 <DialogHeader>
                   <DialogTitle>
-                    {editingPackage ? labels.editPackage : labels.addPackage}
+                    {editingPackage ? t('edit_package') : t('add_package')}
                   </DialogTitle>
                 </DialogHeader>
                 <div className="space-y-4 pt-4">
                   <div>
-                    <label className="mb-1 block text-sm text-slate-300">{labels.name}</label>
+                    <label className="mb-1 block text-sm text-slate-300">{t('name')}</label>
                     <Input
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
                       className="border-slate-600 bg-slate-700 text-white"
-                      placeholder="e.g. Business Pro"
+                      placeholder={t('package_name_placeholder')}
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm text-slate-300">{labels.clientSlots}</label>
+                    <label className="mb-1 block text-sm text-slate-300">{t('client_slots')}</label>
                     <Input
                       type="number"
                       value={form.client_slots}
@@ -224,7 +219,7 @@ export default function PackageManagement() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm text-slate-300">{labels.wholesalePrice}</label>
+                    <label className="mb-1 block text-sm text-slate-300">{t('wholesale_price')}</label>
                     <Input
                       type="number"
                       value={form.wholesale_price}
@@ -235,7 +230,7 @@ export default function PackageManagement() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm text-slate-300">{labels.retailPrice}</label>
+                    <label className="mb-1 block text-sm text-slate-300">{t('retail_price')}</label>
                     <Input
                       type="number"
                       value={form.suggested_retail_price}
@@ -297,41 +292,44 @@ export default function PackageManagement() {
           </div>
         )}
 
+        {/* Permission-denied state (in-page, UX-02) */}
+        {!loading && denied && <PermissionDenied />}
+
         {/* Error state — distinct from empty (UX-02) */}
-        {!loading && loadError && (
+        {!loading && !denied && loadError && (
           <ErrorState onRetry={fetchPackages} />
         )}
 
         {/* Empty state */}
-        {!loading && !loadError && packages.length === 0 && (
+        {!loading && !denied && !loadError && packages.length === 0 && (
           <div className="flex flex-col items-center justify-center py-20 text-slate-400">
             <Package className="mb-4 h-16 w-16 opacity-30" />
-            <p className="text-lg">{labels.noPackages}</p>
+            <p className="text-lg">{t('no_packages')}</p>
           </div>
         )}
 
         {/* Package grid */}
-        {!loading && packages.length > 0 && (
+        {!loading && !denied && packages.length > 0 && (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {packages.map((pkg) => (
               <Card key={pkg.id} className="border-slate-700 bg-slate-800">
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
                   <CardTitle className="text-lg text-white">{pkg.name}</CardTitle>
-                  <Badge className={pkg.is_active ? 'bg-green-600 text-white' : 'bg-slate-600 text-slate-300'}>
+                  <Badge className={pkg.is_active ? 'bg-green-600/20 text-green-400' : 'bg-slate-600/30 text-slate-300'}>
                     {pkg.is_active ? t('active') : t('inactive')}
                   </Badge>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex justify-between text-sm">
-                    <span className="text-slate-400">{labels.clientSlots}</span>
+                    <span className="text-slate-400">{t('client_slots')}</span>
                     <span className="font-medium text-white">{pkg.client_slots}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-slate-400">{labels.wholesalePrice}</span>
+                    <span className="text-slate-400">{t('wholesale_price')}</span>
                     <span className="font-medium text-white">SAR {pkg.wholesale_price}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-slate-400">{labels.retailPrice}</span>
+                    <span className="text-slate-400">{t('retail_price')}</span>
                     <span className="font-medium text-white">SAR {pkg.suggested_retail_price}</span>
                   </div>
                   {/* MA-07: the package's feature tier */}
@@ -357,7 +355,7 @@ export default function PackageManagement() {
                       className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
                     >
                       <Edit2 className="mr-1 h-3.5 w-3.5" />
-                      {language === 'ar' ? 'تعديل' : language === 'hi' ? 'संपादित' : language === 'ur' ? 'ترمیم' : 'Edit'}
+                      {t('edit')}
                     </Button>
                     {confirmDeleteId === pkg.id ? (
                       <div className="flex flex-1 gap-1">
@@ -366,7 +364,7 @@ export default function PackageManagement() {
                           onClick={() => handleDelete(pkg.id)}
                           className="flex-1 bg-red-600 text-white hover:bg-red-700"
                         >
-                          {language === 'ar' ? 'نعم' : language === 'hi' ? 'हाँ' : language === 'ur' ? 'ہاں' : 'Yes'}
+                          {t('yes')}
                         </Button>
                         <Button
                           size="sm"
@@ -374,7 +372,7 @@ export default function PackageManagement() {
                           onClick={() => setConfirmDeleteId(null)}
                           className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
                         >
-                          {language === 'ar' ? 'لا' : language === 'hi' ? 'नहीं' : language === 'ur' ? 'نہیں' : 'No'}
+                          {t('no')}
                         </Button>
                       </div>
                     ) : (
@@ -382,10 +380,10 @@ export default function PackageManagement() {
                         variant="outline"
                         size="sm"
                         onClick={() => setConfirmDeleteId(pkg.id)}
-                        className="flex-1 border-red-800 text-red-400 hover:bg-red-900/30 hover:text-red-300"
+                        className="flex-1 border-red-600/50 text-red-400 hover:bg-red-600/20 hover:text-red-300"
                       >
                         <Trash2 className="mr-1 h-3.5 w-3.5" />
-                        {labels.deactivate}
+                        {t('deactivate')}
                       </Button>
                     )}
                   </div>
