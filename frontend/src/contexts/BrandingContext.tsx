@@ -24,10 +24,17 @@ export interface Branding {
 
 const stripWww = (h: string): string => h.replace(/^www\./, '');
 
-/** The platform's own host (single-origin: same host the API is served from). */
+/**
+ * The platform's own host. Prefer the build-time `VITE_API_BASE_URL` (baked to
+ * the platform's canonical origin, e.g. https://posai.tech) — it identifies the
+ * platform even when the same bundle is served from an agent's custom domain.
+ * The runtime `/api/config` base is empty in the single-origin deploy, so it
+ * only serves as a dev/local fallback.
+ */
 function platformHost(): string {
+  const raw = import.meta.env?.VITE_API_BASE_URL || getAPIBaseURL();
   try {
-    return new URL(getAPIBaseURL()).hostname;
+    return raw ? new URL(raw).hostname : '';
   } catch {
     return '';
   }

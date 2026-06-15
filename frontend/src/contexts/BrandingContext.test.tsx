@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// getAPIBaseURL drives platformHost(); control it per-test.
+// getAPIBaseURL is the runtime fallback when VITE_API_BASE_URL is unset.
 vi.mock('../lib/config', () => ({
-  getAPIBaseURL: vi.fn(() => 'https://posai.tech'),
+  getAPIBaseURL: vi.fn(() => ''),
 }));
 
 import { isCustomHost } from './BrandingContext';
@@ -10,7 +10,14 @@ import { getAPIBaseURL } from '../lib/config';
 
 describe('isCustomHost', () => {
   beforeEach(() => {
-    vi.mocked(getAPIBaseURL).mockReturnValue('https://posai.tech');
+    // platformHost() prefers the build-time VITE_API_BASE_URL (the platform's
+    // canonical origin), which is baked at build time in prod.
+    vi.stubEnv('VITE_API_BASE_URL', 'https://posai.tech');
+    vi.mocked(getAPIBaseURL).mockReturnValue('');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('treats the platform domain as NOT custom (no by-domain lookup)', () => {
@@ -31,8 +38,8 @@ describe('isCustomHost', () => {
     expect(isCustomHost('')).toBe(false);
   });
 
-  it('falls back gracefully when the API base URL is unparseable', () => {
-    vi.mocked(getAPIBaseURL).mockReturnValue('not a url');
+  it('falls back gracefully when the platform host is unparseable', () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'not a url');
     // platformHost() returns '' → platform exclusion is skipped, normal rules apply.
     expect(isCustomHost('pos.myrestaurant.com')).toBe(true);
   });
