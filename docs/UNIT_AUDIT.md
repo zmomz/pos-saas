@@ -262,7 +262,7 @@ services/storage.py:31-32 reads `settings.oss_service_url`/`oss_api_key`, neithe
 ### Dead/inert backend
 - `services/payment.py` PaymentService + CheckoutSession* models (Stripe Checkout) — only `initialize_stripe` is used (subscription_billing.py:56). *(U3.6)*
 - `middlewares/production.py:157-204` PerformanceMiddleware — defined, never registered → `performance_monitor` stays empty. *(U0.3)*
-- `middlewares/production.py:210-245` `get_cors_config` — duplicate with `yourdomain.com` placeholders; core/cors.py is source of truth. *(U0.3)*
+- ~~`middlewares/production.py:210-245` `get_cors_config` — duplicate with `yourdomain.com` placeholders; core/cors.py is source of truth. *(U0.3)*~~ **RESOLVED (#100):** duplicate removed; CORS comes only from `core/cors.py`.
 - `pos.py:224-264` `generate_zatca_tlv`/`generate_zatca_hash` — legacy in-router helpers superseded by services.zatca_sale. *(U3.4)*
 - `routers/zatca.py::sign_invoice` — divergent duplicate signer, reachable only via idempotency early-return. *(U3.7)*
 - `services/restaurant.py:363 count_tables` — no callers. *(U4.1)*

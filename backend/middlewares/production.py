@@ -1,7 +1,7 @@
 """
 Production middleware for the multi-tenant POS system.
-Provides rate limiting, performance monitoring, structured logging,
-and CORS lockdown helpers.
+Provides rate limiting, performance monitoring, and structured logging.
+CORS configuration lives in ``core/cors.py`` (the single source of truth).
 """
 
 import json
@@ -202,47 +202,6 @@ class PerformanceMiddleware(BaseHTTPMiddleware):
         response.headers["X-Correlation-ID"] = correlation_id
 
         return response
-
-
-# =============================================================================
-# CORS Lockdown Helper
-# =============================================================================
-def get_cors_config(environment: str = "production") -> dict:
-    """
-    Get CORS configuration based on environment.
-    In production, restrict to known origins.
-    In development, allow broader access.
-    """
-    if environment == "development":
-        return {
-            "allow_origins": ["*"],
-            "allow_credentials": True,
-            "allow_methods": ["*"],
-            "allow_headers": ["*"],
-        }
-    elif environment == "staging":
-        return {
-            "allow_origins": [
-                "https://staging.yourdomain.com",
-                "https://staging-admin.yourdomain.com",
-            ],
-            "allow_credentials": True,
-            "allow_methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-            "allow_headers": ["Authorization", "Content-Type", "X-Requested-With"],
-        }
-    else:
-        # Production - most restrictive
-        return {
-            "allow_origins": [
-                "https://yourdomain.com",
-                "https://admin.yourdomain.com",
-                "https://pos.yourdomain.com",
-            ],
-            "allow_credentials": True,
-            "allow_methods": ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-            "allow_headers": ["Authorization", "Content-Type", "X-Requested-With"],
-            "max_age": 3600,
-        }
 
 
 # =============================================================================
