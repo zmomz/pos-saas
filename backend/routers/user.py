@@ -14,6 +14,7 @@ from schemas.auth import (
 )
 from services.user import PasswordError, UserService
 from sqlalchemy.ext.asyncio import AsyncSession
+from utils.password_policy import enforce_password_complexity
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
@@ -104,6 +105,7 @@ async def change_password(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="New password must be different from the current password",
         )
+    enforce_password_complexity(payload.new_password)
     try:
         await UserService.change_password(
             db, current_user.id, payload.current_password, payload.new_password

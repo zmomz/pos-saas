@@ -15,6 +15,7 @@ from services.staff_members import Staff_membersService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
+from utils.password_policy import enforce_password_complexity
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -88,6 +89,18 @@ class Staff_membersBatchUpdateRequest(BaseModel):
 class Staff_membersBatchDeleteRequest(BaseModel):
     """Batch delete request"""
     ids: List[int]
+
+
+def _assert_password_complexity(password: Optional[str]) -> None:
+    """Reject a caller-supplied staff password that violates policy (ISSUE-084).
+
+    Only caller-supplied passwords are checked; auto-generated temp passwords are
+    high-entropy by construction. Validated up front so a rejection never leaves a
+    half-created staff row behind.
+    """
+    if password is None:
+        return
+    enforce_password_complexity(password)
 
 
 async def _provision_staff_login(
@@ -235,6 +248,10 @@ async def create_staff_members(
     """Create a new staff_members"""
     logger.debug(f"Creating new staff_members with data: {data}")
     
+    # Enforce the password policy before any row is written so a weak password
+    # can't leave a directory entry without a working login (ISSUE-084).
+    _assert_password_complexity(data.password)
+
     service = Staff_membersService(db)
     try:
         payload = data.model_dump()
@@ -268,9 +285,14 @@ async def create_staff_memberss_batch(
     """Create multiple staff_memberss in a single request"""
     logger.debug(f"Batch creating {len(request.items)} staff_memberss")
     
+    # Reject the whole batch up front if any supplied password is too weak, so a
+    # partial batch isn't committed before the bad row is reached (ISSUE-084).
+    for item_data in request.items:
+        _assert_password_complexity(item_data.password)
+
     service = Staff_membersService(db)
     results = []
-    
+
     try:
         for item_data in request.items:
             payload = item_data.model_dump()

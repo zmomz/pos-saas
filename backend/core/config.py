@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     login_lockout_minutes: int = 15
     login_attempt_window_minutes: int = 15
 
+    # Password-complexity policy (ISSUE-084). Enforced at every set-password
+    # entry point — signup, reset, change-password, and staff-login
+    # provisioning. Defaults require a mixed-case alphanumeric of at least 8
+    # characters; symbols are optional. Tune per deployment via env vars
+    # (e.g. PASSWORD_MIN_LENGTH=12, PASSWORD_REQUIRE_SYMBOL=true).
+    password_min_length: int = 8
+    password_require_uppercase: bool = True
+    password_require_lowercase: bool = True
+    password_require_digit: bool = True
+    password_require_symbol: bool = False
+
     # ZATCA Phase-2 (Fatoora) e-invoicing.
     #   zatca_environment: sandbox | simulation | production (selects the
     #     Fatoora gateway + CSR template). Network calls are skipped (503)

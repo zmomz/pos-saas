@@ -27,6 +27,7 @@ from schemas.auth import (
     UserResponse,
 )
 from services.auth import AuthService
+from utils.password_policy import enforce_password_complexity
 from services.password_reset import PasswordResetService
 from services.login_throttle import (
     LoginLockedOut,
@@ -66,6 +67,8 @@ async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db))
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Self-registration is disabled. Contact your administrator.",
         )
+
+    enforce_password_complexity(payload.password)
 
     service = AuthService(db)
     try:
@@ -179,6 +182,10 @@ async def reset_password(payload: PasswordResetConfirm, db: AsyncSession = Depen
     is rejected with 400. On success the new password takes effect and the
     account's previously issued sessions are dropped (security-stamp bump).
     """
+    # Enforce complexity before consuming the single-use token so a weak attempt
+    # doesn't burn the reset grant.
+    enforce_password_complexity(payload.new_password)
+
     ok = await PasswordResetService(db).reset(payload.token, payload.new_password)
     if not ok:
         raise HTTPException(
