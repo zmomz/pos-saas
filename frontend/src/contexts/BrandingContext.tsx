@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import { useAuth } from './AuthContext';
 import { getAgentBranding, getClientBranding, getBrandingByDomain } from '../lib/api';
+import { getAPIBaseURL } from '../lib/config';
 
 export interface Branding {
   logo_url?: string | null;
@@ -21,12 +22,31 @@ export interface Branding {
   custom_domain?: string | null;
 }
 
-/** True when the host looks like a real custom domain, not localhost / an IP. */
-function isCustomHost(host: string): boolean {
+const stripWww = (h: string): string => h.replace(/^www\./, '');
+
+/** The platform's own host (single-origin: same host the API is served from). */
+function platformHost(): string {
+  try {
+    return new URL(getAPIBaseURL()).hostname;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * True when the host is a real white-label custom domain — i.e. an agent's own
+ * domain pointed at the platform, not localhost / an IP, and crucially **not**
+ * the platform's own host. On the platform domain (e.g. posai.tech) there is no
+ * by-domain brand to resolve, so the lookup must be skipped (it would 404).
+ */
+export function isCustomHost(host: string): boolean {
   if (!host) return false;
   if (host === 'localhost' || host.endsWith('.local')) return false;
   // Bare IPv4 / IPv6 are not white-label domains.
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host) || host.includes(':')) return false;
+  // The platform's own domain is not a custom host.
+  const ph = platformHost();
+  if (ph && stripWww(host) === stripWww(ph)) return false;
   return host.includes('.');
 }
 
