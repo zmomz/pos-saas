@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional
 
 from core.auth import AccessTokenError, create_mfa_token, decode_access_token
@@ -17,12 +18,16 @@ from schemas.auth import (
     MfaEnrollResponse,
     MfaLoginRequest,
     MfaStatusResponse,
+    PasswordResetConfirm,
+    PasswordResetRequest,
+    PasswordResetRequestResponse,
     RefreshRequest,
     RefreshResponse,
     RegisterRequest,
     UserResponse,
 )
 from services.auth import AuthService
+from services.password_reset import PasswordResetService
 from services.login_throttle import (
     LoginLockedOut,
     assert_login_allowed,
@@ -148,6 +153,41 @@ async def login_mfa(payload: MfaLoginRequest, db: AsyncSession = Depends(get_db)
     return await _issue_login_response(service, user)
 
 
+def _is_dev() -> bool:
+    """Whether we're in a dev/CI environment (mirrors core/cors.py)."""
+    return os.getenv("ENVIRONMENT", "prod").lower() == "dev"
+
+
+@router.post("/password/forgot", response_model=PasswordResetRequestResponse)
+async def forgot_password(payload: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
+    """Request a password reset (ISSUE-082).
+
+    Always responds 200 — whether or not the email matches an account — so the
+    endpoint cannot be used to enumerate registered addresses. A matching
+    account is emailed a single-use, time-limited reset token. In dev/no-SMTP
+    mode the token is also returned in the response so the flow is testable.
+    """
+    token = await PasswordResetService(db).request_reset(payload.email)
+    return PasswordResetRequestResponse(reset_token=token if _is_dev() else None)
+
+
+@router.post("/password/reset")
+async def reset_password(payload: PasswordResetConfirm, db: AsyncSession = Depends(get_db)):
+    """Complete a password reset with a token from ``/password/forgot`` (ISSUE-082).
+
+    The token is single-use and time-limited; a used, expired, or unknown token
+    is rejected with 400. On success the new password takes effect and the
+    account's previously issued sessions are dropped (security-stamp bump).
+    """
+    ok = await PasswordResetService(db).reset(payload.token, payload.new_password)
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This reset link is invalid or has expired. Request a new one.",
+        )
+    return {"success": True, "message": "Password has been reset. Please sign in."}
+
+
 @router.post("/refresh", response_model=RefreshResponse)
 async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
     """Exchange a valid refresh token for a new access token."""
@@ -176,6 +216,14 @@ async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_
     user = await service.get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User no longer exists")
+
+    # Security stamp (ISSUE-082): a refresh token issued before a password reset
+    # can no longer mint access tokens.
+    if int(claims.get("sv", 0) or 0) != int(getattr(user, "token_version", 0) or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This session is no longer valid. Please sign in again.",
+        )
 
     token, expires_at, _ = await service.issue_app_token(user)
     return RefreshResponse(token=token, expires_at=int(expires_at.timestamp()))

@@ -76,6 +76,9 @@ class AuthService:
             "email": user.email,
             "role": user.role,
             "must_change_password": bool(getattr(user, "must_change_password", False)),
+            # Security stamp (ISSUE-082): rejected once the user resets and the
+            # stored token_version moves past this value.
+            "sv": int(getattr(user, "token_version", 0) or 0),
         }
         if user.name:
             claims["name"] = user.name
@@ -87,12 +90,27 @@ class AuthService:
 
     def issue_refresh_token(self, user: User) -> str:
         """Generate a long-lived refresh token for the user."""
-        claims: Dict[str, Any] = {"sub": user.id, "email": user.email}
+        claims: Dict[str, Any] = {
+            "sub": user.id,
+            "email": user.email,
+            "sv": int(getattr(user, "token_version", 0) or 0),
+        }
         return create_refresh_token(claims)
 
     async def get_user_by_id(self, user_id: str) -> Optional[User]:
         result = await self.db.execute(select(User).where(User.id == str(user_id)))
         return result.scalar_one_or_none()
+
+
+async def get_security_stamp(db: AsyncSession, user_id: str) -> Optional[int]:
+    """Return a user's current ``token_version`` (security stamp), or ``None``.
+
+    Used to validate a presented token's ``sv`` claim — see ISSUE-082. ``None``
+    means the user no longer exists (caller should reject).
+    """
+    result = await db.execute(select(User.token_version).where(User.id == str(user_id)))
+    row = result.scalar_one_or_none()
+    return None if row is None else int(row or 0)
 
 
 async def initialize_admin_user():

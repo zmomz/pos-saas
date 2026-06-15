@@ -1,5 +1,5 @@
 from models.base import Base
-from sqlalchemy import Boolean, Column, DateTime, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, String
 from sqlalchemy.sql import func
 
 
@@ -15,5 +15,10 @@ class User(Base):
     # (agents/clients created by master/agent). Cleared on first password change.
     # Drives the frontend force-reset-on-first-login screen.
     must_change_password = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Security stamp (ISSUE-082): every issued access/refresh token carries the
+    # value current at mint time as its ``sv`` claim. A password reset bumps this,
+    # so tokens minted before the reset no longer match and are rejected — i.e. a
+    # reset drops all previously issued sessions.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     last_login = Column(DateTime(timezone=True), nullable=True)

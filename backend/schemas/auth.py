@@ -64,6 +64,31 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=8)
 
 
+class PasswordResetRequest(BaseModel):
+    """Request body for ``/auth/password/forgot`` — the account email."""
+
+    email: EmailStr
+
+
+class PasswordResetRequestResponse(BaseModel):
+    """Response for a reset request. Always 200 (anti-enumeration).
+
+    ``reset_token`` is populated only in dev / no-SMTP mode so the flow is usable
+    and testable without a real mailbox; it is ``None`` in production.
+    """
+
+    success: bool = True
+    message: str = "If the account exists, a reset link has been sent."
+    reset_token: Optional[str] = None
+
+
+class PasswordResetConfirm(BaseModel):
+    """Request body for ``/auth/password/reset`` — the token + the new password."""
+
+    token: str
+    new_password: str = Field(min_length=8)
+
+
 class NotificationPrefs(BaseModel):
     """Per-user notification toggles. Defaults mirror the prior frontend defaults."""
 

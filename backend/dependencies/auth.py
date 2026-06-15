@@ -91,6 +91,17 @@ async def get_current_user(
             detail="This session has been logged out. Please sign in again.",
         )
 
+    # Security stamp (ISSUE-082): a password reset bumps the user's token_version,
+    # so a token minted before the reset no longer matches and is rejected.
+    from services.auth import get_security_stamp
+
+    current_stamp = await get_security_stamp(db, user_id)
+    if current_stamp is None or int(payload.get("sv", 0) or 0) != current_stamp:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This session is no longer valid. Please sign in again.",
+        )
+
     await _assert_account_active(db, user_id)
 
     last_login_raw = payload.get("last_login")
