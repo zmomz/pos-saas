@@ -14,6 +14,7 @@ import { useLanguage } from '@/lib/i18n';
 import ErrorState from '@/components/states/ErrorState';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import { Gift, Star, Users, Settings, Plus, Minus } from 'lucide-react';
 
 interface LoyaltyConfig {
@@ -169,6 +170,101 @@ export default function LoyaltyProgram() {
     return <ErrorState message={t('loyalty_load_error')} onRetry={loadData} />;
   }
 
+  const balanceColumns: DataTableColumn<CustomerLoyalty>[] = [
+    {
+      key: 'customer',
+      header: tt('customer', 'Customer'),
+      cell: (cust) => <span className="text-foreground font-medium">{cust.customer_name}</span>,
+    },
+    {
+      key: 'balance',
+      header: tt('balance', 'Balance'),
+      cell: (cust) => (
+        <span className="text-foreground/90">
+          <span className="text-gold-600 font-bold tabular-nums">{cust.points_balance?.toLocaleString()}</span> {tt('pts', 'pts')}
+        </span>
+      ),
+    },
+    {
+      key: 'available',
+      header: tt('available', 'Available'),
+      cell: (cust) => (
+        <span className="text-foreground/90">
+          <span className="text-brand font-bold tabular-nums">
+            {(cust.available_points ?? cust.points_balance)?.toLocaleString()}
+          </span> {tt('pts', 'pts')}
+        </span>
+      ),
+    },
+    {
+      key: 'total_earned',
+      header: tt('total_earned', 'Total Earned'),
+      cell: (cust) => <span className="text-success tabular-nums">{cust.total_earned?.toLocaleString()}</span>,
+    },
+    {
+      key: 'total_redeemed',
+      header: tt('total_redeemed', 'Total Redeemed'),
+      cell: (cust) => <span className="text-danger tabular-nums">{cust.total_redeemed?.toLocaleString()}</span>,
+    },
+    {
+      key: 'last_activity',
+      header: tt('last_activity', 'Last Activity'),
+      cell: (cust) => (
+        <span className="text-foreground/90">{cust.last_activity ? new Date(cust.last_activity).toLocaleDateString() : '—'}</span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: tt('actions', 'Actions'),
+      cell: (cust) => (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => { setSelectedCustomer(cust); setAdjustOpen(true); }}
+          className="text-xs"
+        >
+          {tt('adjust', 'Adjust')}
+        </Button>
+      ),
+    },
+  ];
+
+  const historyColumns: DataTableColumn<PointsTransaction>[] = [
+    {
+      key: 'date',
+      header: tt('date', 'Date'),
+      cell: (tx) => <span className="text-foreground/90">{new Date(tx.created_at).toLocaleDateString()}</span>,
+    },
+    {
+      key: 'customer',
+      header: tt('customer', 'Customer'),
+      cell: (tx) => <span className="text-foreground">{tx.customer_name || '—'}</span>,
+    },
+    {
+      key: 'type',
+      header: tt('type', 'Type'),
+      cell: (tx) => (
+        <span className={tx.type === 'earned' || tx.type === 'add' ? 'pill-success' : 'pill-danger'}>
+          {tx.type}
+        </span>
+      ),
+    },
+    {
+      key: 'points',
+      header: tt('points', 'Points'),
+      cell: (tx) => (
+        <span className={`tabular-nums ${tx.type === 'earned' || tx.type === 'add' ? 'text-success' : 'text-danger'}`}>
+          {tx.type === 'earned' || tx.type === 'add' ? '+' : '-'}{tx.points}
+        </span>
+      ),
+    },
+    {
+      key: 'description',
+      header: tt('description', 'Description'),
+      cell: (tx) => <span className="text-foreground/90">{tx.description || '—'}</span>,
+    },
+  ];
+
   return (
     <div className="animate-fade-up space-y-6">
       <PageHeading
@@ -248,8 +344,8 @@ export default function LoyaltyProgram() {
               {configEditing ? (
                 <Button
                   size="sm"
+                  variant={config.is_active ? 'success' : 'danger'}
                   onClick={() => setConfig((c) => ({ ...c, is_active: !c.is_active }))}
-                  className={config.is_active ? 'bg-success text-white hover:bg-success/90' : 'bg-danger text-white hover:bg-danger/90'}
                 >
                   {config.is_active ? tt('active', 'Active') : tt('inactive', 'Inactive')}
                 </Button>
@@ -279,95 +375,24 @@ export default function LoyaltyProgram() {
       </div>
 
       {activeTab === 'balances' && (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-card">
-              <tr className="text-muted-foreground">
-                <th className="p-3 text-start">{tt('customer', 'Customer')}</th>
-                <th className="p-3 text-start">{tt('balance', 'Balance')}</th>
-                <th className="p-3 text-start">{tt('available', 'Available')}</th>
-                <th className="p-3 text-start">{tt('total_earned', 'Total Earned')}</th>
-                <th className="p-3 text-start">{tt('total_redeemed', 'Total Redeemed')}</th>
-                <th className="p-3 text-start">{tt('last_activity', 'Last Activity')}</th>
-                <th className="p-3 text-start">{tt('actions', 'Actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {customerBalances.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-muted-foreground">{tt('no_loyalty_members', 'No loyalty members yet')}</td>
-                </tr>
-              ) : (
-                customerBalances.map((cust) => (
-                  <tr key={cust.id} className="border-t border-border text-foreground/90">
-                    <td className="p-3 text-foreground font-medium">{cust.customer_name}</td>
-                    <td className="p-3">
-                      <span className="text-gold-600 font-bold tabular-nums">{cust.points_balance?.toLocaleString()}</span> {tt('pts', 'pts')}
-                    </td>
-                    <td className="p-3">
-                      <span className="text-brand font-bold tabular-nums">
-                        {(cust.available_points ?? cust.points_balance)?.toLocaleString()}
-                      </span> {tt('pts', 'pts')}
-                    </td>
-                    <td className="p-3 text-success tabular-nums">{cust.total_earned?.toLocaleString()}</td>
-                    <td className="p-3 text-danger tabular-nums">{cust.total_redeemed?.toLocaleString()}</td>
-                    <td className="p-3">{cust.last_activity ? new Date(cust.last_activity).toLocaleDateString() : '—'}</td>
-                    <td className="p-3">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => { setSelectedCustomer(cust); setAdjustOpen(true); }}
-                        className="text-xs"
-                      >
-                        {tt('adjust', 'Adjust')}
-                      </Button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div className="rounded-lg border border-border">
+          <DataTable<CustomerLoyalty>
+            columns={balanceColumns}
+            rows={customerBalances}
+            rowKey={(cust) => cust.id}
+            empty={tt('no_loyalty_members', 'No loyalty members yet')}
+          />
         </div>
       )}
 
       {activeTab === 'history' && (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-card">
-              <tr className="text-muted-foreground">
-                <th className="p-3 text-start">{tt('date', 'Date')}</th>
-                <th className="p-3 text-start">{tt('customer', 'Customer')}</th>
-                <th className="p-3 text-start">{tt('type', 'Type')}</th>
-                <th className="p-3 text-start">{tt('points', 'Points')}</th>
-                <th className="p-3 text-start">{tt('description', 'Description')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transactions.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="p-6 text-center text-muted-foreground">{tt('no_transactions', 'No transactions yet')}</td>
-                </tr>
-              ) : (
-                transactions.map((tx) => (
-                  <tr key={tx.id} className="border-t border-border text-foreground/90">
-                    <td className="p-3">{new Date(tx.created_at).toLocaleDateString()}</td>
-                    <td className="p-3 text-foreground">{tx.customer_name || '—'}</td>
-                    <td className="p-3">
-                      <span className={tx.type === 'earned' || tx.type === 'add' ? 'pill-success' : 'pill-danger'}>
-                        {tx.type}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <span className={`tabular-nums ${tx.type === 'earned' || tx.type === 'add' ? 'text-success' : 'text-danger'}`}>
-                        {tx.type === 'earned' || tx.type === 'add' ? '+' : '-'}{tx.points}
-                      </span>
-                    </td>
-                    <td className="p-3">{tx.description || '—'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div className="rounded-lg border border-border">
+          <DataTable<PointsTransaction>
+            columns={historyColumns}
+            rows={transactions}
+            rowKey={(tx) => tx.id}
+            empty={tt('no_transactions', 'No transactions yet')}
+          />
         </div>
       )}
 
@@ -381,13 +406,15 @@ export default function LoyaltyProgram() {
             <div className="flex gap-2">
               <Button
                 onClick={() => setAdjustType('add')}
-                className={adjustType === 'add' ? 'bg-success text-white flex-1' : 'bg-muted text-foreground/90 flex-1'}
+                variant={adjustType === 'add' ? 'success' : 'secondary'}
+                className="flex-1"
               >
                 <Plus className="h-4 w-4 me-1" /> {tt('add_points', 'Add Points')}
               </Button>
               <Button
                 onClick={() => setAdjustType('deduct')}
-                className={adjustType === 'deduct' ? 'bg-danger text-white flex-1' : 'bg-muted text-foreground/90 flex-1'}
+                variant={adjustType === 'deduct' ? 'danger' : 'secondary'}
+                className="flex-1"
               >
                 <Minus className="h-4 w-4 me-1" /> {tt('deduct_points', 'Deduct Points')}
               </Button>

@@ -20,6 +20,7 @@ import { client, receivePurchaseOrder, getBranches } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
@@ -431,6 +432,69 @@ export default function SupplierManagement() {
     );
   }
 
+  const supplierColumns: DataTableColumn<Supplier>[] = [
+    {
+      key: 'name',
+      header: t('name'),
+      cell: (supplier) => <span className="text-foreground font-medium">{supplier.name}</span>,
+    },
+    { key: 'contact', header: t('contact'), cell: (supplier) => supplier.contact_person || '—' },
+    { key: 'email', header: t('email'), cell: (supplier) => supplier.email || '—' },
+    { key: 'phone', header: t('phone'), cell: (supplier) => supplier.phone || '—' },
+    {
+      key: 'vat',
+      header: t('vat_number'),
+      cell: (supplier) => <span className="font-mono text-xs">{supplier.vat_number || '—'}</span>,
+    },
+    { key: 'terms', header: t('terms'), cell: (supplier) => supplier.payment_terms || '—' },
+    { key: 'status', header: t('status'), cell: (supplier) => getStatusBadge(supplier.status || 'active') },
+    {
+      key: 'actions',
+      header: t('actions'),
+      cell: (supplier) => (
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => openEdit(supplier)} className="text-xs">{t('edit')}</Button>
+          <Button size="sm" variant="outline" onClick={() => openCreatePO(supplier)} className="text-xs">
+            <Package className="h-3 w-3 me-1" /> {t('po_short')}
+          </Button>
+          <Button size="sm" variant="destructive" onClick={() => { setSelectedSupplier(supplier); setDeleteOpen(true); }} className="text-xs">{t('delete')}</Button>
+        </div>
+      ),
+    },
+  ];
+
+  const orderColumns: DataTableColumn<PurchaseOrder>[] = [
+    {
+      key: 'order_id',
+      header: t('order_id'),
+      cell: (po) => <span className="text-foreground font-mono text-xs">#{po.id.slice(0, 8)}</span>,
+    },
+    { key: 'supplier', header: t('supplier'), cell: (po) => po.supplier_name || '—' },
+    { key: 'items', header: t('items_label'), cell: (po) => po.items_count },
+    {
+      key: 'total',
+      header: t('total'),
+      cell: (po) => <span className="text-foreground font-medium tabular-nums">{formatMoney(po.total_amount || 0, language)}</span>,
+    },
+    { key: 'status', header: t('status'), cell: (po) => getStatusBadge(po.status) },
+    {
+      key: 'date',
+      header: t('date'),
+      cell: (po) => (po.order_date ? new Date(po.order_date).toLocaleDateString() : '—'),
+    },
+    {
+      key: 'actions',
+      header: t('actions'),
+      cell: (po) =>
+        po.status !== 'received' && po.status !== 'cancelled' ? (
+          <Button size="sm" variant="success" onClick={() => openReceive(po)} className="text-xs">
+            <CheckCircle className="h-3 w-3 me-1" />
+            {po.status === 'partially_received' ? t('receive_remaining') : t('receive_po')}
+          </Button>
+        ) : null,
+    },
+  ];
+
   if (loading && suppliers.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -510,95 +574,24 @@ export default function SupplierManagement() {
           </div>
 
           {/* Suppliers Table */}
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full text-sm">
-              <thead className="bg-card">
-                <tr className="text-muted-foreground">
-                  <th className="p-3 text-start">{t('name')}</th>
-                  <th className="p-3 text-start">{t('contact')}</th>
-                  <th className="p-3 text-start">{t('email')}</th>
-                  <th className="p-3 text-start">{t('phone')}</th>
-                  <th className="p-3 text-start">{t('vat_number')}</th>
-                  <th className="p-3 text-start">{t('terms')}</th>
-                  <th className="p-3 text-start">{t('status')}</th>
-                  <th className="p-3 text-start">{t('actions')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredSuppliers.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="p-6 text-center text-muted-foreground">{t('no_suppliers_found')}</td>
-                  </tr>
-                ) : (
-                  filteredSuppliers.map((supplier) => (
-                    <tr key={supplier.id} className="border-t border-border text-foreground/90">
-                      <td className="p-3 text-foreground font-medium">{supplier.name}</td>
-                      <td className="p-3">{supplier.contact_person || '—'}</td>
-                      <td className="p-3">{supplier.email || '—'}</td>
-                      <td className="p-3">{supplier.phone || '—'}</td>
-                      <td className="p-3 font-mono text-xs">{supplier.vat_number || '—'}</td>
-                      <td className="p-3">{supplier.payment_terms || '—'}</td>
-                      <td className="p-3">{getStatusBadge(supplier.status || 'active')}</td>
-                      <td className="p-3">
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => openEdit(supplier)} className="text-xs">{t('edit')}</Button>
-                          <Button size="sm" variant="outline" onClick={() => openCreatePO(supplier)} className="text-xs">
-                            <Package className="h-3 w-3 me-1" /> {t('po_short')}
-                          </Button>
-                          <Button size="sm" variant="destructive" onClick={() => { setSelectedSupplier(supplier); setDeleteOpen(true); }} className="text-xs">{t('delete')}</Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            className="rounded-lg border border-border"
+            columns={supplierColumns}
+            rows={filteredSuppliers}
+            rowKey={(supplier) => supplier.id}
+            empty={t('no_suppliers_found')}
+          />
         </>
       )}
 
       {activeTab === 'orders' && (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-card">
-              <tr className="text-muted-foreground">
-                <th className="p-3 text-start">{t('order_id')}</th>
-                <th className="p-3 text-start">{t('supplier')}</th>
-                <th className="p-3 text-start">{t('items_label')}</th>
-                <th className="p-3 text-start">{t('total')}</th>
-                <th className="p-3 text-start">{t('status')}</th>
-                <th className="p-3 text-start">{t('date')}</th>
-                <th className="p-3 text-start">{t('actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {purchaseOrders.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-muted-foreground">{t('no_purchase_orders')}</td>
-                </tr>
-              ) : (
-                purchaseOrders.map((po) => (
-                  <tr key={po.id} className="border-t border-border text-foreground/90">
-                    <td className="p-3 text-foreground font-mono text-xs">#{po.id.slice(0, 8)}</td>
-                    <td className="p-3">{po.supplier_name || '—'}</td>
-                    <td className="p-3">{po.items_count}</td>
-                    <td className="p-3 text-foreground font-medium tabular-nums">{formatMoney(po.total_amount || 0, language)}</td>
-                    <td className="p-3">{getStatusBadge(po.status)}</td>
-                    <td className="p-3">{po.order_date ? new Date(po.order_date).toLocaleDateString() : '—'}</td>
-                    <td className="p-3">
-                      {po.status !== 'received' && po.status !== 'cancelled' && (
-                        <Button size="sm" onClick={() => openReceive(po)} className="bg-success text-white hover:bg-success/90 text-xs">
-                          <CheckCircle className="h-3 w-3 me-1" />
-                          {po.status === 'partially_received' ? t('receive_remaining') : t('receive_po')}
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          className="rounded-lg border border-border"
+          columns={orderColumns}
+          rows={purchaseOrders}
+          rowKey={(po) => po.id}
+          empty={t('no_purchase_orders')}
+        />
       )}
 
       {/* Edit Dialog */}
@@ -709,8 +702,9 @@ export default function SupplierManagement() {
             )}
             <Button
               onClick={handleReceiveSubmit}
+              variant="success"
               disabled={submitting || receiveLines.every((l) => l.qty <= 0)}
-              className="w-full bg-success text-white hover:bg-success/90"
+              className="w-full"
             >
               {submitting ? t('loading') : t('receive_stock')}
             </Button>

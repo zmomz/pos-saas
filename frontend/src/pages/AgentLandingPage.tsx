@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import NotFoundState from '@/components/states/NotFoundState';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getAgentPublicProfile } from '@/lib/api';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
@@ -262,6 +262,14 @@ const content = {
   },
 };
 
+/**
+ * Public, white-labelled agent storefront.
+ *
+ * Phase 5 decision: like the partner landing page, this is intentionally light.
+ * It uses fixed palettes (`slate-*` + the agent's own `primary_color`, applied
+ * via inline styles) and never the inverting app tokens, so a logged-out shopper
+ * always sees a clean light brochure regardless of any persisted app theme.
+ */
 export default function AgentLandingPage() {
   const { agentId } = useParams<{ agentId: string }>();
   const [profile, setProfile] = useState<AgentProfile | null>(null);
@@ -299,18 +307,13 @@ export default function AgentLandingPage() {
 
   if (error || !profile) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <Card className="bg-white border-slate-200 max-w-md w-full shadow-lg">
-          <CardContent className="p-8 text-center space-y-4">
-            <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto">
-              <Package className="w-8 h-8 text-slate-400" />
-            </div>
-            <h2 className="text-xl font-bold text-slate-900">{c.not_found_title}</h2>
-            <p className="text-slate-600">{c.not_found_desc}</p>
-            <Button onClick={() => navigate('/')} className="bg-brand-500 hover:bg-brand-600 text-white">{c.go_main}</Button>
-          </CardContent>
-        </Card>
-      </div>
+      <NotFoundState
+        code=""
+        icon={Package}
+        title={c.not_found_title}
+        description={c.not_found_desc}
+        action={<Button onClick={() => navigate('/')}>{c.go_main}</Button>}
+      />
     );
   }
 
@@ -556,7 +559,7 @@ export default function AgentLandingPage() {
             {c.plans.map((plan) => (
               <div key={plan.name} className="relative bg-white rounded-2xl p-7 flex flex-col shadow-sm border" style={plan.feat ? { borderColor: brand, boxShadow: '0 10px 20px -6px rgba(0,0,0,0.12)' } : { borderColor: '#e2e8f0' }}>
                 {plan.feat && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gold text-[#5a4410] text-xs font-bold px-3.5 py-1 rounded-full whitespace-nowrap">{c.most_popular}</span>
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gold text-gold-900 text-xs font-bold px-3.5 py-1 rounded-full whitespace-nowrap">{c.most_popular}</span>
                 )}
                 <div className="text-[15px] font-bold">{plan.name}</div>
                 <div className="text-[13px] text-slate-500 mt-1 min-h-[38px]">{plan.desc}</div>

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
   getZatcaStatus,
@@ -96,12 +95,10 @@ export default function ZatcaOnboarding({ onComplete }: ZatcaOnboardingProps) {
 
   if (step === 'done') {
     return (
-      <Card className="bg-card border-border">
-        <CardContent className="p-6 flex items-center gap-3 text-success">
-          <CheckCircle2 className="h-6 w-6 shrink-0" />
-          <span className="text-sm">{t('zatca_onboarding_complete')}</span>
-        </CardContent>
-      </Card>
+      <div className="dxr-tile p-6 flex items-center gap-3 text-success">
+        <CheckCircle2 className="h-6 w-6 shrink-0" />
+        <span className="text-sm">{t('zatca_onboarding_complete')}</span>
+      </div>
     );
   }
 
@@ -113,9 +110,8 @@ export default function ZatcaOnboarding({ onComplete }: ZatcaOnboardingProps) {
   const activeIndex = steps.findIndex((s) => s.key === step);
 
   return (
-    <Card className="bg-card border-border">
-      <CardContent className="p-6 space-y-5">
-        <div>
+    <div className="dxr-tile p-6 space-y-5">
+      <div>
           <h3 className="text-foreground font-semibold flex items-center gap-2">
             <ShieldCheck className="h-5 w-5 text-brand" />
             {t('zatca_onboarding_title')}
@@ -224,7 +220,6 @@ export default function ZatcaOnboarding({ onComplete }: ZatcaOnboardingProps) {
             </Button>
           </div>
         )}
-      </CardContent>
-    </Card>
+    </div>
   );
 }

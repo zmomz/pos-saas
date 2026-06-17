@@ -51,7 +51,7 @@ const ProtectedAdminRoute: React.FC<ProtectedAdminRouteProps> = ({
                 The account you are using does not have administrator rights.
               </p>
               <div className="bg-gray-100 rounded-lg p-3 mb-4">
-                <div className="flex items-center justify-center space-x-2 text-sm">
+                <div className="flex items-center justify-center gap-2 text-sm">
                   <User className="h-4 w-4 text-gray-500" />
                   <span className="text-gray-700">
                     Current account: {user.email}
@@ -68,7 +68,7 @@ const ProtectedAdminRoute: React.FC<ProtectedAdminRouteProps> = ({
 
             <div className="space-y-3">
               <Button onClick={() => window.location.assign('/login')} className="w-full" variant="outline">
-                <LogIn className="h-4 w-4 mr-2" />
+                <LogIn className="h-4 w-4 me-2" />
                 Switch account
               </Button>
 

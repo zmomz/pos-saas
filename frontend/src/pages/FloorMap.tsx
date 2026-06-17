@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -248,12 +249,12 @@ export default function FloorMap() {
             onClick={() => setNewOrderOpen(true)}
             className="border-input text-foreground/90 hover:bg-muted"
           >
-            <ShoppingBag className="h-4 w-4 mr-2" /> {t('new_order')}
+            <ShoppingBag className="h-4 w-4 me-2" /> {t('new_order')}
           </Button>
           <Dialog open={addZoneOpen} onOpenChange={setAddZoneOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="border-input text-foreground/90 hover:bg-muted">
-                <Plus className="h-4 w-4 mr-2" /> {t('add_zone')}
+                <Plus className="h-4 w-4 me-2" /> {t('add_zone')}
               </Button>
             </DialogTrigger>
             <DialogContent className="bg-card border-border text-foreground">
@@ -283,7 +284,7 @@ export default function FloorMap() {
           <Dialog open={addTableOpen} onOpenChange={setAddTableOpen}>
             <DialogTrigger asChild>
               <Button>
-                <Plus className="h-4 w-4 mr-2" /> {t('add_table')}
+                <Plus className="h-4 w-4 me-2" /> {t('add_table')}
               </Button>
             </DialogTrigger>
             <DialogContent className="bg-card border-border text-foreground">
@@ -312,23 +313,27 @@ export default function FloorMap() {
                 {zones.length > 0 && (
                   <div>
                     <label className="text-sm text-muted-foreground mb-1 block">{t('all_zones')}</label>
-                    <select
-                      value={tableForm.zone_id ?? ''}
-                      onChange={(e) =>
+                    <Select
+                      value={tableForm.zone_id != null ? String(tableForm.zone_id) : 'none'}
+                      onValueChange={(v) =>
                         setTableForm((f) => ({
                           ...f,
-                          zone_id: e.target.value ? parseInt(e.target.value) : undefined,
+                          zone_id: v === 'none' ? undefined : parseInt(v),
                         }))
                       }
-                      className="w-full bg-muted border border-input text-foreground rounded-md p-2"
                     >
-                      <option value="">—</option>
-                      {zones.map((z) => (
-                        <option key={z.id} value={z.id}>
-                          {z.name}
-                        </option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="w-full bg-muted border border-input text-foreground rounded-md p-2">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">—</SelectItem>
+                        {zones.map((z) => (
+                          <SelectItem key={z.id} value={String(z.id)}>
+                            {z.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 )}
                 <Button
@@ -382,7 +387,7 @@ export default function FloorMap() {
               <button
                 key={table.id}
                 onClick={() => handleTileClick(table)}
-                className={`rounded-lg border p-4 text-start transition-colors ${STATE_STYLES[state] || STATE_STYLES.free}`}
+                className={`min-h-[96px] rounded-lg border p-4 text-start transition-colors ${STATE_STYLES[state] || STATE_STYLES.free}`}
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-foreground font-semibold">{table.name}</span>
@@ -414,17 +419,21 @@ export default function FloorMap() {
           <div className="space-y-4">
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">{t('order_type')}</label>
-              <select
+              <Select
                 value={orderForm.order_type}
-                onChange={(e) => setOrderForm((f) => ({ ...f, order_type: e.target.value }))}
-                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
+                onValueChange={(v) => setOrderForm((f) => ({ ...f, order_type: v }))}
               >
-                {ORDER_TYPES.map((ot) => (
-                  <option key={ot} value={ot}>
-                    {t(ot)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full bg-muted border border-input text-foreground rounded-md p-2">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ORDER_TYPES.map((ot) => (
+                    <SelectItem key={ot} value={ot}>
+                      {t(ot)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">{t('party_size')}</label>
@@ -469,17 +478,21 @@ export default function FloorMap() {
             <p className="text-muted-foreground text-sm">{t('new_order_desc')}</p>
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">{t('order_type')}</label>
-              <select
+              <Select
                 value={newOrderForm.order_type}
-                onChange={(e) => setNewOrderForm((f) => ({ ...f, order_type: e.target.value }))}
-                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
+                onValueChange={(v) => setNewOrderForm((f) => ({ ...f, order_type: v }))}
               >
-                {TABLELESS_ORDER_TYPES.map((ot) => (
-                  <option key={ot} value={ot}>
-                    {t(ot)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full bg-muted border border-input text-foreground rounded-md p-2">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TABLELESS_ORDER_TYPES.map((ot) => (
+                    <SelectItem key={ot} value={ot}>
+                      {t(ot)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">{t('customer_name')}</label>

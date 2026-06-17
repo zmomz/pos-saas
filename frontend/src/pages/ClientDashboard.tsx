@@ -5,7 +5,7 @@ import { getClientDashboard, getClientBranding, getTransactions, getClientSubscr
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import PageHeading from '@/components/dashboard/rx/PageHeading';
+import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import {
   DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag,
@@ -73,6 +73,30 @@ export default function ClientDashboard() {
     }
   }
 
+  usePageChrome(
+    {
+      subtitle: `${brandName ? `${brandName} · ` : ''}${t('recent_transactions')}`,
+      primaryAction: (
+        <Button onClick={() => navigate('/pos')} className="h-11 rounded-[10px] shadow-brand">
+          <Monitor className="h-4 w-4" />
+          {t('go_to_pos') || 'Open POS'}
+        </Button>
+      ),
+      paletteGroups: [
+        {
+          label: t('cmd_quick_actions'),
+          items: [
+            { icon: Monitor, label: t('go_to_pos') || 'Open POS', kbd: 'P', onSelect: () => navigate('/pos') },
+            { icon: ShoppingBag, label: t('products') || 'Products', onSelect: () => navigate('/products') },
+            { icon: BarChart3, label: t('reports') || 'Reports', onSelect: () => navigate('/reports') },
+            { icon: Users, label: t('staff') || 'Staff', onSelect: () => navigate('/staff') },
+          ],
+        },
+      ],
+    },
+    [language, brandName]
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -108,20 +132,9 @@ export default function ClientDashboard() {
 
   return (
     <div className="animate-fade-up space-y-5">
-      <PageHeading
-        icon={<span className="dxr-sw dxr-sw-brand h-9 w-9"><Receipt className="h-[18px] w-[18px]" /></span>}
-        title={brandName || t('dashboard')}
-        subtitle={t('recent_transactions')}
-      >
-        <Button onClick={() => navigate('/pos')} className="shadow-brand">
-          <Monitor className="h-4 w-4" />
-          {t('go_to_pos') || 'Open POS'}
-        </Button>
-      </PageHeading>
-
       {/* Subscription dunning banner */}
       {subscription && subOverdue && (
-        <div role="alert" className={cn('dxr-tile flex items-center gap-4', subscription.subscription_status === 'suspended' ? 'border-danger/45' : 'border-warning/45')} style={{ padding: 16 }}>
+        <div role="alert" className={cn('dxr-tile flex items-center gap-4', subscription.subscription_status === 'suspended' ? 'border-danger/45' : 'border-warning/45')}>
           <span className={cn('dxr-sw h-10 w-10', subscription.subscription_status === 'suspended' ? 'dxr-sw-danger' : 'dxr-sw-warning')}><AlertTriangle className="h-5 w-5" /></span>
           <div className="flex-1">
             <div className="font-bold">{subscription.subscription_status === 'suspended' ? (t('subscription_suspended_notice') || 'Subscription suspended') : (t('payment_overdue_notice') || 'Subscription payment overdue')}</div>
@@ -152,7 +165,7 @@ export default function ClientDashboard() {
           <div className="mt-auto">
             {spark ? (
               <svg viewBox="0 0 320 46" preserveAspectRatio="none" className="h-12 w-full">
-                <polyline points={spark} fill="none" stroke="#36c5e0" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
+                <polyline points={spark} fill="none" stroke="var(--cyan)" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             ) : (
               <div className="text-sm text-white/50">{t('empty_cart') || 'No transactions yet today.'}</div>
@@ -206,7 +219,7 @@ export default function ClientDashboard() {
       <div className="grid items-start gap-[18px] lg:grid-cols-[360px_1fr]">
         {/* Subscription panel */}
         {subscription && (subscription.subscription_fee > 0 || subscription.payments.length > 0) ? (
-          <div className="dxr-tile" style={{ padding: 22 }}>
+          <div className="dxr-tile">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-[16px] font-extrabold tracking-tight">{t('subscription') || 'Subscription'}</h2>
               <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold', subStatusCls)}>
@@ -248,14 +261,14 @@ export default function ClientDashboard() {
             )}
           </div>
         ) : (
-          <div className="dxr-tile flex flex-col items-center justify-center text-center text-muted-foreground" style={{ padding: 22 }}>
+          <div className="dxr-tile flex flex-col items-center justify-center text-center text-muted-foreground">
             <DollarSign className="mb-2 h-10 w-10 opacity-25" />
             <p className="text-sm">{t('no_subscription') || 'No active subscription.'}</p>
           </div>
         )}
 
         {/* Recent transactions */}
-        <div className="dxr-tile" style={{ padding: 0 }}>
+        <div className="dxr-tile p-0">
           <div className="flex items-center justify-between px-5 pb-3 pt-5">
             <h2 className="text-[16px] font-extrabold tracking-tight">{t('recent_transactions') || 'Recent Transactions'}</h2>
             <button onClick={() => navigate('/reports')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{t('view_all') || 'View all'} <ArrowRight className="h-[15px] w-[15px]" /></button>

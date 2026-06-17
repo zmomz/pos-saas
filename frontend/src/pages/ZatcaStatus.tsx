@@ -204,8 +204,9 @@ export default function ZatcaStatus() {
           </div>
           <Button
             onClick={handleReconcile}
+            variant="warning"
             disabled={reconciling || !summary.onboarded}
-            className="bg-warning hover:bg-warning/90 text-white shrink-0"
+            className="shrink-0"
             title={summary.onboarded ? undefined : t('zatca_not_onboarded')}
           >
             {reconciling ? t('loading') : t('zatca_reconcile')}

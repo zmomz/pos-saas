@@ -322,7 +322,7 @@ export default function StaffManagement() {
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <PageHeading
           icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Users className="h-[18px] w-[18px]" /></span>}
-          title={t('stf_total_staff')}
+          title={t('staff')}
           subtitle={`${staff.length} ${t('stf_total_staff')}`}
         >
           <DialogTrigger asChild>

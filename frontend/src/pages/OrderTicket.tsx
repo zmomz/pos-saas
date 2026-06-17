@@ -5,6 +5,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -454,21 +461,21 @@ export default function OrderTicket() {
       >
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4 mr-2" /> {t('add_item')}
+            <Plus className="h-4 w-4 me-2" /> {t('add_item')}
           </Button>
           <Button
             variant="outline"
             onClick={() => setTransferOpen(true)}
             className="border-input text-foreground/90 hover:bg-muted"
           >
-            <ArrowLeftRight className="h-4 w-4 mr-2" /> {t('transfer')}
+            <ArrowLeftRight className="h-4 w-4 me-2" /> {t('transfer')}
           </Button>
           <Button
             variant="outline"
             onClick={() => setMergeOpen(true)}
             className="border-input text-foreground/90 hover:bg-muted"
           >
-            <Merge className="h-4 w-4 mr-2" /> {t('merge')}
+            <Merge className="h-4 w-4 me-2" /> {t('merge')}
           </Button>
         </div>
       </PageHeading>
@@ -511,10 +518,10 @@ export default function OrderTicket() {
                     {hasOpen && (
                       <Button
                         size="sm"
+                        variant="warning"
                         onClick={() => handleFire(course)}
-                        className="bg-warning hover:opacity-90 text-white"
                       >
-                        <Flame className="h-4 w-4 mr-1" /> {t('fire_course')}
+                        <Flame className="h-4 w-4 me-1" /> {t('fire_course')}
                       </Button>
                     )}
                   </div>
@@ -643,7 +650,7 @@ export default function OrderTicket() {
               onClick={handlePrintCheck}
               className="border-input text-foreground/90 hover:bg-muted"
             >
-              <Receipt className="h-4 w-4 mr-1" /> {t('print_check')}
+              <Receipt className="h-4 w-4 me-1" /> {t('print_check')}
             </Button>
             <Button
               size="sm"
@@ -656,9 +663,9 @@ export default function OrderTicket() {
                 setSettleOpen(true);
               }}
               disabled={items.length === 0}
-              className="bg-success hover:opacity-90 text-white"
+              variant="success"
             >
-              <CheckCircle2 className="h-4 w-4 mr-1" /> {t('settle')}
+              <CheckCircle2 className="h-4 w-4 me-1" /> {t('settle')}
             </Button>
           </CardContent>
         </Card>
@@ -673,7 +680,7 @@ export default function OrderTicket() {
             onClick={() => setScOpen(true)}
             className="border-input text-foreground/90 hover:bg-muted"
           >
-            <Percent className="h-4 w-4 mr-1" /> {t('service_charge')}
+            <Percent className="h-4 w-4 me-1" /> {t('service_charge')}
           </Button>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -682,7 +689,7 @@ export default function OrderTicket() {
               onClick={() => handleSplit('seat')}
               className="border-input text-foreground/90 hover:bg-muted"
             >
-              <SplitSquareHorizontal className="h-4 w-4 mr-1" /> {t('split_by_seat')}
+              <SplitSquareHorizontal className="h-4 w-4 me-1" /> {t('split_by_seat')}
             </Button>
             <Button
               variant="outline"
@@ -713,36 +720,44 @@ export default function OrderTicket() {
           <div className="space-y-4">
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">{t('product')}</label>
-              <select
-                value={addForm.product_id ?? ''}
-                onChange={(e) => handleSelectProduct(e.target.value ? parseInt(e.target.value) : undefined)}
-                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
+              <Select
+                value={addForm.product_id != null ? String(addForm.product_id) : 'none'}
+                onValueChange={(v) => handleSelectProduct(v === 'none' ? undefined : parseInt(v))}
               >
-                <option value="">—</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({p.price})
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full bg-muted border-input text-foreground">
+                  <SelectValue placeholder="—" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  {products.map((p) => (
+                    <SelectItem key={p.id} value={String(p.id)}>
+                      {p.name} ({p.price})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Combo selector (F-056) — a bundle prices the line at its bundle price */}
             {combos.length > 0 && (
               <div>
                 <label className="text-sm text-muted-foreground mb-1 block">{t('combo')}</label>
-                <select
-                  value={addForm.combo_id ?? ''}
-                  onChange={(e) => handleSelectCombo(e.target.value ? parseInt(e.target.value) : undefined)}
-                  className="w-full bg-muted border border-input text-foreground rounded-md p-2"
+                <Select
+                  value={addForm.combo_id != null ? String(addForm.combo_id) : 'none'}
+                  onValueChange={(v) => handleSelectCombo(v === 'none' ? undefined : parseInt(v))}
                 >
-                  <option value="">—</option>
-                  {combos.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ({c.bundle_price})
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="w-full bg-muted border-input text-foreground">
+                    <SelectValue placeholder="—" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">—</SelectItem>
+                    {combos.map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.name} ({c.bundle_price})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
@@ -818,17 +833,21 @@ export default function OrderTicket() {
             </div>
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">{t('course')}</label>
-              <select
+              <Select
                 value={addForm.course}
-                onChange={(e) => setAddForm((f) => ({ ...f, course: e.target.value }))}
-                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
+                onValueChange={(v) => setAddForm((f) => ({ ...f, course: v }))}
               >
-                {COURSES.map((c) => (
-                  <option key={c} value={c}>
-                    {t('course_' + c)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full bg-muted border-input text-foreground">
+                  <SelectValue placeholder={t('course')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {COURSES.map((c) => (
+                    <SelectItem key={c} value={c}>
+                      {t('course_' + c)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">{t('note')}</label>
@@ -944,22 +963,28 @@ export default function OrderTicket() {
               <label htmlFor="settle-scope" className="text-sm text-muted-foreground mb-1 block">
                 {t('settle_scope')}
               </label>
-              <select
-                id="settle-scope"
-                aria-label={t('settle_scope')}
+              <Select
                 value={settleScope}
-                onChange={(e) => {
-                  setSettleScope(e.target.value as 'full' | 'seat' | 'item');
+                onValueChange={(v) => {
+                  setSettleScope(v as 'full' | 'seat' | 'item');
                   setSettleSeat(undefined);
                   setSettleItemIds(new Set());
                   setSettleTip(0);
                 }}
-                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
               >
-                <option value="full">{t('scope_full')}</option>
-                {seatNumbers.length > 0 && <option value="seat">{t('scope_seat')}</option>}
-                <option value="item">{t('scope_item')}</option>
-              </select>
+                <SelectTrigger
+                  id="settle-scope"
+                  aria-label={t('settle_scope')}
+                  className="w-full bg-muted border-input text-foreground"
+                >
+                  <SelectValue placeholder={t('settle_scope')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="full">{t('scope_full')}</SelectItem>
+                  {seatNumbers.length > 0 && <SelectItem value="seat">{t('scope_seat')}</SelectItem>}
+                  <SelectItem value="item">{t('scope_item')}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             {/* By seat — pick which seat's lines to bill */}
@@ -968,20 +993,26 @@ export default function OrderTicket() {
                 <label htmlFor="settle-seat" className="text-sm text-muted-foreground mb-1 block">
                   {t('choose_seat')}
                 </label>
-                <select
-                  id="settle-seat"
-                  aria-label={t('choose_seat')}
-                  value={settleSeat ?? ''}
-                  onChange={(e) => setSettleSeat(e.target.value ? parseInt(e.target.value) : undefined)}
-                  className="w-full bg-muted border border-input text-foreground rounded-md p-2"
+                <Select
+                  value={settleSeat != null ? String(settleSeat) : 'none'}
+                  onValueChange={(v) => setSettleSeat(v === 'none' ? undefined : parseInt(v))}
                 >
-                  <option value="">—</option>
-                  {seatNumbers.map((s) => (
-                    <option key={s} value={s}>
-                      {t('seat')} {s}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    id="settle-seat"
+                    aria-label={t('choose_seat')}
+                    className="w-full bg-muted border-input text-foreground"
+                  >
+                    <SelectValue placeholder="—" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">—</SelectItem>
+                    {seatNumbers.map((s) => (
+                      <SelectItem key={s} value={String(s)}>
+                        {t('seat')} {s}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
@@ -1027,17 +1058,18 @@ export default function OrderTicket() {
             </div>
             <div>
               <label className="text-sm text-muted-foreground mb-1 block">{t('payment_method')}</label>
-              <select
-                value={settleMethod}
-                onChange={(e) => setSettleMethod(e.target.value)}
-                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
-              >
-                <option value="cash">{t('pay_cash')}</option>
-                <option value="card">{t('pay_card')}</option>
-                <option value="mada">Mada</option>
-                <option value="applepay">Apple Pay</option>
-                <option value="stcpay">STC Pay</option>
-              </select>
+              <Select value={settleMethod} onValueChange={(v) => setSettleMethod(v)}>
+                <SelectTrigger className="w-full bg-muted border-input text-foreground">
+                  <SelectValue placeholder={t('payment_method')} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">{t('pay_cash')}</SelectItem>
+                  <SelectItem value="card">{t('pay_card')}</SelectItem>
+                  <SelectItem value="mada">Mada</SelectItem>
+                  <SelectItem value="applepay">Apple Pay</SelectItem>
+                  <SelectItem value="stcpay">STC Pay</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label htmlFor="settle-tip" className="text-sm text-muted-foreground mb-1 block">
@@ -1078,8 +1110,9 @@ export default function OrderTicket() {
             )}
             <Button
               onClick={handleSettle}
+              variant="success"
               disabled={submitting || !canSettle}
-              className="w-full bg-success hover:opacity-90 text-white"
+              className="w-full"
             >
               {submitting ? t('loading') : t('settle')}
             </Button>

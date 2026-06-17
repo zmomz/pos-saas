@@ -10,7 +10,7 @@ import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/dashboard/Avatar';
-import PageHeading from '@/components/dashboard/rx/PageHeading';
+import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
@@ -231,6 +231,31 @@ export default function AgentDashboard() {
   const subsPct = clients.length > 0 ? Math.round((activeClients.length / clients.length) * 100) : 0;
   const hasRevenue = !!revenue && revenue.payments > 0;
 
+  usePageChrome(
+    {
+      subtitle: `${branding?.company_name ? `${branding.company_name} · ` : ''}${clients.length} ${t('clients')} · ${activeClients.length} ${t('active_subscriptions') || 'active subscriptions'}`,
+      primaryAction: (
+        <Button onClick={() => setDialogOpen(true)} className="h-11 rounded-[10px] shadow-brand">
+          <UserPlus className="h-4 w-4" />
+          {t('create_client') || 'Add Client'}
+        </Button>
+      ),
+      paletteGroups: [
+        {
+          label: t('cmd_quick_actions'),
+          items: [
+            { icon: UserPlus, label: t('create_client') || 'Add Client', kbd: 'C', onSelect: () => setDialogOpen(true) },
+            { icon: CreditCard, label: t('run_billing_cycle') || 'Run billing', onSelect: handleRunDunning },
+            { icon: Palette, label: t('brand_editor') || 'Branding', onSelect: () => navigate('/branding') },
+            { icon: ShoppingBag, label: t('products') || 'Products', onSelect: () => navigate('/products') },
+            { icon: BarChart3, label: t('reports') || 'Reports', onSelect: () => navigate('/reports') },
+          ],
+        },
+      ],
+    },
+    [language, branding?.company_name, clients.length, activeClients.length]
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -241,20 +266,15 @@ export default function AgentDashboard() {
 
   return (
     <div className="animate-fade-up space-y-5">
-      <PageHeading
-        icon={<span className="dxr-sw dxr-sw-brand h-9 w-9"><Store className="h-[18px] w-[18px]" /></span>}
-        title={branding?.company_name || t('dashboard')}
-        subtitle={`${clients.length} ${t('clients')} · ${activeClients.length} ${t('active_subscriptions') || 'active subscriptions'}`}
-      >
+      <div className="flex flex-wrap items-center gap-2.5">
+        <span className="dxr-sw dxr-sw-brand h-9 w-9"><Store className="h-[18px] w-[18px]" /></span>
+        <h1 className="text-[18px] font-extrabold tracking-tight">{branding?.company_name || t('dashboard')}</h1>
         <span className="pill-gold"><BadgeCheck className="h-3.5 w-3.5" />{t('white_label_active') || 'White-label active'}</span>
+        <div className="flex-1" />
         <Button variant="outline" onClick={handleRunDunning} disabled={dunningBusy} title={t('run_billing_hint')}>
           {dunningBusy ? t('loading') : (t('run_billing_cycle') || 'Run billing')}
         </Button>
-        <Button onClick={() => setDialogOpen(true)} className="shadow-brand">
-          <UserPlus className="h-4 w-4" />
-          {t('create_client') || 'Add Client'}
-        </Button>
-      </PageHeading>
+      </div>
       {dunningResult && <p role="status" className="text-sm text-muted-foreground">{dunningResult}</p>}
 
       {/* Top bento — revenue spotlight + gauge + KPI chips */}
@@ -288,16 +308,16 @@ export default function AgentDashboard() {
             ) : (
               <>
                 <div className="flex h-8 overflow-hidden rounded-[10px]">
-                  <div className="flex items-center px-3 text-[12px] font-extrabold text-white" style={{ width: `${netPct}%`, background: 'linear-gradient(90deg,#1488a6,#0e7693)' }}>
+                  <div className="flex items-center bg-gradient-to-r from-brand-500 to-brand-600 px-3 text-[12px] font-extrabold text-white" style={{ width: `${netPct}%` }}>
                     {t('revenue_net_margin') || 'Net'} · {formatMoney(net, language)}
                   </div>
-                  <div className="flex items-center px-3 text-[12px] font-extrabold" style={{ width: `${owedPct}%`, background: 'linear-gradient(90deg,#d6a33a,#cd9a40)', color: '#3a2c10' }}>
+                  <div className="flex items-center bg-gradient-to-r from-warning to-gold-600 px-3 text-[12px] font-extrabold text-warning-foreground" style={{ width: `${owedPct}%` }}>
                     {t('revenue_platform_owed') || 'Owed'} · {formatMoney(owed, language)}
                   </div>
                 </div>
                 <div className="mt-2.5 flex gap-4 text-[12px] text-white/65">
-                  <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#1488a6' }} />{t('revenue_net_margin') || 'Net margin'}</span>
-                  <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: '#d6a33a' }} />{t('revenue_platform_owed') || 'Owed to platform'}</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-brand-500" />{t('revenue_net_margin') || 'Net margin'}</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-warning" />{t('revenue_platform_owed') || 'Owed to platform'}</span>
                 </div>
               </>
             )}
@@ -352,7 +372,7 @@ export default function AgentDashboard() {
       {/* Clients + right rail */}
       <div className="grid items-start gap-[18px] lg:grid-cols-[1fr_320px]">
         {/* Client list */}
-        <div className="dxr-tile" style={{ padding: 0 }}>
+        <div className="dxr-tile p-0">
           <div className="flex items-center justify-between px-5 pb-3 pt-5">
             <h2 className="text-[16px] font-extrabold tracking-tight">{t('clients')} <span className="text-muted-foreground">({clients.length})</span></h2>
           </div>
@@ -465,7 +485,7 @@ export default function AgentDashboard() {
       </div>
 
       {/* Commission statements */}
-      <section className="dxr-tile" data-testid="commission-statements" style={{ padding: 22 }}>
+      <section className="dxr-tile" data-testid="commission-statements">
         <div className="mb-3.5 flex items-center justify-between">
           <h2 className="text-[16px] font-extrabold tracking-tight">{t('commission_statements') || 'Commission statements'}</h2>
           <span className="text-[12.5px] text-muted-foreground">{t('per_billing_period') || 'Per billing period'}</span>
@@ -577,8 +597,8 @@ export default function AgentDashboard() {
               <div key={f} className="flex items-center justify-between gap-2">
                 <span className="text-foreground/90">{t(f) || f}</span>
                 <div className="flex gap-2">
-                  <Button size="sm" disabled={featureBusy} onClick={() => handleSetFeature(f, true)} className="bg-success text-white hover:bg-success/90 text-xs">{t('enable') || 'Enable'}</Button>
-                  <Button size="sm" disabled={featureBusy} variant="outline" onClick={() => handleSetFeature(f, false)} className="border-danger/40 text-danger hover:bg-danger/10 text-xs">{t('disable') || 'Disable'}</Button>
+                  <Button size="sm" variant="success" disabled={featureBusy} onClick={() => handleSetFeature(f, true)} className="text-xs">{t('enable') || 'Enable'}</Button>
+                  <Button size="sm" variant="outline-danger" disabled={featureBusy} onClick={() => handleSetFeature(f, false)} className="text-xs">{t('disable') || 'Disable'}</Button>
                 </div>
               </div>
             ))}

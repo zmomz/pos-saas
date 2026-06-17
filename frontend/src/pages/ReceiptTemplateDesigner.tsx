@@ -11,6 +11,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import {
   listReceiptTemplates,
   createReceiptTemplate,
@@ -80,6 +82,7 @@ export default function ReceiptTemplateDesigner() {
   const [form, setForm] = useState<TemplateForm>(emptyForm);
   const [templateId, setTemplateId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -88,6 +91,7 @@ export default function ReceiptTemplateDesigner() {
 
   async function load() {
     setLoading(true);
+    setError(false);
     try {
       const items = await listReceiptTemplates();
       // The renderer loads the `is_default` template; fall back to the first.
@@ -98,6 +102,7 @@ export default function ReceiptTemplateDesigner() {
       }
     } catch (err) {
       console.error('Failed to load receipt template:', err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -141,13 +146,8 @@ export default function ReceiptTemplateDesigner() {
   const widthPx = PAPER_WIDTH_PX[form.paper_size] ?? PAPER_WIDTH_PX['80mm'];
   const base = useMemo(() => 11 * scale, [scale]);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState onRetry={load} />;
 
   return (
     <div className="animate-fade-up space-y-6">
@@ -163,7 +163,7 @@ export default function ReceiptTemplateDesigner() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ---- Editor ---- */}
-        <div className="dxr-tile" style={{ padding: 22 }}>
+        <div className="dxr-tile">
           <div className="space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="tpl-name" className="text-muted-foreground">
@@ -249,7 +249,7 @@ export default function ReceiptTemplateDesigner() {
         </div>
 
         {/* ---- Live preview ---- */}
-        <div className="dxr-tile" style={{ padding: 22 }}>
+        <div className="dxr-tile">
           <div>
             <h3 className="mb-3 text-[16px] font-extrabold tracking-tight">{t('preview')}</h3>
             <div className="flex justify-center">

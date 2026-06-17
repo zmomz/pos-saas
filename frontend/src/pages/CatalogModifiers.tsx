@@ -9,6 +9,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import { formatMoney } from '@/lib/format';
 import {
   getProductsList,
@@ -41,6 +43,7 @@ export default function CatalogModifiers() {
   const [combos, setCombos] = useState<Combo[]>([]);
   const [attached, setAttached] = useState<Record<number, ProductModifierGroup[]>>({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   // Forms
   const [groupName, setGroupName] = useState('');
@@ -57,6 +60,7 @@ export default function CatalogModifiers() {
 
   async function load() {
     setLoading(true);
+    setError(false);
     try {
       const [prodRes, grpRes, comboRes] = await Promise.all([
         getProductsList(),
@@ -73,6 +77,7 @@ export default function CatalogModifiers() {
       setAttached(Object.fromEntries(pairs));
     } catch (err) {
       console.error('Failed to load catalog:', err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -123,13 +128,8 @@ export default function CatalogModifiers() {
     await load();
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState />;
+  if (error) return <ErrorState onRetry={load} />;
 
   // Radix Select disallows an empty value, so map "unpicked" to this sentinel.
   const NONE = 'none';

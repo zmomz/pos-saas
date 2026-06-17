@@ -146,7 +146,7 @@ export default function BrandingEditor() {
       {!loading && !denied && !loadError && (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
           {/* Form panel */}
-          <div className="dxr-tile" style={{ padding: 22 }}>
+          <div className="dxr-tile">
             <h2 className="mb-4 text-[16px] font-extrabold tracking-tight">{t('branding_settings')}</h2>
             <div className="space-y-5">
               {/* Logo */}
@@ -231,7 +231,7 @@ export default function BrandingEditor() {
           </div>
 
           {/* Live preview panel */}
-          <div className="dxr-tile" style={{ padding: 22 }}>
+          <div className="dxr-tile">
             <h2 className="mb-4 text-[16px] font-extrabold tracking-tight">{t('live_preview')}</h2>
             <div className="space-y-6 rounded-2xl border border-border bg-muted/40 p-6">
               {logoUrl && (

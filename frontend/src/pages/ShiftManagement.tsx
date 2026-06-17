@@ -381,7 +381,7 @@ export default function ShiftManagement() {
               <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
               <p className="text-muted-foreground mb-4">{t('sm_no_active_shift')}</p>
               <div className="flex items-center justify-center gap-3">
-                <Button onClick={() => setOpenShiftDialog(true)} className="bg-success hover:bg-success/90 text-white shadow-brand">
+                <Button onClick={() => setOpenShiftDialog(true)} variant="success" className="shadow-brand">
                   <PlayCircle className="h-4 w-4 me-2" /> {t('sm_open_new_shift')}
                 </Button>
                 {lastClosedShiftId != null && (
@@ -481,7 +481,7 @@ export default function ShiftManagement() {
               />
             </div>
             <p className="text-muted-foreground text-sm">{t('sm_opening_hint')}</p>
-            <Button onClick={handleOpenShift} disabled={submitting} className="w-full bg-success hover:bg-success/90 text-white shadow-brand">
+            <Button onClick={handleOpenShift} disabled={submitting} variant="success" className="w-full shadow-brand">
               {submitting ? t('loading') : t('sm_open_shift')}
             </Button>
           </div>

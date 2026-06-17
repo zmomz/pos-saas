@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -277,13 +276,11 @@ export default function MenuBuilder() {
   if (denied) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-card border-border max-w-md">
-          <CardContent className="p-8 text-center">
-            <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-            <h3 className="text-foreground font-semibold mb-2">{t('restaurant_disabled')}</h3>
-            <p className="text-muted-foreground text-sm">{t('restaurant_disabled_desc')}</p>
-          </CardContent>
-        </Card>
+        <div className="dxr-tile max-w-md p-8 text-center">
+          <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+          <h3 className="text-foreground font-semibold mb-2">{t('restaurant_disabled')}</h3>
+          <p className="text-muted-foreground text-sm">{t('restaurant_disabled_desc')}</p>
+        </div>
       </div>
     );
   }
@@ -292,15 +289,13 @@ export default function MenuBuilder() {
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-card border-border max-w-md">
-          <CardContent className="p-8 text-center">
-            <AlertTriangle className="h-12 w-12 text-danger mx-auto mb-3" />
-            <p className="text-foreground/90 mb-4">{t('menu_load_error')}</p>
-            <Button onClick={load}>
-              {t('retry')}
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="dxr-tile max-w-md p-8 text-center">
+          <AlertTriangle className="h-12 w-12 text-danger mx-auto mb-3" />
+          <p className="text-foreground/90 mb-4">{t('menu_load_error')}</p>
+          <Button onClick={load}>
+            {t('retry')}
+          </Button>
+        </div>
       </div>
     );
   }
@@ -334,17 +329,14 @@ export default function MenuBuilder() {
       <div>
         <h3 className="text-[16px] font-extrabold tracking-tight mb-2">{t('modifier_groups')}</h3>
         {groups.length === 0 ? (
-          <Card className="bg-card border-border">
-            <CardContent className="p-8 text-center">
-              <UtensilsCrossed className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
-              <p className="text-muted-foreground text-sm">{t('no_modifier_groups')}</p>
-            </CardContent>
-          </Card>
+          <div className="dxr-tile p-8 text-center">
+            <UtensilsCrossed className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+            <p className="text-muted-foreground text-sm">{t('no_modifier_groups')}</p>
+          </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {groups.map((g) => (
-              <Card key={g.id} className="bg-card border-border">
-                <CardContent className="p-4">
+              <div key={g.id} className="dxr-tile">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <span className="text-foreground font-medium">{g.name}</span>
@@ -402,8 +394,7 @@ export default function MenuBuilder() {
                   >
                     <Plus className="h-3.5 w-3.5" /> {t('add_modifier')}
                   </Button>
-                </CardContent>
-              </Card>
+              </div>
             ))}
           </div>
         )}
@@ -413,17 +404,14 @@ export default function MenuBuilder() {
       <div>
         <h3 className="text-[16px] font-extrabold tracking-tight mb-2">{t('combos')}</h3>
         {combos.length === 0 ? (
-          <Card className="bg-card border-border">
-            <CardContent className="p-8 text-center">
-              <Layers className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
-              <p className="text-muted-foreground text-sm">{t('no_combos')}</p>
-            </CardContent>
-          </Card>
+          <div className="dxr-tile p-8 text-center">
+            <Layers className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+            <p className="text-muted-foreground text-sm">{t('no_combos')}</p>
+          </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {combos.map((c) => (
-              <Card key={c.id} className="bg-card border-border">
-                <CardContent className="p-4">
+              <div key={c.id} className="dxr-tile">
                   <div className="flex items-center justify-between">
                     <span className="text-foreground font-medium">{c.name}</span>
                     <button
@@ -445,8 +433,7 @@ export default function MenuBuilder() {
                   <p className="text-xs text-muted-foreground mt-1">
                     {t('components')}: {c.components.length}
                   </p>
-                </CardContent>
-              </Card>
+              </div>
             ))}
           </div>
         )}
@@ -456,12 +443,10 @@ export default function MenuBuilder() {
       <div>
         <h3 className="text-[16px] font-extrabold tracking-tight mb-2">{t('product_modifiers')}</h3>
         {products.length === 0 ? (
-          <Card className="bg-card border-border">
-            <CardContent className="p-8 text-center">
-              <UtensilsCrossed className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
-              <p className="text-muted-foreground text-sm">{t('no_products_for_modifiers')}</p>
-            </CardContent>
-          </Card>
+          <div className="dxr-tile p-8 text-center">
+            <UtensilsCrossed className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+            <p className="text-muted-foreground text-sm">{t('no_products_for_modifiers')}</p>
+          </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {products.map((p) => {
@@ -469,12 +454,11 @@ export default function MenuBuilder() {
               const attachedIds = new Set(attached.map((g) => g.id));
               const available = groups.filter((g) => !attachedIds.has(g.id));
               return (
-                <Card
+                <div
                   key={p.id}
                   data-testid={`product-mods-${p.id}`}
-                  className="bg-card border-border"
+                  className="dxr-tile"
                 >
-                  <CardContent className="p-4">
                     <div className="mb-2">
                       <span className="text-foreground font-medium">{p.name}</span>
                     </div>
@@ -531,8 +515,7 @@ export default function MenuBuilder() {
                         <Plus className="h-3.5 w-3.5" /> {t('attach')}
                       </Button>
                     </div>
-                  </CardContent>
-                </Card>
+                </div>
               );
             })}
           </div>
@@ -546,12 +529,10 @@ export default function MenuBuilder() {
           {t('recipes')}
         </h3>
         {products.length === 0 ? (
-          <Card className="bg-card border-border">
-            <CardContent className="p-8 text-center">
-              <ChefHat className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
-              <p className="text-muted-foreground text-sm">{t('no_products_for_recipes')}</p>
-            </CardContent>
-          </Card>
+          <div className="dxr-tile p-8 text-center">
+            <ChefHat className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+            <p className="text-muted-foreground text-sm">{t('no_products_for_recipes')}</p>
+          </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {products.map((p) => {
@@ -561,12 +542,11 @@ export default function MenuBuilder() {
               const available = products.filter((c) => c.id !== p.id && !usedIds.has(c.id));
               const cogs = cogsByProduct[p.id] ?? 0;
               return (
-                <Card
+                <div
                   key={p.id}
                   data-testid={`product-bom-${p.id}`}
-                  className="bg-card border-border"
+                  className="dxr-tile"
                 >
-                  <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-foreground font-medium">{p.name}</span>
                       {cogs > 0 && (
@@ -645,8 +625,7 @@ export default function MenuBuilder() {
                         <Plus className="h-3.5 w-3.5" /> {t('add_component')}
                       </Button>
                     </div>
-                  </CardContent>
-                </Card>
+                </div>
               );
             })}
           </div>

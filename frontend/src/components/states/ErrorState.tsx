@@ -18,8 +18,8 @@ export default function ErrorState({ message, description, onRetry }: ErrorState
   const { t } = useLanguage();
   return (
     <div role="alert" className="flex flex-col items-center justify-center gap-3 py-16 text-center">
-      <AlertTriangle className="h-12 w-12 text-red-400" />
-      <p className="text-base font-medium text-red-500">{message || t('load_error')}</p>
+      <AlertTriangle className="h-12 w-12 text-danger/70" />
+      <p className="text-base font-medium text-danger">{message || t('load_error')}</p>
       <p className="max-w-sm text-sm text-muted-foreground">
         {description || t('load_error_desc')}
       </p>

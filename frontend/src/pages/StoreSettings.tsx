@@ -95,7 +95,7 @@ export default function StoreSettings() {
       </PageHeading>
 
       {/* Identity: name, VAT, CR */}
-      <div className="dxr-tile" style={{ padding: 22 }}>
+      <div className="dxr-tile">
         <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
           <Store className="h-5 w-5 text-brand-600" />
           {t('store_settings')}
@@ -131,7 +131,7 @@ export default function StoreSettings() {
       </div>
 
       {/* Receipt footer */}
-      <div className="dxr-tile" style={{ padding: 22 }}>
+      <div className="dxr-tile">
         <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
           <FileText className="h-5 w-5 text-success" />
           {t('receipt_footer')}
@@ -144,7 +144,7 @@ export default function StoreSettings() {
       </div>
 
       {/* Branch profile */}
-      <div className="dxr-tile" style={{ padding: 22 }}>
+      <div className="dxr-tile">
         <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
           <MapPin className="h-5 w-5 text-violet" />
           {t('branch_profile')}
@@ -180,7 +180,7 @@ export default function StoreSettings() {
       </div>
 
       {/* Business hours */}
-      <div className="dxr-tile" style={{ padding: 22 }}>
+      <div className="dxr-tile">
         <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
           <Clock className="h-5 w-5 text-warning" />
           {t('business_hours')}

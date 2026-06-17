@@ -40,6 +40,10 @@
     --input: 204 14% 85%;
     --ring: 192 78% 37%;
 
+    /* Bright cyan accent for dark "ink" tiles, gauges and spark lines.
+       Named in the reference (ds.css:18); ported here as the single source. */
+    --cyan: #36c5e0;
+
     --radius: 0.75rem;
 
     /* Sidebar: deep petrol with a warm-gold active indicator. */
@@ -82,6 +86,8 @@
     --border: 200 24% 22%;
     --input: 200 24% 24%;
     --ring: 192 70% 50%;
+
+    --cyan: #36c5e0;
 
     /* Sidebar stays deep teal in both modes (matches the handoff). */
     --sidebar-background: 197 58% 16%;
@@ -157,7 +163,9 @@
   }
 
   /* Handoff chips/pills — shared by the master & agent dashboards so status
-     badges and quick-action chips match design_handoff_cloud_pos exactly. */
+     badges and quick-action chips match design_handoff_cloud_pos exactly.
+     Which business status maps to which pill is the one source of truth in
+     docs/STATUS_COLOR_MAP.md — consult it before adding a new status colour. */
   .chip-link {
     @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-input bg-card px-[15px] py-[9px] text-[13.5px] font-semibold text-muted-foreground transition-colors hover:border-brand hover:text-brand-700;
   }
@@ -272,6 +280,32 @@
   width: 8px;
   height: 8px;
   border-radius: 9999px;
-  background: #36c5e0;
+  background: var(--cyan);
   animation: dxr-pulse 1.8s infinite;
+}
+
+/* ============================================================
+   Shared data table (.dxr-tbl) — the reference `.tbl` spec
+   (ds.css:255-260). One header/row treatment for every
+   list-heavy page; consumed by the <DataTable> primitive.
+   ============================================================ */
+@layer components {
+  .dxr-tbl {
+    @apply w-full border-collapse;
+  }
+  .dxr-tbl th {
+    @apply px-3 pb-[11px] text-start text-[10.5px] font-extrabold uppercase tracking-[0.06em] text-muted-foreground;
+  }
+  [dir='rtl'] .dxr-tbl th {
+    @apply text-right;
+  }
+  .dxr-tbl td {
+    @apply border-t border-border/70 px-3 py-[11px] align-middle text-[13.5px];
+  }
+  .dxr-tbl tbody tr {
+    @apply transition-colors;
+  }
+  .dxr-tbl tbody tr:hover {
+    @apply bg-muted/40;
+  }
 }

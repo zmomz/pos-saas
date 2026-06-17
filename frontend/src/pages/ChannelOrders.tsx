@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import {
   getSallaConnection,
   connectSalla,
@@ -129,6 +130,58 @@ export default function ChannelOrders() {
     }
   }
 
+  const orderColumns: DataTableColumn<ChannelOrder>[] = [
+    {
+      key: 'order_number',
+      header: t('order_number'),
+      cell: (o) => (
+        <span className="text-foreground">{o.external_reference || o.external_order_id}</span>
+      ),
+    },
+    {
+      key: 'provider',
+      header: t('channel_provider'),
+      cell: (o) => <span className="text-foreground/90">{o.provider}</span>,
+    },
+    {
+      key: 'customer',
+      header: t('customer'),
+      cell: (o) => <span className="text-foreground/90">{o.customer_name || '—'}</span>,
+    },
+    {
+      key: 'total',
+      header: t('total'),
+      cell: (o) => (
+        <span className="text-foreground/90 tabular-nums">
+          {o.total_amount != null ? formatMoney(o.total_amount, language) : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: t('status'),
+      cell: (o) => (
+        <Badge className={STATUS_BADGE[o.status] || 'pill-muted'}>
+          {t(`channel_status_${o.status}`)}
+        </Badge>
+      ),
+    },
+    {
+      key: 'invoice_number',
+      header: t('invoice_number'),
+      cell: (o) => <span className="text-muted-foreground">{o.transaction_id ?? '—'}</span>,
+    },
+    {
+      key: 'date',
+      header: t('date'),
+      cell: (o) => (
+        <span className="text-muted-foreground">
+          {o.created_at ? new Date(o.created_at).toLocaleString() : '—'}
+        </span>
+      ),
+    },
+  ];
+
   // ---- Loading state ----
   if (loading) {
     return (
@@ -165,7 +218,7 @@ export default function ChannelOrders() {
           onClick={load}
           className="border-input text-foreground/90 hover:bg-muted"
         >
-          <RefreshCw className="h-4 w-4 mr-2" /> {t('refresh')}
+          <RefreshCw className="h-4 w-4 me-2" /> {t('refresh')}
         </Button>
       </PageHeading>
 
@@ -177,7 +230,7 @@ export default function ChannelOrders() {
             {t('salla_connection')}
             {connection?.connected && (
               <Badge className="pill-success">
-                <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> {t('salla_connected_badge')}
+                <CheckCircle2 className="h-3.5 w-3.5 me-1" /> {t('salla_connected_badge')}
               </Badge>
             )}
           </div>
@@ -226,7 +279,7 @@ export default function ChannelOrders() {
             {t('aggregator_connection')}
             {aggregator?.connected && (
               <Badge className="pill-success">
-                <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> {t('aggregator_connected_badge')}
+                <CheckCircle2 className="h-3.5 w-3.5 me-1" /> {t('aggregator_connected_badge')}
               </Badge>
             )}
           </div>
@@ -253,8 +306,9 @@ export default function ChannelOrders() {
             />
             <Button
               onClick={handleConnectAggregator}
+              variant="warning"
               disabled={aggSaving || !locationId.trim()}
-              className="bg-warning hover:opacity-90 text-white shrink-0"
+              className="shrink-0"
             >
               {aggSaving ? t('loading') : t('connect')}
             </Button>
@@ -278,41 +332,13 @@ export default function ChannelOrders() {
         </Card>
       ) : (
         <Card className="bg-card border-border">
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-muted-foreground">
-                  <th className="text-start p-3">{t('order_number')}</th>
-                  <th className="text-start p-3">{t('channel_provider')}</th>
-                  <th className="text-start p-3">{t('customer')}</th>
-                  <th className="text-start p-3">{t('total')}</th>
-                  <th className="text-start p-3">{t('status')}</th>
-                  <th className="text-start p-3">{t('invoice_number')}</th>
-                  <th className="text-start p-3">{t('date')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((o) => (
-                  <tr key={o.id} className="border-b border-border/50">
-                    <td className="p-3 text-foreground">{o.external_reference || o.external_order_id}</td>
-                    <td className="p-3 text-foreground/90">{o.provider}</td>
-                    <td className="p-3 text-foreground/90">{o.customer_name || '—'}</td>
-                    <td className="p-3 text-foreground/90 tabular-nums">
-                      {o.total_amount != null ? formatMoney(o.total_amount, language) : '—'}
-                    </td>
-                    <td className="p-3">
-                      <Badge className={STATUS_BADGE[o.status] || 'pill-muted'}>
-                        {t(`channel_status_${o.status}`)}
-                      </Badge>
-                    </td>
-                    <td className="p-3 text-muted-foreground">{o.transaction_id ?? '—'}</td>
-                    <td className="p-3 text-muted-foreground">
-                      {o.created_at ? new Date(o.created_at).toLocaleString() : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <CardContent className="p-0">
+            <DataTable<ChannelOrder>
+              className="text-sm"
+              rowKey={(o) => o.id}
+              rows={orders}
+              columns={orderColumns}
+            />
           </CardContent>
         </Card>
       )}

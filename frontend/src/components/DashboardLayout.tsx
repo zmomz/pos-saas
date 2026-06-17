@@ -3,8 +3,11 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage, languageOptions, Language } from '@/lib/i18n';
+import { cn } from '@/lib/utils';
 import OnboardingTour from '@/components/OnboardingTour';
 import OfflineBanner from '@/components/states/OfflineBanner';
+import CommandPalette, { type PaletteGroup } from '@/components/dashboard/rx/CommandPalette';
+import { PageChromeProvider, useShellChrome } from '@/contexts/PageChromeContext';
 import {
   LayoutDashboard,
   Users,
@@ -18,7 +21,6 @@ import {
   X,
   LogOut,
   Globe,
-  ChevronDown,
   UserCheck,
   Receipt,
   Shield,
@@ -48,14 +50,12 @@ interface NavItem {
 const navConfig: Record<UserRole, NavItem[]> = {
   master: [
     { icon: LayoutDashboard, label: 'dashboard', path: '/master' },
-    { icon: Users, label: 'agents', path: '/master' },
     { icon: Package, label: 'packages', path: '/packages' },
     { icon: Shield, label: 'audit_log', path: '/audit' },
     { icon: Bell, label: 'notifications', path: '/notifications' },
   ],
   agent: [
     { icon: LayoutDashboard, label: 'dashboard', path: '/agent' },
-    { icon: Users, label: 'clients', path: '/agent' },
     { icon: Palette, label: 'branding', path: '/branding' },
     { icon: ShoppingBag, label: 'products', path: '/products' },
     { icon: FolderTree, label: 'categories', path: '/categories' },
@@ -94,16 +94,43 @@ const navConfig: Record<UserRole, NavItem[]> = {
   ],
 };
 
+const DASHBOARD_PATHS = new Set(['/master', '/agent', '/client']);
+
+function greetingKey(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'good_morning';
+  if (hour < 18) return 'good_afternoon';
+  return 'good_evening';
+}
+
+/**
+ * App shell — 80px icon rail + sticky command bar (greeting · ⌘K · bell ·
+ * primary action), matching the creative-redesign reference. Pages contribute
+ * their subtitle / primary action / ⌘K quick actions through
+ * `usePageChrome`; the rail nav and global ⌘K are shared across every role.
+ */
 const DashboardLayout: React.FC = () => {
+  return (
+    <PageChromeProvider>
+      <Shell />
+    </PageChromeProvider>
+  );
+};
+
+const Shell: React.FC = () => {
   const { user, logout } = useAuth();
   const { toggleTheme, isDark } = useTheme();
   const { t, language, setLanguage, isRTL } = useLanguage();
   const navigate = useNavigate();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [langDropdownOpen, setLangDropdownOpen] = useState(false);
+  const chrome = useShellChrome();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
 
   const userRole = (user?.role as UserRole) || 'client';
   const navItems = navConfig[userRole] || navConfig.client;
+
+  const displayName = (user?.name || user?.email?.split('@')[0] || '').trim();
+  const greeting = t(greetingKey());
 
   const handleLogout = async () => {
     await logout();
@@ -112,165 +139,188 @@ const DashboardLayout: React.FC = () => {
 
   const handleLanguageChange = (lang: Language) => {
     setLanguage(lang);
-    setLangDropdownOpen(false);
+    setLangOpen(false);
   };
 
+  // Global ⌘K: page-contributed quick actions first, then a navigate group
+  // built from this role's rail so every dashboard can jump anywhere.
+  const navGroup: PaletteGroup = {
+    label: t('cmd_navigate'),
+    items: navItems.map((n) => ({ icon: n.icon, label: t(n.label), onSelect: () => navigate(n.path) })),
+  };
+  const paletteGroups: PaletteGroup[] = [...(chrome.paletteGroups ?? []), navGroup];
+
   return (
-    <div className={`flex h-screen overflow-hidden bg-background ${isRTL ? 'flex-row-reverse' : ''}`}>
-      {/* Mobile overlay */}
-      {sidebarOpen && (
+    <div className="flex h-screen overflow-hidden bg-background">
+      {/* Mobile drawer overlay */}
+      {drawerOpen && (
         <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 lg:hidden"
-          onClick={() => setSidebarOpen(false)}
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
+          onClick={() => setDrawerOpen(false)}
         />
       )}
 
-      {/* Sidebar */}
+      {/* ── Icon rail ── (static on desktop, slide-in drawer on mobile) */}
       <aside
         data-tour="sidebar-nav"
-        className={`fixed lg:relative lg:h-screen inset-y-0 ${isRTL ? 'right-0' : 'left-0'} z-50 w-64 bg-sidebar text-sidebar-foreground transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${
-          sidebarOpen
+        className={cn(
+          'fixed inset-y-0 start-0 z-50 flex w-20 flex-col items-center gap-1.5 border-e border-border bg-card py-4 transition-transform duration-200 ease-in-out lg:static lg:translate-x-0',
+          drawerOpen
             ? 'translate-x-0'
             : isRTL
             ? 'translate-x-full lg:translate-x-0'
             : '-translate-x-full lg:translate-x-0'
-        } ${isRTL ? 'border-l border-sidebar-border' : 'border-r border-sidebar-border'}`}
+        )}
       >
-        {/* Sidebar header */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-sidebar-border">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/20 text-white font-bold">
-              {(t('app_name') || 'P').charAt(0).toUpperCase()}
-            </span>
-            <h1 className="text-lg font-bold tracking-tight truncate text-white">{t('app_name')}</h1>
-          </div>
-          <button
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-sidebar-foreground hover:text-white"
-          >
-            <X className="h-5 w-5" />
-          </button>
+        {/* Logo */}
+        <div className="mb-2 flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[15px] bg-gradient-to-br from-brand to-brand-700 text-xl font-extrabold text-white shadow-brand">
+          {(t('app_name') || 'P').charAt(0).toUpperCase()}
         </div>
+        <button
+          onClick={() => setDrawerOpen(false)}
+          className="absolute end-2 top-2 text-muted-foreground hover:text-foreground lg:hidden"
+          aria-label={t('close') || 'Close'}
+        >
+          <X className="h-5 w-5" />
+        </button>
 
-        {/* Nav links */}
-        <nav className="p-3 space-y-1 overflow-y-auto" style={{ maxHeight: 'calc(100vh - 8rem)' }}>
+        {/* Nav icons */}
+        <nav className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto px-1 py-1">
           {navItems.map((item, index) => {
             const Icon = item.icon;
             return (
               <NavLink
                 key={`${item.path}-${index}`}
                 to={item.path}
-                end={item.path === '/master' || item.path === '/agent' || item.path === '/client'}
-                onClick={() => setSidebarOpen(false)}
+                end={DASHBOARD_PATHS.has(item.path)}
+                onClick={() => setDrawerOpen(false)}
+                title={t(item.label)}
                 className={({ isActive }) =>
-                  `group relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                  cn(
+                    'group relative flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[14px] transition-all',
                     isActive
-                      ? 'bg-white/10 text-white font-semibold before:absolute before:inset-y-1.5 before:start-0 before:w-1 before:rounded-full before:bg-sidebar-primary'
-                      : 'text-sidebar-foreground hover:bg-white/5 hover:text-white'
-                  }`
+                      ? 'bg-gradient-to-br from-brand to-brand-700 text-white shadow-brand'
+                      : 'text-muted-foreground hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10'
+                  )
                 }
               >
-                <Icon className="h-5 w-5 flex-shrink-0" />
-                <span className="truncate">{t(item.label)}</span>
+                <Icon className="h-[21px] w-[21px]" />
+                {/* Hover tooltip (desktop rail only) */}
+                <span className="pointer-events-none absolute start-[54px] z-50 hidden whitespace-nowrap rounded-md bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background opacity-0 shadow-lg transition-opacity group-hover:opacity-100 lg:block">
+                  {t(item.label)}
+                </span>
               </NavLink>
             );
           })}
         </nav>
 
-        {/* User info at bottom */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-sidebar-border bg-sidebar">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-sidebar-primary flex items-center justify-center text-sidebar-primary-foreground text-sm font-bold">
-              {user?.email?.charAt(0).toUpperCase() || 'U'}
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium truncate text-white">{user?.email || 'User'}</p>
-              <p className="text-xs capitalize text-sidebar-foreground">{userRole}</p>
-            </div>
+        {/* Bottom controls */}
+        <div className="flex w-full flex-col items-center gap-1.5 px-1">
+          <button
+            data-tour="theme-toggle"
+            onClick={toggleTheme}
+            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] text-muted-foreground transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10"
+          >
+            {isDark ? <Sun className="h-5 w-5 text-gold" /> : <Moon className="h-5 w-5" />}
+          </button>
+
+          {/* Language */}
+          <div className="relative">
+            <button
+              onClick={() => setLangOpen((o) => !o)}
+              title={t('language') || 'Language'}
+              className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] text-muted-foreground transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10"
+            >
+              <Globe className="h-5 w-5" />
+            </button>
+            {langOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setLangOpen(false)} />
+                <div className="absolute bottom-0 start-[52px] z-50 min-w-[140px] rounded-xl border border-border bg-popover py-1 text-popover-foreground shadow-lg">
+                  {languageOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => handleLanguageChange(option.value)}
+                      className={cn(
+                        'block w-full px-4 py-2 text-start text-sm transition-colors',
+                        language === option.value
+                          ? 'bg-accent font-medium text-accent-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
+          <button
+            onClick={handleLogout}
+            title={t('logout')}
+            className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
+          >
+            <LogOut className="h-5 w-5" />
+          </button>
+
+          {/* Avatar */}
+          <div
+            title={user?.email || 'User'}
+            className="mt-0.5 flex h-[42px] w-[42px] items-center justify-center rounded-[13px] bg-gradient-to-br from-gold to-gold-600 text-sm font-extrabold text-[#3a2c10]"
+          >
+            {(displayName || user?.email || 'U').charAt(0).toUpperCase()}
           </div>
         </div>
       </aside>
 
-      {/* Main content area — own scroll container so the sidebar stays put. */}
-      <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        {/* Header */}
-        <header className="h-16 bg-card/80 backdrop-blur-md border-b border-border flex items-center justify-between px-4 sticky top-0 z-30">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden text-muted-foreground hover:text-foreground"
-            >
-              <Menu className="h-6 w-6" />
-            </button>
-            <h2 data-tour="dashboard-title" className="font-semibold hidden sm:block text-foreground">{t('dashboard')}</h2>
-          </div>
+      {/* ── Main column ── */}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* Command bar */}
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-border bg-background/80 px-4 py-3 backdrop-blur-md sm:px-6">
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="text-muted-foreground hover:text-foreground lg:hidden"
+            aria-label={t('menu') || 'Menu'}
+          >
+            <Menu className="h-6 w-6" />
+          </button>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Theme toggle */}
-            <button
-              data-tour="theme-toggle"
-              onClick={toggleTheme}
-              className="p-2 rounded-lg transition-colors bg-muted text-foreground hover:bg-accent"
-              title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-            >
-              {isDark ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4" />}
-            </button>
-
-            {/* Language switcher */}
-            <div className="relative">
-              <button
-                onClick={() => setLangDropdownOpen(!langDropdownOpen)}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm bg-muted text-muted-foreground hover:text-foreground hover:bg-accent"
-              >
-                <Globe className="h-4 w-4" />
-                <span className="hidden sm:inline">
-                  {languageOptions.find((l) => l.value === language)?.label || 'English'}
-                </span>
-                <ChevronDown className="h-3 w-3" />
-              </button>
-              {langDropdownOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setLangDropdownOpen(false)}
-                  />
-                  <div
-                    className={`absolute top-full mt-1 ${isRTL ? 'left-0' : 'right-0'} z-50 bg-popover text-popover-foreground border border-border rounded-xl shadow-lg py-1 min-w-[140px]`}
-                  >
-                    {languageOptions.map((option) => (
-                      <button
-                        key={option.value}
-                        onClick={() => handleLanguageChange(option.value)}
-                        className={`w-full text-start px-4 py-2 text-sm transition-colors ${
-                          language === option.value
-                            ? 'bg-accent text-accent-foreground font-medium'
-                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
-                        }`}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
+          <div className="min-w-0" data-tour="dashboard-title">
+            <div className="truncate text-[20px] font-extrabold leading-tight tracking-tight">
+              {displayName ? `${greeting}, ${displayName.charAt(0).toUpperCase()}${displayName.slice(1)}` : greeting}
             </div>
-
-            {/* Logout button */}
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg transition-colors text-sm text-muted-foreground hover:text-red-500 hover:bg-muted"
-            >
-              <LogOut className="h-4 w-4" />
-              <span className="hidden sm:inline">{t('logout')}</span>
-            </button>
+            {chrome.subtitle && (
+              <div className="truncate text-[13px] text-muted-foreground">{chrome.subtitle}</div>
+            )}
           </div>
+
+          <div className="flex-1" />
+
+          <CommandPalette
+            triggerLabel={t('search_everything')}
+            placeholder={t('search_or_command')}
+            groups={paletteGroups}
+          />
+
+          <button
+            onClick={() => navigate('/notifications')}
+            title={t('notifications')}
+            className="relative flex h-11 w-11 items-center justify-center rounded-[14px] border border-input bg-card text-muted-foreground shadow-sm transition-colors hover:border-brand hover:text-brand-700"
+          >
+            <Bell className="h-[18px] w-[18px]" />
+            <span className="absolute end-2.5 top-2.5 h-2 w-2 rounded-full bg-danger ring-2 ring-card" />
+          </button>
+
+          {chrome.primaryAction}
         </header>
 
         {/* Global offline banner (UX-02 / F-051) — covers every back-office page. */}
         <OfflineBanner />
 
         {/* Page content */}
-        <main className="flex-1 p-4 sm:p-6 overflow-auto">
+        <main className="flex-1 overflow-auto p-4 sm:p-6">
           <Outlet />
         </main>
       </div>

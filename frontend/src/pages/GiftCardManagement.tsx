@@ -3,8 +3,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import ErrorState from '@/components/states/ErrorState';
+import EmptyState from '@/components/states/EmptyState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import {
   issueGiftCard,
   listGiftCards,
@@ -163,6 +165,112 @@ export default function GiftCardManagement() {
     return <ErrorState message={t('gift_cards_load_error')} onRetry={load} />;
   }
 
+  const columns: DataTableColumn<GiftCard>[] = [
+    {
+      key: 'code',
+      header: t('gift_card_code'),
+      cell: (c) => (
+        <span className="text-foreground font-mono" dir="ltr">
+          {c.code}
+        </span>
+      ),
+    },
+    {
+      key: 'balance',
+      header: t('gift_card_balance'),
+      cell: (c) => (
+        <span className="text-foreground/90 tabular-nums">{formatMoney(c.balance, language)}</span>
+      ),
+    },
+    {
+      key: 'initial',
+      header: t('gift_card_initial'),
+      cell: (c) => (
+        <span className="text-muted-foreground tabular-nums">
+          {formatMoney(c.initial_balance, language)}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: t('status'),
+      cell: (c) => (
+        <span className={STATUS_PILL[c.status] || 'pill-muted'}>
+          {t(`gift_card_status_${c.status}`)}
+        </span>
+      ),
+    },
+    {
+      key: 'expiry',
+      header: t('gift_card_expiry'),
+      cell: (c) => (
+        <span className="text-muted-foreground">
+          {c.expiry_date ? new Date(c.expiry_date).toLocaleDateString() : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'date',
+      header: t('date'),
+      cell: (c) => (
+        <span className="text-muted-foreground">
+          {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: t('gift_card_actions'),
+      align: 'end',
+      cell: (c) =>
+        c.status === 'void' ? (
+          <span className="text-muted-foreground text-xs">—</span>
+        ) : reloadId === c.id ? (
+          <div className="flex items-center justify-end gap-2">
+            <Input
+              dir="ltr"
+              type="number"
+              min="0"
+              step="0.01"
+              value={reloadAmount}
+              onChange={(e) => setReloadAmount(e.target.value)}
+              placeholder={t('gift_card_reload_amount')}
+              className="h-8 w-32"
+            />
+            <Button
+              size="sm"
+              onClick={() => handleReload(c.id)}
+              disabled={busyId === c.id || !(Number(reloadAmount) > 0)}
+            >
+              {t('gift_card_reload')}
+            </Button>
+          </div>
+        ) : (
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setReloadId(c.id);
+                setReloadAmount('');
+              }}
+              disabled={busyId === c.id}
+            >
+              {t('gift_card_reload')}
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => handleVoid(c.id)}
+              disabled={busyId === c.id}
+            >
+              {t('gift_card_void')}
+            </Button>
+          </div>
+        ),
+    },
+  ];
+
   return (
     <div className="animate-fade-up space-y-6">
       <PageHeading
@@ -228,98 +336,15 @@ export default function GiftCardManagement() {
 
       {/* Issued cards: empty state vs table */}
       {cards.length === 0 ? (
-        <Card className="bg-card border-border">
-          <CardContent className="p-10 text-center">
-            <Gift className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-            <h3 className="text-foreground font-semibold mb-1">{t('no_gift_cards')}</h3>
-            <p className="text-muted-foreground text-sm">{t('no_gift_cards_desc')}</p>
-          </CardContent>
-        </Card>
+        <EmptyState icon={Gift} message={t('no_gift_cards')} description={t('no_gift_cards_desc')} />
       ) : (
         <Card className="bg-card border-border">
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-muted-foreground">
-                  <th className="text-start p-3">{t('gift_card_code')}</th>
-                  <th className="text-start p-3">{t('gift_card_balance')}</th>
-                  <th className="text-start p-3">{t('gift_card_initial')}</th>
-                  <th className="text-start p-3">{t('status')}</th>
-                  <th className="text-start p-3">{t('gift_card_expiry')}</th>
-                  <th className="text-start p-3">{t('date')}</th>
-                  <th className="text-end p-3">{t('gift_card_actions')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cards.map((c) => (
-                  <tr key={c.id} className="border-b border-border/50">
-                    <td className="p-3 text-foreground font-mono" dir="ltr">{c.code}</td>
-                    <td className="p-3 text-foreground/90 tabular-nums">
-                      {formatMoney(c.balance, language)}
-                    </td>
-                    <td className="p-3 text-muted-foreground tabular-nums">{formatMoney(c.initial_balance, language)}</td>
-                    <td className="p-3">
-                      <span className={STATUS_PILL[c.status] || 'pill-muted'}>
-                        {t(`gift_card_status_${c.status}`)}
-                      </span>
-                    </td>
-                    <td className="p-3 text-muted-foreground">
-                      {c.expiry_date ? new Date(c.expiry_date).toLocaleDateString() : '—'}
-                    </td>
-                    <td className="p-3 text-muted-foreground">
-                      {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
-                    </td>
-                    <td className="p-3">
-                      {c.status === 'void' ? (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      ) : reloadId === c.id ? (
-                        <div className="flex items-center justify-end gap-2">
-                          <Input
-                            dir="ltr"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={reloadAmount}
-                            onChange={(e) => setReloadAmount(e.target.value)}
-                            placeholder={t('gift_card_reload_amount')}
-                            className="h-8 w-32"
-                          />
-                          <Button
-                            size="sm"
-                            onClick={() => handleReload(c.id)}
-                            disabled={busyId === c.id || !(Number(reloadAmount) > 0)}
-                          >
-                            {t('gift_card_reload')}
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => {
-                              setReloadId(c.id);
-                              setReloadAmount('');
-                            }}
-                            disabled={busyId === c.id}
-                          >
-                            {t('gift_card_reload')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => handleVoid(c.id)}
-                            disabled={busyId === c.id}
-                          >
-                            {t('gift_card_void')}
-                          </Button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <CardContent className="p-0">
+            <DataTable<GiftCard>
+              columns={columns}
+              rows={cards}
+              rowKey={(c) => c.id}
+            />
             {cards.length < total && (
               <div className="flex justify-center pt-4">
                 <Button

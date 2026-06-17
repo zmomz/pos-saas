@@ -13,10 +13,10 @@ import CountUp from '@/components/dashboard/rx/CountUp';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
 import SpotChart from '@/components/dashboard/rx/SpotChart';
-import CommandPalette from '@/components/dashboard/rx/CommandPalette';
+import { usePageChrome } from '@/contexts/PageChromeContext';
 import {
   Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Shield,
-  TrendingUp, TrendingDown, ArrowRight, ChevronRight, Percent, Bell, AlertTriangle, Check,
+  TrendingUp, TrendingDown, ArrowRight, ChevronRight, Percent, AlertTriangle, Check,
 } from 'lucide-react';
 
 interface AuditEntry {
@@ -221,7 +221,7 @@ export default function MasterDashboard() {
 
   const paletteGroups = [
     {
-      label: 'Quick actions',
+      label: tt('cmd_quick_actions', 'Quick actions'),
       items: [
         { icon: UserPlus, label: tt('create_agent', 'Create agent'), kbd: 'C', onSelect: () => setCreateDialogOpen(true) },
         { icon: Percent, label: tt('tax_rate', 'Edit global tax rate'), onSelect: openTaxDialog },
@@ -230,6 +230,20 @@ export default function MasterDashboard() {
       ],
     },
   ];
+
+  usePageChrome(
+    {
+      subtitle: `${t('platform_economics')} · ${tt('all_agents_revenue', 'all agents and revenue')}`,
+      primaryAction: (
+        <Button onClick={() => setCreateDialogOpen(true)} className="h-11 rounded-[10px] shadow-brand">
+          <UserPlus className="h-4 w-4" />
+          {tt('create_agent', 'Create Agent')}
+        </Button>
+      ),
+      paletteGroups,
+    },
+    [language]
+  );
 
   if (loading) {
     return (
@@ -241,28 +255,6 @@ export default function MasterDashboard() {
 
   return (
     <div className="animate-fade-up space-y-5">
-      {/* Command bar */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div>
-          <h1 className="text-[21px] font-extrabold tracking-tight">{tt('platform_overview', 'Platform Overview')}</h1>
-          <p className="text-[13px] text-muted-foreground">{t('platform_economics')} · {tt('all_agents_revenue', 'all agents and revenue')}</p>
-        </div>
-        <div className="flex-1" />
-        <CommandPalette
-          triggerLabel={tt('search_agents_clients', 'Search agents, clients…')}
-          placeholder={tt('search_or_command', 'Search or run a command…')}
-          groups={paletteGroups}
-        />
-        <button className="relative flex h-11 w-11 items-center justify-center rounded-[14px] border border-input bg-card text-muted-foreground shadow-sm transition-colors hover:border-brand hover:text-brand-700" onClick={() => navigate('/notifications')}>
-          <Bell className="h-[18px] w-[18px]" />
-          <span className="absolute right-2.5 top-2.5 h-2 w-2 rounded-full bg-danger ring-2 ring-card" />
-        </button>
-        <Button onClick={() => setCreateDialogOpen(true)} className="h-11 rounded-[10px] shadow-brand">
-          <UserPlus className="h-4 w-4" />
-          {tt('create_agent', 'Create Agent')}
-        </Button>
-      </div>
-
       {/* BENTO */}
       <div data-tour="stats-section" className="grid gap-4 lg:auto-rows-[116px] lg:grid-cols-12">
 

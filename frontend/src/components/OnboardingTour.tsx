@@ -93,7 +93,7 @@ const clientSteps: TourStep[] = [
 
 const OnboardingTour: React.FC = () => {
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, isRTL } = useLanguage();
   const [currentStep, setCurrentStep] = useState(0);
   const [isVisible, setIsVisible] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
@@ -124,7 +124,17 @@ const OnboardingTour: React.FC = () => {
       let top = 0;
       let left = 0;
 
-      switch (step.position) {
+      // Mirror horizontal side anchoring under RTL so a tooltip meant to sit
+      // beside an element (e.g. the sidebar, which moves to the right edge in
+      // RTL) lands on the content-facing side instead of off-screen.
+      const side =
+        isRTL && step.position === 'right'
+          ? 'left'
+          : isRTL && step.position === 'left'
+          ? 'right'
+          : step.position;
+
+      switch (side) {
         case 'bottom':
           top = rect.bottom + 12;
           left = rect.left + rect.width / 2 - 160;
@@ -194,7 +204,7 @@ const OnboardingTour: React.FC = () => {
         {/* Close button */}
         <button
           onClick={handleSkip}
-          className="absolute top-3 right-3 text-muted-foreground hover:text-muted-foreground dark:hover:text-foreground"
+          className="absolute top-3 end-3 text-muted-foreground hover:text-muted-foreground dark:hover:text-foreground"
         >
           <X className="h-4 w-4" />
         </button>
@@ -233,7 +243,7 @@ const OnboardingTour: React.FC = () => {
             className="flex items-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {isLastStep ? (t('finish') || 'Finish') : (t('next') || 'Next')}
-            {!isLastStep && <ChevronRight className="h-3.5 w-3.5" />}
+            {!isLastStep && <ChevronRight className={`h-3.5 w-3.5 ${isRTL ? 'rotate-180' : ''}`} />}
           </button>
         </div>
       </div>

@@ -112,8 +112,8 @@ export default function PackageManagement() {
       setForm(emptyForm);
       setEditingPackage(null);
       await fetchPackages();
-    } catch {
-      // silent fail
+    } catch (err) {
+      console.error('Failed to save package:', err);
     } finally {
       setSaving(false);
     }
@@ -124,8 +124,8 @@ export default function PackageManagement() {
       await deletePackage(id);
       setConfirmDeleteId(null);
       await fetchPackages();
-    } catch {
-      // silent fail
+    } catch (err) {
+      console.error('Failed to delete package:', err);
     }
   }
 
@@ -197,7 +197,7 @@ export default function PackageManagement() {
                 </Button>
                 {confirmDeleteId === pkg.id ? (
                   <div className="flex flex-1 gap-1">
-                    <Button size="sm" onClick={() => handleDelete(pkg.id)} className="flex-1 bg-danger text-white hover:bg-danger/90">{t('yes')}</Button>
+                    <Button size="sm" variant="danger" onClick={() => handleDelete(pkg.id)} className="flex-1">{t('yes')}</Button>
                     <Button size="sm" variant="outline" onClick={() => setConfirmDeleteId(null)} className="flex-1">{t('no')}</Button>
                   </div>
                 ) : (

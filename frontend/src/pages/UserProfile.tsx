@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check } from 'lucide-react';
@@ -195,16 +196,11 @@ export default function UserProfile() {
                 <p className="text-foreground text-sm font-medium">{item.label}</p>
                 <p className="text-muted-foreground text-xs">{item.desc}</p>
               </div>
-              <Button
-                size="sm"
-                onClick={() => toggleNotifPref(item.key)}
-                className={notifPrefs[item.key]
-                  ? 'bg-success hover:bg-success/90 text-white'
-                  : 'bg-muted hover:bg-muted text-muted-foreground'
-                }
-              >
-                {notifPrefs[item.key] ? tt('on', 'On') : tt('off', 'Off')}
-              </Button>
+              <Switch
+                checked={notifPrefs[item.key]}
+                onCheckedChange={() => toggleNotifPref(item.key)}
+                aria-label={item.label}
+              />
             </div>
           ))}
         </div>

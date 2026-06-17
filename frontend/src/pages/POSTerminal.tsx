@@ -1325,7 +1325,7 @@ export default function POSTerminal() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                className="h-7 w-7 p-0 border-input text-foreground"
+                                className="h-9 w-9 p-0 border-input text-foreground"
                                 onClick={() => setLineRefundQty(idx, qty - 1, item.quantity)}
                                 disabled={qty <= 0}
                               >
@@ -1345,7 +1345,7 @@ export default function POSTerminal() {
                                 type="button"
                                 size="sm"
                                 variant="outline"
-                                className="h-7 w-7 p-0 border-input text-foreground"
+                                className="h-9 w-9 p-0 border-input text-foreground"
                                 onClick={() => setLineRefundQty(idx, qty + 1, item.quantity)}
                                 disabled={qty >= item.quantity}
                               >
@@ -1381,8 +1381,9 @@ export default function POSTerminal() {
 
                 <Button
                   onClick={handleRefund}
+                  variant="warning"
                   disabled={refundProcessing || !canRefund || !canSubmitRefund}
-                  className="w-full bg-warning text-white py-6 text-lg shadow-brand hover:opacity-90 disabled:opacity-50"
+                  className="w-full py-6 text-lg shadow-brand hover:opacity-90 disabled:opacity-50"
                 >
                   {refundProcessing ? t('loading') : `↩ ${t('process_refund')}`}
                 </Button>
@@ -1785,7 +1786,7 @@ export default function POSTerminal() {
                         size="sm"
                         variant="outline"
                         onClick={() => updateQuantity(item.key, -1)}
-                        className="h-7 w-7 p-0 border-border text-foreground hover:bg-muted"
+                        className="h-9 w-9 p-0 border-border text-foreground hover:bg-muted"
                       >
                         -
                       </Button>
@@ -1794,7 +1795,7 @@ export default function POSTerminal() {
                         size="sm"
                         variant="outline"
                         onClick={() => updateQuantity(item.key, 1)}
-                        className="h-7 w-7 p-0 border-border text-foreground hover:bg-muted"
+                        className="h-9 w-9 p-0 border-border text-foreground hover:bg-muted"
                       >
                         +
                       </Button>

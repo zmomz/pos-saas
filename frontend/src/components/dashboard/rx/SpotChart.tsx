@@ -48,7 +48,7 @@ export default function SpotChart({
   initial,
   format,
   height = 170,
-  stroke = '#36c5e0',
+  stroke = 'var(--cyan)',
   ink = true,
 }: SpotChartProps) {
   const W = 640;

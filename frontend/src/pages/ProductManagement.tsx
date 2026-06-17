@@ -18,6 +18,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { formatMoney } from '@/lib/format';
 import { Package as PackageIcon, AlertTriangle, CheckCircle2, Plus } from 'lucide-react';
@@ -653,6 +654,220 @@ export default function ProductManagement() {
     );
   }
 
+  const suggestionColumns: DataTableColumn<ReorderSuggestion>[] = [
+    {
+      header: tt('name', 'Name'),
+      cell: (s) => (
+        <>
+          <span className="text-foreground">{s.name}</span>
+          {s.name_ar && (
+            <span className="block text-xs text-muted-foreground" dir="rtl">
+              {s.name_ar}
+            </span>
+          )}
+        </>
+      ),
+    },
+    {
+      header: t('on_hand'),
+      cell: (s) => <span className="pill-danger tabular-nums">{s.on_hand}</span>,
+    },
+    {
+      header: t('reorder_point'),
+      cell: (s) => <span className="tabular-nums">{s.reorder_point}</span>,
+    },
+    {
+      header: t('suggested_order'),
+      cell: (s) => (
+        <span className="font-semibold text-brand-700 tabular-nums">
+          {s.suggested_order_quantity}
+        </span>
+      ),
+    },
+  ];
+
+  const productColumns: DataTableColumn<Product>[] = [
+    {
+      header: tt('name', 'Name'),
+      cell: (product) => (
+        <div className="flex items-center gap-3">
+          {/* ISSUE-065: image thumbnail, or the name initial fallback. */}
+          {productImageSrc(product.image_url) ? (
+            <img
+              src={productImageSrc(product.image_url)}
+              alt={product.name}
+              className="h-10 w-10 shrink-0 rounded-lg object-cover"
+            />
+          ) : (
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-muted text-sm font-semibold text-foreground/90">
+              {product.name?.charAt(0)?.toUpperCase() || '?'}
+            </span>
+          )}
+          <div>
+            <span className="text-foreground font-medium">{product.name}</span>
+            {product.name_ar && (
+              <span className="block text-xs text-muted-foreground" dir="rtl">
+                {product.name_ar}
+              </span>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    {
+      header: t('category'),
+      cell: (product) => (
+        <span className="pill-muted">{product.category || tt('other', 'Other')}</span>
+      ),
+    },
+    {
+      header: t('price'),
+      cell: (product) => (
+        <span className="tabular-nums">{formatMoney(product.price, language)}</span>
+      ),
+    },
+    {
+      header: tt('stock', 'Stock'),
+      cell: (product) =>
+        isLowStock(product) ? (
+          <span className="pill-danger tabular-nums">
+            {product.quantity}
+            {(product.reorder_point || 0) > 0 && (
+              <span className="ms-1 text-[10px] opacity-70">
+                / {product.reorder_point}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span className="tabular-nums">{product.quantity}</span>
+        ),
+    },
+    {
+      header: tt('vat_percent', 'VAT%'),
+      cell: (product) => <span className="tabular-nums">{product.vat_rate}%</span>,
+    },
+    {
+      header: t('status'),
+      cell: (product) =>
+        product.is_active !== false ? (
+          <span className="pill-success">{t('active')}</span>
+        ) : (
+          <span className="pill-muted">{t('inactive')}</span>
+        ),
+    },
+    {
+      header: tt('actions', 'Actions'),
+      cell: (product) => (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openVariants(product)}
+            className="text-xs"
+          >
+            {t('variants')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openEdit(product)}
+            className="text-xs"
+          >
+            {tt('edit', 'Edit')}
+          </Button>
+          {/* ISSUE-065: upload a product image (catalog + POS tile). */}
+          <label className="inline-flex cursor-pointer items-center rounded-md border border-input px-3 py-1.5 text-xs text-foreground/90 hover:bg-muted">
+            {t('image')}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              disabled={submitting}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleImageUpload(product, file);
+                e.target.value = '';
+              }}
+            />
+          </label>
+          {product.is_active === false ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleRestoreProduct(product)}
+              disabled={submitting}
+              className="border-success/40 text-success hover:bg-success/10 text-xs"
+            >
+              {t('restore')}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => openDelete(product)}
+              className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
+            >
+              {tt('delete', 'Delete')}
+            </Button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
+  const variantColumns: DataTableColumn<ProductVariant>[] = [
+    {
+      header: t('variant_name'),
+      cell: (v) => (
+        <>
+          <span className="text-foreground">{v.name}</span>
+          {v.attributes && (
+            <span className="block text-xs text-muted-foreground">{v.attributes}</span>
+          )}
+        </>
+      ),
+    },
+    {
+      header: t('barcode'),
+      cell: (v) => <span className="font-mono text-xs">{v.barcode || '—'}</span>,
+    },
+    {
+      header: t('price'),
+      cell: (v) => (
+        <span className="tabular-nums">
+          {v.price != null ? formatMoney(v.price, language) : '—'}
+        </span>
+      ),
+    },
+    {
+      header: t('stock'),
+      cell: (v) => <span className="tabular-nums">{v.quantity ?? 0}</span>,
+    },
+    {
+      header: '',
+      cell: (v) => (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => startEditVariant(v)}
+            className="text-xs"
+          >
+            {t('edit')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleDeleteVariant(v.id)}
+            className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
+          >
+            {t('delete')}
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   if (loading && products.length === 0) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -735,40 +950,12 @@ export default function ProductManagement() {
         ) : suggestions.length === 0 ? (
           <div className="py-6 text-center text-muted-foreground">{t('no_reorder_suggestions')}</div>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40">
-                <tr className="text-muted-foreground">
-                  <th className="p-2 text-start">{tt('name', 'Name')}</th>
-                  <th className="p-2 text-start">{t('on_hand')}</th>
-                  <th className="p-2 text-start">{t('reorder_point')}</th>
-                  <th className="p-2 text-start">{t('suggested_order')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {suggestions.map((s) => (
-                  <tr key={s.product_id} className="border-t border-border text-foreground/90">
-                    <td className="p-2">
-                      <span className="text-foreground">{s.name}</span>
-                      {s.name_ar && (
-                        <span className="block text-xs text-muted-foreground" dir="rtl">
-                          {s.name_ar}
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-2">
-                      <span className="pill-danger tabular-nums">
-                        {s.on_hand}
-                      </span>
-                    </td>
-                    <td className="p-2 tabular-nums">{s.reorder_point}</td>
-                    <td className="p-2 font-semibold text-brand-700 tabular-nums">
-                      {s.suggested_order_quantity}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="rounded-lg border border-border">
+            <DataTable
+              columns={suggestionColumns}
+              rows={suggestions}
+              rowKey={(s) => s.product_id}
+            />
           </div>
         )}
       </div>
@@ -836,145 +1023,13 @@ export default function ProductManagement() {
       )}
 
       {/* Products Table */}
-      <div className="dxr-tile overflow-x-auto p-0">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/40">
-            <tr className="text-muted-foreground">
-              <th className="p-3 text-start">{tt('name', 'Name')}</th>
-              <th className="p-3 text-start">{t('category')}</th>
-              <th className="p-3 text-start">{t('price')}</th>
-              <th className="p-3 text-start">{tt('stock', 'Stock')}</th>
-              <th className="p-3 text-start">{tt('vat_percent', 'VAT%')}</th>
-              <th className="p-3 text-start">{t('status')}</th>
-              <th className="p-3 text-start">{tt('actions', 'Actions')}</th>
-            </tr>
-          </thead>
-            <tbody>
-              {products.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-muted-foreground">
-                    {t('no_products')}
-                  </td>
-                </tr>
-              ) : (
-                pagedProducts.map((product) => (
-                  <tr key={product.id} className="border-t border-border text-foreground/90">
-                    <td className="p-3">
-                      <div className="flex items-center gap-3">
-                        {/* ISSUE-065: image thumbnail, or the name initial fallback. */}
-                        {productImageSrc(product.image_url) ? (
-                          <img
-                            src={productImageSrc(product.image_url)}
-                            alt={product.name}
-                            className="h-10 w-10 shrink-0 rounded-lg object-cover"
-                          />
-                        ) : (
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-muted text-sm font-semibold text-foreground/90">
-                            {product.name?.charAt(0)?.toUpperCase() || '?'}
-                          </span>
-                        )}
-                        <div>
-                          <span className="text-foreground font-medium">{product.name}</span>
-                          {product.name_ar && (
-                            <span className="block text-xs text-muted-foreground" dir="rtl">
-                              {product.name_ar}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <span className="pill-muted">
-                        {product.category || tt('other', 'Other')}
-                      </span>
-                    </td>
-                    <td className="p-3 tabular-nums">{formatMoney(product.price, language)}</td>
-                    <td className="p-3">
-                      {isLowStock(product) ? (
-                        <span className="pill-danger tabular-nums">
-                          {product.quantity}
-                          {(product.reorder_point || 0) > 0 && (
-                            <span className="ms-1 text-[10px] opacity-70">
-                              / {product.reorder_point}
-                            </span>
-                          )}
-                        </span>
-                      ) : (
-                        <span className="tabular-nums">{product.quantity}</span>
-                      )}
-                    </td>
-                    <td className="p-3 tabular-nums">{product.vat_rate}%</td>
-                    <td className="p-3">
-                      {product.is_active !== false ? (
-                        <span className="pill-success">
-                          {t('active')}
-                        </span>
-                      ) : (
-                        <span className="pill-muted">
-                          {t('inactive')}
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3">
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openVariants(product)}
-                          className="text-xs"
-                        >
-                          {t('variants')}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openEdit(product)}
-                          className="text-xs"
-                        >
-                          {tt('edit', 'Edit')}
-                        </Button>
-                        {/* ISSUE-065: upload a product image (catalog + POS tile). */}
-                        <label className="inline-flex cursor-pointer items-center rounded-md border border-input px-3 py-1.5 text-xs text-foreground/90 hover:bg-muted">
-                          {t('image')}
-                          <input
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/gif"
-                            className="hidden"
-                            disabled={submitting}
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) handleImageUpload(product, file);
-                              e.target.value = '';
-                            }}
-                          />
-                        </label>
-                        {product.is_active === false ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleRestoreProduct(product)}
-                            disabled={submitting}
-                            className="border-success/40 text-success hover:bg-success/10 text-xs"
-                          >
-                            {t('restore')}
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openDelete(product)}
-                            className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
-                          >
-                            {tt('delete', 'Delete')}
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      <div className="dxr-tile p-0">
+        <DataTable
+          columns={productColumns}
+          rows={pagedProducts}
+          rowKey={(product) => product.id}
+          empty={t('no_products')}
+        />
       </div>
 
       <DataPagination
@@ -1043,53 +1098,12 @@ export default function ProductManagement() {
           ) : variants.length === 0 ? (
             <div className="py-6 text-center text-muted-foreground">{t('no_variants')}</div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40">
-                  <tr className="text-muted-foreground">
-                    <th className="p-2 text-start">{t('variant_name')}</th>
-                    <th className="p-2 text-start">{t('barcode')}</th>
-                    <th className="p-2 text-start">{t('price')}</th>
-                    <th className="p-2 text-start">{t('stock')}</th>
-                    <th className="p-2 text-start"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {variants.map((v) => (
-                    <tr key={v.id} className="border-t border-border text-foreground/90">
-                      <td className="p-2">
-                        <span className="text-foreground">{v.name}</span>
-                        {v.attributes && (
-                          <span className="block text-xs text-muted-foreground">{v.attributes}</span>
-                        )}
-                      </td>
-                      <td className="p-2 font-mono text-xs">{v.barcode || '—'}</td>
-                      <td className="p-2 tabular-nums">{v.price != null ? formatMoney(v.price, language) : '—'}</td>
-                      <td className="p-2 tabular-nums">{v.quantity ?? 0}</td>
-                      <td className="p-2">
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => startEditVariant(v)}
-                            className="text-xs"
-                          >
-                            {t('edit')}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleDeleteVariant(v.id)}
-                            className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
-                          >
-                            {t('delete')}
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="rounded-lg border border-border">
+              <DataTable
+                columns={variantColumns}
+                rows={variants}
+                rowKey={(v) => v.id}
+              />
             </div>
           )}
 

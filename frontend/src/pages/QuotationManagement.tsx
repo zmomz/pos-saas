@@ -20,11 +20,24 @@ import { getAPIBaseURL } from '@/lib/config';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import ErrorState from '@/components/states/ErrorState';
+import EmptyState from '@/components/states/EmptyState';
 import { toast } from 'sonner';
 import { FileText, Plus, Trash2, Eye, ShoppingCart } from 'lucide-react';
 
 // ISSUE-056: a converted/expired quote is terminal — it can't be converted again.
 const TERMINAL_STATUSES = ['converted', 'expired'];
+
+// Map each quote status to a distinct pill so draft/sent/converted/expired read
+// differently (they were all flattened to pill-muted).
+const STATUS_PILL: Record<string, string> = {
+  draft: 'pill-muted',
+  sent: 'pill-sky',
+  accepted: 'pill-success',
+  converted: 'pill-success',
+  rejected: 'pill-danger',
+  expired: 'pill-danger',
+};
 
 interface LineItem {
   name: string;
@@ -48,6 +61,7 @@ export default function QuotationManagement() {
   const { t, language } = useLanguage();
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [customerName, setCustomerName] = useState('');
@@ -57,11 +71,13 @@ export default function QuotationManagement() {
 
   async function load() {
     setLoading(true);
+    setError(false);
     try {
       const data = await getQuotations();
       setQuotations((data?.items as Quotation[]) || []);
     } catch (err) {
       console.error('Failed to load quotations:', err);
+      setError(true);
     } finally {
       setLoading(false);
     }
@@ -234,12 +250,10 @@ export default function QuotationManagement() {
 
       {loading ? (
         <p className="text-muted-foreground">{t('loading')}</p>
+      ) : error ? (
+        <ErrorState onRetry={load} />
       ) : quotations.length === 0 ? (
-        <Card className="bg-card border-border">
-          <CardContent className="p-8 text-center text-muted-foreground">
-            {t('no_quotations')}
-          </CardContent>
-        </Card>
+        <EmptyState icon={FileText} message={t('no_quotations')} />
       ) : (
         <div className="space-y-3">
           {quotations.map((q) => (
@@ -250,7 +264,7 @@ export default function QuotationManagement() {
                   <p className="text-muted-foreground text-sm">{q.customer_name || '—'}</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="pill-muted">{q.status || 'draft'}</span>
+                  <span className={`${STATUS_PILL[q.status || 'draft'] || 'pill-muted'} capitalize`}>{q.status || 'draft'}</span>
                   <span className="text-brand font-bold tabular-nums">{formatMoney(q.total_amount || 0, language)}</span>
                   {!TERMINAL_STATUSES.includes(q.status || 'draft') && (
                     <Button size="sm" variant="outline" onClick={() => handleConvert(q.id)}>

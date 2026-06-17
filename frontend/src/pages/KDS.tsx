@@ -322,7 +322,7 @@ export default function KDS() {
           <Dialog open={addStationOpen} onOpenChange={setAddStationOpen}>
             <DialogTrigger asChild>
               <Button>
-                <Plus className="h-4 w-4 mr-2" /> {t('add_station')}
+                <Plus className="h-4 w-4 me-2" /> {t('add_station')}
               </Button>
             </DialogTrigger>
             <DialogContent className="bg-card border-border text-foreground">
@@ -470,11 +470,11 @@ export default function KDS() {
                           <div className="flex gap-2 pt-1">
                             {card.status !== 'bumped' && (
                               <Button
-                                size="sm"
+                                variant="success"
                                 onClick={() => handleBump(card)}
-                                className="flex-1 bg-success hover:opacity-90 text-white"
+                                className="flex-1"
                               >
-                                <Check className="h-4 w-4 mr-1" /> {t('bump')}
+                                <Check className="h-4 w-4 me-1" /> {t('bump')}
                               </Button>
                             )}
                             {isThermalPrintSupported() && (
@@ -496,7 +496,7 @@ export default function KDS() {
                                 className="flex-1 border-input text-foreground/90 hover:bg-muted"
                                 title={t('recall')}
                               >
-                                <RotateCcw className="h-4 w-4 mr-1" /> {t('recall')}
+                                <RotateCcw className="h-4 w-4 me-1" /> {t('recall')}
                               </Button>
                             )}
                           </div>

@@ -4,6 +4,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   getRestaurantTables,
   getReservations,
   createReservation,
@@ -233,24 +240,30 @@ export default function Reservations() {
                   onChange={(e) => setResForm((f) => ({ ...f, customer_name: e.target.value }))}
                 />
                 <div className="flex gap-2">
-                  <select
-                    aria-label={t('rw_table')}
-                    className="flex h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
-                    value={resForm.table_id ?? ''}
-                    onChange={(e) =>
+                  <Select
+                    value={resForm.table_id != null ? String(resForm.table_id) : 'none'}
+                    onValueChange={(v) =>
                       setResForm((f) => ({
                         ...f,
-                        table_id: e.target.value ? Number(e.target.value) : undefined,
+                        table_id: v === 'none' ? undefined : Number(v),
                       }))
                     }
                   >
-                    <option value="">{t('rw_select_table')}</option>
-                    {tables.map((tbl) => (
-                      <option key={tbl.id} value={tbl.id}>
-                        {tbl.name}
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      aria-label={t('rw_table')}
+                      className="flex h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      <SelectValue placeholder={t('rw_select_table')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">{t('rw_select_table')}</SelectItem>
+                      {tables.map((tbl) => (
+                        <SelectItem key={tbl.id} value={String(tbl.id)}>
+                          {tbl.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Input
                     type="number"
                     min={1}
@@ -266,7 +279,7 @@ export default function Reservations() {
                   onClick={submitReservation}
                   disabled={submitting || !resForm.reserved_at}
                 >
-                  <Plus className="mr-1 h-4 w-4" />
+                  <Plus className="me-1 h-4 w-4" />
                   {t('rw_add_reservation')}
                 </Button>
               </div>
@@ -349,7 +362,7 @@ export default function Reservations() {
                   onClick={submitWaitlist}
                   disabled={submitting || !waitForm.customer_name.trim()}
                 >
-                  <Plus className="mr-1 h-4 w-4" />
+                  <Plus className="me-1 h-4 w-4" />
                   {t('rw_add_party')}
                 </Button>
               </div>
@@ -389,22 +402,27 @@ export default function Reservations() {
                       {/* Seat to a free table */}
                       <div className="mt-2 flex items-center gap-2">
                         <Armchair className="h-4 w-4 text-muted-foreground" />
-                        <select
-                          aria-label={`${t('rw_seat_at')} ${w.id}`}
-                          className="flex h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
-                          defaultValue=""
-                          onChange={(e) => {
-                            if (e.target.value) seatEntry(w.id, Number(e.target.value));
+                        <Select
+                          value=""
+                          onValueChange={(v) => {
+                            if (v) seatEntry(w.id, Number(v));
                           }}
                           disabled={freeTables.length === 0}
                         >
-                          <option value="">{t('rw_seat')}…</option>
-                          {freeTables.map((tbl) => (
-                            <option key={tbl.id} value={tbl.id}>
-                              {tbl.name}
-                            </option>
-                          ))}
-                        </select>
+                          <SelectTrigger
+                            aria-label={`${t('rw_seat_at')} ${w.id}`}
+                            className="flex h-9 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+                          >
+                            <SelectValue placeholder={`${t('rw_seat')}…`} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {freeTables.map((tbl) => (
+                              <SelectItem key={tbl.id} value={String(tbl.id)}>
+                                {tbl.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </li>
                   ))}

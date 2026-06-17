@@ -20,6 +20,7 @@ import {
 import { client, createStockAdjustment, getBranchTransfers, setMainBranch, type BranchTransfer, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star, History } from 'lucide-react';
 
 const ADJUSTMENT_REASONS: StockAdjustmentReason[] = [
@@ -473,27 +474,28 @@ export default function BranchManagement() {
           ) : branchInventory.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">{tt('no_inventory_data', 'No inventory data for this branch')}</div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50">
-                  <tr className="text-muted-foreground">
-                    <th className="p-2 text-start">{tt('product', 'Product')}</th>
-                    <th className="p-2 text-start">{tt('quantity', 'Quantity')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {branchInventory.map((item, idx) => (
-                    <tr key={idx} className="border-t border-border text-foreground/90">
-                      <td className="p-2 text-foreground">{item.product_name}</td>
-                      <td className="p-2">
-                        <Badge className={item.quantity > 10 ? 'pill-success' : item.quantity > 0 ? 'pill-warning' : 'pill-danger'}>
-                          {item.quantity}
-                        </Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="rounded-lg border border-border">
+              <DataTable
+                className="text-sm"
+                columns={[
+                  {
+                    key: 'product',
+                    header: tt('product', 'Product'),
+                    cell: (item) => <span className="text-foreground">{item.product_name}</span>,
+                  },
+                  {
+                    key: 'quantity',
+                    header: tt('quantity', 'Quantity'),
+                    cell: (item) => (
+                      <Badge className={item.quantity > 10 ? 'pill-success' : item.quantity > 0 ? 'pill-warning' : 'pill-danger'}>
+                        {item.quantity}
+                      </Badge>
+                    ),
+                  },
+                ] satisfies DataTableColumn<BranchInventory>[]}
+                rows={branchInventory}
+                rowKey={(_item, idx) => idx}
+              />
             </div>
           )}
         </DialogContent>
@@ -603,31 +605,28 @@ export default function BranchManagement() {
             ) : transfers.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">{t('transfer_history_empty')}</div>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50">
-                    <tr className="text-muted-foreground">
-                      <th className="p-2 text-start">{t('date')}</th>
-                      <th className="p-2 text-start">{t('from_branch')}</th>
-                      <th className="p-2 text-start">{t('to_branch')}</th>
-                      <th className="p-2 text-start">{t('product')}</th>
-                      <th className="p-2 text-start">{t('quantity')}</th>
-                      <th className="p-2 text-start">{t('status')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {transfers.map((tr) => (
-                      <tr key={tr.id} className="border-t border-border text-foreground/90">
-                        <td className="p-2 whitespace-nowrap">{tr.created_at ? new Date(tr.created_at).toLocaleDateString() : '—'}</td>
-                        <td className="p-2">{branchName(tr.from_branch_id)}</td>
-                        <td className="p-2">{branchName(tr.to_branch_id)}</td>
-                        <td className="p-2 text-foreground">{tr.product_name ?? `#${tr.product_id}`}</td>
-                        <td className="p-2">{tr.quantity}</td>
-                        <td className="p-2"><Badge className="pill-sky">{tr.status}</Badge></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="rounded-lg border border-border">
+                <DataTable
+                  className="text-sm"
+                  columns={[
+                    {
+                      key: 'date',
+                      header: t('date'),
+                      cell: (tr) => <span className="whitespace-nowrap">{tr.created_at ? new Date(tr.created_at).toLocaleDateString() : '—'}</span>,
+                    },
+                    { key: 'from', header: t('from_branch'), cell: (tr) => branchName(tr.from_branch_id) },
+                    { key: 'to', header: t('to_branch'), cell: (tr) => branchName(tr.to_branch_id) },
+                    {
+                      key: 'product',
+                      header: t('product'),
+                      cell: (tr) => <span className="text-foreground">{tr.product_name ?? `#${tr.product_id}`}</span>,
+                    },
+                    { key: 'quantity', header: t('quantity'), cell: (tr) => tr.quantity },
+                    { key: 'status', header: t('status'), cell: (tr) => <Badge className="pill-sky">{tr.status}</Badge> },
+                  ] satisfies DataTableColumn<BranchTransfer>[]}
+                  rows={transfers}
+                  rowKey={(tr) => tr.id}
+                />
               </div>
             )}
           </div>

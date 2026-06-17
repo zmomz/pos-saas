@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { toast } from 'sonner';
+import { DirectionProvider } from '@radix-ui/react-direction';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -7,7 +8,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { BrandingProvider } from '@/contexts/BrandingContext';
-import { LanguageProvider } from '@/lib/i18n';
+import { LanguageProvider, useLanguage } from '@/lib/i18n';
 import LandingPage from './pages/LandingPage';
 import Index from './pages/Index';
 import MasterDashboard from './pages/MasterDashboard';
@@ -183,22 +184,37 @@ const AppRoutes = () => (
   </Routes>
 );
 
+/**
+ * Feeds the active language's direction into Radix's DirectionProvider so every
+ * Radix primitive (Select, DropdownMenu, Popover, Tooltip, Toast…) flips its
+ * alignment, arrow-key navigation and slide animations for Arabic/Urdu instead
+ * of defaulting to LTR. Lives inside LanguageProvider so it can read the state.
+ */
+const DirectionGate = ({ children }: { children: ReactNode }) => {
+  const { isRTL } = useLanguage();
+  return (
+    <DirectionProvider dir={isRTL ? 'rtl' : 'ltr'}>{children}</DirectionProvider>
+  );
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <LanguageProvider>
-      <ThemeProvider>
-        <TooltipProvider>
-          <Toaster />
-          <GlobalEventToasts />
-          <BrowserRouter>
-            <AuthProvider>
-              <BrandingProvider>
-                <AppRoutes />
-              </BrandingProvider>
-            </AuthProvider>
-          </BrowserRouter>
-        </TooltipProvider>
-      </ThemeProvider>
+      <DirectionGate>
+        <ThemeProvider>
+          <TooltipProvider>
+            <Toaster />
+            <GlobalEventToasts />
+            <BrowserRouter>
+              <AuthProvider>
+                <BrandingProvider>
+                  <AppRoutes />
+                </BrandingProvider>
+              </AuthProvider>
+            </BrowserRouter>
+          </TooltipProvider>
+        </ThemeProvider>
+      </DirectionGate>
     </LanguageProvider>
   </QueryClientProvider>
 );

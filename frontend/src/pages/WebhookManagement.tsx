@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -15,8 +14,10 @@ import {
 import { client } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import ErrorState from '@/components/states/ErrorState';
+import EmptyState from '@/components/states/EmptyState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { Webhook, Plus, Play, Trash2, Edit, Copy, CheckCircle } from 'lucide-react';
 
@@ -313,6 +314,37 @@ export default function WebhookManagement() {
     );
   }
 
+  const logColumns: DataTableColumn<DeliveryLog>[] = [
+    {
+      header: t('webhook_col_time'),
+      cell: (log) => (
+        <span className="whitespace-nowrap text-xs" dir="ltr">{new Date(log.created_at).toLocaleString()}</span>
+      ),
+    },
+    {
+      header: t('webhook_col_webhook'),
+      cell: (log) => <span className="text-foreground">{log.webhook_name || '—'}</span>,
+    },
+    {
+      header: t('webhook_col_event'),
+      cell: (log) => <Badge variant="secondary" className="text-xs">{log.event}</Badge>,
+    },
+    {
+      header: t('status'),
+      cell: (log) => (
+        <span className={log.success ? 'pill-success' : 'pill-danger'}>
+          {log.status_code || (log.success ? '200' : 'Failed')}
+        </span>
+      ),
+    },
+    {
+      header: t('webhook_col_response'),
+      cell: (log) => (
+        <span className="text-muted-foreground">{log.response_time_ms ? `${log.response_time_ms}ms` : '—'}</span>
+      ),
+    },
+  ];
+
   return (
     <div className="animate-fade-up space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
       <PageHeading
@@ -365,12 +397,7 @@ export default function WebhookManagement() {
         <>
           <div className="space-y-3">
             {webhooks.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center">
-                  <Webhook className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-muted-foreground">{t('webhook_none')}</p>
-                </CardContent>
-              </Card>
+              <EmptyState icon={Webhook} message={t('webhook_none')} />
             ) : (
               webhooks.map((webhook) => {
                 let events: string[] = [];
@@ -429,40 +456,13 @@ export default function WebhookManagement() {
       )}
 
       {activeTab === 'logs' && !logsError && (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-card">
-              <tr className="text-muted-foreground">
-                <th className="p-3 text-start">{t('webhook_col_time')}</th>
-                <th className="p-3 text-start">{t('webhook_col_webhook')}</th>
-                <th className="p-3 text-start">{t('webhook_col_event')}</th>
-                <th className="p-3 text-start">{t('status')}</th>
-                <th className="p-3 text-start">{t('webhook_col_response')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deliveryLogs.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="p-6 text-center text-muted-foreground">{t('webhook_logs_none')}</td>
-                </tr>
-              ) : (
-                deliveryLogs.map((log) => (
-                  <tr key={log.id} className="border-t border-border text-muted-foreground">
-                    <td className="p-3 whitespace-nowrap text-xs" dir="ltr">{new Date(log.created_at).toLocaleString()}</td>
-                    <td className="p-3 text-foreground">{log.webhook_name || '—'}</td>
-                    <td className="p-3"><Badge variant="secondary" className="text-xs">{log.event}</Badge></td>
-                    <td className="p-3">
-                      <span className={log.success ? 'pill-success' : 'pill-danger'}>
-                        {log.status_code || (log.success ? '200' : 'Failed')}
-                      </span>
-                    </td>
-                    <td className="p-3">{log.response_time_ms ? `${log.response_time_ms}ms` : '—'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={logColumns}
+          rows={deliveryLogs}
+          rowKey={(l) => l.id}
+          empty={<span className="text-muted-foreground">{t('webhook_logs_none')}</span>}
+          className="rounded-lg border border-border"
+        />
       )}
 
       {/* Edit Dialog */}

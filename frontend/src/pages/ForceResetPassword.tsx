@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import AuthLayout from '@/components/auth/AuthLayout';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -23,7 +23,7 @@ import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
  */
 export default function ForceResetPassword() {
   const { user, refetch, logout } = useAuth();
-  const { t, language, setLanguage, isRTL } = useLanguage();
+  const { t, language, setLanguage } = useLanguage();
   const navigate = useNavigate();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -82,97 +82,80 @@ export default function ForceResetPassword() {
   }
 
   return (
-    <div
-      dir={isRTL ? 'rtl' : 'ltr'}
-      className="min-h-screen flex items-center justify-center bg-background p-4"
-    >
-      <Card className="w-full max-w-md bg-card border-border">
-        <CardHeader>
-          <CardTitle className="text-foreground">
-            {t('set_new_password')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm text-foreground/90">
-            {user?.name ? `${user.name} — ` : ''}
-            {t('first_login_reset_prompt')}
-          </p>
+    <AuthLayout title={t('set_new_password')} showLanguageSwitcher={false}>
+      <div className="space-y-4">
+        <p className="text-sm text-foreground/90">
+          {user?.name ? `${user.name} — ` : ''}
+          {t('first_login_reset_prompt')}
+        </p>
 
-          {/* CL-02: guided first-login language step. Applies instantly via the
-              shared LanguageProvider and persists the choice. */}
+        {/* CL-02: guided first-login language step. Applies instantly via the
+            shared LanguageProvider and persists the choice. */}
+        <div className="space-y-1">
+          <label className="text-xs text-muted-foreground">{t('choose_language')}</label>
+          <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {languageOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* CL-02: guided first-login business-type step. Drives retail vs
+            restaurant POS mode and gates the restaurant vertical (RST-*).
+            Only a client tenancy has a business type. */}
+        {isClient && (
           <div className="space-y-1">
-            <label className="text-xs text-muted-foreground">{t('choose_language')}</label>
-            <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
-              <SelectTrigger className="bg-muted border-input text-foreground">
+            <label className="text-xs text-muted-foreground">{t('choose_business_type')}</label>
+            <Select
+              value={businessType}
+              onValueChange={(v) => setBusinessType(v as BusinessType)}
+            >
+              <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {languageOptions.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                ))}
+                <SelectItem value="retail">{t('business_type_retail')}</SelectItem>
+                <SelectItem value="restaurant">{t('business_type_restaurant')}</SelectItem>
+                <SelectItem value="both">{t('business_type_both')}</SelectItem>
               </SelectContent>
             </Select>
+            <p className="text-xs text-muted-foreground">{t('business_type_hint')}</p>
           </div>
+        )}
 
-          {/* CL-02: guided first-login business-type step. Drives retail vs
-              restaurant POS mode and gates the restaurant vertical (RST-*).
-              Only a client tenancy has a business type. */}
-          {isClient && (
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">{t('choose_business_type')}</label>
-              <Select
-                value={businessType}
-                onValueChange={(v) => setBusinessType(v as BusinessType)}
-              >
-                <SelectTrigger className="bg-muted border-input text-foreground">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="retail">{t('business_type_retail')}</SelectItem>
-                  <SelectItem value="restaurant">{t('business_type_restaurant')}</SelectItem>
-                  <SelectItem value="both">{t('business_type_both')}</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">{t('business_type_hint')}</p>
-            </div>
-          )}
-
-          <Input
-            type="password"
-            placeholder={t('current_temp_password')}
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-          />
-          <Input
-            type="password"
-            placeholder={t('new_password')}
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-          />
-          <Input
-            type="password"
-            placeholder={t('confirm_password')}
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-          />
-          {error && <p className="text-sm text-destructive">{error}</p>}
-          <div className="flex gap-2 justify-between">
-            <Button
-              variant="outline"
-              onClick={() => logout()}
-              className="border-input text-foreground/90"
-            >
-              {t('logout')}
-            </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={submitting}
-            >
-              {submitting ? t('saving') : t('save')}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
+        <Input
+          type="password"
+          placeholder={t('current_temp_password')}
+          value={currentPassword}
+          onChange={(e) => setCurrentPassword(e.target.value)}
+        />
+        <Input
+          type="password"
+          placeholder={t('new_password')}
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+        />
+        <Input
+          type="password"
+          placeholder={t('confirm_password')}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+        />
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        <div className="flex justify-between gap-2">
+          <Button variant="outline" onClick={() => logout()}>
+            {t('logout')}
+          </Button>
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting ? t('saving') : t('save')}
+          </Button>
+        </div>
+      </div>
+    </AuthLayout>
   );
 }

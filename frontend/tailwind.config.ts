@@ -46,18 +46,25 @@ export default {
           900: '#0e2c38',
           DEFAULT: '#1488a6',
         },
-        // Warm gold accent (fixed across themes).
+        // Warm gold accent (fixed across themes). `900` is the dark gold "ink"
+        // used for text/badges on gold fills (e.g. landing "Most popular" pills).
         gold: {
           50: '#faf1df',
           600: '#cd9a40',
+          900: '#5a4410',
           DEFAULT: '#e6b45c',
         },
-        // Semantic stat colors (fixed across themes).
-        success: '#23a06b',
-        warning: '#d6a33a',
+        // Bright cyan accent (dark-tile spark lines / gauges). CSS-var driven
+        // so raw SVG/inline styles can share the one source (`--cyan`).
+        cyan: 'var(--cyan)',
+        // Semantic stat colors (fixed across themes). The three that back solid
+        // action buttons carry an explicit foreground tuned for contrast — gold
+        // `warning` needs dark ink, not white (avoids the contrast failure).
+        success: { DEFAULT: '#23a06b', foreground: '#ffffff' },
+        warning: { DEFAULT: '#d6a33a', foreground: '#3a2c10' },
         violet: '#7b57c9',
         sky: '#3d9ad1',
-        danger: '#d14a3a',
+        danger: { DEFAULT: '#d14a3a', foreground: '#ffffff' },
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',

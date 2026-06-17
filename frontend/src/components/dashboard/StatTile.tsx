@@ -44,7 +44,7 @@ export default function StatTile({
   return (
     <div
       className={cn(
-        'flex flex-col gap-3.5 rounded-2xl border border-border bg-card p-5 shadow-card transition-shadow hover:shadow-brand',
+        'flex flex-col gap-3.5 rounded-[20px] border border-border bg-card p-[18px] shadow-sm transition-transform duration-200 hover:-translate-y-0.5',
         className
       )}
     >

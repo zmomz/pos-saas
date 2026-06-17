@@ -48,7 +48,7 @@ export default function Gauge({
         <defs>
           <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0" stopColor="hsl(var(--primary))" />
-            <stop offset="1" stopColor="#36c5e0" />
+            <stop offset="1" stopColor="var(--cyan)" />
           </linearGradient>
         </defs>
         <circle

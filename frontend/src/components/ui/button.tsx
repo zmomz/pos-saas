@@ -12,6 +12,14 @@ const buttonVariants = cva(
         default: 'bg-primary text-primary-foreground hover:bg-primary/90',
         destructive:
           'bg-destructive text-destructive-foreground hover:bg-destructive/90',
+        // Semantic action variants — replace the hand-rolled `bg-success text-white`
+        // patterns across the app. `warning` carries dark ink (token foreground)
+        // rather than white, which on the light gold fails contrast.
+        success: 'bg-success text-success-foreground hover:bg-success/90',
+        warning: 'bg-warning text-warning-foreground hover:bg-warning/90',
+        danger: 'bg-danger text-danger-foreground hover:bg-danger/90',
+        'outline-danger':
+          'border border-danger text-danger hover:bg-danger hover:text-danger-foreground',
         outline:
           'border border-input hover:bg-accent hover:text-accent-foreground',
         secondary:

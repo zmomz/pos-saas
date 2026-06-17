@@ -691,8 +691,9 @@ export default function CustomerManagement() {
             </Button>
             <Button
               onClick={handleEraseCustomer}
+              variant="warning"
               disabled={submitting}
-              className="flex-1 bg-warning text-white hover:bg-warning/90"
+              className="flex-1"
             >
               {submitting ? t('loading') : t('erase_pii')}
             </Button>

@@ -257,17 +257,27 @@ function RevenueChart() {
     <svg viewBox="0 0 440 120" preserveAspectRatio="none" className="w-full h-full overflow-visible">
       <defs>
         <linearGradient id="rg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#1488a6" stopOpacity="0.26" />
-          <stop offset="1" stopColor="#1488a6" stopOpacity="0" />
+          <stop offset="0" stopColor="hsl(var(--primary))" stopOpacity="0.26" />
+          <stop offset="1" stopColor="hsl(var(--primary))" stopOpacity="0" />
         </linearGradient>
       </defs>
       <path d={area} fill="url(#rg)" />
-      <path d={line} fill="none" stroke="#1488a6" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={x(last).toFixed(1)} cy={y(data[last]).toFixed(1)} r="5" fill="#1488a6" stroke="#fff" strokeWidth="2" />
+      <path d={line} fill="none" stroke="hsl(var(--primary))" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={x(last).toFixed(1)} cy={y(data[last]).toFixed(1)} r="5" fill="hsl(var(--primary))" stroke="#fff" strokeWidth="2" />
     </svg>
   );
 }
 
+/**
+ * Public partner-program landing page.
+ *
+ * Phase 5 decision: this marketing surface is intentionally light. It paints on
+ * fixed palettes only (`slate-*` neutrals + `brand`/`gold`/`success`, none of
+ * which are theme tokens), so it never half-inverts when a signed-in user has
+ * the app in dark mode — and a logged-out visitor has no theme toggle here. We
+ * deliberately do NOT route it through the inverting app tokens (`bg-background`
+ * etc.); doing so would flip the brochure to dark and break the design.
+ */
 export default function LandingPage() {
   const navigate = useNavigate();
   const { language, setLanguage, isRTL } = useLanguage();
@@ -304,7 +314,7 @@ export default function LandingPage() {
             <span className="w-9 h-9 rounded-[9px] bg-brand-500 text-white grid place-items-center">
               <Store className="w-5 h-5" />
             </span>
-            <span className="text-left leading-none">
+            <span className="text-start leading-none">
               <b className="text-[17px] font-bold tracking-tight block">Cloud POS</b>
               <small className="font-mono text-[9.5px] text-slate-400 tracking-wide">{c.partner_program}</small>
             </span>
@@ -393,7 +403,7 @@ export default function LandingPage() {
               </div>
             </div>
             {/* handshake chip */}
-            <div className={`hidden lg:grid absolute -bottom-4 ${isRTL ? '-left-3.5' : '-right-3.5'} w-16 h-16 rounded-[18px] bg-gold text-[#5a4410] place-items-center shadow-lg -rotate-6`}>
+            <div className={`hidden lg:grid absolute -bottom-4 ${isRTL ? '-left-3.5' : '-right-3.5'} w-16 h-16 rounded-[18px] bg-gold text-gold-900 place-items-center shadow-lg -rotate-6`}>
               <Handshake className="w-8 h-8" />
             </div>
           </div>
@@ -433,6 +443,9 @@ export default function LandingPage() {
                 <div className="h-9 w-36 rounded-lg bg-brand-500 mt-1.5" />
               </div>
             </div>
+            {/* The "Another Agent" mock is deliberately a *different* (green)
+                brand to illustrate that each partner runs their own identity —
+                so these greens are intentional literals, not the product palette. */}
             <div className={`rounded-2xl overflow-hidden border border-slate-200 shadow-md mt-4 ${isRTL ? 'me-12' : 'ms-12'}`}>
               <div className="h-[46px] flex items-center gap-2 px-4 bg-gradient-to-br from-[#2e7d54] to-[#3f9d6a]">
                 <span className="w-6 h-6 rounded-[7px] bg-white/25" />
@@ -477,7 +490,7 @@ export default function LandingPage() {
           {steps.map((s, idx) => (
             <div key={s.n} className="text-center px-4 relative">
               {idx < steps.length - 1 && (
-                <div className={`hidden md:block absolute top-7 ${isRTL ? 'right-1/2 me-9' : 'left-1/2 ms-9'} w-[calc(100%-72px)] h-0.5`} style={{ backgroundImage: 'repeating-linear-gradient(90deg, #d7ebf1 0 7px, transparent 7px 14px)' }} />
+                <div className={`hidden md:block absolute top-7 ${isRTL ? 'right-1/2 me-9' : 'left-1/2 ms-9'} w-[calc(100%-72px)] border-t-2 border-dashed border-brand-100`} />
               )}
               <div className="w-14 h-14 rounded-full bg-brand-500 text-white grid place-items-center text-[22px] font-extrabold mx-auto mb-4 relative z-[2] ring-[6px] ring-brand-50">{s.n}</div>
               <h3 className="text-[17px] font-bold mb-2">{s.t}</h3>
@@ -502,7 +515,7 @@ export default function LandingPage() {
                 className={`relative bg-white rounded-2xl p-7 flex flex-col shadow-sm border ${plan.feat ? 'border-brand-500 shadow-md md:scale-[1.03]' : 'border-slate-200'}`}
               >
                 {plan.feat && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gold text-[#5a4410] text-xs font-bold px-3.5 py-1 rounded-full whitespace-nowrap">{c.most_popular}</span>
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gold text-gold-900 text-xs font-bold px-3.5 py-1 rounded-full whitespace-nowrap">{c.most_popular}</span>
                 )}
                 <div className="text-[15px] font-bold">{plan.name}</div>
                 <div className="text-[13px] text-slate-500 mt-1 min-h-[38px]">{plan.desc}</div>
@@ -564,7 +577,7 @@ export default function LandingPage() {
           <h2 className="text-[32px] md:text-[40px] font-bold text-white">{c.cta_title}</h2>
           <p className="text-lg text-brand-100/80 mt-4 mb-7 max-w-[560px] mx-auto">{c.cta_sub}</p>
           <div className="flex flex-wrap justify-center gap-3">
-            <Button onClick={() => navigate('/login')} className="bg-gold hover:bg-gold-600 text-[#5a4410] px-7 py-6 text-base font-semibold">{c.cta_primary}</Button>
+            <Button onClick={() => navigate('/login')} className="bg-gold hover:bg-gold-600 text-gold-900 px-7 py-6 text-base font-semibold">{c.cta_primary}</Button>
             <Button onClick={() => navigate('/login')} className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-7 py-6 text-base font-semibold">{c.cta_secondary}</Button>
           </div>
         </div>
