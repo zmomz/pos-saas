@@ -19,7 +19,9 @@ import {
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle } from 'lucide-react';
 
 interface Shift {
@@ -86,7 +88,11 @@ export default function ShiftManagement() {
   const [movementReason, setMovementReason] = useState('');
   const [movementError, setMovementError] = useState<string | null>(null);
 
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
+  const tt = (key: string, fallback: string) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
 
   useEffect(() => {
     loadShiftData();
@@ -254,7 +260,7 @@ export default function ShiftManagement() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -277,12 +283,19 @@ export default function ShiftManagement() {
   }
 
   return (
-    <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
+    <div className="animate-fade-up space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
+      {/* Header */}
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Clock className="h-[18px] w-[18px]" /></span>}
+        title={tt('shift_management', 'Shift Management')}
+        subtitle={tt('shift_management_desc', 'Open, close and reconcile cashier shifts')}
+      />
+
       {/* Current Shift Status */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            <Clock className="h-5 w-5 text-brand-400" />
+          <CardTitle className="text-foreground flex items-center gap-2">
+            <Clock className="h-5 w-5 text-brand" />
             {t('sm_current_shift')}
           </CardTitle>
         </CardHeader>
@@ -290,75 +303,71 @@ export default function ShiftManagement() {
           {currentShift ? (
             <div className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-                <div className="bg-slate-700/50 rounded-lg p-3">
-                  <p className="text-slate-400 text-xs">{t('sm_started')}</p>
-                  <p className="text-white font-medium">{new Date(currentShift.opened_at).toLocaleTimeString()}</p>
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-muted-foreground text-xs">{t('sm_started')}</p>
+                  <p className="text-foreground font-medium">{new Date(currentShift.opened_at).toLocaleTimeString()}</p>
                 </div>
-                <div className="bg-slate-700/50 rounded-lg p-3">
-                  <p className="text-slate-400 text-xs">{t('sm_duration')}</p>
-                  <p className="text-white font-medium">{formatDuration(currentShift.opened_at)}</p>
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-muted-foreground text-xs">{t('sm_duration')}</p>
+                  <p className="text-foreground font-medium">{formatDuration(currentShift.opened_at)}</p>
                 </div>
-                <div className="bg-slate-700/50 rounded-lg p-3">
-                  <p className="text-slate-400 text-xs">{t('sm_opening_cash')}</p>
-                  <p className="text-white font-medium">SAR {currentShift.opening_cash?.toFixed(2)}</p>
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-muted-foreground text-xs">{t('sm_opening_cash')}</p>
+                  <p className="text-foreground font-medium tabular-nums">{formatMoney(currentShift.opening_cash || 0, language)}</p>
                 </div>
-                <div className="bg-slate-700/50 rounded-lg p-3">
-                  <p className="text-slate-400 text-xs">{t('sm_transactions')}</p>
-                  <p className="text-white font-medium">{currentShift.transaction_count || 0}</p>
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-muted-foreground text-xs">{t('sm_transactions')}</p>
+                  <p className="text-foreground font-medium">{currentShift.transaction_count || 0}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <Badge className="bg-green-500/20 text-green-400">{t('active')}</Badge>
+                <Badge className="pill-success">{t('active')}</Badge>
                 {currentShift.staff_name && (
-                  <span className="text-slate-400 text-sm">{t('sm_staff')}: {currentShift.staff_name}</span>
+                  <span className="text-muted-foreground text-sm">{t('sm_staff')}: {currentShift.staff_name}</span>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <Button onClick={() => setCloseShiftDialog(true)} className="bg-red-600 hover:bg-red-700 text-white">
-                  <StopCircle className="h-4 w-4 mr-2" /> {t('sm_close_shift')}
+                <Button variant="destructive" onClick={() => setCloseShiftDialog(true)}>
+                  <StopCircle className="h-4 w-4 me-2" /> {t('sm_close_shift')}
                 </Button>
                 <Button
                   variant="outline"
                   onClick={() => openMovementDialog('pay_out')}
-                  className="border-slate-600 text-slate-200 hover:bg-slate-700"
+                  className="border-input text-foreground hover:bg-muted"
                 >
-                  <ArrowDownCircle className="h-4 w-4 mr-2" /> {t('record_cash_movement')}
+                  <ArrowDownCircle className="h-4 w-4 me-2" /> {t('record_cash_movement')}
                 </Button>
                 <Button
                   variant="outline"
                   onClick={() => printZReport()}
-                  className="border-slate-600 text-slate-200 hover:bg-slate-700"
+                  className="border-input text-foreground hover:bg-muted"
                 >
-                  <Receipt className="h-4 w-4 mr-2" /> {t('x_report')}
+                  <Receipt className="h-4 w-4 me-2" /> {t('x_report')}
                 </Button>
               </div>
 
               {/* Cash drawer movements (FIN-04 / POS-09) for the open shift. */}
-              <div className="rounded-lg border border-slate-700">
-                <div className="px-3 py-2 border-b border-slate-700 text-slate-300 text-sm font-medium">
+              <div className="rounded-lg border border-border">
+                <div className="px-3 py-2 border-b border-border text-foreground/90 text-sm font-medium">
                   {t('cash_drawer_movements')}
                 </div>
                 {movements.length === 0 ? (
-                  <p className="px-3 py-4 text-center text-slate-500 text-sm">{t('no_cash_movements')}</p>
+                  <p className="px-3 py-4 text-center text-muted-foreground text-sm">{t('no_cash_movements')}</p>
                 ) : (
                   <table className="w-full text-sm">
                     <tbody>
                       {movements.map((m) => (
-                        <tr key={m.id} className="border-t border-slate-700 text-slate-300">
+                        <tr key={m.id} className="border-t border-border text-foreground/90">
                           <td className="px-3 py-2">
                             <Badge
-                              className={
-                                m.movement_type === 'pay_in'
-                                  ? 'bg-green-500/20 text-green-400'
-                                  : 'bg-amber-500/20 text-amber-400'
-                              }
+                              className={m.movement_type === 'pay_in' ? 'pill-success' : 'pill-warning'}
                             >
                               {t(m.movement_type)}
                             </Badge>
                           </td>
-                          <td className="px-3 py-2 text-slate-400">{m.reason || '—'}</td>
-                          <td className="px-3 py-2 text-end text-white font-medium">
-                            {m.movement_type === 'pay_in' ? '+' : '−'}SAR {Number(m.amount).toFixed(2)}
+                          <td className="px-3 py-2 text-muted-foreground">{m.reason || '—'}</td>
+                          <td className="px-3 py-2 text-end text-foreground font-medium tabular-nums">
+                            {m.movement_type === 'pay_in' ? '+' : '−'}{formatMoney(Number(m.amount), language)}
                           </td>
                         </tr>
                       ))}
@@ -369,19 +378,19 @@ export default function ShiftManagement() {
             </div>
           ) : (
             <div className="text-center py-8">
-              <Clock className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400 mb-4">{t('sm_no_active_shift')}</p>
+              <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground mb-4">{t('sm_no_active_shift')}</p>
               <div className="flex items-center justify-center gap-3">
-                <Button onClick={() => setOpenShiftDialog(true)} className="bg-green-600 hover:bg-green-700 text-white">
-                  <PlayCircle className="h-4 w-4 mr-2" /> {t('sm_open_new_shift')}
+                <Button onClick={() => setOpenShiftDialog(true)} className="bg-success hover:bg-success/90 text-white shadow-brand">
+                  <PlayCircle className="h-4 w-4 me-2" /> {t('sm_open_new_shift')}
                 </Button>
                 {lastClosedShiftId != null && (
                   <Button
                     variant="outline"
                     onClick={() => printZReport(lastClosedShiftId)}
-                    className="border-slate-600 text-slate-200 hover:bg-slate-700"
+                    className="border-input text-foreground hover:bg-muted"
                   >
-                    <Receipt className="h-4 w-4 mr-2" /> {t('print_last_z_report')}
+                    <Receipt className="h-4 w-4 me-2" /> {t('print_last_z_report')}
                   </Button>
                 )}
               </div>
@@ -391,18 +400,18 @@ export default function ShiftManagement() {
       </Card>
 
       {/* Shift History */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            <History className="h-5 w-5 text-brand-400" />
+          <CardTitle className="text-foreground flex items-center gap-2">
+            <History className="h-5 w-5 text-brand" />
             {t('sm_shift_history')}
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto rounded-lg border border-slate-700">
+          <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
-              <thead className="bg-slate-700/50">
-                <tr className="text-slate-400">
+              <thead className="bg-muted/50">
+                <tr className="text-muted-foreground">
                   <th className="p-3 text-start">{t('sm_date')}</th>
                   <th className="p-3 text-start">{t('sm_staff')}</th>
                   <th className="p-3 text-start">{t('sm_opening')}</th>
@@ -416,32 +425,32 @@ export default function ShiftManagement() {
               <tbody>
                 {shiftHistory.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-6 text-center text-slate-500">{t('sm_no_history')}</td>
+                    <td colSpan={8} className="p-6 text-center text-muted-foreground">{t('sm_no_history')}</td>
                   </tr>
                 ) : (
                   shiftHistory.map((shift) => (
-                    <tr key={shift.id} className="border-t border-slate-700 text-slate-300">
-                      <td className="p-3 text-white">{new Date(shift.opened_at).toLocaleDateString()}</td>
+                    <tr key={shift.id} className="border-t border-border text-foreground/90">
+                      <td className="p-3 text-foreground">{new Date(shift.opened_at).toLocaleDateString()}</td>
                       <td className="p-3">{shift.staff_name || '—'}</td>
-                      <td className="p-3">SAR {shift.opening_cash?.toFixed(2)}</td>
-                      <td className="p-3">{shift.closing_cash != null ? `SAR ${shift.closing_cash.toFixed(2)}` : '—'}</td>
+                      <td className="p-3 tabular-nums">{formatMoney(shift.opening_cash || 0, language)}</td>
+                      <td className="p-3 tabular-nums">{shift.closing_cash != null ? formatMoney(shift.closing_cash, language) : '—'}</td>
                       <td className="p-3">
                         {shift.difference != null ? (
-                          <span className={shift.difference >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            {shift.difference >= 0 ? '+' : ''}SAR {shift.difference.toFixed(2)}
+                          <span className={`tabular-nums ${shift.difference >= 0 ? 'text-success' : 'text-danger'}`}>
+                            {shift.difference >= 0 ? '+' : ''}{formatMoney(shift.difference, language)}
                           </span>
                         ) : '—'}
                       </td>
-                      <td className="p-3 text-white font-medium">SAR {shift.sales_total?.toFixed(2) || '0.00'}</td>
+                      <td className="p-3 text-foreground font-medium tabular-nums">{formatMoney(shift.sales_total || 0, language)}</td>
                       <td className="p-3">{shift.transaction_count || 0}</td>
                       <td className="p-3">
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => printZReport(Number(shift.id))}
-                          className="text-brand-400 hover:bg-slate-700"
+                          className="text-brand hover:bg-muted"
                         >
-                          <Receipt className="h-4 w-4 mr-1" /> {t('z_report')}
+                          <Receipt className="h-4 w-4 me-1" /> {t('z_report')}
                         </Button>
                       </td>
                     </tr>
@@ -455,24 +464,24 @@ export default function ShiftManagement() {
 
       {/* Open Shift Dialog */}
       <Dialog open={openShiftDialog} onOpenChange={setOpenShiftDialog}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('sm_open_new_shift')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('sm_open_new_shift')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('sm_opening_cash_amount')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('sm_opening_cash_amount')}</label>
               <Input
                 type="number"
                 dir="ltr"
                 value={openingCash}
                 onChange={(e) => setOpeningCash(e.target.value)}
                 placeholder="0.00"
-                className="bg-slate-700 border-slate-600 text-white text-lg"
+                className="bg-muted border-input text-foreground text-lg"
               />
             </div>
-            <p className="text-slate-400 text-sm">{t('sm_opening_hint')}</p>
-            <Button onClick={handleOpenShift} disabled={submitting} className="w-full bg-green-600 hover:bg-green-700 text-white">
+            <p className="text-muted-foreground text-sm">{t('sm_opening_hint')}</p>
+            <Button onClick={handleOpenShift} disabled={submitting} className="w-full bg-success hover:bg-success/90 text-white shadow-brand">
               {submitting ? t('loading') : t('sm_open_shift')}
             </Button>
           </div>
@@ -481,53 +490,53 @@ export default function ShiftManagement() {
 
       {/* Close Shift Dialog */}
       <Dialog open={closeShiftDialog} onOpenChange={setCloseShiftDialog}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('sm_close_shift')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('sm_close_shift')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {currentShift && (
-              <div className="bg-slate-700/50 rounded-lg p-4 space-y-2">
+              <div className="bg-muted/50 rounded-lg p-4 space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-slate-400">{t('sm_opening_cash')}:</span>
-                  <span className="text-white">SAR {currentShift.opening_cash?.toFixed(2)}</span>
+                  <span className="text-muted-foreground">{t('sm_opening_cash')}:</span>
+                  <span className="text-foreground tabular-nums">{formatMoney(currentShift.opening_cash || 0, language)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">{t('sm_sales_total')}:</span>
-                  <span className="text-white">SAR {currentShift.sales_total?.toFixed(2) || '0.00'}</span>
+                  <span className="text-muted-foreground">{t('sm_sales_total')}:</span>
+                  <span className="text-foreground tabular-nums">{formatMoney(currentShift.sales_total || 0, language)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-400">{t('sm_expected_cash')}:</span>
-                  <span className="text-white font-bold">SAR {((currentShift.opening_cash || 0) + (currentShift.sales_total || 0)).toFixed(2)}</span>
+                  <span className="text-muted-foreground">{t('sm_expected_cash')}:</span>
+                  <span className="text-foreground font-bold tabular-nums">{formatMoney((currentShift.opening_cash || 0) + (currentShift.sales_total || 0), language)}</span>
                 </div>
               </div>
             )}
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('sm_closing_cash_amount')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('sm_closing_cash_amount')}</label>
               <Input
                 type="number"
                 dir="ltr"
                 value={closingCash}
                 onChange={(e) => setClosingCash(e.target.value)}
                 placeholder="0.00"
-                className="bg-slate-700 border-slate-600 text-white text-lg"
+                className="bg-muted border-input text-foreground text-lg"
               />
             </div>
             {closingCash && currentShift && (
-              <div className="bg-slate-700/50 rounded-lg p-3">
+              <div className="bg-muted/50 rounded-lg p-3">
                 <div className="flex justify-between">
-                  <span className="text-slate-400">{t('sm_difference')}:</span>
+                  <span className="text-muted-foreground">{t('sm_difference')}:</span>
                   <span className={
                     (parseFloat(closingCash) - (currentShift.opening_cash || 0) - (currentShift.sales_total || 0)) >= 0
-                      ? 'text-green-400 font-bold'
-                      : 'text-red-400 font-bold'
+                      ? 'text-success font-bold tabular-nums'
+                      : 'text-danger font-bold tabular-nums'
                   }>
-                    SAR {(parseFloat(closingCash) - (currentShift.opening_cash || 0) - (currentShift.sales_total || 0)).toFixed(2)}
+                    {formatMoney(parseFloat(closingCash) - (currentShift.opening_cash || 0) - (currentShift.sales_total || 0), language)}
                   </span>
                 </div>
               </div>
             )}
-            <Button onClick={handleCloseShift} disabled={submitting} className="w-full bg-red-600 hover:bg-red-700 text-white">
+            <Button variant="destructive" onClick={handleCloseShift} disabled={submitting} className="w-full">
               {submitting ? t('loading') : t('sm_close_shift')}
             </Button>
           </div>
@@ -536,59 +545,55 @@ export default function ShiftManagement() {
 
       {/* Cash Movement Dialog (FIN-04 / POS-09) */}
       <Dialog open={movementDialog} onOpenChange={setMovementDialog}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('record_cash_movement')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('record_cash_movement')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('movement_type')}</label>
-              <div className="grid grid-cols-3 gap-2">
+              <label className="text-sm text-muted-foreground mb-1 block">{t('movement_type')}</label>
+              <div className="dxr-seg w-full">
                 {(['pay_in', 'pay_out', 'cash_drop'] as CashMovementType[]).map((type) => (
-                  <Button
+                  <button
                     key={type}
                     type="button"
-                    variant={movementType === type ? 'default' : 'outline'}
+                    data-active={movementType === type}
                     onClick={() => setMovementType(type)}
-                    className={
-                      movementType === type
-                        ? 'bg-brand-600 hover:bg-brand-700 text-white'
-                        : 'border-slate-600 text-slate-200 hover:bg-slate-700'
-                    }
+                    className="flex-1"
                   >
                     {t(type)}
-                  </Button>
+                  </button>
                 ))}
               </div>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('movement_amount')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('movement_amount')}</label>
               <Input
                 type="number"
                 dir="ltr"
                 value={movementAmount}
                 onChange={(e) => setMovementAmount(e.target.value)}
                 placeholder="0.00"
-                className="bg-slate-700 border-slate-600 text-white text-lg"
+                className="bg-muted border-input text-foreground text-lg"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('movement_reason')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('movement_reason')}</label>
               <Input
                 value={movementReason}
                 onChange={(e) => setMovementReason(e.target.value)}
-                className="bg-slate-700 border-slate-600 text-white"
+                className="bg-muted border-input text-foreground"
               />
             </div>
             {movementError && (
-              <p role="alert" className="text-red-400 text-sm">
+              <p role="alert" className="text-danger text-sm">
                 {movementError}
               </p>
             )}
             <Button
               onClick={handleRecordMovement}
               disabled={submitting}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full shadow-brand"
             >
               {submitting ? t('loading') : t('record_cash_movement')}
             </Button>

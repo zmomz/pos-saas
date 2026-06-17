@@ -57,7 +57,8 @@ describe('PrinterSettings', () => {
     await userEvent.click(await screen.findByRole('button', { name: /add printer/i }));
     const dialog = await screen.findByRole('dialog');
     await userEvent.type(within(dialog).getByPlaceholderText(/printer name/i), 'Counter');
-    await userEvent.selectOptions(within(dialog).getByLabelText(/role/i), 'kot');
+    await userEvent.click(within(dialog).getByRole('combobox', { name: /role/i }));
+    await userEvent.click(await screen.findByRole('option', { name: /kitchen ticket/i }));
     await userEvent.click(within(dialog).getByRole('checkbox'));
     await userEvent.click(within(dialog).getByRole('button', { name: /add printer/i }));
 

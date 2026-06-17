@@ -22,19 +22,20 @@ import {
   type RestaurantTable,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { UtensilsCrossed, Plus, Users, WifiOff, AlertTriangle, Lock, ShoppingBag } from 'lucide-react';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import { UtensilsCrossed, Plus, Users, AlertTriangle, Lock, ShoppingBag } from 'lucide-react';
 
 // free | occupied | bill_printed — tile colours mirror the state machine.
 const STATE_STYLES: Record<string, string> = {
-  free: 'border-green-600/40 bg-green-500/10 hover:bg-green-500/20',
-  occupied: 'border-amber-600/40 bg-amber-500/10 hover:bg-amber-500/20',
+  free: 'border-success/40 bg-success/10 hover:bg-success/20',
+  occupied: 'border-warning/40 bg-warning/10 hover:bg-warning/20',
   bill_printed: 'border-brand-600/40 bg-brand-500/10 hover:bg-brand-500/20',
 };
 
 const STATE_BADGE: Record<string, string> = {
-  free: 'bg-green-500/20 text-green-400',
-  occupied: 'bg-amber-500/20 text-amber-400',
-  bill_printed: 'bg-brand-500/20 text-brand-400',
+  free: 'pill-success',
+  occupied: 'pill-warning',
+  bill_printed: 'bg-brand-500/20 text-brand-600',
 };
 
 const ORDER_TYPES = ['dine_in', 'takeaway', 'delivery'];
@@ -52,7 +53,6 @@ export default function FloorMap() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
 
   const [addTableOpen, setAddTableOpen] = useState(false);
   const [addZoneOpen, setAddZoneOpen] = useState(false);
@@ -75,18 +75,6 @@ export default function FloorMap() {
     customer_name: '',
     notes: '',
   });
-
-  // Connectivity badge (UX-02 offline state).
-  useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener('online', on);
-    window.addEventListener('offline', off);
-    return () => {
-      window.removeEventListener('online', on);
-      window.removeEventListener('offline', off);
-    };
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -205,7 +193,7 @@ export default function FloorMap() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -214,11 +202,11 @@ export default function FloorMap() {
   if (denied) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-slate-800 border-slate-700 max-w-md">
+        <Card className="bg-card border-border max-w-md">
           <CardContent className="p-8 text-center">
-            <Lock className="h-12 w-12 text-slate-500 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-2">{t('restaurant_disabled')}</h3>
-            <p className="text-slate-400 text-sm">{t('restaurant_disabled_desc')}</p>
+            <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-2">{t('restaurant_disabled')}</h3>
+            <p className="text-muted-foreground text-sm">{t('restaurant_disabled_desc')}</p>
           </CardContent>
         </Card>
       </div>
@@ -229,11 +217,11 @@ export default function FloorMap() {
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-slate-800 border-slate-700 max-w-md">
+        <Card className="bg-card border-border max-w-md">
           <CardContent className="p-8 text-center">
-            <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-3" />
-            <p className="text-slate-300 mb-4">{t('floor_load_error')}</p>
-            <Button onClick={load} className="bg-brand-600 hover:bg-brand-700 text-white">
+            <AlertTriangle className="h-12 w-12 text-danger mx-auto mb-3" />
+            <p className="text-foreground/90 mb-4">{t('floor_load_error')}</p>
+            <Button onClick={load}>
               {t('retry')}
             </Button>
           </CardContent>
@@ -243,55 +231,48 @@ export default function FloorMap() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Offline banner (UX-02) */}
-      {!online && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-600/40 bg-amber-500/10 px-4 py-2 text-amber-300 text-sm">
-          <WifiOff className="h-4 w-4" />
-          <span>{t('you_are_offline')}</span>
-        </div>
-      )}
-
+    <div className="animate-fade-up space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <UtensilsCrossed className="h-6 w-6 text-brand-400" />
-            {t('floor_map')}
-          </h2>
-          <p className="text-slate-400 text-sm mt-1">{t('floor_map_desc')}</p>
-        </div>
+      <PageHeading
+        title={t('floor_map')}
+        subtitle={t('floor_map_desc')}
+        icon={
+          <span className="dxr-sw dxr-sw-brand h-10 w-10">
+            <UtensilsCrossed className="h-[18px] w-[18px]" />
+          </span>
+        }
+      >
         <div className="flex gap-2">
           <Button
             variant="outline"
             onClick={() => setNewOrderOpen(true)}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            className="border-input text-foreground/90 hover:bg-muted"
           >
             <ShoppingBag className="h-4 w-4 mr-2" /> {t('new_order')}
           </Button>
           <Dialog open={addZoneOpen} onOpenChange={setAddZoneOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
+              <Button variant="outline" className="border-input text-foreground/90 hover:bg-muted">
                 <Plus className="h-4 w-4 mr-2" /> {t('add_zone')}
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-slate-800 border-slate-700 text-white">
+            <DialogContent className="bg-card border-border text-foreground">
               <DialogHeader>
-                <DialogTitle className="text-white">{t('add_zone')}</DialogTitle>
+                <DialogTitle className="text-foreground">{t('add_zone')}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm text-slate-400 mb-1 block">{t('zone_name')}</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">{t('zone_name')}</label>
                   <Input
                     value={zoneForm.name}
                     onChange={(e) => setZoneForm({ name: e.target.value })}
-                    className="bg-slate-700 border-slate-600 text-white"
+                    className="bg-muted border-input text-foreground"
                   />
                 </div>
                 <Button
                   onClick={handleAddZone}
                   disabled={submitting || !zoneForm.name}
-                  className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+                  className="w-full"
                 >
                   {submitting ? t('loading') : t('create_zone')}
                 </Button>
@@ -301,36 +282,36 @@ export default function FloorMap() {
 
           <Dialog open={addTableOpen} onOpenChange={setAddTableOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-brand-600 hover:bg-brand-700 text-white">
+              <Button>
                 <Plus className="h-4 w-4 mr-2" /> {t('add_table')}
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-slate-800 border-slate-700 text-white">
+            <DialogContent className="bg-card border-border text-foreground">
               <DialogHeader>
-                <DialogTitle className="text-white">{t('add_table')}</DialogTitle>
+                <DialogTitle className="text-foreground">{t('add_table')}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm text-slate-400 mb-1 block">{t('table_name')}</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">{t('table_name')}</label>
                   <Input
                     value={tableForm.name}
                     onChange={(e) => setTableForm((f) => ({ ...f, name: e.target.value }))}
                     placeholder="T1"
-                    className="bg-slate-700 border-slate-600 text-white"
+                    className="bg-muted border-input text-foreground"
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-slate-400 mb-1 block">{t('table_seats')}</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">{t('table_seats')}</label>
                   <Input
                     type="number"
                     value={tableForm.seats}
                     onChange={(e) => setTableForm((f) => ({ ...f, seats: parseInt(e.target.value) || 0 }))}
-                    className="bg-slate-700 border-slate-600 text-white"
+                    className="bg-muted border-input text-foreground"
                   />
                 </div>
                 {zones.length > 0 && (
                   <div>
-                    <label className="text-sm text-slate-400 mb-1 block">{t('all_zones')}</label>
+                    <label className="text-sm text-muted-foreground mb-1 block">{t('all_zones')}</label>
                     <select
                       value={tableForm.zone_id ?? ''}
                       onChange={(e) =>
@@ -339,7 +320,7 @@ export default function FloorMap() {
                           zone_id: e.target.value ? parseInt(e.target.value) : undefined,
                         }))
                       }
-                      className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                      className="w-full bg-muted border border-input text-foreground rounded-md p-2"
                     >
                       <option value="">—</option>
                       {zones.map((z) => (
@@ -353,7 +334,7 @@ export default function FloorMap() {
                 <Button
                   onClick={handleAddTable}
                   disabled={submitting || !tableForm.name}
-                  className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+                  className="w-full"
                 >
                   {submitting ? t('loading') : t('create_table')}
                 </Button>
@@ -361,14 +342,14 @@ export default function FloorMap() {
             </DialogContent>
           </Dialog>
         </div>
-      </div>
+      </PageHeading>
 
       {/* Zone tabs */}
       {zones.length > 0 && (
-        <div className="flex flex-wrap gap-2">
+        <div className="dxr-seg">
           <button
             onClick={() => setActiveZone('all')}
-            className={`px-3 py-1 rounded-md text-sm ${activeZone === 'all' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+            data-active={activeZone === 'all'}
           >
             {t('all_zones')}
           </button>
@@ -376,7 +357,7 @@ export default function FloorMap() {
             <button
               key={z.id}
               onClick={() => setActiveZone(z.id)}
-              className={`px-3 py-1 rounded-md text-sm ${activeZone === z.id ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+              data-active={activeZone === z.id}
             >
               {z.name}
             </button>
@@ -386,11 +367,11 @@ export default function FloorMap() {
 
       {/* Tables grid / empty state */}
       {visibleTables.length === 0 ? (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-10 text-center">
-            <UtensilsCrossed className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-1">{t('no_tables')}</h3>
-            <p className="text-slate-400 text-sm">{t('no_tables_desc')}</p>
+            <UtensilsCrossed className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-1">{t('no_tables')}</h3>
+            <p className="text-muted-foreground text-sm">{t('no_tables_desc')}</p>
           </CardContent>
         </Card>
       ) : (
@@ -404,17 +385,17 @@ export default function FloorMap() {
                 className={`rounded-lg border p-4 text-start transition-colors ${STATE_STYLES[state] || STATE_STYLES.free}`}
               >
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-white font-semibold">{table.name}</span>
+                  <span className="text-foreground font-semibold">{table.name}</span>
                   <Badge className={STATE_BADGE[state] || STATE_BADGE.free}>
                     {t(state === 'occupied' ? 'tbl_occupied' : state === 'bill_printed' ? 'tbl_bill_printed' : 'tbl_free')}
                   </Badge>
                 </div>
-                <div className="flex items-center gap-1 text-slate-400 text-xs">
+                <div className="flex items-center gap-1 text-muted-foreground text-xs">
                   <Users className="h-3 w-3" />
                   <span>{table.seats ?? 0}</span>
                 </div>
                 {state === 'free' && (
-                  <span className="mt-2 inline-block text-xs text-green-400">{t('open_order')}</span>
+                  <span className="mt-2 inline-block text-xs text-success">{t('open_order')}</span>
                 )}
               </button>
             );
@@ -424,19 +405,19 @@ export default function FloorMap() {
 
       {/* Open-order dialog */}
       <Dialog open={!!orderTable} onOpenChange={(o) => !o && setOrderTable(null)}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">
+            <DialogTitle className="text-foreground">
               {t('open_order')} — {orderTable?.name}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('order_type')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('order_type')}</label>
               <select
                 value={orderForm.order_type}
                 onChange={(e) => setOrderForm((f) => ({ ...f, order_type: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
               >
                 {ORDER_TYPES.map((ot) => (
                   <option key={ot} value={ot}>
@@ -446,7 +427,7 @@ export default function FloorMap() {
               </select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('party_size')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('party_size')}</label>
               <Input
                 type="number"
                 value={orderForm.party_size ?? ''}
@@ -456,21 +437,21 @@ export default function FloorMap() {
                     party_size: e.target.value ? parseInt(e.target.value) : undefined,
                   }))
                 }
-                className="bg-slate-700 border-slate-600 text-white"
+                className="bg-muted border-input text-foreground"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('customer_name')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('customer_name')}</label>
               <Input
                 value={orderForm.customer_name}
                 onChange={(e) => setOrderForm((f) => ({ ...f, customer_name: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
+                className="bg-muted border-input text-foreground"
               />
             </div>
             <Button
               onClick={handleOpenOrder}
               disabled={submitting}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full"
             >
               {submitting ? t('loading') : t('open_order')}
             </Button>
@@ -480,18 +461,18 @@ export default function FloorMap() {
 
       {/* Tableless new-order dialog (F-058) — takeaway / delivery skip table selection */}
       <Dialog open={newOrderOpen} onOpenChange={setNewOrderOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('new_order')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('new_order')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p className="text-slate-400 text-sm">{t('new_order_desc')}</p>
+            <p className="text-muted-foreground text-sm">{t('new_order_desc')}</p>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('order_type')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('order_type')}</label>
               <select
                 value={newOrderForm.order_type}
                 onChange={(e) => setNewOrderForm((f) => ({ ...f, order_type: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
               >
                 {TABLELESS_ORDER_TYPES.map((ot) => (
                   <option key={ot} value={ot}>
@@ -501,25 +482,25 @@ export default function FloorMap() {
               </select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('customer_name')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('customer_name')}</label>
               <Input
                 value={newOrderForm.customer_name}
                 onChange={(e) => setNewOrderForm((f) => ({ ...f, customer_name: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
+                className="bg-muted border-input text-foreground"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('note')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('note')}</label>
               <Input
                 value={newOrderForm.notes}
                 onChange={(e) => setNewOrderForm((f) => ({ ...f, notes: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
+                className="bg-muted border-input text-foreground"
               />
             </div>
             <Button
               onClick={handleNewOrder}
               disabled={submitting}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full"
             >
               {submitting ? t('loading') : t('start_order')}
             </Button>

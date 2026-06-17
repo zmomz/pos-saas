@@ -4,6 +4,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import StatTile, { type TileTone } from '@/components/dashboard/StatTile';
 import ZatcaOnboarding from './ZatcaOnboarding';
 import {
   getZatcaDocumentSummary,
@@ -26,12 +28,21 @@ import {
 // Status → tile/badge styling. The fiscal-document state machine is
 // signed → reported | cleared, with pending/failed the stuck states (ZA-08).
 const STATUS_BADGE: Record<string, string> = {
-  signed: 'bg-brand-500/20 text-brand-400',
-  reported: 'bg-green-500/20 text-green-400',
-  cleared: 'bg-emerald-500/20 text-emerald-400',
-  pending: 'bg-amber-500/20 text-amber-400',
-  failed: 'bg-red-500/20 text-red-400',
-  unknown: 'bg-slate-500/20 text-slate-300',
+  signed: 'pill-sky',
+  reported: 'pill-success',
+  cleared: 'pill-success',
+  pending: 'pill-warning',
+  failed: 'pill-danger',
+  unknown: 'pill-muted',
+};
+
+const STATUS_TONE: Record<string, TileTone> = {
+  signed: 'sky',
+  reported: 'success',
+  cleared: 'success',
+  pending: 'warning',
+  failed: 'warning',
+  unknown: 'brand',
 };
 
 const STATUS_ICON: Record<string, ElementType> = {
@@ -127,7 +138,7 @@ export default function ZatcaStatus() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -148,24 +159,21 @@ export default function ZatcaStatus() {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="animate-fade-up space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <ShieldCheck className="h-6 w-6 text-brand-400" />
-            {t('zatca_status')}
-          </h2>
-          <p className="text-slate-400 text-sm mt-1">{t('zatca_status_desc')}</p>
-        </div>
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><ShieldCheck className="h-[18px] w-[18px]" /></span>}
+        title={t('zatca_status')}
+        subtitle={t('zatca_status_desc')}
+      >
         <Button
           variant="outline"
           onClick={load}
-          className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          className="h-11 rounded-[10px]"
         >
-          <RefreshCw className="h-4 w-4 mr-2" /> {t('refresh')}
+          <RefreshCw className="h-4 w-4 me-2" /> {t('refresh')}
         </Button>
-      </div>
+      </PageHeading>
 
       {/* Onboarding / gateway state */}
       <div className="flex flex-wrap gap-2 text-sm">
@@ -184,9 +192,9 @@ export default function ZatcaStatus() {
       {summary?.needs_attention && (
         <div
           role="alert"
-          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-md border border-amber-600/40 bg-amber-500/10 px-4 py-3"
+          className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-4 py-3"
         >
-          <div className="flex items-start gap-2 text-amber-300 text-sm">
+          <div className="flex items-start gap-2 text-warning text-sm">
             <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
             <span>
               {t('zatca_stuck_alert')
@@ -197,7 +205,7 @@ export default function ZatcaStatus() {
           <Button
             onClick={handleReconcile}
             disabled={reconciling || !summary.onboarded}
-            className="bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+            className="bg-warning hover:bg-warning/90 text-white shrink-0"
             title={summary.onboarded ? undefined : t('zatca_not_onboarded')}
           >
             {reconciling ? t('loading') : t('zatca_reconcile')}
@@ -206,47 +214,43 @@ export default function ZatcaStatus() {
       )}
 
       {reconcileMsg && (
-        <p className="text-sm text-slate-300" role="status">
+        <p className="text-sm text-foreground/90" role="status">
           {reconcileMsg}
         </p>
       )}
 
       {/* Status summary cards / empty state */}
       {(summary?.total ?? 0) === 0 ? (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-10 text-center">
-            <FileText className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-1">{t('zatca_no_documents')}</h3>
-            <p className="text-slate-400 text-sm">{t('zatca_no_documents_desc')}</p>
+            <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-1">{t('zatca_no_documents')}</h3>
+            <p className="text-muted-foreground text-sm">{t('zatca_no_documents_desc')}</p>
           </CardContent>
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
             {statuses.map((s) => {
               const Icon = STATUS_ICON[s] || FileText;
               return (
-                <Card key={s} className="bg-slate-800 border-slate-700">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="text-2xl font-bold text-white">{counts[s]}</span>
-                      <Icon className="h-5 w-5 text-slate-500" />
-                    </div>
-                    <Badge className={`mt-2 ${STATUS_BADGE[s] || STATUS_BADGE.unknown}`}>
-                      {t(`zatca_doc_${s}`)}
-                    </Badge>
-                  </CardContent>
-                </Card>
+                <StatTile
+                  key={s}
+                  icon={Icon}
+                  label={t(`zatca_doc_${s}`)}
+                  value={counts[s]}
+                  tone={STATUS_TONE[s] || 'brand'}
+                />
               );
             })}
           </div>
 
           {/* Document table */}
-          <Card className="bg-slate-800 border-slate-700">
+          <Card className="bg-card border-border">
             <CardContent className="p-0 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-slate-700 text-slate-400">
+                  <tr className="border-b border-border text-muted-foreground">
                     <th className="text-start p-3">{t('invoice_number')}</th>
                     <th className="text-start p-3">ICV</th>
                     <th className="text-start p-3">{t('status')}</th>
@@ -255,15 +259,15 @@ export default function ZatcaStatus() {
                 </thead>
                 <tbody>
                   {documents.map((d) => (
-                    <tr key={d.id} className="border-b border-slate-700/50">
-                      <td className="p-3 text-white">{d.invoice_number}</td>
-                      <td className="p-3 text-slate-300">{d.icv ?? '—'}</td>
+                    <tr key={d.id} className="border-b border-border/50">
+                      <td className="p-3 text-foreground">{d.invoice_number}</td>
+                      <td className="p-3 text-foreground/90">{d.icv ?? '—'}</td>
                       <td className="p-3">
                         <Badge className={STATUS_BADGE[d.status] || STATUS_BADGE.unknown}>
                           {t(`zatca_doc_${d.status}`)}
                         </Badge>
                       </td>
-                      <td className="p-3 text-slate-400">
+                      <td className="p-3 text-muted-foreground">
                         {d.created_at ? new Date(d.created_at).toLocaleString() : '—'}
                       </td>
                     </tr>

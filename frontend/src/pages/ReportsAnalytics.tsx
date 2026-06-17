@@ -1,17 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { BarChart3, DollarSign, Receipt, TrendingUp, Loader2 } from 'lucide-react';
+import { useLanguage } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, downloadReportPdf, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -20,6 +13,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import StatTile from '@/components/dashboard/StatTile';
+import Bar from '@/components/dashboard/rx/Bar';
 
 interface SalesDataPoint {
   date: string;
@@ -494,8 +490,7 @@ const reportTranslations: Record<string, Record<string, string>> = {
 };
 
 export default function ReportsAnalytics() {
-  const navigate = useNavigate();
-  const { language, setLanguage, isRTL } = useLanguage();
+  const { language } = useLanguage();
   const [period, setPeriod] = useState<string>('daily');
   const [salesData, setSalesData] = useState<SalesDataPoint[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
@@ -863,173 +858,121 @@ export default function ReportsAnalytics() {
   const maxSales = Math.max(...salesData.map((d) => d.total_sales), 1);
 
   const rankBadge = (rank: number) => {
-    if (rank === 1)
-      return (
-        <Badge className="bg-yellow-500 text-black hover:bg-yellow-400">🥇 #1</Badge>
-      );
-    if (rank === 2)
-      return (
-        <Badge className="bg-gray-300 text-black hover:bg-gray-200">🥈 #2</Badge>
-      );
+    if (rank === 1) return <span className="pill-gold tabular-nums">#1</span>;
+    if (rank === 2) return <span className="pill-muted tabular-nums">#2</span>;
     if (rank === 3)
       return (
-        <Badge className="bg-amber-700 text-white hover:bg-amber-600">🥉 #3</Badge>
+        <span className="dxr-sw dxr-sw-warning inline-flex h-7 min-w-7 px-2 text-[12.5px] font-semibold tabular-nums">
+          #3
+        </span>
       );
-    return <span className="text-slate-400 text-sm">#{rank}</span>;
+    return <span className="text-muted-foreground text-sm tabular-nums">#{rank}</span>;
   };
 
   return (
-    <div
-      className="min-h-screen bg-slate-900 text-white p-4 md:p-8"
-      dir={isRTL ? 'rtl' : 'ltr'}
-    >
+    <div className="animate-fade-up space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
-        <div className="flex items-center gap-4">
-          <Button
-            variant="outline"
-            className="border-slate-700 text-slate-300 hover:bg-slate-800"
-            onClick={() => navigate('/client')}
-          >
-            ← {tr('back_to_dashboard')}
-          </Button>
-          <h1 className="text-2xl font-bold">{tr('reports_analytics')}</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <Select value={language} onValueChange={(val) => setLanguage(val as Language)}>
-            <SelectTrigger className="w-[130px] bg-slate-800 border-slate-700 text-white">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-700">
-              {languageOptions.map((opt) => (
-                <SelectItem
-                  key={opt.value}
-                  value={opt.value}
-                  className="text-white hover:bg-slate-700"
-                >
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            onClick={handleExportCSV}
-            disabled={exporting}
-            className="bg-brand-600 hover:bg-brand-700 text-white"
-          >
-            {exporting ? '...' : tr('export_csv')}
-          </Button>
-        </div>
-      </div>
+      <PageHeading
+        title={tr('reports_analytics')}
+        subtitle={tr('sales_chart')}
+        icon={
+          <span className="dxr-sw dxr-sw-brand h-10 w-10">
+            <BarChart3 className="h-[18px] w-[18px]" />
+          </span>
+        }
+      >
+        <Button onClick={handleExportCSV} disabled={exporting} className="h-11 rounded-[10px] shadow-brand">
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_csv')}
+        </Button>
+      </PageHeading>
 
       {/* Period Selector */}
-      <div className="flex gap-2 mb-6">
+      <div className="dxr-seg">
         {(['daily', 'weekly', 'monthly'] as const).map((p) => (
-          <Button
-            key={p}
-            variant={period === p ? 'default' : 'outline'}
-            className={
-              period === p
-                ? 'bg-brand-600 hover:bg-brand-700 text-white'
-                : 'border-slate-700 text-slate-300 hover:bg-slate-800'
-            }
-            onClick={() => setPeriod(p)}
-          >
+          <button key={p} data-active={period === p} onClick={() => setPeriod(p)}>
             {tr(p)}
-          </Button>
+          </button>
         ))}
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <Card className="bg-slate-800 border-slate-700">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-400">{tr('total_revenue')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {loadingSales ? (
-              <div className="h-8 bg-slate-700 rounded animate-pulse" />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <StatTile
+          icon={DollarSign}
+          tone="brand"
+          label={tr('total_revenue')}
+          value={
+            loadingSales ? (
+              <span className="inline-block h-7 w-24 animate-pulse rounded bg-muted align-middle" />
             ) : (
-              <p className="text-2xl font-bold text-white">
-                {tr('sar')} {totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-400">
-              {tr('total_transactions')}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {loadingSales ? (
-              <div className="h-8 bg-slate-700 rounded animate-pulse" />
+              formatMoney(totalRevenue, language)
+            )
+          }
+        />
+        <StatTile
+          icon={Receipt}
+          tone="sky"
+          label={tr('total_transactions')}
+          value={
+            loadingSales ? (
+              <span className="inline-block h-7 w-16 animate-pulse rounded bg-muted align-middle" />
             ) : (
-              <p className="text-2xl font-bold text-white">{totalTransactions}</p>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-400">{tr('avg_order_value')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {loadingSales ? (
-              <div className="h-8 bg-slate-700 rounded animate-pulse" />
+              totalTransactions
+            )
+          }
+        />
+        <StatTile
+          icon={TrendingUp}
+          tone="success"
+          label={tr('avg_order_value')}
+          value={
+            loadingSales ? (
+              <span className="inline-block h-7 w-24 animate-pulse rounded bg-muted align-middle" />
             ) : (
-              <p className="text-2xl font-bold text-white">
-                {tr('sar')} {avgOrderValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </p>
-            )}
-          </CardContent>
-        </Card>
+              formatMoney(avgOrderValue, language)
+            )
+          }
+        />
       </div>
 
       {/* Sales Chart */}
-      <Card className="bg-slate-800 border-slate-700 mb-8">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-white">{tr('sales_chart')}</CardTitle>
+          <CardTitle className="text-foreground">{tr('sales_chart')}</CardTitle>
           <Button
             onClick={() => handleExportPdf('sales-summary', 'sales_summary', { period })}
             disabled={exportingPdf === 'sales-summary' || salesData.length === 0}
             variant="outline"
-            className="border-slate-600 text-slate-200 hover:bg-slate-700 shrink-0"
+            className="shrink-0"
           >
-            {exportingPdf === 'sales-summary' ? '...' : tr('export_pdf')}
+            {exportingPdf === 'sales-summary' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
           </Button>
         </CardHeader>
         <CardContent>
           {loadingSales ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="h-8 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-8 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : salesError ? (
-            <p className="text-red-400 text-center py-8">{tr('error_loading')}</p>
+            <p className="text-danger text-center py-8">{tr('error_loading')}</p>
           ) : salesData.length === 0 ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {salesData.map((point) => {
                 const barWidth = (point.total_sales / maxSales) * 100;
                 return (
                   <div key={point.date} className="flex items-center gap-3">
-                    <span className="text-xs text-slate-400 w-24 shrink-0 truncate">
+                    <span className="text-xs text-muted-foreground w-24 shrink-0 truncate">
                       {point.date}
                     </span>
-                    <div className="flex-1 bg-slate-700 rounded-full h-7 relative overflow-hidden">
-                      <div
-                        className="bg-brand-600 h-full rounded-full transition-all duration-500 flex items-center justify-end px-2"
-                        style={{ width: `${Math.max(barWidth, 5)}%` }}
-                      >
-                        <span className="text-xs text-white font-medium whitespace-nowrap">
-                          {tr('sar')} {point.total_sales.toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                    <span className="text-xs text-slate-500 w-16 text-end shrink-0">
+                    <Bar pct={barWidth} className="flex-1" />
+                    <span className="text-xs text-foreground font-medium whitespace-nowrap tabular-nums w-28 text-end shrink-0">
+                      {formatMoney(point.total_sales, language)}
+                    </span>
+                    <span className="text-xs text-muted-foreground w-16 text-end shrink-0 tabular-nums">
                       {point.transaction_count} txn
                     </span>
                   </div>
@@ -1041,81 +984,73 @@ export default function ReportsAnalytics() {
       </Card>
 
       {/* Payment Breakdown (RPT-03) */}
-      <Card className="bg-slate-800 border-slate-700 mb-8">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-white">{tr('payment_breakdown')}</CardTitle>
+          <CardTitle className="text-foreground">{tr('payment_breakdown')}</CardTitle>
           <Button
             onClick={() => handleExportPdf('payment-breakdown', 'payment_breakdown')}
             disabled={exportingPdf === 'payment-breakdown' || paymentTenders.length === 0}
             variant="outline"
-            className="border-slate-600 text-slate-200 hover:bg-slate-700 shrink-0"
+            className="shrink-0"
           >
-            {exportingPdf === 'payment-breakdown' ? '...' : tr('export_pdf')}
+            {exportingPdf === 'payment-breakdown' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
           </Button>
         </CardHeader>
         <CardContent>
           {loadingPayments ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : paymentError ? (
-            <p className="text-red-400 text-center py-8">{tr('error_loading')}</p>
+            <p className="text-danger text-center py-8">{tr('error_loading')}</p>
           ) : paymentTenders.length === 0 ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
             <Table>
               <TableHeader>
-                <TableRow className="border-slate-700 hover:bg-slate-800">
-                  <TableHead className="text-slate-400">{tr('method')}</TableHead>
-                  <TableHead className="text-slate-400 text-end">{tr('collected')}</TableHead>
-                  <TableHead className="text-slate-400 text-end">{tr('refunds')}</TableHead>
-                  <TableHead className="text-slate-400 text-end">{tr('net')}</TableHead>
-                  <TableHead className="text-slate-400 text-end">{tr('txns')}</TableHead>
+                <TableRow className="border-border hover:bg-card">
+                  <TableHead className="text-muted-foreground">{tr('method')}</TableHead>
+                  <TableHead className="text-muted-foreground text-end">{tr('collected')}</TableHead>
+                  <TableHead className="text-muted-foreground text-end">{tr('refunds')}</TableHead>
+                  <TableHead className="text-muted-foreground text-end">{tr('net')}</TableHead>
+                  <TableHead className="text-muted-foreground text-end">{tr('txns')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paymentTenders.map((t) => (
                   <TableRow
                     key={t.tender_type}
-                    className="border-slate-700 hover:bg-slate-750"
+                    className="border-border hover:bg-muted"
                   >
-                    <TableCell className="text-white font-medium">
+                    <TableCell className="text-foreground font-medium">
                       {tenderLabel(t.tender_type)}
                     </TableCell>
-                    <TableCell className="text-slate-300 text-end">
-                      {tr('sar')} {t.collected.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <TableCell className="text-foreground/90 text-end tabular-nums">
+                      {formatMoney(t.collected, language)}
                     </TableCell>
-                    <TableCell className="text-slate-300 text-end">
-                      {t.refunds > 0
-                        ? `- ${tr('sar')} ${t.refunds.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                        : '—'}
+                    <TableCell className="text-foreground/90 text-end tabular-nums">
+                      {t.refunds > 0 ? `- ${formatMoney(t.refunds, language)}` : '—'}
                     </TableCell>
-                    <TableCell className="text-white text-end font-medium">
-                      {tr('sar')} {t.net.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <TableCell className="text-foreground text-end font-medium tabular-nums">
+                      {formatMoney(t.net, language)}
                     </TableCell>
-                    <TableCell className="text-slate-400 text-end">{t.count}</TableCell>
+                    <TableCell className="text-muted-foreground text-end tabular-nums">{t.count}</TableCell>
                   </TableRow>
                 ))}
-                <TableRow className="border-slate-700 bg-slate-850 font-semibold">
-                  <TableCell className="text-white">{tr('total')}</TableCell>
-                  <TableCell className="text-white text-end">
-                    {tr('sar')} {paymentTenders
-                      .reduce((s, t) => s + t.collected, 0)
-                      .toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <TableRow className="border-border bg-card font-semibold">
+                  <TableCell className="text-foreground">{tr('total')}</TableCell>
+                  <TableCell className="text-foreground text-end tabular-nums">
+                    {formatMoney(paymentTenders.reduce((s, t) => s + t.collected, 0), language)}
                   </TableCell>
-                  <TableCell className="text-white text-end">
-                    {tr('sar')} {paymentTenders
-                      .reduce((s, t) => s + t.refunds, 0)
-                      .toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <TableCell className="text-foreground text-end tabular-nums">
+                    {formatMoney(paymentTenders.reduce((s, t) => s + t.refunds, 0), language)}
                   </TableCell>
-                  <TableCell className="text-white text-end">
-                    {tr('sar')} {paymentTenders
-                      .reduce((s, t) => s + t.net, 0)
-                      .toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <TableCell className="text-foreground text-end tabular-nums">
+                    {formatMoney(paymentTenders.reduce((s, t) => s + t.net, 0), language)}
                   </TableCell>
-                  <TableCell className="text-slate-400 text-end">
+                  <TableCell className="text-muted-foreground text-end tabular-nums">
                     {paymentTenders.reduce((s, t) => s + t.count, 0)}
                   </TableCell>
                 </TableRow>
@@ -1126,27 +1061,25 @@ export default function ReportsAnalytics() {
       </Card>
 
       {/* Accounting Journal / GL export (FIN-02) */}
-      <Card className="bg-slate-800 border-slate-700 mb-8">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-white">{tr('journal_export')}</CardTitle>
-            <p className="text-xs text-slate-400 mt-1">{tr('journal_hint')}</p>
+            <CardTitle className="text-foreground">{tr('journal_export')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{tr('journal_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button
               onClick={handleExportJournal}
               disabled={exportingJournal || !journal || journal.lines.length === 0}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
-              {exportingJournal ? '...' : tr('download_journal')}
+              {exportingJournal ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_journal')}
             </Button>
             <Button
               onClick={() => handleExportPdf('journal-export', `journal_${journal?.from_date}_${journal?.to_date}`)}
               disabled={exportingPdf === 'journal-export' || !journal || journal.lines.length === 0}
               variant="outline"
-              className="border-slate-600 text-slate-200 hover:bg-slate-700"
             >
-              {exportingPdf === 'journal-export' ? '...' : tr('export_pdf')}
+              {exportingPdf === 'journal-export' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1154,80 +1087,67 @@ export default function ReportsAnalytics() {
           {loadingJournal ? (
             <div className="space-y-3">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : journalError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
-              <Button
-                variant="outline"
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                onClick={fetchJournal}
-              >
+              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <Button variant="outline" onClick={fetchJournal}>
                 {tr('retry')}
               </Button>
             </div>
           ) : !journal || journal.lines.length === 0 ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
             <>
               <div className="flex items-center justify-between mb-3">
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-muted-foreground">
                   {journal.from_date} → {journal.to_date}
                 </span>
-                <Badge
-                  className={
-                    journal.balanced
-                      ? 'bg-emerald-600 text-white hover:bg-emerald-500'
-                      : 'bg-red-600 text-white hover:bg-red-500'
-                  }
-                >
+                <span className={journal.balanced ? 'pill-success' : 'pill-danger'}>
+                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
                   {journal.balanced ? tr('journal_balanced') : tr('journal_unbalanced')}
-                </Badge>
+                </span>
               </div>
               <Table>
                 <TableHeader>
-                  <TableRow className="border-slate-700 hover:bg-slate-800">
-                    <TableHead className="text-slate-400">{tr('account_code')}</TableHead>
-                    <TableHead className="text-slate-400">{tr('gl_account')}</TableHead>
-                    <TableHead className="text-slate-400">{tr('description')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('debit')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('credit')}</TableHead>
+                  <TableRow className="border-border hover:bg-card">
+                    <TableHead className="text-muted-foreground">{tr('account_code')}</TableHead>
+                    <TableHead className="text-muted-foreground">{tr('gl_account')}</TableHead>
+                    <TableHead className="text-muted-foreground">{tr('description')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('debit')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('credit')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {journal.lines.map((line, idx) => (
                     <TableRow
                       key={`${line.account_code}-${idx}`}
-                      className="border-slate-700 hover:bg-slate-750"
+                      className="border-border hover:bg-muted"
                     >
-                      <TableCell className="text-slate-400 font-mono text-xs">
+                      <TableCell className="text-muted-foreground font-mono text-xs">
                         {line.account_code}
                       </TableCell>
-                      <TableCell className="text-white font-medium">{line.account}</TableCell>
-                      <TableCell className="text-slate-400 text-xs">{line.description}</TableCell>
-                      <TableCell className="text-slate-300 text-end">
-                        {line.debit > 0
-                          ? `${tr('sar')} ${line.debit.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                          : '—'}
+                      <TableCell className="text-foreground font-medium">{line.account}</TableCell>
+                      <TableCell className="text-muted-foreground text-xs">{line.description}</TableCell>
+                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                        {line.debit > 0 ? formatMoney(line.debit, language) : '—'}
                       </TableCell>
-                      <TableCell className="text-slate-300 text-end">
-                        {line.credit > 0
-                          ? `${tr('sar')} ${line.credit.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                          : '—'}
+                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                        {line.credit > 0 ? formatMoney(line.credit, language) : '—'}
                       </TableCell>
                     </TableRow>
                   ))}
-                  <TableRow className="border-slate-700 bg-slate-850 font-semibold">
-                    <TableCell className="text-white" colSpan={3}>
+                  <TableRow className="border-border bg-card font-semibold">
+                    <TableCell className="text-foreground" colSpan={3}>
                       {tr('total')}
                     </TableCell>
-                    <TableCell className="text-white text-end">
-                      {tr('sar')} {journal.total_debit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <TableCell className="text-foreground text-end tabular-nums">
+                      {formatMoney(journal.total_debit, language)}
                     </TableCell>
-                    <TableCell className="text-white text-end">
-                      {tr('sar')} {journal.total_credit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <TableCell className="text-foreground text-end tabular-nums">
+                      {formatMoney(journal.total_credit, language)}
                     </TableCell>
                   </TableRow>
                 </TableBody>
@@ -1238,27 +1158,25 @@ export default function ReportsAnalytics() {
       </Card>
 
       {/* Profit / COGS / Margin + Dead Stock (F-068) */}
-      <Card className="bg-slate-800 border-slate-700 mb-8">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-white">{tr('profit_margin')}</CardTitle>
-            <p className="text-xs text-slate-400 mt-1">{tr('profit_margin_hint')}</p>
+            <CardTitle className="text-foreground">{tr('profit_margin')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{tr('profit_margin_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button
               onClick={handleExportMargin}
               disabled={exportingMargin || !margin || margin.by_item.length === 0}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
-              {exportingMargin ? '...' : tr('download_margin')}
+              {exportingMargin ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_margin')}
             </Button>
             <Button
               onClick={() => handleExportPdf('profit-margin', `profit_margin_${margin?.from_date}_${margin?.to_date}`)}
               disabled={exportingPdf === 'profit-margin' || !margin || margin.by_item.length === 0}
               variant="outline"
-              className="border-slate-600 text-slate-200 hover:bg-slate-700"
             >
-              {exportingPdf === 'profit-margin' ? '...' : tr('export_pdf')}
+              {exportingPdf === 'profit-margin' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1266,80 +1184,76 @@ export default function ReportsAnalytics() {
           {loadingMargin ? (
             <div className="space-y-3">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : marginError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
-              <Button
-                variant="outline"
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                onClick={fetchMargin}
-              >
+              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <Button variant="outline" onClick={fetchMargin}>
                 {tr('retry')}
               </Button>
             </div>
           ) : !margin || margin.by_item.length === 0 ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
             <>
               {/* Totals strip */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('revenue')}</p>
-                  <p className="text-lg font-bold text-white">
-                    {tr('sar')} {margin.totals.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('revenue')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
+                    {formatMoney(margin.totals.revenue, language)}
                   </p>
                 </div>
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('cogs')}</p>
-                  <p className="text-lg font-bold text-white">
-                    {tr('sar')} {margin.totals.cogs.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('cogs')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
+                    {formatMoney(margin.totals.cogs, language)}
                   </p>
                 </div>
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('gross_profit')}</p>
-                  <p className="text-lg font-bold text-emerald-400">
-                    {tr('sar')} {margin.totals.gross_profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('gross_profit')}</p>
+                  <p className="text-lg font-bold text-success tabular-nums">
+                    {formatMoney(margin.totals.gross_profit, language)}
                   </p>
                 </div>
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('margin')}</p>
-                  <p className="text-lg font-bold text-emerald-400">
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('margin')}</p>
+                  <p className="text-lg font-bold text-success tabular-nums">
                     {margin.totals.margin_pct.toFixed(1)}%
                   </p>
                 </div>
               </div>
 
               {/* By item */}
-              <h3 className="text-sm font-semibold text-slate-300 mb-2">{tr('by_item')}</h3>
+              <h3 className="text-sm font-semibold text-foreground/90 mb-2">{tr('by_item')}</h3>
               <Table>
                 <TableHeader>
-                  <TableRow className="border-slate-700 hover:bg-slate-800">
-                    <TableHead className="text-slate-400">{tr('item')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('qty_sold')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('revenue')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('cogs')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('gross_profit')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('margin')}</TableHead>
+                  <TableRow className="border-border hover:bg-card">
+                    <TableHead className="text-muted-foreground">{tr('item')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('qty_sold')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('revenue')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('cogs')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('gross_profit')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('margin')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {margin.by_item.map((row) => (
-                    <TableRow key={row.key} className="border-slate-700 hover:bg-slate-750">
-                      <TableCell className="text-white font-medium">{row.name}</TableCell>
-                      <TableCell className="text-slate-300 text-end">{row.qty_sold}</TableCell>
-                      <TableCell className="text-slate-300 text-end">
-                        {tr('sar')} {row.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <TableRow key={row.key} className="border-border hover:bg-muted">
+                      <TableCell className="text-foreground font-medium">{row.name}</TableCell>
+                      <TableCell className="text-foreground/90 text-end tabular-nums">{row.qty_sold}</TableCell>
+                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                        {formatMoney(row.revenue, language)}
                       </TableCell>
-                      <TableCell className="text-slate-300 text-end">
-                        {tr('sar')} {row.cogs.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                        {formatMoney(row.cogs, language)}
                       </TableCell>
-                      <TableCell className="text-emerald-400 text-end">
-                        {tr('sar')} {row.gross_profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      <TableCell className="text-success text-end tabular-nums">
+                        {formatMoney(row.gross_profit, language)}
                       </TableCell>
-                      <TableCell className="text-slate-300 text-end">{row.margin_pct.toFixed(1)}%</TableCell>
+                      <TableCell className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -1348,31 +1262,31 @@ export default function ReportsAnalytics() {
               {/* By category */}
               {margin.by_category.length > 0 && (
                 <>
-                  <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-2">{tr('by_category')}</h3>
+                  <h3 className="text-sm font-semibold text-foreground/90 mt-6 mb-2">{tr('by_category')}</h3>
                   <Table>
                     <TableHeader>
-                      <TableRow className="border-slate-700 hover:bg-slate-800">
-                        <TableHead className="text-slate-400">{tr('category')}</TableHead>
-                        <TableHead className="text-slate-400 text-end">{tr('revenue')}</TableHead>
-                        <TableHead className="text-slate-400 text-end">{tr('cogs')}</TableHead>
-                        <TableHead className="text-slate-400 text-end">{tr('gross_profit')}</TableHead>
-                        <TableHead className="text-slate-400 text-end">{tr('margin')}</TableHead>
+                      <TableRow className="border-border hover:bg-card">
+                        <TableHead className="text-muted-foreground">{tr('category')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('revenue')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('cogs')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('gross_profit')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('margin')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {margin.by_category.map((row) => (
-                        <TableRow key={row.key} className="border-slate-700 hover:bg-slate-750">
-                          <TableCell className="text-white font-medium">{row.name}</TableCell>
-                          <TableCell className="text-slate-300 text-end">
-                            {tr('sar')} {row.revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <TableRow key={row.key} className="border-border hover:bg-muted">
+                          <TableCell className="text-foreground font-medium">{row.name}</TableCell>
+                          <TableCell className="text-foreground/90 text-end tabular-nums">
+                            {formatMoney(row.revenue, language)}
                           </TableCell>
-                          <TableCell className="text-slate-300 text-end">
-                            {tr('sar')} {row.cogs.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          <TableCell className="text-foreground/90 text-end tabular-nums">
+                            {formatMoney(row.cogs, language)}
                           </TableCell>
-                          <TableCell className="text-emerald-400 text-end">
-                            {tr('sar')} {row.gross_profit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          <TableCell className="text-success text-end tabular-nums">
+                            {formatMoney(row.gross_profit, language)}
                           </TableCell>
-                          <TableCell className="text-slate-300 text-end">{row.margin_pct.toFixed(1)}%</TableCell>
+                          <TableCell className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1381,32 +1295,32 @@ export default function ReportsAnalytics() {
               )}
 
               {/* Dead stock */}
-              <h3 className="text-sm font-semibold text-slate-300 mt-6 mb-1">{tr('dead_stock')}</h3>
-              <p className="text-xs text-slate-500 mb-2">{tr('dead_stock_hint')}</p>
+              <h3 className="text-sm font-semibold text-foreground/90 mt-6 mb-1">{tr('dead_stock')}</h3>
+              <p className="text-xs text-muted-foreground mb-2">{tr('dead_stock_hint')}</p>
               {margin.dead_stock.length === 0 ? (
-                <p className="text-slate-400 text-sm py-3">{tr('no_dead_stock')}</p>
+                <p className="text-muted-foreground text-sm py-3">{tr('no_dead_stock')}</p>
               ) : (
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-slate-700 hover:bg-slate-800">
-                      <TableHead className="text-slate-400">{tr('product_name')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('category')}</TableHead>
-                      <TableHead className="text-slate-400 text-end">{tr('on_hand')}</TableHead>
-                      <TableHead className="text-slate-400 text-end">{tr('cost')}</TableHead>
-                      <TableHead className="text-slate-400 text-end">{tr('stock_value')}</TableHead>
+                    <TableRow className="border-border hover:bg-card">
+                      <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('category')}</TableHead>
+                      <TableHead className="text-muted-foreground text-end">{tr('on_hand')}</TableHead>
+                      <TableHead className="text-muted-foreground text-end">{tr('cost')}</TableHead>
+                      <TableHead className="text-muted-foreground text-end">{tr('stock_value')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {margin.dead_stock.map((row) => (
-                      <TableRow key={row.product_id} className="border-slate-700 hover:bg-slate-750">
-                        <TableCell className="text-white font-medium">{row.name}</TableCell>
-                        <TableCell className="text-slate-400 text-xs">{row.category || '—'}</TableCell>
-                        <TableCell className="text-slate-300 text-end">{row.quantity}</TableCell>
-                        <TableCell className="text-slate-300 text-end">
-                          {tr('sar')} {row.cost_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      <TableRow key={row.product_id} className="border-border hover:bg-muted">
+                        <TableCell className="text-foreground font-medium">{row.name}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">{row.category || '—'}</TableCell>
+                        <TableCell className="text-foreground/90 text-end tabular-nums">{row.quantity}</TableCell>
+                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                          {formatMoney(row.cost_price, language)}
                         </TableCell>
-                        <TableCell className="text-slate-300 text-end">
-                          {tr('sar')} {row.stock_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                          {formatMoney(row.stock_value, language)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1419,27 +1333,22 @@ export default function ReportsAnalytics() {
       </Card>
 
       {/* VAT / Tax Summary by rate (F-069) */}
-      <Card className="bg-slate-800 border-slate-700 mb-8">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-white">{tr('vat_summary')}</CardTitle>
-            <p className="text-xs text-slate-400 mt-1">{tr('vat_summary_hint')}</p>
+            <CardTitle className="text-foreground">{tr('vat_summary')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{tr('vat_summary_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
-            <Button
-              onClick={handleExportVat}
-              disabled={exportingVat || !vat}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
-            >
-              {exportingVat ? '...' : tr('download_vat')}
+            <Button onClick={handleExportVat} disabled={exportingVat || !vat}>
+              {exportingVat ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_vat')}
             </Button>
             <Button
               onClick={() => handleExportPdf('vat-summary', `vat_summary_${vat?.from_date}_${vat?.to_date}`)}
               disabled={exportingPdf === 'vat-summary' || !vat}
               variant="outline"
-              className="border-slate-600 text-slate-200 hover:bg-slate-700"
             >
-              {exportingPdf === 'vat-summary' ? '...' : tr('export_pdf')}
+              {exportingPdf === 'vat-summary' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1447,42 +1356,38 @@ export default function ReportsAnalytics() {
           {loadingVat ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : vatError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
-              <Button
-                variant="outline"
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                onClick={fetchVat}
-              >
+              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <Button variant="outline" onClick={fetchVat}>
                 {tr('retry')}
               </Button>
             </div>
           ) : !vat ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
             <>
               {/* Net-VAT strip */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('vat_collected')}</p>
-                  <p className="text-lg font-bold text-white">
-                    {tr('sar')} {vat.vat_collected.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('vat_collected')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
+                    {formatMoney(vat.vat_collected, language)}
                   </p>
                 </div>
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('vat_reversed')}</p>
-                  <p className="text-lg font-bold text-white">
-                    {tr('sar')} {vat.vat_reversed.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('vat_reversed')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
+                    {formatMoney(vat.vat_reversed, language)}
                   </p>
                 </div>
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('net_vat')}</p>
-                  <p className="text-lg font-bold text-emerald-400">
-                    {tr('sar')} {vat.net_vat.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('net_vat')}</p>
+                  <p className="text-lg font-bold text-success tabular-nums">
+                    {formatMoney(vat.net_vat, language)}
                   </p>
                 </div>
               </div>
@@ -1490,31 +1395,31 @@ export default function ReportsAnalytics() {
               {/* The ZATCA VAT-return boxes */}
               <Table>
                 <TableHeader>
-                  <TableRow className="border-slate-700 hover:bg-slate-800">
-                    <TableHead className="text-slate-400">{tr('tax_category')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('taxable_base')}</TableHead>
-                    <TableHead className="text-slate-400 text-end">{tr('vat_amount')}</TableHead>
+                  <TableRow className="border-border hover:bg-card">
+                    <TableHead className="text-muted-foreground">{tr('tax_category')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('taxable_base')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('vat_amount')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {vat.buckets.map((b) => (
-                    <TableRow key={b.key} className="border-slate-700 hover:bg-slate-750">
-                      <TableCell className="text-white font-medium">{b.label}</TableCell>
-                      <TableCell className="text-slate-300 text-end">
-                        {tr('sar')} {b.taxable_base.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <TableRow key={b.key} className="border-border hover:bg-muted">
+                      <TableCell className="text-foreground font-medium">{b.label}</TableCell>
+                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                        {formatMoney(b.taxable_base, language)}
                       </TableCell>
-                      <TableCell className="text-slate-300 text-end">
-                        {tr('sar')} {b.vat_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                        {formatMoney(b.vat_amount, language)}
                       </TableCell>
                     </TableRow>
                   ))}
-                  <TableRow className="border-slate-700 bg-slate-900/40">
-                    <TableCell className="text-white font-semibold">{tr('net_vat')}</TableCell>
-                    <TableCell className="text-slate-300 text-end">
-                      {tr('sar')} {vat.total_taxable_base.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <TableRow className="border-border bg-muted/40">
+                    <TableCell className="text-foreground font-semibold">{tr('net_vat')}</TableCell>
+                    <TableCell className="text-foreground/90 text-end tabular-nums">
+                      {formatMoney(vat.total_taxable_base, language)}
                     </TableCell>
-                    <TableCell className="text-emerald-400 text-end font-semibold">
-                      {tr('sar')} {vat.net_vat.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <TableCell className="text-success text-end font-semibold tabular-nums">
+                      {formatMoney(vat.net_vat, language)}
                     </TableCell>
                   </TableRow>
                 </TableBody>
@@ -1525,27 +1430,22 @@ export default function ReportsAnalytics() {
       </Card>
 
       {/* Inventory — on-hand valuation at cost + movements (F-070) */}
-      <Card className="bg-slate-800 border-slate-700 mb-8">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-white">{tr('inventory_report')}</CardTitle>
-            <p className="text-xs text-slate-400 mt-1">{tr('inventory_hint')}</p>
+            <CardTitle className="text-foreground">{tr('inventory_report')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{tr('inventory_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
-            <Button
-              onClick={handleExportInventory}
-              disabled={exportingInventory || !inventory}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
-            >
-              {exportingInventory ? '...' : tr('download_inventory')}
+            <Button onClick={handleExportInventory} disabled={exportingInventory || !inventory}>
+              {exportingInventory ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_inventory')}
             </Button>
             <Button
               onClick={() => handleExportPdf('inventory', `inventory_${inventory?.from_date}_${inventory?.to_date}`)}
               disabled={exportingPdf === 'inventory' || !inventory}
               variant="outline"
-              className="border-slate-600 text-slate-200 hover:bg-slate-700"
             >
-              {exportingPdf === 'inventory' ? '...' : tr('export_pdf')}
+              {exportingPdf === 'inventory' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1553,65 +1453,61 @@ export default function ReportsAnalytics() {
           {loadingInventory ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : inventoryError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
-              <Button
-                variant="outline"
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                onClick={fetchInventory}
-              >
+              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <Button variant="outline" onClick={fetchInventory}>
                 {tr('retry')}
               </Button>
             </div>
           ) : !inventory ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
             <>
               {/* Totals strip */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('total_on_hand')}</p>
-                  <p className="text-lg font-bold text-white">
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('total_on_hand')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
                     {inventory.total_quantity.toLocaleString()}
                   </p>
                 </div>
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('total_valuation')}</p>
-                  <p className="text-lg font-bold text-emerald-400">
-                    {tr('sar')} {inventory.total_valuation.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('total_valuation')}</p>
+                  <p className="text-lg font-bold text-success tabular-nums">
+                    {formatMoney(inventory.total_valuation, language)}
                   </p>
                 </div>
               </div>
 
               {/* On-hand valuation at cost, by product */}
               {inventory.by_product.length === 0 ? (
-                <p className="text-slate-400 text-sm py-3">{tr('no_data')}</p>
+                <p className="text-muted-foreground text-sm py-3">{tr('no_data')}</p>
               ) : (
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-slate-700 hover:bg-slate-800">
-                      <TableHead className="text-slate-400">{tr('product_name')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('category')}</TableHead>
-                      <TableHead className="text-slate-400 text-end">{tr('on_hand')}</TableHead>
-                      <TableHead className="text-slate-400 text-end">{tr('cost')}</TableHead>
-                      <TableHead className="text-slate-400 text-end">{tr('stock_value')}</TableHead>
+                    <TableRow className="border-border hover:bg-card">
+                      <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('category')}</TableHead>
+                      <TableHead className="text-muted-foreground text-end">{tr('on_hand')}</TableHead>
+                      <TableHead className="text-muted-foreground text-end">{tr('cost')}</TableHead>
+                      <TableHead className="text-muted-foreground text-end">{tr('stock_value')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {inventory.by_product.map((row) => (
-                      <TableRow key={row.product_id} className="border-slate-700 hover:bg-slate-750">
-                        <TableCell className="text-white font-medium">{row.name}</TableCell>
-                        <TableCell className="text-slate-400 text-xs">{row.category || '—'}</TableCell>
-                        <TableCell className="text-slate-300 text-end">{row.quantity}</TableCell>
-                        <TableCell className="text-slate-300 text-end">
-                          {tr('sar')} {row.cost_price.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      <TableRow key={row.product_id} className="border-border hover:bg-muted">
+                        <TableCell className="text-foreground font-medium">{row.name}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">{row.category || '—'}</TableCell>
+                        <TableCell className="text-foreground/90 text-end tabular-nums">{row.quantity}</TableCell>
+                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                          {formatMoney(row.cost_price, language)}
                         </TableCell>
-                        <TableCell className="text-slate-300 text-end">
-                          {tr('sar')} {row.stock_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                          {formatMoney(row.stock_value, language)}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -1622,24 +1518,24 @@ export default function ReportsAnalytics() {
               {/* Per-branch valuation */}
               {inventory.by_branch.length > 0 && (
                 <div className="mt-6">
-                  <h4 className="text-sm font-semibold text-slate-300 mb-2">{tr('by_branch')}</h4>
+                  <h4 className="text-sm font-semibold text-foreground/90 mb-2">{tr('by_branch')}</h4>
                   <Table>
                     <TableHeader>
-                      <TableRow className="border-slate-700 hover:bg-slate-800">
-                        <TableHead className="text-slate-400">{tr('branch')}</TableHead>
-                        <TableHead className="text-slate-400 text-end">{tr('on_hand')}</TableHead>
-                        <TableHead className="text-slate-400 text-end">{tr('stock_value')}</TableHead>
+                      <TableRow className="border-border hover:bg-card">
+                        <TableHead className="text-muted-foreground">{tr('branch')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('on_hand')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('stock_value')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {inventory.by_branch.map((b) => (
-                        <TableRow key={b.branch_id} className="border-slate-700 hover:bg-slate-750">
-                          <TableCell className="text-white font-medium">
+                        <TableRow key={b.branch_id} className="border-border hover:bg-muted">
+                          <TableCell className="text-foreground font-medium">
                             {b.branch_name || `#${b.branch_id}`}
                           </TableCell>
-                          <TableCell className="text-slate-300 text-end">{b.quantity}</TableCell>
-                          <TableCell className="text-slate-300 text-end">
-                            {tr('sar')} {b.stock_value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                          <TableCell className="text-foreground/90 text-end tabular-nums">{b.quantity}</TableCell>
+                          <TableCell className="text-foreground/90 text-end tabular-nums">
+                            {formatMoney(b.stock_value, language)}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1650,32 +1546,32 @@ export default function ReportsAnalytics() {
 
               {/* Movement ledger */}
               <div className="mt-6">
-                <h4 className="text-sm font-semibold text-slate-300 mb-2">{tr('movements')}</h4>
+                <h4 className="text-sm font-semibold text-foreground/90 mb-2">{tr('movements')}</h4>
                 {inventory.movements.length === 0 ? (
-                  <p className="text-slate-400 text-sm py-3">{tr('no_movements')}</p>
+                  <p className="text-muted-foreground text-sm py-3">{tr('no_movements')}</p>
                 ) : (
                   <Table>
                     <TableHeader>
-                      <TableRow className="border-slate-700 hover:bg-slate-800">
-                        <TableHead className="text-slate-400">{tr('mv_date')}</TableHead>
-                        <TableHead className="text-slate-400">{tr('mv_type')}</TableHead>
-                        <TableHead className="text-slate-400">{tr('product_name')}</TableHead>
-                        <TableHead className="text-slate-400 text-end">{tr('mv_qty')}</TableHead>
-                        <TableHead className="text-slate-400">{tr('mv_reference')}</TableHead>
+                      <TableRow className="border-border hover:bg-card">
+                        <TableHead className="text-muted-foreground">{tr('mv_date')}</TableHead>
+                        <TableHead className="text-muted-foreground">{tr('mv_type')}</TableHead>
+                        <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('mv_qty')}</TableHead>
+                        <TableHead className="text-muted-foreground">{tr('mv_reference')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {inventory.movements.map((m, idx) => (
-                        <TableRow key={idx} className="border-slate-700 hover:bg-slate-750">
-                          <TableCell className="text-slate-400 text-xs">{m.date}</TableCell>
-                          <TableCell className="text-slate-300 text-xs">
+                        <TableRow key={idx} className="border-border hover:bg-muted">
+                          <TableCell className="text-muted-foreground text-xs">{m.date}</TableCell>
+                          <TableCell className="text-foreground/90 text-xs">
                             {tr(`mv_${m.type}`)}
                           </TableCell>
-                          <TableCell className="text-white">
+                          <TableCell className="text-foreground">
                             {m.product_name || (m.product_id ? `#${m.product_id}` : '—')}
                           </TableCell>
-                          <TableCell className="text-slate-300 text-end">{m.quantity}</TableCell>
-                          <TableCell className="text-slate-400 text-xs">{m.reference || '—'}</TableCell>
+                          <TableCell className="text-foreground/90 text-end tabular-nums">{m.quantity}</TableCell>
+                          <TableCell className="text-muted-foreground text-xs">{m.reference || '—'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1688,27 +1584,22 @@ export default function ReportsAnalytics() {
       </Card>
 
       {/* Refunds & Voids — actor / reason / amount over a window (F-071) */}
-      <Card className="bg-slate-800 border-slate-700 mb-8">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-white">{tr('refunds_voids')}</CardTitle>
-            <p className="text-xs text-slate-400 mt-1">{tr('refunds_voids_hint')}</p>
+            <CardTitle className="text-foreground">{tr('refunds_voids')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{tr('refunds_voids_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
-            <Button
-              onClick={handleExportRefundsVoids}
-              disabled={exportingRefundsVoids || !refundsVoids}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
-            >
-              {exportingRefundsVoids ? '...' : tr('download_refunds_voids')}
+            <Button onClick={handleExportRefundsVoids} disabled={exportingRefundsVoids || !refundsVoids}>
+              {exportingRefundsVoids ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_refunds_voids')}
             </Button>
             <Button
               onClick={() => handleExportPdf('refunds-voids', `refunds_voids_${refundsVoids?.from_date}_${refundsVoids?.to_date}`)}
               disabled={exportingPdf === 'refunds-voids' || !refundsVoids}
               variant="outline"
-              className="border-slate-600 text-slate-200 hover:bg-slate-700"
             >
-              {exportingPdf === 'refunds-voids' ? '...' : tr('export_pdf')}
+              {exportingPdf === 'refunds-voids' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1716,86 +1607,76 @@ export default function ReportsAnalytics() {
           {loadingRefundsVoids ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : refundsVoidsError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
-              <Button
-                variant="outline"
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                onClick={fetchRefundsVoids}
-              >
+              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <Button variant="outline" onClick={fetchRefundsVoids}>
                 {tr('retry')}
               </Button>
             </div>
           ) : !refundsVoids ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
             <>
               {/* Totals strip */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('refund_count')}</p>
-                  <p className="text-lg font-bold text-white">
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('refund_count')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
                     {refundsVoids.refund_count}
-                    <span className="text-sm text-slate-400 ms-2">
-                      {tr('sar')} {refundsVoids.refund_total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <span className="text-sm text-muted-foreground ms-2">
+                      {formatMoney(refundsVoids.refund_total, language)}
                     </span>
                   </p>
                 </div>
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('void_count')}</p>
-                  <p className="text-lg font-bold text-white">
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('void_count')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
                     {refundsVoids.void_count}
-                    <span className="text-sm text-slate-400 ms-2">
-                      {tr('sar')} {refundsVoids.void_total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <span className="text-sm text-muted-foreground ms-2">
+                      {formatMoney(refundsVoids.void_total, language)}
                     </span>
                   </p>
                 </div>
               </div>
 
               {refundsVoids.rows.length === 0 ? (
-                <p className="text-slate-400 text-center py-6">{tr('no_data')}</p>
+                <p className="text-muted-foreground text-center py-6">{tr('no_data')}</p>
               ) : (
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-slate-700 hover:bg-slate-800">
-                      <TableHead className="text-slate-400">{tr('rv_type')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('invoice')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('actor')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('reason')}</TableHead>
-                      <TableHead className="text-slate-400 text-end">{tr('amount')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('when')}</TableHead>
+                    <TableRow className="border-border hover:bg-card">
+                      <TableHead className="text-muted-foreground">{tr('rv_type')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('invoice')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('actor')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('reason')}</TableHead>
+                      <TableHead className="text-muted-foreground text-end">{tr('amount')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('when')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {refundsVoids.rows.map((r, idx) => (
-                      <TableRow key={idx} className="border-slate-700 hover:bg-slate-750">
+                      <TableRow key={idx} className="border-border hover:bg-muted">
                         <TableCell>
-                          <Badge
-                            className={
-                              r.type === 'void'
-                                ? 'bg-red-900 text-red-200'
-                                : 'bg-amber-900 text-amber-200'
-                            }
-                          >
+                          <span className={r.type === 'void' ? 'pill-danger' : 'pill-warning'}>
                             {tr(`rv_${r.type}`)}
-                          </Badge>
+                          </span>
                         </TableCell>
-                        <TableCell className="text-white text-xs">
+                        <TableCell className="text-foreground text-xs">
                           {r.invoice_number || '—'}
                           {r.original_invoice ? (
-                            <span className="text-slate-500"> ← {r.original_invoice}</span>
+                            <span className="text-muted-foreground"> ← {r.original_invoice}</span>
                           ) : null}
                         </TableCell>
-                        <TableCell className="text-slate-300 text-xs">{r.actor || '—'}</TableCell>
-                        <TableCell className="text-slate-400 text-xs">{r.reason || '—'}</TableCell>
-                        <TableCell className="text-slate-300 text-end">
-                          {tr('sar')} {r.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <TableCell className="text-foreground/90 text-xs">{r.actor || '—'}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">{r.reason || '—'}</TableCell>
+                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                          {formatMoney(r.amount, language)}
                         </TableCell>
-                        <TableCell className="text-slate-400 text-xs">
+                        <TableCell className="text-muted-foreground text-xs">
                           {r.timestamp ? r.timestamp.slice(0, 10) : '—'}
                         </TableCell>
                       </TableRow>
@@ -1809,27 +1690,22 @@ export default function ReportsAnalytics() {
       </Card>
 
       {/* Discounts — actor / code / amount over a window (F-071) */}
-      <Card className="bg-slate-800 border-slate-700 mb-8">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-white">{tr('discounts_report')}</CardTitle>
-            <p className="text-xs text-slate-400 mt-1">{tr('discounts_hint')}</p>
+            <CardTitle className="text-foreground">{tr('discounts_report')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{tr('discounts_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
-            <Button
-              onClick={handleExportDiscounts}
-              disabled={exportingDiscounts || !discounts}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
-            >
-              {exportingDiscounts ? '...' : tr('download_discounts')}
+            <Button onClick={handleExportDiscounts} disabled={exportingDiscounts || !discounts}>
+              {exportingDiscounts ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_discounts')}
             </Button>
             <Button
               onClick={() => handleExportPdf('discounts', `discounts_${discounts?.from_date}_${discounts?.to_date}`)}
               disabled={exportingPdf === 'discounts' || !discounts}
               variant="outline"
-              className="border-slate-600 text-slate-200 hover:bg-slate-700"
             >
-              {exportingPdf === 'discounts' ? '...' : tr('export_pdf')}
+              {exportingPdf === 'discounts' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1837,66 +1713,62 @@ export default function ReportsAnalytics() {
           {loadingDiscounts ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : discountsError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-red-400 mb-3">{tr('error_loading')}</p>
-              <Button
-                variant="outline"
-                className="border-slate-700 text-slate-300 hover:bg-slate-800"
-                onClick={fetchDiscounts}
-              >
+              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <Button variant="outline" onClick={fetchDiscounts}>
                 {tr('retry')}
               </Button>
             </div>
           ) : !discounts ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('discount_count')}</p>
-                  <p className="text-lg font-bold text-white">{discounts.discount_count}</p>
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('discount_count')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">{discounts.discount_count}</p>
                 </div>
-                <div className="bg-slate-900 rounded-lg p-3">
-                  <p className="text-xs text-slate-400">{tr('discount_total')}</p>
-                  <p className="text-lg font-bold text-emerald-400">
-                    {tr('sar')} {discounts.discount_total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('discount_total')}</p>
+                  <p className="text-lg font-bold text-success tabular-nums">
+                    {formatMoney(discounts.discount_total, language)}
                   </p>
                 </div>
               </div>
 
               {discounts.rows.length === 0 ? (
-                <p className="text-slate-400 text-center py-6">{tr('no_data')}</p>
+                <p className="text-muted-foreground text-center py-6">{tr('no_data')}</p>
               ) : (
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-slate-700 hover:bg-slate-800">
-                      <TableHead className="text-slate-400">{tr('invoice')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('actor')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('code')}</TableHead>
-                      <TableHead className="text-slate-400 text-end">{tr('amount')}</TableHead>
-                      <TableHead className="text-slate-400">{tr('when')}</TableHead>
+                    <TableRow className="border-border hover:bg-card">
+                      <TableHead className="text-muted-foreground">{tr('invoice')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('actor')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('code')}</TableHead>
+                      <TableHead className="text-muted-foreground text-end">{tr('amount')}</TableHead>
+                      <TableHead className="text-muted-foreground">{tr('when')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {discounts.rows.map((r, idx) => (
-                      <TableRow key={idx} className="border-slate-700 hover:bg-slate-750">
-                        <TableCell className="text-white text-xs">{r.invoice_number || '—'}</TableCell>
-                        <TableCell className="text-slate-300 text-xs">{r.actor || '—'}</TableCell>
-                        <TableCell className="text-slate-400 text-xs">
+                      <TableRow key={idx} className="border-border hover:bg-muted">
+                        <TableCell className="text-foreground text-xs">{r.invoice_number || '—'}</TableCell>
+                        <TableCell className="text-foreground/90 text-xs">{r.actor || '—'}</TableCell>
+                        <TableCell className="text-muted-foreground text-xs">
                           {r.is_manual ? (
-                            <span className="italic text-slate-500">{tr('manual')}</span>
+                            <span className="italic text-muted-foreground">{tr('manual')}</span>
                           ) : (
                             r.code
                           )}
                         </TableCell>
-                        <TableCell className="text-slate-300 text-end">
-                          {tr('sar')} {r.discount_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                          {formatMoney(r.discount_amount, language)}
                         </TableCell>
-                        <TableCell className="text-slate-400 text-xs">
+                        <TableCell className="text-muted-foreground text-xs">
                           {r.timestamp ? r.timestamp.slice(0, 10) : '—'}
                         </TableCell>
                       </TableRow>
@@ -1910,52 +1782,52 @@ export default function ReportsAnalytics() {
       </Card>
 
       {/* Top Products */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-white">{tr('top_products')}</CardTitle>
+          <CardTitle className="text-foreground">{tr('top_products')}</CardTitle>
           <Button
             onClick={() => handleExportPdf('top-products', 'top_products')}
             disabled={exportingPdf === 'top-products' || topProducts.length === 0}
             variant="outline"
-            className="border-slate-600 text-slate-200 hover:bg-slate-700 shrink-0"
+            className="shrink-0"
           >
-            {exportingPdf === 'top-products' ? '...' : tr('export_pdf')}
+            {exportingPdf === 'top-products' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
           </Button>
         </CardHeader>
         <CardContent>
           {loadingProducts ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="h-10 bg-slate-700 rounded animate-pulse" />
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
               ))}
             </div>
           ) : productsError ? (
-            <p className="text-red-400 text-center py-8">{tr('error_loading')}</p>
+            <p className="text-danger text-center py-8">{tr('error_loading')}</p>
           ) : topProducts.length === 0 ? (
-            <p className="text-slate-400 text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
             <Table>
               <TableHeader>
-                <TableRow className="border-slate-700 hover:bg-slate-800">
-                  <TableHead className="text-slate-400">{tr('rank')}</TableHead>
-                  <TableHead className="text-slate-400">{tr('product_name')}</TableHead>
-                  <TableHead className="text-slate-400 text-end">{tr('qty_sold')}</TableHead>
-                  <TableHead className="text-slate-400 text-end">{tr('revenue')}</TableHead>
+                <TableRow className="border-border hover:bg-card">
+                  <TableHead className="text-muted-foreground">{tr('rank')}</TableHead>
+                  <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
+                  <TableHead className="text-muted-foreground text-end">{tr('qty_sold')}</TableHead>
+                  <TableHead className="text-muted-foreground text-end">{tr('revenue')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {topProducts.map((product, idx) => (
                   <TableRow
                     key={product.product_id}
-                    className="border-slate-700 hover:bg-slate-750"
+                    className="border-border hover:bg-muted"
                   >
                     <TableCell>{rankBadge(idx + 1)}</TableCell>
-                    <TableCell className="text-white font-medium">{product.name}</TableCell>
-                    <TableCell className="text-slate-300 text-end">
+                    <TableCell className="text-foreground font-medium">{product.name}</TableCell>
+                    <TableCell className="text-foreground/90 text-end tabular-nums">
                       {product.total_quantity}
                     </TableCell>
-                    <TableCell className="text-slate-300 text-end">
-                      {tr('sar')} {product.total_revenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    <TableCell className="text-foreground/90 text-end tabular-nums">
+                      {formatMoney(product.total_revenue, language)}
                     </TableCell>
                   </TableRow>
                 ))}

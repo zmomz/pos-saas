@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -22,8 +22,11 @@ import {
   type CustomerInsights,
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
-import { Users, UserPlus, Search, Download, ShieldOff, BarChart3, Tag } from 'lucide-react';
+import { formatMoney } from '@/lib/format';
+import { Plus, Users, UserPlus, Search, Download, ShieldOff, BarChart3, Tag } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -92,7 +95,11 @@ export default function CustomerManagement() {
   const [insightsError, setInsightsError] = useState(false);
   const [insights, setInsights] = useState<CustomerInsights | null>(null);
 
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const tt = (key: string, fallback: string) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
 
   useEffect(() => {
     loadCustomers();
@@ -299,13 +306,13 @@ export default function CustomerManagement() {
   function segmentClass(segment?: string): string {
     switch (segment) {
       case 'vip':
-        return 'bg-amber-600/20 text-amber-400';
+        return 'pill-gold';
       case 'at_risk':
-        return 'bg-red-600/20 text-red-400';
+        return 'pill-danger';
       case 'regular':
-        return 'bg-green-600/20 text-green-400';
+        return 'pill-success';
       default:
-        return 'bg-slate-600/30 text-slate-300';
+        return 'pill-muted';
     }
   }
 
@@ -313,71 +320,64 @@ export default function CustomerManagement() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Name *</label>
+          <Label className="mb-1 block">{tt('name', 'Name')} *</Label>
           <Input
             value={formData.name}
             onChange={(e) => handleFormChange('name', e.target.value)}
-            placeholder="Customer name"
-            className="bg-slate-700 border-slate-600 text-white"
+            placeholder={tt('customer_name', 'Customer name')}
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Phone</label>
+          <Label className="mb-1 block">{tt('phone', 'Phone')}</Label>
           <Input
             value={formData.phone}
             onChange={(e) => handleFormChange('phone', e.target.value)}
             placeholder="+966 5xx xxx xxxx"
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Email</label>
+          <Label className="mb-1 block">{tt('email', 'Email')}</Label>
           <Input
             value={formData.email}
             onChange={(e) => handleFormChange('email', e.target.value)}
             placeholder="email@example.com"
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">VAT Number (B2B)</label>
+          <Label className="mb-1 block">{tt('vat_number_b2b', 'VAT Number (B2B)')}</Label>
           <Input
             value={formData.vat_number}
             onChange={(e) => handleFormChange('vat_number', e.target.value)}
             placeholder="3xxxxxxxxxxxxx3"
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Address</label>
+          <Label className="mb-1 block">{tt('address', 'Address')}</Label>
           <Input
             value={formData.address}
             onChange={(e) => handleFormChange('address', e.target.value)}
-            placeholder="Street address"
-            className="bg-slate-700 border-slate-600 text-white"
+            placeholder={tt('street_address', 'Street address')}
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Notes</label>
+          <Label className="mb-1 block">{tt('notes', 'Notes')}</Label>
           <Input
             value={formData.notes}
             onChange={(e) => handleFormChange('notes', e.target.value)}
-            placeholder="Additional notes"
-            className="bg-slate-700 border-slate-600 text-white"
+            placeholder={tt('additional_notes', 'Additional notes')}
           />
         </div>
         {/* Segmentation tags (CRM-04 / F-039) — comma-separated */}
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('tags')}</label>
+          <Label className="mb-1 block">{t('tags')}</Label>
           <Input
             value={formData.tags}
             onChange={(e) => handleFormChange('tags', e.target.value)}
             placeholder={t('tags_placeholder')}
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         {/* PDPL marketing consent (SEC-05 / CRM-05) */}
-        <div className="flex items-start gap-3 rounded-md border border-slate-600 bg-slate-700/40 p-3">
+        <div className="flex items-start gap-3 rounded-md border border-input bg-muted/40 p-3">
           <Checkbox
             id="marketing-consent"
             checked={formData.marketing_consent}
@@ -387,15 +387,15 @@ export default function CustomerManagement() {
             className="mt-0.5"
           />
           <label htmlFor="marketing-consent" className="cursor-pointer">
-            <span className="text-sm text-white block">{t('marketing_consent')}</span>
-            <span className="text-xs text-slate-400 block">{t('marketing_consent_hint')}</span>
+            <span className="text-sm text-foreground block">{t('marketing_consent')}</span>
+            <span className="text-xs text-muted-foreground block">{t('marketing_consent_hint')}</span>
           </label>
         </div>
         <div className="flex gap-3 pt-2">
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.name}
-            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
+            className="flex-1"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -407,86 +407,74 @@ export default function CustomerManagement() {
   if (loading && customers.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Users className="h-8 w-8 text-brand-400" />
-            <div>
-              <p className="text-slate-400 text-sm">Total Customers</p>
-              <p className="text-2xl font-bold text-white">{customers.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <UserPlus className="h-8 w-8 text-green-400" />
-            <div>
-              <p className="text-slate-400 text-sm">New This Month</p>
-              <p className="text-2xl font-bold text-green-400">
-                {customers.filter((c) => {
-                  if (!c.created_at) return false;
-                  const d = new Date(c.created_at);
-                  const now = new Date();
-                  return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                }).length}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Users className="h-8 w-8 text-purple-400" />
-            <div>
-              <p className="text-slate-400 text-sm">With Email</p>
-              <p className="text-2xl font-bold text-purple-400">
-                {customers.filter((c) => c.email).length}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Search + Add */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, phone, or email..."
-            className="pl-10 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500"
-          />
-        </div>
-        <Dialog open={addOpen} onOpenChange={setAddOpen}>
+    <div className="animate-fade-up space-y-6">
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <PageHeading
+          icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Users className="h-[18px] w-[18px]" /></span>}
+          title={tt('customers', 'Customers')}
+          subtitle={`${customers.length} ${tt('customers', 'Customers')}`}
+        >
           <DialogTrigger asChild>
             <Button
               onClick={() => setFormData(emptyForm)}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
+              className="h-11 rounded-[10px] shadow-brand"
             >
-              + Add Customer
+              <Plus className="h-4 w-4" />
+              {tt('add_customer', 'Add Customer')}
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="text-white">Add New Customer</DialogTitle>
-            </DialogHeader>
-            {renderForm(handleAddCustomer, 'Add Customer')}
-          </DialogContent>
-        </Dialog>
+        </PageHeading>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{tt('add_new_customer', 'Add New Customer')}</DialogTitle>
+          </DialogHeader>
+          {renderForm(handleAddCustomer, tt('add_customer', 'Add Customer'))}
+        </DialogContent>
+      </Dialog>
+
+      {/* Stats */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile icon={Users} label={tt('total_customers', 'Total Customers')} value={customers.length} tone="brand" />
+        <StatTile
+          icon={UserPlus}
+          label={tt('new_this_month', 'New This Month')}
+          value={customers.filter((c) => {
+            if (!c.created_at) return false;
+            const d = new Date(c.created_at);
+            const now = new Date();
+            return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+          }).length}
+          tone="success"
+        />
+        <StatTile
+          icon={Users}
+          label={tt('with_email', 'With Email')}
+          value={customers.filter((c) => c.email).length}
+          tone="violet"
+        />
+      </div>
+
+      {/* Search */}
+      <div className="relative flex-1">
+        <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={tt('search_customers', 'Search by name, phone, or email...')}
+          className="ps-10"
+        />
       </div>
 
       {/* Segment filter (CRM-04 / F-039) — filter the book by tag */}
       {allTags.length > 0 && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="flex items-center gap-1 text-sm text-slate-400">
+          <span className="flex items-center gap-1 text-sm text-muted-foreground">
             <Tag className="h-4 w-4" />
             {t('filter_by_tag')}:
           </span>
@@ -494,7 +482,7 @@ export default function CustomerManagement() {
             type="button"
             onClick={() => setTagFilter('')}
             className={`rounded-full px-3 py-1 text-xs ${
-              tagFilter === '' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300'
+              tagFilter === '' ? 'bg-brand text-white' : 'bg-muted text-foreground/90'
             }`}
           >
             {t('all_tags')}
@@ -505,7 +493,7 @@ export default function CustomerManagement() {
               type="button"
               onClick={() => setTagFilter(tag)}
               className={`rounded-full px-3 py-1 text-xs ${
-                tagFilter === tag ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300'
+                tagFilter === tag ? 'bg-brand text-white' : 'bg-muted text-foreground/90'
               }`}
             >
               {tag}
@@ -516,41 +504,41 @@ export default function CustomerManagement() {
 
       {/* Action error (PDPL export/erase) */}
       {actionError && (
-        <div role="alert" className="rounded-md border border-red-600/50 bg-red-600/10 p-3 text-sm text-red-400">
+        <div role="alert" className="rounded-md border border-danger/50 bg-danger/10 p-3 text-sm text-danger">
           {actionError}
         </div>
       )}
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-slate-700">
+      <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
-          <thead className="bg-slate-800">
-            <tr className="text-slate-400">
-              <th className="p-3 text-start">Name</th>
-              <th className="p-3 text-start">Phone</th>
-              <th className="p-3 text-start">Email</th>
-              <th className="p-3 text-start">VAT Number</th>
+          <thead className="bg-card">
+            <tr className="text-muted-foreground">
+              <th className="p-3 text-start">{tt('name', 'Name')}</th>
+              <th className="p-3 text-start">{tt('phone', 'Phone')}</th>
+              <th className="p-3 text-start">{tt('email', 'Email')}</th>
+              <th className="p-3 text-start">{tt('vat_number', 'VAT Number')}</th>
               <th className="p-3 text-start">{t('tags')}</th>
               <th className="p-3 text-start">{t('consent')}</th>
-              <th className="p-3 text-start">Actions</th>
+              <th className="p-3 text-start">{tt('actions', 'Actions')}</th>
             </tr>
           </thead>
           <tbody>
             {filteredCustomers.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-slate-500">
-                  No customers found
+                <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                  {tt('no_customers_found', 'No customers found')}
                 </td>
               </tr>
             ) : (
               filteredCustomers.map((customer) => {
                 const erased = !!customer.pii_erased_at;
                 return (
-                <tr key={customer.id} className="border-t border-slate-700 text-slate-300">
-                  <td className="p-3 text-white font-medium">
+                <tr key={customer.id} className="border-t border-border text-foreground/90">
+                  <td className="p-3 text-foreground font-medium">
                     {customer.name}
                     {erased && (
-                      <Badge variant="outline" className="ms-2 border-slate-500 text-slate-400 text-xs">
+                      <Badge variant="outline" className="ms-2 border-input text-muted-foreground text-xs">
                         {t('pii_erased')}
                       </Badge>
                     )}
@@ -565,21 +553,21 @@ export default function CustomerManagement() {
                           <Badge
                             key={tag}
                             variant="outline"
-                            className="border-brand-600/40 text-brand-300 text-xs"
+                            className="border-brand/40 text-brand text-xs"
                           >
                             {tag}
                           </Badge>
                         ))}
                       </div>
                     ) : (
-                      <span className="text-slate-500">—</span>
+                      <span className="text-muted-foreground">—</span>
                     )}
                   </td>
                   <td className="p-3">
                     {customer.marketing_consent ? (
-                      <Badge className="bg-green-600/20 text-green-400 text-xs">{t('consent_given')}</Badge>
+                      <span className="pill-success">{t('consent_given')}</span>
                     ) : (
-                      <span className="text-slate-500">{t('consent_none')}</span>
+                      <span className="text-muted-foreground">{t('consent_none')}</span>
                     )}
                   </td>
                   <td className="p-3">
@@ -589,15 +577,15 @@ export default function CustomerManagement() {
                         variant="outline"
                         onClick={() => openEdit(customer)}
                         disabled={erased}
-                        className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                        className="text-xs"
                       >
-                        Edit
+                        {tt('edit', 'Edit')}
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => openInsights(customer)}
-                        className="border-purple-600/50 text-purple-300 hover:bg-purple-600/20 text-xs"
+                        className="text-xs"
                       >
                         <BarChart3 className="h-3 w-3 me-1" />
                         {t('view_insights')}
@@ -606,7 +594,7 @@ export default function CustomerManagement() {
                         size="sm"
                         variant="outline"
                         onClick={() => handleExportData(customer)}
-                        className="border-brand-600/50 text-brand-400 hover:bg-brand-600/20 text-xs"
+                        className="text-xs"
                       >
                         <Download className="h-3 w-3 me-1" />
                         {t('export_data')}
@@ -616,18 +604,18 @@ export default function CustomerManagement() {
                         variant="outline"
                         onClick={() => openErase(customer)}
                         disabled={erased}
-                        className="border-amber-600/50 text-amber-400 hover:bg-amber-600/20 text-xs"
+                        className="text-xs"
                       >
                         <ShieldOff className="h-3 w-3 me-1" />
                         {t('erase_pii')}
                       </Button>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="destructive"
                         onClick={() => openDelete(customer)}
-                        className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
+                        className="text-xs"
                       >
-                        Delete
+                        {tt('delete', 'Delete')}
                       </Button>
                     </div>
                   </td>
@@ -641,9 +629,9 @@ export default function CustomerManagement() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">Edit Customer</DialogTitle>
+            <DialogTitle>{tt('edit_customer', 'Edit Customer')}</DialogTitle>
           </DialogHeader>
           {renderForm(handleEditCustomer, t('save'))}
         </DialogContent>
@@ -651,28 +639,28 @@ export default function CustomerManagement() {
 
       {/* Delete Dialog */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">Confirm Delete</DialogTitle>
+            <DialogTitle>{tt('confirm_delete', 'Confirm Delete')}</DialogTitle>
           </DialogHeader>
-          <p className="text-slate-300">
-            Are you sure you want to delete <strong>{selectedCustomer?.name}</strong>? This action
-            cannot be undone.
+          <p className="text-foreground/90">
+            {tt('delete_customer_confirm', 'Are you sure you want to delete')} <strong>{selectedCustomer?.name}</strong>? {tt('action_cannot_be_undone', 'This action cannot be undone.')}
           </p>
           <div className="flex gap-3 pt-4">
             <Button
               variant="outline"
               onClick={() => setDeleteOpen(false)}
-              className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="flex-1"
             >
               {t('cancel')}
             </Button>
             <Button
+              variant="destructive"
               onClick={handleDeleteCustomer}
               disabled={submitting}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+              className="flex-1"
             >
-              {submitting ? t('loading') : 'Delete'}
+              {submitting ? t('loading') : tt('delete', 'Delete')}
             </Button>
           </div>
         </DialogContent>
@@ -680,16 +668,16 @@ export default function CustomerManagement() {
 
       {/* PDPL Erase Dialog (SEC-05) */}
       <Dialog open={eraseOpen} onOpenChange={setEraseOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">{t('erase_pii')}</DialogTitle>
+            <DialogTitle>{t('erase_pii')}</DialogTitle>
           </DialogHeader>
-          <p className="text-slate-300">
+          <p className="text-foreground/90">
             {t('erase_pii_confirm')} <strong>{selectedCustomer?.name}</strong>
           </p>
-          <p className="text-xs text-slate-500">{t('erase_pii_retention')}</p>
+          <p className="text-xs text-muted-foreground">{t('erase_pii_retention')}</p>
           {actionError && (
-            <div role="alert" className="rounded-md border border-red-600/50 bg-red-600/10 p-2 text-sm text-red-400">
+            <div role="alert" className="rounded-md border border-danger/50 bg-danger/10 p-2 text-sm text-danger">
               {actionError}
             </div>
           )}
@@ -697,14 +685,14 @@ export default function CustomerManagement() {
             <Button
               variant="outline"
               onClick={() => setEraseOpen(false)}
-              className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="flex-1"
             >
               {t('cancel')}
             </Button>
             <Button
               onClick={handleEraseCustomer}
               disabled={submitting}
-              className="flex-1 bg-amber-600 hover:bg-amber-700 text-white"
+              className="flex-1 bg-warning text-white hover:bg-warning/90"
             >
               {submitting ? t('loading') : t('erase_pii')}
             </Button>
@@ -714,54 +702,54 @@ export default function CustomerManagement() {
 
       {/* Customer insights — computed LTV / RFM-lite (CRM-04 / F-039) */}
       <Dialog open={insightsOpen} onOpenChange={setInsightsOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-purple-400" />
+            <DialogTitle className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-violet" />
               {t('customer_insights')}
               {selectedCustomer && (
-                <span className="text-slate-400 font-normal">— {selectedCustomer.name}</span>
+                <span className="text-muted-foreground font-normal">— {selectedCustomer.name}</span>
               )}
             </DialogTitle>
           </DialogHeader>
 
           {insightsLoading ? (
-            <div className="py-12 text-center text-slate-400 animate-pulse">{t('loading')}</div>
+            <div className="py-12 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
           ) : insightsError ? (
             <ErrorState
               message={t('insights_error')}
               onRetry={() => selectedCustomer && loadInsights(selectedCustomer.id)}
             />
           ) : insights && insights.visit_count === 0 ? (
-            <div className="py-12 text-center text-slate-500">{t('no_purchases')}</div>
+            <div className="py-12 text-center text-muted-foreground">{t('no_purchases')}</div>
           ) : insights ? (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-400">{t('segment')}</span>
-                <Badge className={`${segmentClass(insights.segment)} text-xs`}>
+                <span className="text-sm text-muted-foreground">{t('segment')}</span>
+                <span className={segmentClass(insights.segment)}>
                   {segmentLabel(insights.segment)}
-                </Badge>
+                </span>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-md border border-slate-700 bg-slate-700/40 p-3">
-                  <p className="text-xs text-slate-400">{t('lifetime_value')}</p>
-                  <p className="text-xl font-bold text-white">
-                    {insights.lifetime_value.toFixed(2)} <span className="text-sm">SAR</span>
+                <div className="rounded-md border border-border bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{t('lifetime_value')}</p>
+                  <p className="text-xl font-bold text-foreground tabular-nums">
+                    {formatMoney(insights.lifetime_value, language)}
                   </p>
                 </div>
-                <div className="rounded-md border border-slate-700 bg-slate-700/40 p-3">
-                  <p className="text-xs text-slate-400">{t('visits')}</p>
-                  <p className="text-xl font-bold text-white">{insights.visit_count}</p>
+                <div className="rounded-md border border-border bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{t('visits')}</p>
+                  <p className="text-xl font-bold text-foreground tabular-nums">{insights.visit_count}</p>
                 </div>
-                <div className="rounded-md border border-slate-700 bg-slate-700/40 p-3">
-                  <p className="text-xs text-slate-400">{t('avg_basket')}</p>
-                  <p className="text-lg font-semibold text-white">
-                    {insights.average_basket.toFixed(2)} <span className="text-xs">SAR</span>
+                <div className="rounded-md border border-border bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{t('avg_basket')}</p>
+                  <p className="text-lg font-semibold text-foreground tabular-nums">
+                    {formatMoney(insights.average_basket, language)}
                   </p>
                 </div>
-                <div className="rounded-md border border-slate-700 bg-slate-700/40 p-3">
-                  <p className="text-xs text-slate-400">{t('last_purchase_label')}</p>
-                  <p className="text-lg font-semibold text-white">
+                <div className="rounded-md border border-border bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{t('last_purchase_label')}</p>
+                  <p className="text-lg font-semibold text-foreground">
                     {insights.recency_days != null
                       ? `${insights.recency_days} ${t('days_ago')}`
                       : '—'}

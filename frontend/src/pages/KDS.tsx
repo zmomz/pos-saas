@@ -23,10 +23,10 @@ import {
 } from '@/lib/api';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
 import { useLanguage } from '@/lib/i18n';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import {
   ChefHat,
   Plus,
-  WifiOff,
   AlertTriangle,
   Lock,
   Clock,
@@ -65,7 +65,6 @@ export default function KDS() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
   const [streamLive, setStreamLive] = useState(false);
 
   const [addStationOpen, setAddStationOpen] = useState(false);
@@ -80,18 +79,6 @@ export default function KDS() {
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, []);
-
-  // Connectivity badge (UX-02 offline state).
-  useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener('online', on);
-    window.addEventListener('offline', off);
-    return () => {
-      window.removeEventListener('online', on);
-      window.removeEventListener('offline', off);
-    };
   }, []);
 
   const load = useCallback(async () => {
@@ -274,7 +261,7 @@ export default function KDS() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -283,11 +270,11 @@ export default function KDS() {
   if (denied) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-slate-800 border-slate-700 max-w-md">
+        <Card className="bg-card border-border max-w-md">
           <CardContent className="p-8 text-center">
-            <Lock className="h-12 w-12 text-slate-500 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-2">{t('restaurant_disabled')}</h3>
-            <p className="text-slate-400 text-sm">{t('restaurant_disabled_desc')}</p>
+            <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-2">{t('restaurant_disabled')}</h3>
+            <p className="text-muted-foreground text-sm">{t('restaurant_disabled_desc')}</p>
           </CardContent>
         </Card>
       </div>
@@ -298,11 +285,11 @@ export default function KDS() {
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-slate-800 border-slate-700 max-w-md">
+        <Card className="bg-card border-border max-w-md">
           <CardContent className="p-8 text-center">
-            <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-3" />
-            <p className="text-slate-300 mb-4">{t('kds_load_error')}</p>
-            <Button onClick={load} className="bg-brand-600 hover:bg-brand-700 text-white">
+            <AlertTriangle className="h-12 w-12 text-danger mx-auto mb-3" />
+            <p className="text-foreground/90 mb-4">{t('kds_load_error')}</p>
+            <Button onClick={load}>
               {t('retry')}
             </Button>
           </CardContent>
@@ -312,61 +299,48 @@ export default function KDS() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Offline banner (UX-02) */}
-      {!online && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-600/40 bg-amber-500/10 px-4 py-2 text-amber-300 text-sm">
-          <WifiOff className="h-4 w-4" />
-          <span>{t('you_are_offline')}</span>
-        </div>
-      )}
-
+    <div className="animate-fade-up space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <ChefHat className="h-6 w-6 text-brand-400" />
-            {t('kds')}
-          </h2>
-          <p className="text-slate-400 text-sm mt-1">{t('kds_desc')}</p>
-        </div>
+      <PageHeading
+        title={t('kds')}
+        subtitle={t('kds_desc')}
+        icon={
+          <span className="dxr-sw dxr-sw-brand h-10 w-10">
+            <ChefHat className="h-[18px] w-[18px]" />
+          </span>
+        }
+      >
         <div className="flex items-center gap-2">
           {/* Live/reconnecting indicator for the real-time channel */}
-          <Badge
-            className={
-              streamLive
-                ? 'bg-green-500/20 text-green-400 gap-1'
-                : 'bg-amber-500/20 text-amber-400 gap-1'
-            }
-          >
+          <Badge className={streamLive ? 'pill-success gap-1' : 'pill-warning gap-1'}>
             <Radio className="h-3 w-3" />
             {streamLive ? t('kds_live') : t('kds_reconnecting')}
           </Badge>
-          <Badge className="bg-slate-700 text-slate-200 gap-1">
+          <Badge className="bg-muted text-foreground gap-1">
             <ChefHat className="h-3 w-3" /> {allDayQty}
           </Badge>
           <Dialog open={addStationOpen} onOpenChange={setAddStationOpen}>
             <DialogTrigger asChild>
-              <Button className="bg-brand-600 hover:bg-brand-700 text-white">
+              <Button>
                 <Plus className="h-4 w-4 mr-2" /> {t('add_station')}
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-slate-800 border-slate-700 text-white">
+            <DialogContent className="bg-card border-border text-foreground">
               <DialogHeader>
-                <DialogTitle className="text-white">{t('add_station')}</DialogTitle>
+                <DialogTitle className="text-foreground">{t('add_station')}</DialogTitle>
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm text-slate-400 mb-1 block">{t('station_name')}</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">{t('station_name')}</label>
                   <Input
                     value={stationForm.name}
                     onChange={(e) => setStationForm((f) => ({ ...f, name: e.target.value }))}
                     placeholder="Grill"
-                    className="bg-slate-700 border-slate-600 text-white"
+                    className="bg-muted border-input text-foreground"
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-slate-400 mb-1 block">
+                  <label className="text-sm text-muted-foreground mb-1 block">
                     {t('station_name_ar')}
                   </label>
                   <Input
@@ -374,13 +348,13 @@ export default function KDS() {
                     onChange={(e) => setStationForm((f) => ({ ...f, name_ar: e.target.value }))}
                     dir="rtl"
                     placeholder="الشواية"
-                    className="bg-slate-700 border-slate-600 text-white"
+                    className="bg-muted border-input text-foreground"
                   />
                 </div>
                 <Button
                   onClick={handleAddStation}
                   disabled={submitting || !stationForm.name}
-                  className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+                  className="w-full"
                 >
                   {submitting ? t('loading') : t('create_station')}
                 </Button>
@@ -388,38 +362,29 @@ export default function KDS() {
             </DialogContent>
           </Dialog>
         </div>
-      </div>
+      </PageHeading>
 
       {/* Board view: live line vs. recently-bumped cards to recall (ISSUE-073) */}
-      <div className="flex gap-2">
-        <button
-          onClick={() => setBoardStatus('active')}
-          className={`px-3 py-1 rounded-md text-sm ${boardStatus === 'active' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
-        >
+      <div className="dxr-seg">
+        <button onClick={() => setBoardStatus('active')} data-active={boardStatus === 'active'}>
           {t('kds_active')}
         </button>
-        <button
-          onClick={() => setBoardStatus('bumped')}
-          className={`px-3 py-1 rounded-md text-sm ${boardStatus === 'bumped' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
-        >
+        <button onClick={() => setBoardStatus('bumped')} data-active={boardStatus === 'bumped'}>
           {t('kds_completed')}
         </button>
       </div>
 
       {/* Station filter tabs */}
       {stations.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => setActiveStation('all')}
-            className={`px-3 py-1 rounded-md text-sm ${activeStation === 'all' ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
-          >
+        <div className="dxr-seg flex-wrap">
+          <button onClick={() => setActiveStation('all')} data-active={activeStation === 'all'}>
             {t('all_stations')}
           </button>
           {stations.map((s) => (
             <button
               key={s.id}
               onClick={() => setActiveStation(s.id)}
-              className={`px-3 py-1 rounded-md text-sm ${activeStation === s.id ? 'bg-brand-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+              data-active={activeStation === s.id}
             >
               {s.name}
             </button>
@@ -429,22 +394,22 @@ export default function KDS() {
 
       {/* No prep-stations yet */}
       {stations.length === 0 ? (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-10 text-center">
-            <ChefHat className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-1">{t('no_stations')}</h3>
-            <p className="text-slate-400 text-sm">{t('no_stations_desc')}</p>
+            <ChefHat className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-1">{t('no_stations')}</h3>
+            <p className="text-muted-foreground text-sm">{t('no_stations_desc')}</p>
           </CardContent>
         </Card>
       ) : visibleCards.length === 0 ? (
         /* Empty board (stations exist, nothing fired / nothing bumped) */
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-10 text-center">
-            <ChefHat className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-1">
+            <ChefHat className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-1">
               {boardStatus === 'bumped' ? t('no_bumped_tickets') : t('no_kds_tickets')}
             </h3>
-            <p className="text-slate-400 text-sm">
+            <p className="text-muted-foreground text-sm">
               {boardStatus === 'bumped' ? t('no_bumped_tickets_desc') : t('no_kds_tickets_desc')}
             </p>
           </CardContent>
@@ -456,11 +421,11 @@ export default function KDS() {
             return (
               <div key={col.id ?? 'unrouted'} className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-white font-semibold">{col.name}</h3>
-                  <Badge className="bg-slate-700 text-slate-300">{colCards.length}</Badge>
+                  <h3 className="text-foreground font-semibold">{col.name}</h3>
+                  <Badge className="bg-muted text-foreground/90">{colCards.length}</Badge>
                 </div>
                 {colCards.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-slate-700 p-4 text-center text-slate-500 text-xs">
+                  <div className="rounded-lg border border-dashed border-border p-4 text-center text-muted-foreground text-xs">
                     {t('no_kds_tickets')}
                   </div>
                 ) : (
@@ -469,35 +434,35 @@ export default function KDS() {
                     return (
                       <Card
                         key={card.id}
-                        className={`border ${late ? 'border-red-600/50 bg-red-500/5' : 'border-slate-700 bg-slate-800'}`}
+                        className={`border ${late ? 'border-danger/50 bg-danger/5' : 'border-border bg-card'}`}
                       >
                         <CardContent className="p-3 space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="text-white text-sm font-semibold">
+                            <span className="text-foreground text-sm font-semibold">
                               {t('kds_order')} #{card.order_ticket_id}
                               {card.table_id ? ` · ${t('kds_table')} ${card.table_id}` : ''}
                             </span>
                             <span
-                              className={`flex items-center gap-1 text-xs ${late ? 'text-red-400' : 'text-slate-400'}`}
+                              className={`flex items-center gap-1 text-xs ${late ? 'text-danger' : 'text-muted-foreground'}`}
                             >
                               <Clock className="h-3 w-3" />
                               {elapsedLabel(card.fired_at, now)}
                             </span>
                           </div>
                           {card.course && (
-                            <Badge className="bg-brand-500/20 text-brand-300">{card.course}</Badge>
+                            <Badge className="bg-brand-500/20 text-brand-600">{card.course}</Badge>
                           )}
                           <ul className="space-y-1">
                             {card.items.map((it) => (
-                              <li key={it.item_id} className="text-sm text-slate-200">
-                                <span className="text-white font-medium">{it.qty}×</span> {it.name}
+                              <li key={it.item_id} className="text-sm text-foreground">
+                                <span className="text-foreground font-medium">{it.qty}×</span> {it.name}
                                 {it.modifiers?.length > 0 && (
-                                  <div className="text-xs text-amber-300 ms-4">
+                                  <div className="text-xs text-warning ms-4">
                                     {it.modifiers.map((m) => `+ ${m}`).join('  ')}
                                   </div>
                                 )}
                                 {it.notes && (
-                                  <div className="text-xs text-slate-400 ms-4">» {it.notes}</div>
+                                  <div className="text-xs text-muted-foreground ms-4">» {it.notes}</div>
                                 )}
                               </li>
                             ))}
@@ -507,7 +472,7 @@ export default function KDS() {
                               <Button
                                 size="sm"
                                 onClick={() => handleBump(card)}
-                                className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                                className="flex-1 bg-success hover:opacity-90 text-white"
                               >
                                 <Check className="h-4 w-4 mr-1" /> {t('bump')}
                               </Button>
@@ -517,7 +482,7 @@ export default function KDS() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handlePrintKot(card)}
-                                className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                                className="border-input text-foreground/90 hover:bg-muted"
                                 title={t('print_kot')}
                               >
                                 <Printer className="h-4 w-4" />
@@ -528,7 +493,7 @@ export default function KDS() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => handleRecall(card)}
-                                className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+                                className="flex-1 border-input text-foreground/90 hover:bg-muted"
                                 title={t('recall')}
                               >
                                 <RotateCcw className="h-4 w-4 mr-1" /> {t('recall')}

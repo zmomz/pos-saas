@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import {
   listReceiptTemplates,
   createReceiptTemplate,
@@ -10,6 +19,7 @@ import {
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { Receipt as ReceiptIcon, QrCode } from 'lucide-react';
+import { toast } from 'sonner';
 
 interface TemplateForm {
   name: string;
@@ -71,7 +81,6 @@ export default function ReceiptTemplateDesigner() {
   const [templateId, setTemplateId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<'saved' | 'error' | null>(null);
 
   useEffect(() => {
     void load();
@@ -96,12 +105,10 @@ export default function ReceiptTemplateDesigner() {
 
   function change<K extends keyof TemplateForm>(field: K, value: TemplateForm[K]) {
     setForm((prev) => ({ ...prev, [field]: value }));
-    setStatus(null);
   }
 
   async function handleSave() {
     setSaving(true);
-    setStatus(null);
     const payload = {
       name: form.name?.trim() || 'Default',
       header_text: form.header_text,
@@ -121,10 +128,10 @@ export default function ReceiptTemplateDesigner() {
         const created = await createReceiptTemplate(payload);
         setTemplateId(created.id);
       }
-      setStatus('saved');
+      toast.success(t('template_saved'));
     } catch (err) {
       console.error('Failed to save receipt template:', err);
-      setStatus('error');
+      toast.error(t('template_save_failed'));
     } finally {
       setSaving(false);
     }
@@ -137,143 +144,114 @@ export default function ReceiptTemplateDesigner() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <Card className="bg-slate-800 border-slate-700">
-        <CardContent className="p-4 flex items-center gap-3">
-          <ReceiptIcon className="h-8 w-8 text-brand-400" />
-          <div>
-            <h2 className="text-lg font-bold text-white">{t('receipt_template')}</h2>
-            <p className="text-slate-400 text-sm">{t('receipt_template_intro')}</p>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="animate-fade-up space-y-6">
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><ReceiptIcon className="h-[18px] w-[18px]" /></span>}
+        title={t('receipt_template')}
+        subtitle={t('receipt_template_intro')}
+      >
+        <Button onClick={handleSave} disabled={saving} className="h-11 rounded-[10px] shadow-brand">
+          {saving ? t('loading') : t('save')}
+        </Button>
+      </PageHeading>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ---- Editor ---- */}
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 space-y-4">
-            <div>
-              <label htmlFor="tpl-name" className="text-sm text-slate-400 mb-1 block">
+        <div className="dxr-tile" style={{ padding: 22 }}>
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-name" className="text-muted-foreground">
                 {t('template_name')}
-              </label>
+              </Label>
               <Input
                 id="tpl-name"
                 value={form.name}
                 onChange={(e) => change('name', e.target.value)}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
 
-            <div>
-              <label htmlFor="tpl-header" className="text-sm text-slate-400 mb-1 block">
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-header" className="text-muted-foreground">
                 {t('header_text')}
-              </label>
+              </Label>
               <Input
                 id="tpl-header"
                 value={form.header_text}
                 onChange={(e) => change('header_text', e.target.value)}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
 
-            <div>
-              <label htmlFor="tpl-footer" className="text-sm text-slate-400 mb-1 block">
+            <div className="space-y-1.5">
+              <Label htmlFor="tpl-footer" className="text-muted-foreground">
                 {t('footer_text')}
-              </label>
+              </Label>
               <Input
                 id="tpl-footer"
                 value={form.footer_text}
                 onChange={(e) => change('footer_text', e.target.value)}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
 
-            <div>
-              <label htmlFor="tpl-font" className="text-sm text-slate-400 mb-1 block">
-                {t('font_size')}
-              </label>
-              <select
-                id="tpl-font"
-                aria-label={t('font_size')}
-                value={form.font_size}
-                onChange={(e) => change('font_size', e.target.value)}
-                className="w-full rounded-md bg-slate-700 border border-slate-600 text-white p-2 text-sm"
-              >
-                <option value="small">{t('font_small')}</option>
-                <option value="medium">{t('font_medium')}</option>
-                <option value="large">{t('font_large')}</option>
-              </select>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground">{t('font_size')}</Label>
+              <Select value={form.font_size} onValueChange={(v) => change('font_size', v)}>
+                <SelectTrigger aria-label={t('font_size')}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="small">{t('font_small')}</SelectItem>
+                  <SelectItem value="medium">{t('font_medium')}</SelectItem>
+                  <SelectItem value="large">{t('font_large')}</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
-            <div>
-              <label htmlFor="tpl-paper" className="text-sm text-slate-400 mb-1 block">
-                {t('paper_size')}
-              </label>
-              <select
-                id="tpl-paper"
-                aria-label={t('paper_size')}
-                value={form.paper_size}
-                onChange={(e) => change('paper_size', e.target.value)}
-                className="w-full rounded-md bg-slate-700 border border-slate-600 text-white p-2 text-sm"
-              >
-                <option value="80mm">80mm</option>
-                <option value="58mm">58mm</option>
-              </select>
+            <div className="space-y-1.5">
+              <Label className="text-muted-foreground">{t('paper_size')}</Label>
+              <Select value={form.paper_size} onValueChange={(v) => change('paper_size', v)}>
+                <SelectTrigger aria-label={t('paper_size')}><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="80mm">80mm</SelectItem>
+                  <SelectItem value="58mm">58mm</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
+            <Label htmlFor="tpl-show-logo" className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="tpl-show-logo"
                 checked={form.show_logo}
-                onChange={(e) => change('show_logo', e.target.checked)}
+                onCheckedChange={(c) => change('show_logo', c === true)}
               />
               {t('show_logo')}
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
+            </Label>
+            <Label htmlFor="tpl-show-vat" className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="tpl-show-vat"
                 checked={form.show_vat_details}
-                onChange={(e) => change('show_vat_details', e.target.checked)}
+                onCheckedChange={(c) => change('show_vat_details', c === true)}
               />
               {t('show_vat_details')}
-            </label>
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
+            </Label>
+            <Label htmlFor="tpl-show-qr" className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="tpl-show-qr"
                 checked={form.show_qr_code}
-                onChange={(e) => change('show_qr_code', e.target.checked)}
+                onCheckedChange={(c) => change('show_qr_code', c === true)}
               />
               {t('show_qr_code')}
-            </label>
-
-            <div className="flex items-center gap-3 pt-2">
-              <Button
-                onClick={handleSave}
-                disabled={saving}
-                className="bg-brand-600 hover:bg-brand-700 text-white"
-              >
-                {saving ? t('loading') : t('save')}
-              </Button>
-              {status === 'saved' && (
-                <span className="text-sm text-emerald-400">{t('template_saved')}</span>
-              )}
-              {status === 'error' && (
-                <span className="text-sm text-red-400">{t('template_save_failed')}</span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+            </Label>
+          </div>
+        </div>
 
         {/* ---- Live preview ---- */}
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4">
-            <h3 className="text-sm font-semibold text-slate-300 mb-3">{t('preview')}</h3>
+        <div className="dxr-tile" style={{ padding: 22 }}>
+          <div>
+            <h3 className="mb-3 text-[16px] font-extrabold tracking-tight">{t('preview')}</h3>
             <div className="flex justify-center">
               <div
                 data-testid="receipt-preview"
@@ -326,8 +304,8 @@ export default function ReceiptTemplateDesigner() {
                 </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     </div>
   );

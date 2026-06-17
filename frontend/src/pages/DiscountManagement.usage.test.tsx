@@ -40,9 +40,10 @@ describe('DiscountManagement Total Uses (ISSUE-025)', () => {
     );
     renderPage();
 
-    // The "Total Uses" card value sits next to its label in the same wrapper.
+    // The "Total Uses" StatTile holds its value in a node sibling to the label;
+    // assert on the enclosing tile so the summed figure is checked.
     const label = await screen.findByText('Total Uses');
-    const card = label.parentElement!;
+    const card = label.closest('.rounded-2xl')!;
     // 3 + 4 = 7, not the always-0 placeholder.
     expect(card.textContent).toContain('7');
   });

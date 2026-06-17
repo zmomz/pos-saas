@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
-import StatCard from '@/components/dashboard/StatCard';
-import { PageHeader, SectionHeading } from '@/components/dashboard/PageHeader';
-import { DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag, BarChart3, Users, Download, AlertTriangle } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import CountUp from '@/components/dashboard/rx/CountUp';
+import {
+  DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag,
+  BarChart3, Users, Download, AlertTriangle, ArrowRight, Receipt,
+} from 'lucide-react';
 
 interface DashboardStats {
   total_sales: number;
@@ -79,170 +81,213 @@ export default function ClientDashboard() {
     );
   }
 
+  const todaySales = stats?.today_sales || 0;
+  const todayTx = stats?.today_transactions || 0;
+  const avgTicket = todayTx > 0 ? todaySales / todayTx : 0;
+  const subOverdue = subscription && ['past_due', 'dunning', 'suspended'].includes(subscription.subscription_status);
+  const subStatusCls = subscription?.subscription_status === 'active'
+    ? 'bg-success/10 text-success'
+    : subscription?.subscription_status === 'suspended'
+      ? 'bg-danger/10 text-danger'
+      : 'bg-warning/15 text-warning';
+
+  // Real sparkline from recent transaction amounts (chronological).
+  const spark = (() => {
+    const amts = [...transactions].reverse().map((tx) => tx.total_amount || 0);
+    if (amts.length < 2) return '';
+    const max = Math.max(...amts);
+    const min = Math.min(...amts);
+    const span = max - min || 1;
+    const W = 320, H = 46, pad = 3;
+    return amts.map((v, i) => {
+      const x = pad + ((W - 2 * pad) * i) / (amts.length - 1);
+      const y = pad + (H - 2 * pad) * (1 - (v - min) / span);
+      return `${x},${y}`;
+    }).join(' ');
+  })();
+
   return (
-    <div className="space-y-6 animate-fade-up">
-      <PageHeader
+    <div className="animate-fade-up space-y-5">
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-9 w-9"><Receipt className="h-[18px] w-[18px]" /></span>}
         title={brandName || t('dashboard')}
         subtitle={t('recent_transactions')}
-        actions={
-          <Button onClick={() => navigate('/pos')} className="shadow-brand">
-            <Monitor className="h-4 w-4" />
-            {t('go_to_pos') || 'Open POS'}
+      >
+        <Button onClick={() => navigate('/pos')} className="shadow-brand">
+          <Monitor className="h-4 w-4" />
+          {t('go_to_pos') || 'Open POS'}
+        </Button>
+      </PageHeading>
+
+      {/* Subscription dunning banner */}
+      {subscription && subOverdue && (
+        <div role="alert" className={cn('dxr-tile flex items-center gap-4', subscription.subscription_status === 'suspended' ? 'border-danger/45' : 'border-warning/45')} style={{ padding: 16 }}>
+          <span className={cn('dxr-sw h-10 w-10', subscription.subscription_status === 'suspended' ? 'dxr-sw-danger' : 'dxr-sw-warning')}><AlertTriangle className="h-5 w-5" /></span>
+          <div className="flex-1">
+            <div className="font-bold">{subscription.subscription_status === 'suspended' ? (t('subscription_suspended_notice') || 'Subscription suspended') : (t('payment_overdue_notice') || 'Subscription payment overdue')}</div>
+            <div className="text-sm text-muted-foreground">
+              {t('overdue_amount') || 'Amount due'}: {formatMoney(subscription.subscription_fee, language)}
+              {subscription.grace_deadline ? ` · ${t('pay_before') || 'pay before'} ${subscription.grace_deadline}` : ''}
+            </div>
+          </div>
+          <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="bg-gradient-to-b from-gold to-gold-600 text-[#3a2c10] hover:opacity-90">
+            {paying ? t('loading') : (t('pay_now') || 'Pay now')}
           </Button>
-        }
-      />
-
-      {/* Stats Cards */}
-      <div data-tour="stats-section" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={DollarSign} tone="emerald" label={t('today_sales')} value={formatMoney(stats?.today_sales || 0, language)} />
-        <StatCard icon={ShoppingCart} tone="sky" label={t('total_transactions')} value={stats?.total_transactions || 0} />
-        <StatCard icon={TrendingUp} tone="violet" label={t('total_sales')} value={formatMoney(stats?.total_sales || 0, language)} />
-        <StatCard icon={PackageIcon} tone="amber" label={t('products_count')} value={stats?.products_count || 0} />
-      </div>
-
-      {/* Quick Actions */}
-      <div data-tour="quick-actions" className="flex flex-wrap gap-3">
-        <Button variant="outline" onClick={() => navigate('/products')}>
-          <ShoppingBag className="h-4 w-4" />
-          {t('manage_products') || 'Products'}
-        </Button>
-        <Button variant="outline" onClick={() => navigate('/reports')}>
-          <BarChart3 className="h-4 w-4" />
-          {t('reports_analytics') || 'Reports'}
-        </Button>
-        <Button variant="outline" onClick={() => navigate('/staff')}>
-          <Users className="h-4 w-4" />
-          {t('staff') || 'Staff'}
-        </Button>
-      </div>
-
-      {/* Subscription panel (CL-04) */}
-      {subscription && (subscription.subscription_fee > 0 || subscription.payments.length > 0) && (
-        <section>
-          <SectionHeading title={t('subscription')} />
-          <Card className="rounded-2xl shadow-card">
-            <CardContent className="p-5 space-y-3">
-              {/* Dunning notice (CL-06 / PRN-09): overdue amount + grace deadline + pay */}
-              {(subscription.subscription_status === 'past_due' ||
-                subscription.subscription_status === 'dunning' ||
-                subscription.subscription_status === 'suspended') && (
-                <div
-                  role="alert"
-                  className={`flex items-start gap-3 rounded-xl border p-3 text-sm ${
-                    subscription.subscription_status === 'suspended'
-                      ? 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-300'
-                      : 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-300'
-                  }`}
-                >
-                  <AlertTriangle className="h-5 w-5 shrink-0" />
-                  <div>
-                    <p className="font-semibold">
-                      {subscription.subscription_status === 'suspended'
-                        ? t('subscription_suspended_notice')
-                        : t('payment_overdue_notice')}
-                    </p>
-                    <p className="opacity-90">
-                      {t('overdue_amount')}: {formatMoney(subscription.subscription_fee, language)}
-                      {subscription.grace_deadline
-                        ? ` · ${t('pay_before')} ${subscription.grace_deadline}`
-                        : ''}
-                    </p>
-                  </div>
-                </div>
-              )}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm text-muted-foreground">{t('subscription_fee')}</p>
-                  <p className="text-xl font-bold text-foreground">
-                    {formatMoney(subscription.subscription_fee, language)} / {t(subscription.billing_cycle) || subscription.billing_cycle}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">{t('next_billing')}</p>
-                  <p className="text-foreground/80">{subscription.next_billing_date || '—'}</p>
-                </div>
-                <div>
-                  <Badge className={subscription.subscription_status === 'active' ? 'bg-emerald-600 text-white' : subscription.subscription_status === 'suspended' ? 'bg-red-600 text-white' : 'bg-amber-500 text-white'}>
-                    {subscription.subscription_status}
-                  </Badge>
-                </div>
-                <Button
-                  onClick={handlePaySubscription}
-                  disabled={paying || subscription.subscription_fee <= 0}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                >
-                  {paying ? t('loading') : (t('pay_now') || 'Pay now')}
-                </Button>
-              </div>
-              {subscription.payments.length > 0 && (
-                <div className="border-t border-border pt-3">
-                  <p className="text-sm mb-2 text-muted-foreground">{t('payment_history')}</p>
-                  <div className="space-y-1">
-                    {subscription.payments.slice(0, 6).map((p) => (
-                      <div key={p.id} className="flex items-center justify-between text-sm text-foreground/80">
-                        <span>{p.period_start || (p.created_at ? p.created_at.slice(0, 10) : '')}</span>
-                        <div className="flex items-center gap-3">
-                          <span>{formatMoney(p.amount, language)}</span>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 gap-1"
-                            onClick={() => downloadSubscriptionInvoice(p.id)}
-                            title={t('download_invoice')}
-                          >
-                            <Download className="h-4 w-4" />
-                            <span className="hidden sm:inline">{t('download_invoice')}</span>
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </section>
+        </div>
       )}
 
-      {/* Recent Transactions */}
-      <section>
-        <SectionHeading title={t('recent_transactions')} />
-        <div className="overflow-x-auto rounded-2xl border border-border bg-card shadow-card">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr>
-                <th className="p-3 text-start font-medium">{t('invoice_number')}</th>
-                <th className="p-3 text-start font-medium">{t('total')}</th>
-                <th className="p-3 text-start font-medium">{t('payment_method')}</th>
-                <th className="p-3 text-start font-medium">{t('status')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transactions.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="p-6 text-center text-muted-foreground">
-                    {t('empty_cart')}
-                  </td>
+      {/* Bento KPIs */}
+      <div data-tour="stats-section" className="grid gap-4 lg:auto-rows-[116px] lg:grid-cols-12">
+        {/* Today's sales spotlight */}
+        <section className="dxr-tile dxr-ink flex flex-col lg:col-span-8 lg:row-span-2">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="dxr-eyebrow">{t('today_sales') || "Today's Sales"}</div>
+              <div className="mt-2 text-[clamp(30px,3.6vw,44px)] font-extrabold leading-none tracking-tight tabular-nums">
+                <CountUp value={todaySales} prefix="SAR " />
+              </div>
+              <div className="mt-1.5 text-[13px] text-white/65">{todayTx} {t('total_transactions') || 'transactions'} · {t('avg_ticket') || 'avg'} {formatMoney(avgTicket, language)}</div>
+            </div>
+          </div>
+          <div className="mt-auto">
+            {spark ? (
+              <svg viewBox="0 0 320 46" preserveAspectRatio="none" className="h-12 w-full">
+                <polyline points={spark} fill="none" stroke="#36c5e0" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            ) : (
+              <div className="text-sm text-white/50">{t('empty_cart') || 'No transactions yet today.'}</div>
+            )}
+          </div>
+        </section>
+
+        {/* Open POS action tile */}
+        <button onClick={() => navigate('/pos')} className="dxr-tile flex flex-col justify-between bg-gradient-to-br from-brand to-brand-700 text-start text-white lg:col-span-4 lg:row-span-2">
+          <div className="flex items-center justify-between">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15"><Monitor className="h-5 w-5" /></span>
+            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/15"><ArrowRight className="h-5 w-5" /></span>
+          </div>
+          <div>
+            <div className="text-[22px] font-extrabold tracking-tight">{t('go_to_pos') || 'Open POS'}</div>
+            <div className="mt-0.5 text-[12.5px] text-white/80">{t('start_new_sale') || 'Start a new sale'}</div>
+          </div>
+        </button>
+
+        {/* KPI chips */}
+        <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('total_transactions') || 'Transactions'}</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_transactions || 0} /></div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">{todayTx} {t('today') || 'today'}</div>
+        </section>
+        <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('total_sales') || 'Total Sales'}</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_sales || 0} prefix="SAR " /></div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">{t('all_time') || 'all time'}</div>
+        </section>
+        <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('avg_ticket') || 'Avg Ticket'}</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{formatMoney(avgTicket, language)}</div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">{t('today') || 'today'}</div>
+        </section>
+        <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('products_count') || 'Products'}</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.products_count || 0} /></div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">{t('active') || 'active'}</div>
+        </section>
+      </div>
+
+      {/* Quick actions */}
+      <div data-tour="quick-actions" className="flex flex-wrap gap-2.5">
+        <button onClick={() => navigate('/products')} className="chip-link"><ShoppingBag className="h-4 w-4" /> {t('manage_products') || 'Products'}</button>
+        <button onClick={() => navigate('/reports')} className="chip-link"><BarChart3 className="h-4 w-4" /> {t('reports_analytics') || 'Reports'}</button>
+        <button onClick={() => navigate('/staff')} className="chip-link"><Users className="h-4 w-4" /> {t('staff') || 'Staff'}</button>
+      </div>
+
+      {/* Subscription + transactions */}
+      <div className="grid items-start gap-[18px] lg:grid-cols-[360px_1fr]">
+        {/* Subscription panel */}
+        {subscription && (subscription.subscription_fee > 0 || subscription.payments.length > 0) ? (
+          <div className="dxr-tile" style={{ padding: 22 }}>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-[16px] font-extrabold tracking-tight">{t('subscription') || 'Subscription'}</h2>
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold', subStatusCls)}>
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />{subscription.subscription_status}
+              </span>
+            </div>
+            <div className="flex items-end justify-between">
+              <div>
+                <div className="text-xs text-muted-foreground">{t('subscription_fee') || 'Fee'}</div>
+                <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{formatMoney(subscription.subscription_fee, language)}</div>
+                <div className="text-[11.5px] text-muted-foreground">/ {t(subscription.billing_cycle) || subscription.billing_cycle}</div>
+              </div>
+              <div className="text-end">
+                <div className="text-xs text-muted-foreground">{t('next_billing') || 'Next billing'}</div>
+                <div className="mt-1 font-semibold tabular-nums">{subscription.next_billing_date || '—'}</div>
+              </div>
+            </div>
+            <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="mt-4 w-full shadow-brand">
+              {paying ? t('loading') : (t('pay_now') || 'Pay now')}
+            </Button>
+            {subscription.payments.length > 0 && (
+              <div className="mt-4 border-t border-border pt-3">
+                <p className="mb-2 text-sm text-muted-foreground">{t('payment_history') || 'Payment history'}</p>
+                <div className="space-y-1">
+                  {subscription.payments.slice(0, 6).map((p) => (
+                    <div key={p.id} className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">{p.period_start || (p.created_at ? p.created_at.slice(0, 10) : '')}</span>
+                      <div className="flex items-center gap-3">
+                        <span className="font-semibold tabular-nums">{formatMoney(p.amount, language)}</span>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={() => downloadSubscriptionInvoice(p.id)} title={t('download_invoice') || 'Download invoice'}>
+                          <Download className="h-4 w-4" />
+                          <span className="hidden sm:inline">{t('download_invoice') || 'Invoice'}</span>
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="dxr-tile flex flex-col items-center justify-center text-center text-muted-foreground" style={{ padding: 22 }}>
+            <DollarSign className="mb-2 h-10 w-10 opacity-25" />
+            <p className="text-sm">{t('no_subscription') || 'No active subscription.'}</p>
+          </div>
+        )}
+
+        {/* Recent transactions */}
+        <div className="dxr-tile" style={{ padding: 0 }}>
+          <div className="flex items-center justify-between px-5 pb-3 pt-5">
+            <h2 className="text-[16px] font-extrabold tracking-tight">{t('recent_transactions') || 'Recent Transactions'}</h2>
+            <button onClick={() => navigate('/reports')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{t('view_all') || 'View all'} <ArrowRight className="h-[15px] w-[15px]" /></button>
+          </div>
+          <div className="overflow-x-auto px-2 pb-2">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <th className="px-3 py-2.5 text-start">{t('invoice_number') || 'Invoice'}</th>
+                  <th className="px-3 py-2.5 text-start">{t('total') || 'Total'}</th>
+                  <th className="px-3 py-2.5 text-start">{t('payment_method') || 'Payment'}</th>
+                  <th className="px-3 py-2.5 text-start">{t('status') || 'Status'}</th>
                 </tr>
-              ) : (
-                transactions.map((tx) => (
-                  <tr key={tx.id} className="border-t border-border text-foreground/80 transition-colors hover:bg-muted/40">
-                    <td className="p-3 font-mono">{tx.invoice_number}</td>
-                    <td className="p-3">{formatMoney(tx.total_amount || 0, language)}</td>
-                    <td className="p-3">
-                      <Badge variant="secondary">{tx.payment_method}</Badge>
-                    </td>
-                    <td className="p-3">
-                      <Badge className="bg-emerald-600 text-white">✓</Badge>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {transactions.length === 0 ? (
+                  <tr><td colSpan={4} className="px-3 py-10 text-center text-muted-foreground">{t('empty_cart') || 'No transactions yet.'}</td></tr>
+                ) : (
+                  transactions.map((tx) => (
+                    <tr key={tx.id} className="border-t border-border/70 transition-colors hover:bg-muted/40">
+                      <td className="px-3 py-3 font-mono text-[13px]">{tx.invoice_number}</td>
+                      <td className="px-3 py-3 font-semibold tabular-nums">{formatMoney(tx.total_amount || 0, language)}</td>
+                      <td className="px-3 py-3"><span className="pill-sky">{tx.payment_method}</span></td>
+                      <td className="px-3 py-3"><span className="pill-success"><span className="h-1.5 w-1.5 rounded-full bg-current" />{t('paid') || 'Paid'}</span></td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </section>
+      </div>
     </div>
   );
 }

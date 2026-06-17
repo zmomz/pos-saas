@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
 import { Store, FileText, MapPin, Clock } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   getStoreSettings,
   saveStoreSettings,
@@ -32,7 +34,6 @@ export default function StoreSettings() {
   const [phone, setPhone] = useState('');
   const [hours, setHours] = useState<BusinessHours[]>(defaultHours());
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,8 +70,7 @@ export default function StoreSettings() {
         phone,
         business_hours: hours,
       });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      toast.success(t('save_changes'));
     } finally {
       setSaving(false);
     }
@@ -80,132 +80,122 @@ export default function StoreSettings() {
     setHours((prev) => prev.map((h, i) => (i === index ? { ...h, ...patch } : h)));
   }
 
+  const labelCls = 'mb-1 block text-muted-foreground';
+
   return (
-    <div className="space-y-6 max-w-3xl" dir={isRTL ? 'rtl' : 'ltr'}>
-      <div>
-        <h1 className="text-2xl font-bold text-white">{t('store_settings')}</h1>
-        <p className="text-slate-400 text-sm mt-1">{t('store_settings_intro')}</p>
-      </div>
+    <div className="animate-fade-up space-y-6 max-w-3xl" dir={isRTL ? 'rtl' : 'ltr'}>
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Store className="h-[18px] w-[18px]" /></span>}
+        title={t('store_settings')}
+        subtitle={t('store_settings_intro')}
+      >
+        <Button onClick={handleSave} disabled={saving} className="h-11 rounded-[10px] shadow-brand">
+          {saving ? t('loading') : t('save_changes')}
+        </Button>
+      </PageHeading>
 
       {/* Identity: name, VAT, CR */}
-      <Card className="bg-slate-800 border-slate-700">
-        <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            <Store className="h-5 w-5 text-brand-400" />
-            {t('store_settings')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <div className="dxr-tile" style={{ padding: 22 }}>
+        <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
+          <Store className="h-5 w-5 text-brand-600" />
+          {t('store_settings')}
+        </h2>
+        <div className="space-y-4">
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">{t('store_name')}</label>
+            <Label className={labelCls}>{t('store_name')}</Label>
             <Input
               value={storeName}
               onChange={(e) => setStoreName(e.target.value)}
               placeholder={t('store_name')}
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('vat_number')}</label>
+              <Label className={labelCls}>{t('vat_number')}</Label>
               <Input
                 value={vatNumber}
                 onChange={(e) => setVatNumber(e.target.value)}
                 placeholder={t('vat_number')}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('cr_number')}</label>
+              <Label className={labelCls}>{t('cr_number')}</Label>
               <Input
                 value={crNumber}
                 onChange={(e) => setCrNumber(e.target.value)}
                 placeholder={t('cr_number')}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Receipt footer */}
-      <Card className="bg-slate-800 border-slate-700">
-        <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            <FileText className="h-5 w-5 text-green-400" />
-            {t('receipt_footer')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Input
-            value={receiptFooter}
-            onChange={(e) => setReceiptFooter(e.target.value)}
-            placeholder={t('receipt_footer')}
-            className="bg-slate-700 border-slate-600 text-white"
-          />
-        </CardContent>
-      </Card>
+      <div className="dxr-tile" style={{ padding: 22 }}>
+        <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
+          <FileText className="h-5 w-5 text-success" />
+          {t('receipt_footer')}
+        </h2>
+        <Input
+          value={receiptFooter}
+          onChange={(e) => setReceiptFooter(e.target.value)}
+          placeholder={t('receipt_footer')}
+        />
+      </div>
 
       {/* Branch profile */}
-      <Card className="bg-slate-800 border-slate-700">
-        <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            <MapPin className="h-5 w-5 text-purple-400" />
-            {t('branch_profile')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <div className="dxr-tile" style={{ padding: 22 }}>
+        <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
+          <MapPin className="h-5 w-5 text-violet" />
+          {t('branch_profile')}
+        </h2>
+        <div className="space-y-4">
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">{t('address')}</label>
+            <Label className={labelCls}>{t('address')}</Label>
             <Input
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               placeholder={t('address')}
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('city')}</label>
+              <Label className={labelCls}>{t('city')}</Label>
               <Input
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
                 placeholder={t('city')}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('phone')}</label>
+              <Label className={labelCls}>{t('phone')}</Label>
               <Input
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder={t('phone')}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {/* Business hours */}
-      <Card className="bg-slate-800 border-slate-700">
-        <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            <Clock className="h-5 w-5 text-yellow-400" />
-            {t('business_hours')}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-2">
+      <div className="dxr-tile" style={{ padding: 22 }}>
+        <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
+          <Clock className="h-5 w-5 text-warning" />
+          {t('business_hours')}
+        </h2>
+        <div className="space-y-2">
           {hours.map((h, i) => (
             <div key={h.day} className="flex items-center gap-3 py-1">
-              <span className="w-12 text-sm text-slate-300 uppercase">{h.day}</span>
+              <span className="w-12 text-sm text-muted-foreground uppercase">{h.day}</span>
               <Input
                 type="time"
                 aria-label={`${h.day}-${t('day_open')}`}
                 value={h.open}
                 disabled={h.closed}
                 onChange={(e) => updateDay(i, { open: e.target.value })}
-                className="bg-slate-700 border-slate-600 text-white w-32"
+                className="w-32"
               />
               <Input
                 type="time"
@@ -213,28 +203,18 @@ export default function StoreSettings() {
                 value={h.close}
                 disabled={h.closed}
                 onChange={(e) => updateDay(i, { close: e.target.value })}
-                className="bg-slate-700 border-slate-600 text-white w-32"
+                className="w-32"
               />
               <Button
                 size="sm"
-                variant="outline"
+                variant={h.closed ? 'destructive' : 'outline'}
                 onClick={() => updateDay(i, { closed: !h.closed })}
-                className={h.closed
-                  ? 'bg-red-600/30 text-red-300 border-red-700'
-                  : 'bg-slate-700 text-slate-300 border-slate-600'
-                }
               >
                 {t('day_closed')}
               </Button>
             </div>
           ))}
-        </CardContent>
-      </Card>
-
-      <div className="flex gap-3">
-        <Button onClick={handleSave} disabled={saving} className="bg-brand-600 hover:bg-brand-700 text-white">
-          {saving ? t('loading') : saved ? '✓ ' + t('save_changes') : t('save_changes')}
-        </Button>
+        </div>
       </div>
     </div>
   );

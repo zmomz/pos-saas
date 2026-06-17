@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, productImageSrc, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
 import { CUSTOMER_DISPLAY_KEY, buildCustomerDisplayPayload, paidCustomerDisplayPayload } from '@/lib/customerDisplay';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoneyAr, toArabicDigits } from '@/lib/format';
+import { formatMoney, formatMoneyAr, toArabicDigits } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
@@ -172,7 +170,13 @@ export default function POSTerminal() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [mode, setMode] = useState<POSMode>('sale');
   const navigate = useNavigate();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  // i18n fallback helper: return the translated string, or the supplied English
+  // fallback when the key is missing (translate() returns the key on a miss).
+  const tt = (key: string, fallback: string) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
 
   // Barcode scanner state
   const [barcodeInput, setBarcodeInput] = useState('');
@@ -468,7 +472,7 @@ export default function POSTerminal() {
     const matchedProduct = products.find((p) => p.barcode === barcode || p.sku === barcode);
     if (matchedProduct) {
       addToCart(matchedProduct);
-      setBarcodeMessage({ text: `✓ ${matchedProduct.name} added`, type: 'success' });
+      setBarcodeMessage({ text: `✓ ${matchedProduct.name} ${tt('added', 'added')}`, type: 'success' });
       return true;
     }
     try {
@@ -484,7 +488,7 @@ export default function POSTerminal() {
           },
           res.variant_id,
         );
-        setBarcodeMessage({ text: `✓ ${res.name} added`, type: 'success' });
+        setBarcodeMessage({ text: `✓ ${res.name} ${tt('added', 'added')}`, type: 'success' });
         return true;
       }
       if (res.kind === 'product' && res.product_id) {
@@ -498,13 +502,13 @@ export default function POSTerminal() {
             barcode: res.barcode,
           },
         );
-        setBarcodeMessage({ text: `✓ ${res.name} added`, type: 'success' });
+        setBarcodeMessage({ text: `✓ ${res.name} ${tt('added', 'added')}`, type: 'success' });
         return true;
       }
     } catch (err) {
       console.error('Barcode resolution failed:', err);
     }
-    setBarcodeMessage({ text: `✕ No product found for "${barcode}"`, type: 'error' });
+    setBarcodeMessage({ text: `✕ ${tt('no_product_found_for', 'No product found for')} "${barcode}"`, type: 'error' });
     return false;
   }
 
@@ -536,7 +540,7 @@ export default function POSTerminal() {
     }
     const DetectorCtor = (window as unknown as { BarcodeDetector?: new (o?: unknown) => { detect: (s: unknown) => Promise<{ rawValue: string }[]> } }).BarcodeDetector;
     if (!DetectorCtor || !navigator.mediaDevices?.getUserMedia) {
-      setBarcodeMessage({ text: '✕ Camera scanning not supported on this device', type: 'error' });
+      setBarcodeMessage({ text: `✕ ${tt('camera_scan_unsupported', 'Camera scanning not supported on this device')}`, type: 'error' });
       return;
     }
     setCameraScanning(true);
@@ -568,7 +572,7 @@ export default function POSTerminal() {
       // Auto-stop after 20s so the camera never stays on indefinitely.
       setTimeout(() => { stop(); video.srcObject = null; setCameraScanning(false); }, 20000);
     } catch {
-      setBarcodeMessage({ text: '✕ Could not access the camera', type: 'error' });
+      setBarcodeMessage({ text: `✕ ${tt('camera_access_failed', 'Could not access the camera')}`, type: 'error' });
       setCameraScanning(false);
     }
   }
@@ -604,7 +608,7 @@ export default function POSTerminal() {
       setDiscountError('');
     } catch (err) {
       const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setDiscountError(detail || 'Invalid or expired discount code');
+      setDiscountError(detail || tt('invalid_discount_code', 'Invalid or expired discount code'));
       setAppliedDiscount(null);
     } finally {
       setApplyingDiscount(false);
@@ -672,9 +676,9 @@ export default function POSTerminal() {
     return TINTS[h % TINTS.length];
   }
 
-  // SAR currency display for the sale screen (matches the handoff "SAR 0.00").
-  const SAR = (n: number) =>
-    'SAR ' + (n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // Locale-aware currency display for the sale screen (Arabic-Indic digits for
+  // ar/ur). The always-Arabic fiscal receipt uses formatMoneyAr directly.
+  const SAR = (n: number) => formatMoney(n || 0, language);
 
   // Per-product quantity already in the cart (drives the tile qty badge).
   const cartQtyByProduct = cart.reduce<Record<number, number>>((acc, it) => {
@@ -731,7 +735,7 @@ export default function POSTerminal() {
     if (cart.length === 0) return;
     // POS-02: a split payment must be fully allocated before we send it.
     if (splitMode && !splitBalanced) {
-      setBarcodeMessage({ text: '✕ Split payments must equal the total', type: 'error' });
+      setBarcodeMessage({ text: `✕ ${tt('split_must_equal_total', 'Split payments must equal the total')}`, type: 'error' });
       return;
     }
     setProcessing(true);
@@ -1057,10 +1061,10 @@ export default function POSTerminal() {
     };
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card className="w-full max-w-md bg-card border-border">
-          <CardContent dir="rtl" lang="ar" className="p-6 space-y-4 text-right">
+        <div className="w-full max-w-md rounded-2xl border border-border bg-card">
+          <div dir="rtl" lang="ar" className="p-6 space-y-4 text-right">
             <div className="text-center">
-              <h2 className={`text-xl font-bold ${isRefund ? 'text-orange-400' : 'text-green-400'}`}>
+              <h2 className={`text-xl font-bold ${isRefund ? 'text-warning' : 'text-success'}`}>
                 {isRefund ? '↩ تمت معالجة الاسترجاع' : '✓ تمت العملية بنجاح'}
               </h2>
               <p className="text-muted-foreground mt-1">رقم الفاتورة: {receipt.invoice_number}</p>
@@ -1081,7 +1085,7 @@ export default function POSTerminal() {
                 <span>{formatMoneyAr(receipt.subtotal || 0)}</span>
               </div>
               {receipt.discount_amount && receipt.discount_amount > 0 && (
-                <div className="flex justify-between text-green-400 text-sm">
+                <div className="flex justify-between text-success text-sm">
                   <span>الخصم ({receipt.discount_code})</span>
                   <span>-{formatMoneyAr(receipt.discount_amount)}</span>
                 </div>
@@ -1101,7 +1105,7 @@ export default function POSTerminal() {
                     <span>البقشيش</span>
                     <span>{formatMoneyAr(receipt.tip_amount)}</span>
                   </div>
-                  <div className="flex justify-between text-emerald-300 font-bold">
+                  <div className="flex justify-between text-success font-bold">
                     <span>المبلغ المدفوع</span>
                     <span>{formatMoneyAr((receipt.total_amount || 0) + receipt.tip_amount)}</span>
                   </div>
@@ -1111,9 +1115,9 @@ export default function POSTerminal() {
 
             <div className="flex justify-between text-foreground text-sm">
               <span>طريقة الدفع</span>
-              <Badge className={`${isRefund ? 'bg-orange-600' : 'bg-brand-600'} text-white`}>
+              <span className={isRefund ? 'pill-warning' : 'pill-success'}>
                 {paymentAr[receipt.payment_method] || receipt.payment_method}
-              </Badge>
+              </span>
             </div>
 
             {/* PAY-01: captured tender approval (network + auth code) for card-like
@@ -1150,7 +1154,7 @@ export default function POSTerminal() {
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
                         target.style.display = 'none';
-                        target.parentElement!.innerHTML = `<div class="w-32 h-32 flex items-center justify-center bg-gray-100 text-xs text-gray-600 break-all p-1 font-mono">${receipt.zatca_qr_base64.substring(0, 60)}...</div>`;
+                        target.parentElement!.innerHTML = `<div class="w-32 h-32 flex items-center justify-center bg-muted text-xs text-muted-foreground break-all p-1 font-mono">${receipt.zatca_qr_base64.substring(0, 60)}...</div>`;
                       }}
                     />
                   </div>
@@ -1170,13 +1174,13 @@ export default function POSTerminal() {
             )}
 
             {queuedOffline && (
-              <div className="rounded-md bg-amber-900/40 border border-amber-700 text-amber-200 text-sm p-3 text-center">
+              <div className="rounded-md bg-warning/15 border border-warning/40 text-warning text-sm p-3 text-center">
                 تم حفظ العملية دون اتصال وسيتم مزامنتها عند عودة الإنترنت
               </div>
             )}
 
             <div className="flex gap-3 pt-2">
-              <Button onClick={handleNewSale} className="flex-1 bg-brand-600 hover:bg-brand-700 text-white">
+              <Button onClick={handleNewSale} className="flex-1">
                 {t('new_sale')}
               </Button>
               {receipt.id && (
@@ -1207,8 +1211,8 @@ export default function POSTerminal() {
                 {t('back')}
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     );
   }
@@ -1220,13 +1224,12 @@ export default function POSTerminal() {
         {/* Header */}
         <div className="bg-card border-b border-border p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <RotateCcw className="w-5 h-5 text-orange-400" />
+            <RotateCcw className="w-5 h-5 text-warning" />
             <h2 className="text-lg font-bold text-foreground">{t('refund_mode')}</h2>
           </div>
           <div className="flex items-center gap-2">
             <Button
               onClick={() => { setMode('sale'); setSelectedTransaction(null); setRefundQty({}); }}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               <ShoppingCart className="w-4 h-4 me-2" />
               {t('new_sale')}
@@ -1252,32 +1255,30 @@ export default function POSTerminal() {
             ) : (
               <div className="space-y-2">
                 {recentTransactions.map((txn, idx) => (
-                  <Card
+                  <div
                     key={txn.id || idx}
-                    className={`bg-card border-border cursor-pointer transition-colors ${
+                    className={`rounded-2xl border bg-card p-4 cursor-pointer transition-colors ${
                       selectedTransaction?.invoice_number === txn.invoice_number
-                        ? 'border-orange-500 ring-1 ring-orange-500'
-                        : 'hover:border-input'
+                        ? 'border-brand ring-1 ring-brand'
+                        : 'border-border hover:border-input'
                     }`}
                     onClick={() => selectTransactionForRefund(txn)}
                   >
-                    <CardContent className="p-4">
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="text-foreground font-medium text-sm">{txn.invoice_number}</p>
-                          <p className="text-muted-foreground text-xs mt-1">
-                            {txn.created_at ? new Date(txn.created_at).toLocaleString() : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="text-end">
-                          <p className="text-brand-400 font-bold">{SAR(txn.total_amount || 0)}</p>
-                          <Badge className="bg-muted text-foreground text-xs mt-1">
-                            {txn.payment_method}
-                          </Badge>
-                        </div>
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="text-foreground font-medium text-sm">{txn.invoice_number}</p>
+                        <p className="text-muted-foreground text-xs mt-1">
+                          {txn.created_at ? new Date(txn.created_at).toLocaleString() : 'N/A'}
+                        </p>
                       </div>
-                    </CardContent>
-                  </Card>
+                      <div className="text-end">
+                        <p className="text-brand-700 font-bold">{SAR(txn.total_amount || 0)}</p>
+                        <span className="pill-muted text-xs mt-1">
+                          {txn.payment_method}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 ))}
               </div>
             )}
@@ -1290,9 +1291,9 @@ export default function POSTerminal() {
                 <div className="flex items-center justify-between">
                   <h3 className="text-foreground font-semibold">{t('refund_details')}</h3>
                   {selectedTransaction.status === 'partial_refunded' && (
-                    <Badge className="bg-orange-900 text-orange-300 text-xs">
+                    <span className="pill-warning text-xs">
                       {t('already_partially_refunded')}
-                    </Badge>
+                    </span>
                   )}
                 </div>
                 <div className="bg-muted rounded-lg p-4 space-y-2">
@@ -1362,12 +1363,12 @@ export default function POSTerminal() {
                       <span>
                         {t('refund_amount')}
                         {refundHasLineItems && refundIsPartial && (
-                          <span className="ms-2 text-orange-300 text-xs font-normal">
+                          <span className="ms-2 text-warning text-xs font-normal">
                             ({t('partial_refund')})
                           </span>
                         )}
                       </span>
-                      <span className="text-orange-400">
+                      <span className="text-warning">
                         {SAR(
                           refundHasLineItems
                             ? refundSelectedAmount
@@ -1381,12 +1382,12 @@ export default function POSTerminal() {
                 <Button
                   onClick={handleRefund}
                   disabled={refundProcessing || !canRefund || !canSubmitRefund}
-                  className="w-full bg-orange-600 hover:bg-orange-700 text-white py-6 text-lg disabled:opacity-50"
+                  className="w-full bg-warning text-white py-6 text-lg shadow-brand hover:opacity-90 disabled:opacity-50"
                 >
                   {refundProcessing ? t('loading') : `↩ ${t('process_refund')}`}
                 </Button>
                 {!canRefund && (
-                  <p className="text-center text-sm text-orange-400/80 mt-2">
+                  <p className="text-center text-sm text-warning mt-2">
                     {t('refund_no_permission')}
                   </p>
                 )}
@@ -1403,7 +1404,7 @@ export default function POSTerminal() {
                         onClick={handleVoid}
                         disabled={voidProcessing}
                         variant="outline"
-                        className="w-full border-red-600 text-red-400 hover:bg-red-600/10 disabled:opacity-50"
+                        className="w-full border-destructive text-destructive hover:bg-destructive/10 disabled:opacity-50"
                       >
                         {voidProcessing ? t('loading') : `✕ ${t('void_sale')}`}
                       </Button>
@@ -1411,7 +1412,7 @@ export default function POSTerminal() {
                         {t('void_sale_hint')}
                       </p>
                       {voidError && (
-                        <p role="alert" className="text-center text-sm text-red-400 mt-2">
+                        <p role="alert" className="text-center text-sm text-destructive mt-2">
                           {voidError}
                         </p>
                       )}
@@ -1459,7 +1460,7 @@ export default function POSTerminal() {
             {!online && (
               <span
                 role="status"
-                className="inline-flex items-center gap-1 rounded-full border border-amber-700 bg-amber-900/40 px-2 py-0.5 text-xs text-amber-200"
+                className="inline-flex items-center gap-1 rounded-full border border-warning/40 bg-warning/15 px-2 py-0.5 text-xs text-warning"
               >
                 <WifiOff className="h-3 w-3" />
                 {t('offline')}
@@ -1484,7 +1485,7 @@ export default function POSTerminal() {
               <Button
                 onClick={() => setMode('refund')}
                 variant="outline"
-                className="border-orange-600 text-orange-400 hover:bg-orange-600/10"
+                className="border-warning/50 text-warning hover:bg-warning/10"
               >
                 <RotateCcw className="w-4 h-4 me-2" />
                 {t('refund')}
@@ -1540,25 +1541,25 @@ export default function POSTerminal() {
             </Button>
           </div>
           {priceCheckMode && priceCheckResult && (
-            <div className="mt-2 rounded border border-brand-700 bg-brand-900/30 px-3 py-2 text-sm">
+            <div className="mt-2 rounded border border-brand bg-brand-50 px-3 py-2 text-sm">
               {priceCheckResult.found ? (
                 <div className="flex items-center justify-between gap-3">
                   <span className="font-medium text-foreground">{priceCheckResult.name}</span>
-                  <span className="text-brand-300 font-bold">{SAR(priceCheckResult.price)}</span>
+                  <span className="text-brand-700 font-bold">{SAR(priceCheckResult.price)}</span>
                   <span className="text-muted-foreground">
                     {t('on_hand')}: {priceCheckResult.quantity ?? 0}
                   </span>
                 </div>
               ) : (
-                <span className="text-red-400">{t('price_check_none')}</span>
+                <span className="text-danger">{t('price_check_none')}</span>
               )}
             </div>
           )}
           {barcodeMessage && (
             <div className={`absolute top-full mt-1 start-0 text-xs px-3 py-1.5 rounded ${
               barcodeMessage.type === 'success'
-                ? 'bg-green-900/50 text-green-400 border border-green-700'
-                : 'bg-red-900/50 text-red-400 border border-red-700'
+                ? 'bg-success/10 text-success border border-success/40'
+                : 'bg-danger/10 text-danger border border-danger/40'
             }`}>
               {barcodeMessage.text}
             </div>
@@ -1662,7 +1663,7 @@ export default function POSTerminal() {
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-foreground">{product.name}</div>
                     <div className="mt-0.5 font-bold tabular-nums text-brand-700">
-                      {product.price?.toFixed(2)} <small className="text-[11px] font-semibold text-muted-foreground">SAR</small>
+                      {formatMoney(product.price ?? 0, language)}
                     </div>
                   </div>
                 </button>
@@ -1714,17 +1715,17 @@ export default function POSTerminal() {
                     <p className="text-foreground text-sm font-medium">
                       {item.product.name}
                       {item.variantId && (
-                        <span className="ms-1 text-[10px] uppercase tracking-wide text-brand-300">
+                        <span className="ms-1 text-[10px] uppercase tracking-wide text-brand-700">
                           {t('variant')}
                         </span>
                       )}
                       {item.product.is_weighted && (
-                        <span className="ms-1 text-[10px] uppercase tracking-wide text-amber-300">
+                        <span className="ms-1 text-[10px] uppercase tracking-wide text-warning">
                           {t('weighted')}
                         </span>
                       )}
                       {item.product.is_open_price && (
-                        <span className="ms-1 text-[10px] uppercase tracking-wide text-emerald-300">
+                        <span className="ms-1 text-[10px] uppercase tracking-wide text-success">
                           {t('open_price')}
                         </span>
                       )}
@@ -1756,7 +1757,7 @@ export default function POSTerminal() {
                     size="sm"
                     variant="ghost"
                     onClick={() => removeFromCart(item.key)}
-                    className="text-red-400 hover:text-red-300 hover:bg-muted h-6 w-6 p-0"
+                    className="text-destructive hover:text-destructive hover:bg-muted h-6 w-6 p-0"
                   >
                     ✕
                   </Button>
@@ -1826,7 +1827,7 @@ export default function POSTerminal() {
                   size="sm"
                   variant="ghost"
                   onClick={removeDiscount}
-                  className="h-6 w-6 p-0 text-red-400 hover:text-red-300 hover:bg-transparent"
+                  className="h-6 w-6 p-0 text-destructive hover:text-destructive hover:bg-transparent"
                 >
                   <X className="w-4 h-4" />
                 </Button>
@@ -1844,14 +1845,14 @@ export default function POSTerminal() {
                   size="sm"
                   onClick={handleApplyDiscount}
                   disabled={!discountCode.trim() || applyingDiscount}
-                  className="bg-brand-600 hover:bg-brand-700 text-white px-3 whitespace-nowrap"
+                  className="px-3 whitespace-nowrap"
                 >
                   {applyingDiscount ? '...' : t('apply')}
                 </Button>
               </div>
             )}
             {discountError && (
-              <p className="text-red-400 text-xs mt-1">{discountError}</p>
+              <p className="text-destructive text-xs mt-1">{discountError}</p>
             )}
           </div>
 
@@ -1909,7 +1910,7 @@ export default function POSTerminal() {
                   type="button"
                   variant="ghost"
                   onClick={() => setTipAmount(0)}
-                  className="h-9 w-9 p-0 text-red-400 hover:text-red-300 hover:bg-transparent"
+                  className="h-9 w-9 p-0 text-destructive hover:text-destructive hover:bg-transparent"
                   aria-label={t('clear_tip')}
                 >
                   <X className="w-4 h-4" />
@@ -2147,7 +2148,7 @@ export default function POSTerminal() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-2">
               {heldError ? (
-                <div role="alert" className="text-center py-8 text-red-400">
+                <div role="alert" className="text-center py-8 text-destructive">
                   <p>{heldError}</p>
                   <Button
                     size="sm"
@@ -2171,13 +2172,13 @@ export default function POSTerminal() {
                         {ticket.label || ticket.customer_name || `#${ticket.id}`}
                       </p>
                       <p className="text-muted-foreground text-xs">
-                        {ticket.item_count} {t('items')} · {ticket.total_amount?.toFixed(2)}
+                        {ticket.item_count} {t('items')} · {SAR(ticket.total_amount ?? 0)}
                       </p>
                     </div>
                     <Button
                       size="sm"
                       onClick={() => handleRecall(ticket.id)}
-                      className="bg-brand-600 hover:bg-brand-700 text-white whitespace-nowrap"
+                      className="whitespace-nowrap"
                     >
                       <Play className="w-4 h-4 me-1" />
                       {t('recall')}

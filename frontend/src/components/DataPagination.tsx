@@ -23,7 +23,7 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
   const end = Math.min(page * pageSize, total);
 
   return (
-    <div className="flex items-center justify-between pt-4 text-sm text-slate-400">
+    <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
       <span>
         {start}–{end} of {total}
       </span>
@@ -33,7 +33,7 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
           variant="outline"
           disabled={page <= 1}
           onClick={() => onPageChange(page - 1)}
-          className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          className="border-input text-foreground/90 hover:bg-muted"
         >
           Previous
         </Button>
@@ -45,7 +45,7 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
           variant="outline"
           disabled={page >= pageCount}
           onClick={() => onPageChange(page + 1)}
-          className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          className="border-input text-foreground/90 hover:bg-muted"
         >
           Next
         </Button>

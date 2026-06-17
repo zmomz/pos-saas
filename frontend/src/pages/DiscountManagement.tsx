@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -20,8 +19,11 @@ import {
 import { getDiscounts, createDiscount, updateDiscount, deleteDiscount } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
-import { Tag, Percent, DollarSign } from 'lucide-react';
+import { formatMoney } from '@/lib/format';
+import { Tag, Percent, DollarSign, Plus } from 'lucide-react';
 
 interface Discount {
   id: string;
@@ -93,7 +95,8 @@ export default function DiscountManagement() {
   const [formData, setFormData] = useState<DiscountFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
 
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
+  const tt = (key: string, fallback: string) => { const v = t(key); return v === key ? fallback : v; };
 
   useEffect(() => {
     loadDiscounts();
@@ -223,103 +226,98 @@ export default function DiscountManagement() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('discount_code')} *</label>
+          <Label className="mb-1 block">{t('discount_code')} *</Label>
           <div className="flex gap-2">
             <Input
               value={formData.code}
               onChange={(e) => handleFormChange('code', e.target.value.toUpperCase())}
               placeholder={t('discount_code_placeholder')}
               dir="ltr"
-              className="bg-slate-700 border-slate-600 text-white flex-1"
+              className="flex-1"
             />
             <Button
               type="button"
               variant="outline"
               onClick={() => handleFormChange('code', generateCode())}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs whitespace-nowrap"
+              className="text-xs whitespace-nowrap"
             >
               {t('auto_generate')}
             </Button>
           </div>
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('discount_type')} *</label>
+          <Label className="mb-1 block">{t('discount_type')} *</Label>
           <Select value={formData.type} onValueChange={(v) => handleFormChange('type', v)}>
-            <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+            <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-600">
-              <SelectItem value="percentage" className="text-white hover:bg-slate-700">
+            <SelectContent>
+              <SelectItem value="percentage">
                 {t('discount_percentage')} (%)
               </SelectItem>
-              <SelectItem value="fixed" className="text-white hover:bg-slate-700">
+              <SelectItem value="fixed">
                 {t('discount_fixed')} (SAR)
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">
+          <Label className="mb-1 block">
             {t('discount_value')} * {formData.type === 'percentage' ? '(%)' : '(SAR)'}
-          </label>
+          </Label>
           <Input
             type="number"
             value={formData.value}
             onChange={(e) => handleFormChange('value', e.target.value)}
             placeholder={formData.type === 'percentage' ? '10' : '50.00'}
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('min_purchase')} (SAR)</label>
+          <Label className="mb-1 block">{t('min_purchase')} (SAR)</Label>
           <Input
             type="number"
             value={formData.min_purchase}
             onChange={(e) => handleFormChange('min_purchase', e.target.value)}
             placeholder={t('min_purchase_placeholder')}
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('max_uses')}</label>
+          <Label className="mb-1 block">{t('max_uses')}</Label>
           <Input
             type="number"
             value={formData.max_uses}
             onChange={(e) => handleFormChange('max_uses', e.target.value)}
             placeholder={t('max_uses_placeholder')}
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         {/* PRC-02 scheduled validity window — a coupon is only honoured between
             these bounds; leave either empty for an open-ended (always-on) code. */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">{t('valid_from')}</label>
+            <Label className="mb-1 block">{t('valid_from')}</Label>
             <Input
               type="datetime-local"
               dir="ltr"
               value={formData.starts_at}
               onChange={(e) => handleFormChange('starts_at', e.target.value)}
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">{t('valid_until')}</label>
+            <Label className="mb-1 block">{t('valid_until')}</Label>
             <Input
               type="datetime-local"
               dir="ltr"
               value={formData.ends_at}
               onChange={(e) => handleFormChange('ends_at', e.target.value)}
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
         </div>
-        <p className="text-xs text-slate-500">{t('validity_window_hint')}</p>
+        <p className="text-xs text-muted-foreground">{t('validity_window_hint')}</p>
         <div className="flex gap-3 pt-2">
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.code || !formData.value}
-            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
+            className="flex-1"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -331,7 +329,7 @@ export default function DiscountManagement() {
   if (loading) {
     return (
       <div dir={isRTL ? 'rtl' : 'ltr'} className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -353,65 +351,48 @@ export default function DiscountManagement() {
   }
 
   return (
-    <div dir={isRTL ? 'rtl' : 'ltr'} className="space-y-6">
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Tag className="h-8 w-8 text-brand-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('total_discounts')}</p>
-              <p className="text-2xl font-bold text-white">{discounts.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Percent className="h-8 w-8 text-green-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('active')}</p>
-              <p className="text-2xl font-bold text-green-400">{activeCount}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <DollarSign className="h-8 w-8 text-purple-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('total_uses')}</p>
-              <p className="text-2xl font-bold text-purple-400">
-                {discounts.reduce((sum, d) => sum + (d.usage_count || 0), 0)}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Add Button */}
-      <div className="flex justify-end">
+    <div dir={isRTL ? 'rtl' : 'ltr'} className="animate-fade-up space-y-6">
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Tag className="h-[18px] w-[18px]" /></span>}
+        title={tt('discounts', 'Discounts')}
+        subtitle={`${discounts.length} ${t('total_discounts')}`}
+      >
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>
             <Button
               onClick={() => setFormData(emptyForm)}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
+              className="h-11 rounded-[10px] shadow-brand"
             >
-              + {t('create_discount')}
+              <Plus className="h-4 w-4" />
+              {t('create_discount')}
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle className="text-white">{t('create_new_discount')}</DialogTitle>
+              <DialogTitle>{t('create_new_discount')}</DialogTitle>
             </DialogHeader>
             {renderForm(handleAddDiscount, t('create_discount'))}
           </DialogContent>
         </Dialog>
+      </PageHeading>
+
+      {/* Stats */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatTile icon={Tag} label={t('total_discounts')} value={discounts.length} tone="brand" />
+        <StatTile icon={Percent} label={t('active')} value={activeCount} tone="success" />
+        <StatTile
+          icon={DollarSign}
+          label={t('total_uses')}
+          value={discounts.reduce((sum, d) => sum + (d.usage_count || 0), 0)}
+          tone="violet"
+        />
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-slate-700">
+      <div className="dxr-tile overflow-x-auto p-0">
         <table className="w-full text-sm">
-          <thead className="bg-slate-800">
-            <tr className="text-slate-400">
+          <thead className="bg-muted/40">
+            <tr className="text-muted-foreground">
               <th className="p-3 text-start">{t('code')}</th>
               <th className="p-3 text-start">{t('discount_type')}</th>
               <th className="p-3 text-start">{t('discount_value')}</th>
@@ -425,65 +406,65 @@ export default function DiscountManagement() {
           <tbody>
             {discounts.length === 0 ? (
               <tr>
-                <td colSpan={8} className="p-6 text-center text-slate-500">
+                <td colSpan={8} className="p-6 text-center text-muted-foreground">
                   {t('no_discounts')}
                 </td>
               </tr>
             ) : (
               discounts.map((discount) => (
-                <tr key={discount.id} className="border-t border-slate-700 text-slate-300">
+                <tr key={discount.id} className="border-t border-border text-foreground/90">
                   <td className="p-3">
-                    <code className="bg-slate-700 px-2 py-0.5 rounded text-brand-300 font-mono text-xs" dir="ltr">
+                    <code className="bg-muted px-2 py-0.5 rounded text-brand-700 font-mono text-xs" dir="ltr">
                       {discount.code}
                     </code>
                   </td>
                   <td className="p-3">
                     {discount.type === 'percentage' ? t('discount_percentage') : t('discount_fixed')}
                   </td>
-                  <td className="p-3 font-medium text-white">
+                  <td className="p-3 font-medium text-foreground tabular-nums">
                     {discount.type === 'percentage'
                       ? `${discount.value}%`
-                      : `SAR ${discount.value}`}
+                      : formatMoney(discount.value, language)}
                   </td>
-                  <td className="p-3">
-                    {discount.min_purchase ? `SAR ${discount.min_purchase}` : '—'}
+                  <td className="p-3 tabular-nums">
+                    {discount.min_purchase ? formatMoney(discount.min_purchase, language) : '—'}
                   </td>
-                  <td className="p-3">
+                  <td className="p-3 tabular-nums">
                     {discount.usage_count ?? 0}
                     {discount.max_uses ? ` / ${discount.max_uses}` : ' / ∞'}
                   </td>
                   <td className="p-3">
                     {!discount.starts_at && !discount.ends_at ? (
-                      <span className="text-slate-500">{t('validity_always')}</span>
+                      <span className="text-muted-foreground">{t('validity_always')}</span>
                     ) : (
                       <div className="flex flex-col gap-1">
-                        <span className="text-xs text-slate-400" dir="ltr">
+                        <span className="text-xs text-muted-foreground" dir="ltr">
                           {discount.starts_at ? toLocalInput(discount.starts_at) : '…'}
                           {' → '}
                           {discount.ends_at ? toLocalInput(discount.ends_at) : '…'}
                         </span>
                         {windowState(discount) === 'scheduled' && (
-                          <Badge className="bg-amber-600/20 text-amber-400 border border-amber-600/40 w-fit">
+                          <span className="pill-warning w-fit">
                             {t('discount_scheduled')}
-                          </Badge>
+                          </span>
                         )}
                         {windowState(discount) === 'expired' && (
-                          <Badge className="bg-red-600/20 text-red-400 border border-red-600/40 w-fit">
+                          <span className="pill-danger w-fit">
                             {t('discount_expired')}
-                          </Badge>
+                          </span>
                         )}
                       </div>
                     )}
                   </td>
                   <td className="p-3">
                     {discount.is_active !== false ? (
-                      <Badge className="bg-green-600/20 text-green-400 border border-green-600/40">
+                      <span className="pill-success">
                         {t('active')}
-                      </Badge>
+                      </span>
                     ) : (
-                      <Badge className="bg-slate-600/20 text-slate-400 border border-slate-600/40">
+                      <span className="pill-muted">
                         {t('inactive')}
-                      </Badge>
+                      </span>
                     )}
                   </td>
                   <td className="p-3">
@@ -494,8 +475,8 @@ export default function DiscountManagement() {
                         onClick={() => toggleStatus(discount)}
                         className={`text-xs ${
                           discount.is_active !== false
-                            ? 'border-orange-600/50 text-orange-400 hover:bg-orange-600/20'
-                            : 'border-green-600/50 text-green-400 hover:bg-green-600/20'
+                            ? 'border-warning/40 text-warning hover:bg-warning/10'
+                            : 'border-success/40 text-success hover:bg-success/10'
                         }`}
                       >
                         {discount.is_active !== false ? t('disable') : t('enable')}
@@ -504,7 +485,7 @@ export default function DiscountManagement() {
                         size="sm"
                         variant="outline"
                         onClick={() => openEdit(discount)}
-                        className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                        className="text-xs"
                       >
                         {t('edit')}
                       </Button>
@@ -512,7 +493,7 @@ export default function DiscountManagement() {
                         size="sm"
                         variant="outline"
                         onClick={() => openDelete(discount)}
-                        className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
+                        className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
                       >
                         {t('delete')}
                       </Button>
@@ -527,9 +508,9 @@ export default function DiscountManagement() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('edit_discount')}</DialogTitle>
+            <DialogTitle>{t('edit_discount')}</DialogTitle>
           </DialogHeader>
           {renderForm(handleEditDiscount, t('save'))}
         </DialogContent>
@@ -537,24 +518,25 @@ export default function DiscountManagement() {
 
       {/* Delete Dialog */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">{t('confirm_delete')}</DialogTitle>
+            <DialogTitle>{t('confirm_delete')}</DialogTitle>
           </DialogHeader>
-          <p className="text-slate-300">{t('delete_discount_confirm')}</p>
-          <p className="text-center font-mono text-brand-300" dir="ltr">{selectedDiscount?.code}</p>
+          <p className="text-foreground/90">{t('delete_discount_confirm')}</p>
+          <p className="text-center font-mono text-brand-700" dir="ltr">{selectedDiscount?.code}</p>
           <div className="flex gap-3 pt-4">
             <Button
               variant="outline"
               onClick={() => setDeleteOpen(false)}
-              className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="flex-1"
             >
               {t('cancel')}
             </Button>
             <Button
+              variant="destructive"
               onClick={handleDeleteDiscount}
               disabled={submitting}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+              className="flex-1"
             >
               {submitting ? t('loading') : t('delete')}
             </Button>

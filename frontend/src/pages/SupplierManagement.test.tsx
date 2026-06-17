@@ -114,7 +114,8 @@ describe('SupplierManagement create PO (ISSUE-036)', () => {
 
     // Pick a real product on the line (gives us its product_id) and a quantity.
     const productSelect = await screen.findByRole('combobox');
-    await userEvent.selectOptions(productSelect, '7');
+    await userEvent.click(productSelect);
+    await userEvent.click(await screen.findByRole('option', { name: 'Flour 25kg' }));
 
     await userEvent.click(screen.getByRole('button', { name: /create purchase order/i }));
 

@@ -81,7 +81,8 @@ describe('SupplierManagement receive PO (ISSUE-037)', () => {
 
     // Branch picker in the receive dialog.
     const branchSelect = await screen.findByRole('combobox');
-    await userEvent.selectOptions(branchSelect, '3');
+    await userEvent.click(branchSelect);
+    await userEvent.click(await screen.findByRole('option', { name: 'Downtown' }));
 
     await userEvent.click(screen.getByRole('button', { name: /receive stock/i }));
 

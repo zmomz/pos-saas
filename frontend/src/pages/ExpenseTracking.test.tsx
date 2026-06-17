@@ -54,8 +54,8 @@ describe('ExpenseTracking revenue/profit (ISSUE-022)', () => {
     mockEndpoints();
     renderPage();
 
-    const revenueCard = (await screen.findByText('Revenue (Total)')).closest('div');
-    expect(revenueCard).toHaveTextContent('SAR 150.00');
+    const revenueCard = (await screen.findByText('Revenue (Total)')).closest('.rounded-2xl');
+    expect(revenueCard).toHaveTextContent('150.00 SAR');
   });
 
   it('computes Net Profit/Loss as revenue minus this-month expenses', async () => {
@@ -63,7 +63,7 @@ describe('ExpenseTracking revenue/profit (ISSUE-022)', () => {
     renderPage();
 
     // 150 revenue - 40 expenses = 110.
-    const netCard = (await screen.findByText('Net Profit/Loss')).closest('div');
-    expect(netCard).toHaveTextContent('SAR 110.00');
+    const netCard = (await screen.findByText('Net Profit/Loss')).closest('.rounded-2xl');
+    expect(netCard).toHaveTextContent('110.00 SAR');
   });
 });

@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Dashboard — Creative Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="ds.css" />
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="gaugegrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--brand)"/><stop offset="1" stop-color="var(--cyan)"/></linearGradient>
+  <linearGradient id="chartfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--cyan)" stop-opacity=".30"/><stop offset="1" stop-color="var(--cyan)" stop-opacity="0"/></linearGradient>
+</defs></svg>
+
+<div class="app">
+  <!-- ICON RAIL -->
+  <aside class="rail">
+    <div class="logo">N</div>
+    <div class="ri active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="tip">Dashboard</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg><span class="tip">Clients · 214</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="13" r="2.5"/><circle cx="8.5" cy="12" r="2.5"/><circle cx="6.5" cy="17" r="2.5"/></svg><span class="tip">Branding Editor</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="6"/><circle cx="16" cy="12" r="3"/></svg><span class="tip">Subscription Toggles</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8" rx="1"/><rect x="12" y="6" width="3" height="12" rx="1"/><rect x="17" y="13" width="3" height="5" rx="1"/></svg><span class="tip">Reports</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg><span class="tip">Switch to Master view</span></div>
+    <div class="sp"></div>
+    <div class="avatar-rail" id="cmdk-trigger" title="Sara Al-Nasser">SN</div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <header class="cmdbar">
+      <div class="hello">
+        <div class="hi">Najd Systems POS</div>
+        <div class="sub">214 merchants · 198 active subscriptions · white-label active</div>
+      </div>
+      <div class="sp"></div>
+      <span class="badge gold"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 12 2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg>White-label active</span>
+      <div class="cmdk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Search merchants<span class="kbd"><span>⌘</span><span>K</span></span></div>
+      <button class="iconbtn"><span class="reddot"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.27 21a1.94 1.94 0 0 0 3.46 0"/><path d="M3.5 17h17a1 1 0 0 0 .76-1.65C20.3 14.3 19 12.4 19 9a7 7 0 1 0-14 0c0 3.4-1.3 5.3-2.26 6.35A1 1 0 0 0 3.5 17"/></svg></button>
+      <button class="btn btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Add Client</button>
+    </header>
+
+    <main class="content">
+      <div class="bento">
+
+        <!-- HERO SPOTLIGHT: revenue + money flow -->
+        <section class="tile ink spot c-8 r-2">
+          <div class="between">
+            <div>
+              <div class="eyebrow ey">Monthly Revenue · this cycle</div>
+              <div class="big num" data-count="48200" data-prefix="SAR ">SAR 0</div>
+              <div class="subrow"><span class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>+6.8%</span><span>collected vs SAR 45,100 last cycle</span></div>
+            </div>
+            <div class="col" style="align-items:flex-end;gap:3px">
+              <div class="eyebrow ey">Net margin retained</div>
+              <div style="font-size:30px;font-weight:800;letter-spacing:-0.03em;color:#fff" class="num">71%</div>
+            </div>
+          </div>
+          <div class="mt-auto">
+            <div class="flow">
+              <div style="width:71%;background:linear-gradient(90deg,var(--brand),var(--brand-600))" data-w="71">Net · SAR 34,400</div>
+              <div style="width:29%;background:linear-gradient(90deg,var(--warning),var(--gold-600));color:oklch(0.30 0.06 70)" data-w="29">Owed · SAR 13,800</div>
+            </div>
+            <div class="row" style="margin-top:10px;gap:18px;font-size:12px;color:var(--ink-muted)">
+              <span class="row" style="gap:6px"><span style="width:9px;height:9px;border-radius:3px;background:var(--brand)"></span>Net margin</span>
+              <span class="row" style="gap:6px"><span style="width:9px;height:9px;border-radius:3px;background:var(--warning)"></span>Owed to platform</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- ACTIVE SUBS GAUGE -->
+        <section class="tile c-4 r-2">
+          <div class="tile-head"><h3>Active Subscriptions</h3><span class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>92%</span></div>
+          <div class="gauge" data-pct="92">
+            <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="prog" cx="60" cy="60" r="52"/></svg>
+            <div class="ctr"><div class="pc num">198</div><div class="cap">of 214 clients</div></div>
+          </div>
+        </section>
+
+        <!-- KPI CHIPS -->
+        <section class="tile kpi-mini c-3 r-1">
+          <div class="row" style="justify-content:space-between"><div class="lbl">Total Clients</div><span class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>+9</span></div>
+          <div class="val num" data-count="214">0</div>
+          <div class="foot">9 new this month</div>
+        </section>
+        <section class="tile kpi-mini c-3 r-1">
+          <div class="lbl">Net Margin</div>
+          <div class="val num" data-count="34400" data-prefix="SAR ">SAR 0</div>
+          <div class="foot">this billing cycle</div>
+        </section>
+        <section class="tile kpi-mini c-3 r-1">
+          <div class="lbl">Owed to Platform</div>
+          <div class="val num" data-count="13800" data-prefix="SAR ">SAR 0</div>
+          <div class="foot">due 30 Jun 2026</div>
+        </section>
+        <section class="tile kpi-mini c-3 r-1">
+          <div class="lbl">Remaining Slots</div>
+          <div class="val num"><span class="num" data-count="36">0</span><small> / 250</small></div>
+          <div class="bar" style="margin-top:8px"><span data-w="86" style="background:linear-gradient(90deg,var(--warning),var(--gold-600))"></span></div>
+        </section>
+
+        <!-- CLIENT LIST -->
+        <section class="tile c-8 r-4">
+          <div class="tile-head">
+            <h2>Clients</h2>
+            <div class="cmdk" style="min-width:200px;height:38px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Search…</div>
+          </div>
+          <div class="wrap" style="margin-bottom:12px">
+            <button class="chip active">All <span class="n">214</span></button>
+            <button class="chip">Active <span class="n">198</span></button>
+            <button class="chip">Past due <span class="n">11</span></button>
+            <button class="chip">Suspended <span class="n">5</span></button>
+          </div>
+          <table class="tbl">
+            <thead><tr><th>Merchant</th><th>Plan</th><th>Status</th><th>Monthly</th><th>Joined</th><th></th></tr></thead>
+            <tbody>
+              <tr><td><div class="row"><span class="avatar">QA</span><div><div style="font-weight:700">Qahwa Al-Riyadh</div><div class="muted" style="font-size:11.5px">Café · 2 branches</div></div></div></td><td><span class="pill pill-violet">Pro</span></td><td><span class="pill pill-success"><span class="dot"></span>Active</span></td><td class="num" style="font-weight:700">SAR 280</td><td class="muted num" style="font-size:12.5px">12 Jan 26</td><td><span class="link-more">Manage</span></td></tr>
+              <tr><td><div class="row"><span class="avatar" style="background:linear-gradient(135deg,var(--violet),oklch(0.42 0.14 295))">BM</span><div><div style="font-weight:700">Bakery Madinah</div><div class="muted" style="font-size:11.5px">Retail · 1 branch</div></div></div></td><td><span class="pill pill-sky">Basic</span></td><td><span class="pill pill-success"><span class="dot"></span>Active</span></td><td class="num" style="font-weight:700">SAR 150</td><td class="muted num" style="font-size:12.5px">04 Feb 26</td><td><span class="link-more">Manage</span></td></tr>
+              <tr><td><div class="row"><span class="avatar" style="background:linear-gradient(135deg,var(--gold),var(--gold-600));color:oklch(0.28 0.06 70)">GG</span><div><div style="font-weight:700">Gold Grocers</div><div class="muted" style="font-size:11.5px">Retail · 5 branches</div></div></div></td><td><span class="pill pill-gold">Premium</span></td><td><span class="pill pill-warning"><span class="dot"></span>Past due</span></td><td class="num" style="font-weight:700">SAR 450</td><td class="muted num" style="font-size:12.5px">22 Nov 25</td><td><span class="link-more">Manage</span></td></tr>
+              <tr><td><div class="row"><span class="avatar" style="background:linear-gradient(135deg,var(--sky),oklch(0.46 0.12 232))">SS</span><div><div style="font-weight:700">Shawarma Spot</div><div class="muted" style="font-size:11.5px">Restaurant · 3 branches</div></div></div></td><td><span class="pill pill-violet">Pro</span></td><td><span class="pill pill-success"><span class="dot"></span>Active</span></td><td class="num" style="font-weight:700">SAR 280</td><td class="muted num" style="font-size:12.5px">18 Mar 26</td><td><span class="link-more">Manage</span></td></tr>
+              <tr><td><div class="row"><span class="avatar" style="background:linear-gradient(135deg,oklch(0.59 0.18 22),oklch(0.46 0.16 22))">DP</span><div><div style="font-weight:700">Dates &amp; Perfume</div><div class="muted" style="font-size:11.5px">Retail · 1 branch</div></div></div></td><td><span class="pill pill-sky">Basic</span></td><td><span class="pill pill-danger"><span class="dot"></span>Suspended</span></td><td class="num" style="font-weight:700">SAR 150</td><td class="muted num" style="font-size:12.5px">09 Dec 25</td><td><span class="link-more">Manage</span></td></tr>
+              <tr><td><div class="row"><span class="avatar" style="background:linear-gradient(135deg,var(--brand-300),var(--brand))">JK</span><div><div style="font-weight:700">Juhayna Kitchen</div><div class="muted" style="font-size:11.5px">Restaurant · 4 branches</div></div></div></td><td><span class="pill pill-violet">Pro</span></td><td><span class="pill pill-success"><span class="dot"></span>Active</span></td><td class="num" style="font-weight:700">SAR 280</td><td class="muted num" style="font-size:12.5px">27 Apr 26</td><td><span class="link-more">Manage</span></td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- FEATURE OVERRIDES -->
+        <section class="tile c-4 r-2">
+          <div class="tile-head"><h3>Feature overrides</h3><span class="pill pill-muted">Qahwa Al-Riyadh</span></div>
+          <div class="toggle-row"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/></svg></div><div class="nm">Inventory</div><span class="switch on" style="margin-inline-start:auto"></span></div>
+          <div class="toggle-row"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg></div><div class="nm">Discounts</div><span class="switch on" style="margin-inline-start:auto"></span></div>
+          <div class="toggle-row"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 3 3 11.5l9.5 9.5L21 12.5 21 3z"/><circle cx="16.5" cy="7.5" r="1.5"/></svg></div><div class="nm">Loyalty program</div><span class="switch" style="margin-inline-start:auto"></span></div>
+          <div class="toggle-row"><div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 8 9 5 9-5"/></svg></div><div class="nm">ZATCA e-invoice</div><span class="switch on" style="margin-inline-start:auto"></span></div>
+        </section>
+
+        <!-- WHITE LABEL PREVIEW -->
+        <section class="tile c-4 r-2">
+          <div class="tile-head"><h3>Your white-label look</h3></div>
+          <div style="border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden">
+            <div style="background:linear-gradient(135deg,var(--brand),var(--brand-700));padding:14px;color:#fff">
+              <div class="row"><div class="logo" style="width:26px;height:26px;font-size:12px;border-radius:8px;box-shadow:none">N</div><b style="font-size:13.5px">Najd Systems POS</b></div>
+              <div style="font-size:11px;opacity:.85;margin-top:7px">An easy-to-use POS for your shop.</div>
+            </div>
+            <div style="padding:11px 14px;background:var(--surface);display:flex;align-items:center;gap:8px">
+              <span class="swatch-dot" style="background:var(--brand)"></span>
+              <span class="swatch-dot" style="background:var(--brand-700)"></span>
+              <span class="swatch-dot" style="background:var(--gold)"></span>
+              <span class="muted" style="font-size:11.5px;margin-inline-start:2px">Brand colors</span>
+            </div>
+          </div>
+          <button class="btn btn-outline btn-block mt-auto" style="margin-top:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Edit branding</button>
+        </section>
+
+        <!-- NEEDS ATTENTION -->
+        <section class="tile c-8 r-2">
+          <div class="tile-head"><h2>Needs Attention</h2><span class="pill pill-warning num">3</span></div>
+          <div class="row" style="gap:12px;align-items:stretch">
+            <div class="insight" style="flex:1;margin-bottom:0"><div class="ic sw-warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><div><div class="ti">11 clients past due</div><div class="ds">SAR 2,180 outstanding · send reminders</div></div></div>
+            <div class="insight" style="flex:1;margin-bottom:0"><div class="ic sw-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/></svg></div><div><div class="ti">Only 36 slots left</div><div class="ds">86% of cap used · request more</div></div></div>
+          </div>
+          <div class="insight" style="margin-top:10px"><div class="ic sw-sky"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 7v6c0 4.5 3.5 7.3 8 9 4.5-1.7 8-4.5 8-9V7Z"/></svg></div><div><div class="ti">5 clients haven't enabled ZATCA e-invoicing</div><div class="ds">Required for compliance · nudge merchants</div></div><span class="go"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></span></div>
+        </section>
+
+        <!-- PLAN MIX -->
+        <section class="tile c-4 r-2">
+          <div class="tile-head"><h3>Plan mix</h3></div>
+          <div class="prow"><span class="nm" style="width:64px">Basic</span><div class="grow"><div class="mb"><span data-w="38" style="background:var(--sky)"></span></div></div><b class="num" style="font-size:13px">82</b></div>
+          <div class="prow"><span class="nm" style="width:64px">Pro</span><div class="grow"><div class="mb"><span data-w="52" style="background:var(--violet)"></span></div></div><b class="num" style="font-size:13px">112</b></div>
+          <div class="prow"><span class="nm" style="width:64px">Premium</span><div class="grow"><div class="mb"><span data-w="10" style="background:var(--gold-600)"></span></div></div><b class="num" style="font-size:13px">20</b></div>
+          <div class="between mt-auto" style="margin-top:12px;font-size:12px"><span class="muted">Avg revenue / client</span><b class="num">SAR 225</b></div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ⌘K PALETTE -->
+<div class="palette-bg" id="palette">
+  <div class="palette">
+    <div class="inp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input placeholder="Search merchants or run a command…" /></div>
+    <div class="grp">
+      <div class="lbl">Quick actions</div>
+      <div class="opt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Add new client <span class="k">A</span></div>
+      <div class="opt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg> Edit white-label branding</div>
+      <div class="opt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Send payment reminders</div>
+    </div>
+    <div class="grp">
+      <div class="lbl">Jump to client</div>
+      <div class="opt"><span class="avatar" style="width:22px;height:22px;border-radius:7px;font-size:9px">QA</span> Qahwa Al-Riyadh</div>
+      <div class="opt"><span class="avatar" style="width:22px;height:22px;border-radius:7px;font-size:9px;background:linear-gradient(135deg,var(--gold),var(--gold-600));color:oklch(0.28 0.06 70)">GG</span> Gold Grocers</div>
+    </div>
+  </div>
+</div>
+
+<script src="ds.js"></script>
+</body>
+</html>

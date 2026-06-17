@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import {
   getSallaConnection,
   connectSalla,
@@ -16,18 +17,19 @@ import {
   type ChannelOrder,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { Globe, ShoppingCart, RefreshCw, Link2, CheckCircle2 } from 'lucide-react';
 
 // Channel-order status → badge styling. The OMN order line is
 // received → imported → fulfilled.
 const STATUS_BADGE: Record<string, string> = {
-  imported: 'bg-green-500/20 text-green-400',
-  received: 'bg-amber-500/20 text-amber-400',
-  fulfilled: 'bg-emerald-500/20 text-emerald-400',
+  imported: 'pill-success',
+  received: 'pill-warning',
+  fulfilled: 'pill-success',
 };
 
 export default function ChannelOrders() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [connection, setConnection] = useState<SallaConnection | null>(null);
   const [orders, setOrders] = useState<ChannelOrder[]>([]);
@@ -131,7 +133,7 @@ export default function ChannelOrders() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -147,45 +149,46 @@ export default function ChannelOrders() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="animate-fade-up space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Globe className="h-6 w-6 text-brand-400" />
-            {t('online_orders')}
-          </h2>
-          <p className="text-slate-400 text-sm mt-1">{t('online_orders_desc')}</p>
-        </div>
+      <PageHeading
+        title={t('online_orders')}
+        subtitle={t('online_orders_desc')}
+        icon={
+          <span className="dxr-sw dxr-sw-brand h-10 w-10">
+            <Globe className="h-[18px] w-[18px]" />
+          </span>
+        }
+      >
         <Button
           variant="outline"
           onClick={load}
-          className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          className="border-input text-foreground/90 hover:bg-muted"
         >
           <RefreshCw className="h-4 w-4 mr-2" /> {t('refresh')}
         </Button>
-      </div>
+      </PageHeading>
 
       {/* Salla connection (OMN-01) */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardContent className="p-4 space-y-3">
-          <div className="flex items-center gap-2 text-white font-semibold">
+          <div className="flex items-center gap-2 text-foreground font-semibold">
             <Link2 className="h-5 w-5 text-brand-400" />
             {t('salla_connection')}
             {connection?.connected && (
-              <Badge className="bg-green-500/20 text-green-400">
+              <Badge className="pill-success">
                 <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> {t('salla_connected_badge')}
               </Badge>
             )}
           </div>
-          <p className="text-slate-400 text-sm">{t('salla_connection_hint')}</p>
+          <p className="text-muted-foreground text-sm">{t('salla_connection_hint')}</p>
           <div className="flex flex-col sm:flex-row gap-2">
             <Input
               dir="ltr"
               value={storeId}
               onChange={(e) => setStoreId(e.target.value)}
               placeholder={t('salla_store_id')}
-              className="bg-slate-900 border-slate-600 text-white"
+              className="bg-background border-input text-foreground"
             />
             <Input
               dir="ltr"
@@ -197,18 +200,18 @@ export default function ChannelOrders() {
                   ? t('salla_webhook_secret_set')
                   : t('salla_webhook_secret')
               }
-              className="bg-slate-900 border-slate-600 text-white"
+              className="bg-background border-input text-foreground"
             />
             <Button
               onClick={handleConnect}
               disabled={saving || !storeId.trim()}
-              className="bg-brand-600 hover:bg-brand-700 text-white shrink-0"
+              className="shrink-0"
             >
               {saving ? t('loading') : t('connect')}
             </Button>
           </div>
           {connectMsg && (
-            <p className="text-sm text-slate-300" role="status">
+            <p className="text-sm text-foreground/90" role="status">
               {connectMsg}
             </p>
           )}
@@ -216,25 +219,25 @@ export default function ChannelOrders() {
       </Card>
 
       {/* Delivery-aggregator connection (F-060) */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardContent className="p-4 space-y-3">
-          <div className="flex items-center gap-2 text-white font-semibold">
-            <Link2 className="h-5 w-5 text-orange-400" />
+          <div className="flex items-center gap-2 text-foreground font-semibold">
+            <Link2 className="h-5 w-5 text-warning" />
             {t('aggregator_connection')}
             {aggregator?.connected && (
-              <Badge className="bg-green-500/20 text-green-400">
+              <Badge className="pill-success">
                 <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> {t('aggregator_connected_badge')}
               </Badge>
             )}
           </div>
-          <p className="text-slate-400 text-sm">{t('aggregator_connection_hint')}</p>
+          <p className="text-muted-foreground text-sm">{t('aggregator_connection_hint')}</p>
           <div className="flex flex-col sm:flex-row gap-2">
             <Input
               dir="ltr"
               value={locationId}
               onChange={(e) => setLocationId(e.target.value)}
               placeholder={t('aggregator_location_id')}
-              className="bg-slate-900 border-slate-600 text-white"
+              className="bg-background border-input text-foreground"
             />
             <Input
               dir="ltr"
@@ -246,18 +249,18 @@ export default function ChannelOrders() {
                   ? t('salla_webhook_secret_set')
                   : t('salla_webhook_secret')
               }
-              className="bg-slate-900 border-slate-600 text-white"
+              className="bg-background border-input text-foreground"
             />
             <Button
               onClick={handleConnectAggregator}
               disabled={aggSaving || !locationId.trim()}
-              className="bg-orange-600 hover:bg-orange-700 text-white shrink-0"
+              className="bg-warning hover:opacity-90 text-white shrink-0"
             >
               {aggSaving ? t('loading') : t('connect')}
             </Button>
           </div>
           {aggMsg && (
-            <p className="text-sm text-slate-300" role="status">
+            <p className="text-sm text-foreground/90" role="status">
               {aggMsg}
             </p>
           )}
@@ -266,19 +269,19 @@ export default function ChannelOrders() {
 
       {/* Imported orders: empty state vs table */}
       {orders.length === 0 ? (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-10 text-center">
-            <ShoppingCart className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-1">{t('no_channel_orders')}</h3>
-            <p className="text-slate-400 text-sm">{t('no_channel_orders_desc')}</p>
+            <ShoppingCart className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-1">{t('no_channel_orders')}</h3>
+            <p className="text-muted-foreground text-sm">{t('no_channel_orders_desc')}</p>
           </CardContent>
         </Card>
       ) : (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-0 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-700 text-slate-400">
+                <tr className="border-b border-border text-muted-foreground">
                   <th className="text-start p-3">{t('order_number')}</th>
                   <th className="text-start p-3">{t('channel_provider')}</th>
                   <th className="text-start p-3">{t('customer')}</th>
@@ -290,20 +293,20 @@ export default function ChannelOrders() {
               </thead>
               <tbody>
                 {orders.map((o) => (
-                  <tr key={o.id} className="border-b border-slate-700/50">
-                    <td className="p-3 text-white">{o.external_reference || o.external_order_id}</td>
-                    <td className="p-3 text-slate-300">{o.provider}</td>
-                    <td className="p-3 text-slate-300">{o.customer_name || '—'}</td>
-                    <td className="p-3 text-slate-300">
-                      {o.total_amount != null ? `${o.total_amount} ${o.currency || ''}` : '—'}
+                  <tr key={o.id} className="border-b border-border/50">
+                    <td className="p-3 text-foreground">{o.external_reference || o.external_order_id}</td>
+                    <td className="p-3 text-foreground/90">{o.provider}</td>
+                    <td className="p-3 text-foreground/90">{o.customer_name || '—'}</td>
+                    <td className="p-3 text-foreground/90 tabular-nums">
+                      {o.total_amount != null ? formatMoney(o.total_amount, language) : '—'}
                     </td>
                     <td className="p-3">
-                      <Badge className={STATUS_BADGE[o.status] || 'bg-slate-500/20 text-slate-300'}>
+                      <Badge className={STATUS_BADGE[o.status] || 'pill-muted'}>
                         {t(`channel_status_${o.status}`)}
                       </Badge>
                     </td>
-                    <td className="p-3 text-slate-400">{o.transaction_id ?? '—'}</td>
-                    <td className="p-3 text-slate-400">
+                    <td className="p-3 text-muted-foreground">{o.transaction_id ?? '—'}</td>
+                    <td className="p-3 text-muted-foreground">
                       {o.created_at ? new Date(o.created_at).toLocaleString() : '—'}
                     </td>
                   </tr>

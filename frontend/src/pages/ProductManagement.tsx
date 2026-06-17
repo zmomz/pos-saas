@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -18,6 +17,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import StatTile from '@/components/dashboard/StatTile';
+import { formatMoney } from '@/lib/format';
+import { Package as PackageIcon, AlertTriangle, CheckCircle2, Plus } from 'lucide-react';
 import {
   getProductsList,
   createProduct,
@@ -40,7 +43,7 @@ import {
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import { DataPagination } from '@/components/DataPagination';
-import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { useLanguage } from '@/lib/i18n';
 
 const PAGE_SIZE = 10;
 
@@ -173,8 +176,8 @@ export default function ProductManagement() {
   const [importResult, setImportResult] = useState<CsvImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const navigate = useNavigate();
-  const { t, language, setLanguage } = useLanguage();
+  const { t, language } = useLanguage();
+  const tt = (key: string, fallback: string) => { const v = t(key); return v === key ? fallback : v; };
 
   useEffect(() => {
     loadProducts();
@@ -498,153 +501,138 @@ export default function ProductManagement() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Name *</label>
+          <Label className="mb-1 block">{tt('name', 'Name')} *</Label>
           <Input
             value={formData.name}
             onChange={(e) => handleFormChange('name', e.target.value)}
-            placeholder="Product name"
-            className="bg-slate-700 border-slate-600 text-white"
+            placeholder={tt('product_name_placeholder', 'Product name')}
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Arabic Name</label>
+          <Label className="mb-1 block">{tt('arabic_name', 'Arabic Name')}</Label>
           <Input
             value={formData.name_ar}
             onChange={(e) => handleFormChange('name_ar', e.target.value)}
             placeholder="اسم المنتج"
             dir="rtl"
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Barcode</label>
+          <Label className="mb-1 block">{tt('barcode', 'Barcode')}</Label>
           <Input
             value={formData.barcode}
             onChange={(e) => handleFormChange('barcode', e.target.value)}
             placeholder="e.g. 1234567890"
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">{t('price')} *</label>
+            <Label className="mb-1 block">{t('price')} *</Label>
             <Input
               type="number"
               value={formData.price}
               onChange={(e) => handleFormChange('price', e.target.value)}
               placeholder="0.00"
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">Cost Price</label>
+            <Label className="mb-1 block">{tt('cost_price', 'Cost Price')}</Label>
             <Input
               type="number"
               value={formData.cost_price}
               onChange={(e) => handleFormChange('cost_price', e.target.value)}
               placeholder="0.00"
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">{t('quantity')} *</label>
+            <Label className="mb-1 block">{t('quantity')} *</Label>
             <Input
               type="number"
               value={formData.quantity}
               onChange={(e) => handleFormChange('quantity', e.target.value)}
               placeholder="0"
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">VAT %</label>
+            <Label className="mb-1 block">{tt('vat_percent', 'VAT %')}</Label>
             <Input
               type="number"
               value={formData.vat_rate}
               onChange={(e) => handleFormChange('vat_rate', e.target.value)}
               placeholder="15"
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">{t('reorder_point')}</label>
+            <Label className="mb-1 block">{t('reorder_point')}</Label>
             <Input
               type="number"
               value={formData.reorder_point}
               onChange={(e) => handleFormChange('reorder_point', e.target.value)}
               placeholder="0"
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
           <div>
-            <label className="text-sm text-slate-400 mb-1 block">{t('reorder_quantity')}</label>
+            <Label className="mb-1 block">{t('reorder_quantity')}</Label>
             <Input
               type="number"
               value={formData.reorder_quantity}
               onChange={(e) => handleFormChange('reorder_quantity', e.target.value)}
               placeholder="0"
-              className="bg-slate-700 border-slate-600 text-white"
             />
           </div>
         </div>
-        <p className="text-xs text-slate-500 -mt-2">{t('reorder_point_hint')}</p>
+        <p className="text-xs text-muted-foreground -mt-2">{t('reorder_point_hint')}</p>
         {/* POS-11 (F-011): weighted & open-price configuration */}
-        <div className="space-y-2 border border-slate-700 rounded-md p-3">
-          <label className="flex items-center gap-2 text-sm text-slate-200">
-            <input
-              type="checkbox"
+        <div className="space-y-2 border border-border rounded-md p-3">
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <Checkbox
               checked={formData.is_weighted}
-              onChange={(e) => handleFormToggle('is_weighted', e.target.checked)}
-              className="h-4 w-4 accent-brand-600"
+              onCheckedChange={(c) => handleFormToggle('is_weighted', c === true)}
             />
             {t('weighted_item')}
           </label>
-          <label className="flex items-center gap-2 text-sm text-slate-200">
-            <input
-              type="checkbox"
+          <label className="flex items-center gap-2 text-sm text-foreground">
+            <Checkbox
               checked={formData.is_open_price}
-              onChange={(e) => handleFormToggle('is_open_price', e.target.checked)}
-              className="h-4 w-4 accent-brand-600"
+              onCheckedChange={(c) => handleFormToggle('is_open_price', c === true)}
             />
             {t('open_price_item')}
           </label>
           {formData.is_weighted && (
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('unit_label')}</label>
+              <Label className="mb-1 block">{t('unit_label')}</Label>
               <Input
                 value={formData.unit_label}
                 onChange={(e) => handleFormChange('unit_label', e.target.value)}
                 placeholder={t('unit_label_placeholder')}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
           )}
-          <p className="text-xs text-slate-500">{t('weighted_open_price_hint')}</p>
+          <p className="text-xs text-muted-foreground">{t('weighted_open_price_hint')}</p>
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('category')}</label>
+          <Label className="mb-1 block">{t('category')}</Label>
           <Select
             value={formData.category_id || NO_CATEGORY}
             onValueChange={(v) =>
               handleFormChange('category_id', v === NO_CATEGORY ? '' : v)
             }
           >
-            <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+            <SelectTrigger>
               <SelectValue placeholder={t('category')} />
             </SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-600">
-              <SelectItem value={NO_CATEGORY} className="text-white hover:bg-slate-700">
+            <SelectContent>
+              <SelectItem value={NO_CATEGORY}>
                 {t('no_category')}
               </SelectItem>
               {categories.map((cat) => (
                 <SelectItem
                   key={cat.id}
                   value={String(cat.id)}
-                  className="text-white hover:bg-slate-700"
                 >
                   {cat.name}
                 </SelectItem>
@@ -656,7 +644,7 @@ export default function ProductManagement() {
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.name || !formData.price || !formData.quantity}
-            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
+            className="flex-1"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -667,259 +655,210 @@ export default function ProductManagement() {
 
   if (loading && products.length === 0) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+      <div className="flex items-center justify-center py-20">
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900">
-      {/* Header */}
-      <header className="flex items-center justify-between p-4 border-b border-slate-700">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-white">{t('products')}</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
-            <SelectTrigger className="w-32 bg-slate-800 border-slate-600 text-white">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-600">
-              {languageOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value} className="text-white hover:bg-slate-700">
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+    <div className="animate-fade-up space-y-6">
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><PackageIcon className="h-[18px] w-[18px]" /></span>}
+        title={t('products')}
+        subtitle={`${totalProducts} ${t('products')}`}
+      >
+        <Button
+          variant="outline"
+          onClick={handleExportCsv}
+        >
+          {t('export_csv')}
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".csv,text/csv"
+          onChange={handleImportCsv}
+          className="hidden"
+          data-testid="csv-import-input"
+        />
+        <Button
+          variant="outline"
+          disabled={importing}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          {importing ? t('loading') : t('import_csv')}
+        </Button>
+        <Dialog open={addOpen} onOpenChange={setAddOpen}>
+          <DialogTrigger asChild>
+            <Button
+              onClick={() => setFormData(emptyForm)}
+              className="h-11 rounded-[10px] shadow-brand"
+            >
+              <Plus className="h-4 w-4" />
+              {tt('add_product', 'Add Product')}
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{tt('add_new_product', 'Add New Product')}</DialogTitle>
+            </DialogHeader>
+            {renderForm(handleAddProduct, tt('add_product', 'Add Product'))}
+          </DialogContent>
+        </Dialog>
+      </PageHeading>
+
+      {/* Stats Cards */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatTile icon={PackageIcon} label={tt('total_products', 'Total Products')} value={totalProducts} tone="brand" />
+        <StatTile icon={AlertTriangle} label={tt('low_stock', 'Low Stock')} value={lowStockCount} tone="warning" />
+        <StatTile icon={CheckCircle2} label={t('active')} value={activeProducts} tone="success" />
+      </div>
+
+      {/* Reorder suggestions (INV-08, F-035): loading / error / empty / list */}
+      <div className="dxr-tile">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-[16px] font-extrabold tracking-tight">{t('reorder_suggestions')}</h2>
           <Button
+            size="sm"
             variant="outline"
-            onClick={() => navigate('/client')}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            onClick={loadSuggestions}
+            className="text-xs"
           >
-            {t('back')}
+            {t('refresh')}
           </Button>
         </div>
-      </header>
-
-      <main className="p-6 space-y-6">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Card className="bg-slate-800 border-slate-700">
-            <CardContent className="p-4">
-              <p className="text-slate-400 text-sm">Total Products</p>
-              <p className="text-2xl font-bold text-white">{totalProducts}</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-slate-800 border-slate-700">
-            <CardContent className="p-4">
-              <p className="text-slate-400 text-sm">Low Stock</p>
-              <p className="text-2xl font-bold text-orange-400">{lowStockCount}</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-slate-800 border-slate-700">
-            <CardContent className="p-4">
-              <p className="text-slate-400 text-sm">{t('active')}</p>
-              <p className="text-2xl font-bold text-green-400">{activeProducts}</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Reorder suggestions (INV-08, F-035): loading / error / empty / list */}
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-white font-semibold">{t('reorder_suggestions')}</h2>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={loadSuggestions}
-                className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
-              >
-                {t('refresh')}
-              </Button>
-            </div>
-            {suggestionsLoading ? (
-              <div className="py-6 text-center text-slate-400 animate-pulse">{t('loading')}</div>
-            ) : suggestionsError ? (
-              <ErrorState message={t('reorder_load_error')} onRetry={loadSuggestions} />
-            ) : suggestions.length === 0 ? (
-              <div className="py-6 text-center text-slate-500">{t('no_reorder_suggestions')}</div>
-            ) : (
-              <div className="overflow-x-auto rounded-lg border border-slate-700">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-900/40">
-                    <tr className="text-slate-400">
-                      <th className="p-2 text-start">Name</th>
-                      <th className="p-2 text-start">{t('on_hand')}</th>
-                      <th className="p-2 text-start">{t('reorder_point')}</th>
-                      <th className="p-2 text-start">{t('suggested_order')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {suggestions.map((s) => (
-                      <tr key={s.product_id} className="border-t border-slate-700 text-slate-300">
-                        <td className="p-2">
-                          <span className="text-white">{s.name}</span>
-                          {s.name_ar && (
-                            <span className="block text-xs text-slate-500" dir="rtl">
-                              {s.name_ar}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-2">
-                          <Badge className="bg-red-600/20 text-red-400 border border-red-600/40">
-                            {s.on_hand}
-                          </Badge>
-                        </td>
-                        <td className="p-2">{s.reorder_point}</td>
-                        <td className="p-2 font-semibold text-brand-300">
-                          {s.suggested_order_quantity}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Search, Filter, Add */}
-        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search products..."
-            className="flex-1 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500"
-          />
-          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-40 bg-slate-800 border-slate-600 text-white">
-              <SelectValue placeholder={t('category')} />
-            </SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-600">
-              <SelectItem value="all" className="text-white hover:bg-slate-700">
-                {t('all_categories')}
-              </SelectItem>
-              {categories.map((cat) => (
-                <SelectItem
-                  key={cat.id}
-                  value={String(cat.id)}
-                  className="text-white hover:bg-slate-700"
-                >
-                  {cat.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          {/* ISSUE-068: opt in to see archived products so they can be restored. */}
-          <label className="flex items-center gap-2 text-sm text-slate-300 whitespace-nowrap">
-            <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-              className="h-4 w-4 accent-brand-600"
-            />
-            {t('show_archived')}
-          </label>
-
-          {/* ISSUE-064: CSV export / import. */}
-          <Button
-            variant="outline"
-            onClick={handleExportCsv}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
-          >
-            {t('export_csv')}
-          </Button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv,text/csv"
-            onChange={handleImportCsv}
-            className="hidden"
-            data-testid="csv-import-input"
-          />
-          <Button
-            variant="outline"
-            disabled={importing}
-            onClick={() => fileInputRef.current?.click()}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
-          >
-            {importing ? t('loading') : t('import_csv')}
-          </Button>
-
-          {/* Add Product Dialog */}
-          <Dialog open={addOpen} onOpenChange={setAddOpen}>
-            <DialogTrigger asChild>
-              <Button
-                onClick={() => setFormData(emptyForm)}
-                className="bg-brand-600 hover:bg-brand-700 text-white"
-              >
-                + Add Product
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle className="text-white">Add New Product</DialogTitle>
-              </DialogHeader>
-              {renderForm(handleAddProduct, 'Add Product')}
-            </DialogContent>
-          </Dialog>
-        </div>
-
-        {/* ISSUE-064: import outcome — created/updated counts + rejected rows. */}
-        {importResult && (
-          <Card className="bg-slate-800 border-slate-700">
-            <CardContent className="p-4 space-y-2">
-              <p className="text-slate-200 text-sm">
-                {t('import_summary')
-                  .replace('{created}', String(importResult.created))
-                  .replace('{updated}', String(importResult.updated))}
-              </p>
-              {importResult.errors.length > 0 && (
-                <div className="text-sm text-orange-400">
-                  <p className="font-semibold">
-                    {t('import_rejected').replace('{count}', String(importResult.errors.length))}
-                  </p>
-                  <ul className="list-disc ms-5 mt-1 space-y-0.5">
-                    {importResult.errors.map((err) => (
-                      <li key={err.row}>
-                        {t('row')} {err.row}: {err.errors.join('; ')}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        {suggestionsLoading ? (
+          <div className="py-6 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
+        ) : suggestionsError ? (
+          <ErrorState message={t('reorder_load_error')} onRetry={loadSuggestions} />
+        ) : suggestions.length === 0 ? (
+          <div className="py-6 text-center text-muted-foreground">{t('no_reorder_suggestions')}</div>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40">
+                <tr className="text-muted-foreground">
+                  <th className="p-2 text-start">{tt('name', 'Name')}</th>
+                  <th className="p-2 text-start">{t('on_hand')}</th>
+                  <th className="p-2 text-start">{t('reorder_point')}</th>
+                  <th className="p-2 text-start">{t('suggested_order')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {suggestions.map((s) => (
+                  <tr key={s.product_id} className="border-t border-border text-foreground/90">
+                    <td className="p-2">
+                      <span className="text-foreground">{s.name}</span>
+                      {s.name_ar && (
+                        <span className="block text-xs text-muted-foreground" dir="rtl">
+                          {s.name_ar}
+                        </span>
+                      )}
+                    </td>
+                    <td className="p-2">
+                      <span className="pill-danger tabular-nums">
+                        {s.on_hand}
+                      </span>
+                    </td>
+                    <td className="p-2 tabular-nums">{s.reorder_point}</td>
+                    <td className="p-2 font-semibold text-brand-700 tabular-nums">
+                      {s.suggested_order_quantity}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
+      </div>
 
-        {/* Products Table */}
-        <div className="overflow-x-auto rounded-lg border border-slate-700">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-800">
-              <tr className="text-slate-400">
-                <th className="p-3 text-start">Name</th>
-                <th className="p-3 text-start">Category</th>
-                <th className="p-3 text-start">{t('price')}</th>
-                <th className="p-3 text-start">Stock</th>
-                <th className="p-3 text-start">VAT%</th>
-                <th className="p-3 text-start">{t('status')}</th>
-                <th className="p-3 text-start">Actions</th>
-              </tr>
-            </thead>
+      {/* Search, Filter */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={tt('search_products_placeholder', 'Search products...')}
+          className="flex-1"
+        />
+        <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder={t('category')} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">
+              {t('all_categories')}
+            </SelectItem>
+            {categories.map((cat) => (
+              <SelectItem
+                key={cat.id}
+                value={String(cat.id)}
+              >
+                {cat.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {/* ISSUE-068: opt in to see archived products so they can be restored. */}
+        <label className="flex items-center gap-2 text-sm text-foreground/90 whitespace-nowrap">
+          <Checkbox
+            checked={showArchived}
+            onCheckedChange={(c) => setShowArchived(c === true)}
+          />
+          {t('show_archived')}
+        </label>
+      </div>
+
+      {/* ISSUE-064: import outcome — created/updated counts + rejected rows. */}
+      {importResult && (
+        <div className="dxr-tile space-y-2">
+          <p className="text-foreground text-sm">
+            {t('import_summary')
+              .replace('{created}', String(importResult.created))
+              .replace('{updated}', String(importResult.updated))}
+          </p>
+          {importResult.errors.length > 0 && (
+            <div className="text-sm text-warning">
+              <p className="font-semibold">
+                {t('import_rejected').replace('{count}', String(importResult.errors.length))}
+              </p>
+              <ul className="list-disc ms-5 mt-1 space-y-0.5">
+                {importResult.errors.map((err) => (
+                  <li key={err.row}>
+                    {t('row')} {err.row}: {err.errors.join('; ')}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Products Table */}
+      <div className="dxr-tile overflow-x-auto p-0">
+        <table className="w-full text-sm">
+          <thead className="bg-muted/40">
+            <tr className="text-muted-foreground">
+              <th className="p-3 text-start">{tt('name', 'Name')}</th>
+              <th className="p-3 text-start">{t('category')}</th>
+              <th className="p-3 text-start">{t('price')}</th>
+              <th className="p-3 text-start">{tt('stock', 'Stock')}</th>
+              <th className="p-3 text-start">{tt('vat_percent', 'VAT%')}</th>
+              <th className="p-3 text-start">{t('status')}</th>
+              <th className="p-3 text-start">{tt('actions', 'Actions')}</th>
+            </tr>
+          </thead>
             <tbody>
               {products.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500">
+                  <td colSpan={7} className="p-6 text-center text-muted-foreground">
                     {t('no_products')}
                   </td>
                 </tr>
               ) : (
                 pagedProducts.map((product) => (
-                  <tr key={product.id} className="border-t border-slate-700 text-slate-300">
+                  <tr key={product.id} className="border-t border-border text-foreground/90">
                     <td className="p-3">
                       <div className="flex items-center gap-3">
                         {/* ISSUE-065: image thumbnail, or the name initial fallback. */}
@@ -930,14 +869,14 @@ export default function ProductManagement() {
                             className="h-10 w-10 shrink-0 rounded-lg object-cover"
                           />
                         ) : (
-                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-slate-700 text-sm font-semibold text-slate-300">
+                          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-muted text-sm font-semibold text-foreground/90">
                             {product.name?.charAt(0)?.toUpperCase() || '?'}
                           </span>
                         )}
                         <div>
-                          <span className="text-white font-medium">{product.name}</span>
+                          <span className="text-foreground font-medium">{product.name}</span>
                           {product.name_ar && (
-                            <span className="block text-xs text-slate-400" dir="rtl">
+                            <span className="block text-xs text-muted-foreground" dir="rtl">
                               {product.name_ar}
                             </span>
                           )}
@@ -945,35 +884,35 @@ export default function ProductManagement() {
                       </div>
                     </td>
                     <td className="p-3">
-                      <Badge className="bg-slate-700 text-slate-300">
-                        {product.category || 'Other'}
-                      </Badge>
+                      <span className="pill-muted">
+                        {product.category || tt('other', 'Other')}
+                      </span>
                     </td>
-                    <td className="p-3">${product.price.toFixed(2)}</td>
+                    <td className="p-3 tabular-nums">{formatMoney(product.price, language)}</td>
                     <td className="p-3">
                       {isLowStock(product) ? (
-                        <Badge className="bg-red-600/20 text-red-400 border border-red-600/40">
+                        <span className="pill-danger tabular-nums">
                           {product.quantity}
                           {(product.reorder_point || 0) > 0 && (
                             <span className="ms-1 text-[10px] opacity-70">
                               / {product.reorder_point}
                             </span>
                           )}
-                        </Badge>
+                        </span>
                       ) : (
-                        <span>{product.quantity}</span>
+                        <span className="tabular-nums">{product.quantity}</span>
                       )}
                     </td>
-                    <td className="p-3">{product.vat_rate}%</td>
+                    <td className="p-3 tabular-nums">{product.vat_rate}%</td>
                     <td className="p-3">
                       {product.is_active !== false ? (
-                        <Badge className="bg-green-600/20 text-green-400 border border-green-600/40">
+                        <span className="pill-success">
                           {t('active')}
-                        </Badge>
+                        </span>
                       ) : (
-                        <Badge className="bg-slate-600/20 text-slate-400 border border-slate-600/40">
+                        <span className="pill-muted">
                           {t('inactive')}
-                        </Badge>
+                        </span>
                       )}
                     </td>
                     <td className="p-3">
@@ -982,7 +921,7 @@ export default function ProductManagement() {
                           size="sm"
                           variant="outline"
                           onClick={() => openVariants(product)}
-                          className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                          className="text-xs"
                         >
                           {t('variants')}
                         </Button>
@@ -990,12 +929,12 @@ export default function ProductManagement() {
                           size="sm"
                           variant="outline"
                           onClick={() => openEdit(product)}
-                          className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                          className="text-xs"
                         >
-                          Edit
+                          {tt('edit', 'Edit')}
                         </Button>
                         {/* ISSUE-065: upload a product image (catalog + POS tile). */}
-                        <label className="inline-flex cursor-pointer items-center rounded-md border border-slate-600 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">
+                        <label className="inline-flex cursor-pointer items-center rounded-md border border-input px-3 py-1.5 text-xs text-foreground/90 hover:bg-muted">
                           {t('image')}
                           <input
                             type="file"
@@ -1015,7 +954,7 @@ export default function ProductManagement() {
                             variant="outline"
                             onClick={() => handleRestoreProduct(product)}
                             disabled={submitting}
-                            className="border-green-600/50 text-green-400 hover:bg-green-600/20 text-xs"
+                            className="border-success/40 text-success hover:bg-success/10 text-xs"
                           >
                             {t('restore')}
                           </Button>
@@ -1024,9 +963,9 @@ export default function ProductManagement() {
                             size="sm"
                             variant="outline"
                             onClick={() => openDelete(product)}
-                            className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
+                            className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
                           >
-                            Delete
+                            {tt('delete', 'Delete')}
                           </Button>
                         )}
                       </div>
@@ -1036,21 +975,20 @@ export default function ProductManagement() {
               )}
             </tbody>
           </table>
-        </div>
+      </div>
 
-        <DataPagination
-          page={page}
-          pageSize={PAGE_SIZE}
-          total={products.length}
-          onPageChange={setPage}
-        />
-      </main>
+      <DataPagination
+        page={page}
+        pageSize={PAGE_SIZE}
+        total={products.length}
+        onPageChange={setPage}
+      />
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">Edit Product</DialogTitle>
+            <DialogTitle>{tt('edit_product', 'Edit Product')}</DialogTitle>
           </DialogHeader>
           {renderForm(handleEditProduct, t('save'))}
         </DialogContent>
@@ -1058,28 +996,28 @@ export default function ProductManagement() {
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">Confirm Delete</DialogTitle>
+            <DialogTitle>{tt('confirm_delete', 'Confirm Delete')}</DialogTitle>
           </DialogHeader>
-          <p className="text-slate-300">
-            Are you sure you want to delete <strong>{selectedProduct?.name}</strong>? This action
-            cannot be undone.
+          <p className="text-foreground/90">
+            {tt('delete_product_confirm_prefix', 'Are you sure you want to delete')} <strong>{selectedProduct?.name}</strong>? {tt('action_cannot_be_undone', 'This action cannot be undone.')}
           </p>
           <div className="flex gap-3 pt-4">
             <Button
               variant="outline"
               onClick={() => setDeleteOpen(false)}
-              className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="flex-1"
             >
               {t('cancel')}
             </Button>
             <Button
+              variant="destructive"
               onClick={handleDeleteProduct}
               disabled={submitting}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+              className="flex-1"
             >
-              {submitting ? t('loading') : 'Delete'}
+              {submitting ? t('loading') : tt('delete', 'Delete')}
             </Button>
           </div>
         </DialogContent>
@@ -1087,28 +1025,28 @@ export default function ProductManagement() {
 
       {/* Variants Matrix Editor (INV-04, F-033) */}
       <Dialog open={variantsOpen} onOpenChange={setVariantsOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-white">
+            <DialogTitle>
               {t('variants')} — {variantsProduct?.name}
             </DialogTitle>
           </DialogHeader>
 
           {/* Existing variants: loading / error (distinct from empty) / empty / list */}
           {variantsLoading ? (
-            <div className="py-8 text-center text-slate-400 animate-pulse">{t('loading')}</div>
+            <div className="py-8 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
           ) : variantsError ? (
             <ErrorState
               message={t('variant_load_error')}
               onRetry={() => variantsProduct && loadVariants(variantsProduct.id)}
             />
           ) : variants.length === 0 ? (
-            <div className="py-6 text-center text-slate-500">{t('no_variants')}</div>
+            <div className="py-6 text-center text-muted-foreground">{t('no_variants')}</div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-slate-700">
+            <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
-                <thead className="bg-slate-900/40">
-                  <tr className="text-slate-400">
+                <thead className="bg-muted/40">
+                  <tr className="text-muted-foreground">
                     <th className="p-2 text-start">{t('variant_name')}</th>
                     <th className="p-2 text-start">{t('barcode')}</th>
                     <th className="p-2 text-start">{t('price')}</th>
@@ -1118,23 +1056,23 @@ export default function ProductManagement() {
                 </thead>
                 <tbody>
                   {variants.map((v) => (
-                    <tr key={v.id} className="border-t border-slate-700 text-slate-300">
+                    <tr key={v.id} className="border-t border-border text-foreground/90">
                       <td className="p-2">
-                        <span className="text-white">{v.name}</span>
+                        <span className="text-foreground">{v.name}</span>
                         {v.attributes && (
-                          <span className="block text-xs text-slate-500">{v.attributes}</span>
+                          <span className="block text-xs text-muted-foreground">{v.attributes}</span>
                         )}
                       </td>
                       <td className="p-2 font-mono text-xs">{v.barcode || '—'}</td>
-                      <td className="p-2">{v.price != null ? v.price.toFixed(2) : '—'}</td>
-                      <td className="p-2">{v.quantity ?? 0}</td>
+                      <td className="p-2 tabular-nums">{v.price != null ? formatMoney(v.price, language) : '—'}</td>
+                      <td className="p-2 tabular-nums">{v.quantity ?? 0}</td>
                       <td className="p-2">
                         <div className="flex gap-2">
                           <Button
                             size="sm"
                             variant="outline"
                             onClick={() => startEditVariant(v)}
-                            className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                            className="text-xs"
                           >
                             {t('edit')}
                           </Button>
@@ -1142,7 +1080,7 @@ export default function ProductManagement() {
                             size="sm"
                             variant="outline"
                             onClick={() => handleDeleteVariant(v.id)}
-                            className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
+                            className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
                           >
                             {t('delete')}
                           </Button>
@@ -1156,65 +1094,59 @@ export default function ProductManagement() {
           )}
 
           {/* Add / edit a variant */}
-          <div className="mt-2 space-y-3 rounded-lg border border-slate-700 p-3">
-            <p className="text-sm font-medium text-slate-300">
+          <div className="mt-2 space-y-3 rounded-lg border border-border p-3">
+            <p className="text-sm font-medium text-foreground/90">
               {editingVariantId ? t('edit_variant') : t('add_variant')}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">{t('variant_name')} *</label>
+                <Label className="mb-1 block text-xs">{t('variant_name')} *</Label>
                 <Input
                   value={variantForm.name}
                   onChange={(e) => setVariantForm((p) => ({ ...p, name: e.target.value }))}
                   placeholder="Red / Large"
-                  className="bg-slate-700 border-slate-600 text-white"
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">{t('variant_attributes')}</label>
+                <Label className="mb-1 block text-xs">{t('variant_attributes')}</Label>
                 <Input
                   value={variantForm.attributes}
                   onChange={(e) => setVariantForm((p) => ({ ...p, attributes: e.target.value }))}
                   placeholder='{"size":"L","color":"Red"}'
-                  className="bg-slate-700 border-slate-600 text-white"
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">{t('barcode')}</label>
+                <Label className="mb-1 block text-xs">{t('barcode')}</Label>
                 <Input
                   value={variantForm.barcode}
                   onChange={(e) => setVariantForm((p) => ({ ...p, barcode: e.target.value }))}
                   placeholder="e.g. TSHIRT-RED-L"
-                  className="bg-slate-700 border-slate-600 text-white"
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">SKU</label>
+                <Label className="mb-1 block text-xs">SKU</Label>
                 <Input
                   value={variantForm.sku}
                   onChange={(e) => setVariantForm((p) => ({ ...p, sku: e.target.value }))}
                   placeholder="SKU"
-                  className="bg-slate-700 border-slate-600 text-white"
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">{t('price')}</label>
+                <Label className="mb-1 block text-xs">{t('price')}</Label>
                 <Input
                   type="number"
                   value={variantForm.price}
                   onChange={(e) => setVariantForm((p) => ({ ...p, price: e.target.value }))}
                   placeholder="0.00"
-                  className="bg-slate-700 border-slate-600 text-white"
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">{t('stock')}</label>
+                <Label className="mb-1 block text-xs">{t('stock')}</Label>
                 <Input
                   type="number"
                   value={variantForm.quantity}
                   onChange={(e) => setVariantForm((p) => ({ ...p, quantity: e.target.value }))}
                   placeholder="0"
-                  className="bg-slate-700 border-slate-600 text-white"
                 />
               </div>
             </div>
@@ -1222,7 +1154,6 @@ export default function ProductManagement() {
               <Button
                 onClick={handleSaveVariant}
                 disabled={variantSubmitting || !variantForm.name}
-                className="bg-brand-600 hover:bg-brand-700 text-white"
               >
                 {variantSubmitting ? t('loading') : editingVariantId ? t('save') : t('add_variant')}
               </Button>
@@ -1230,7 +1161,6 @@ export default function ProductManagement() {
                 <Button
                   variant="outline"
                   onClick={resetVariantForm}
-                  className="border-slate-600 text-slate-300 hover:bg-slate-700"
                 >
                   {t('cancel')}
                 </Button>

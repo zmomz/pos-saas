@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -12,6 +12,8 @@ import {
 import { client } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import ErrorState from '@/components/states/ErrorState';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import StatTile from '@/components/dashboard/StatTile';
 import { Gift, Star, Users, Settings, Plus, Minus } from 'lucide-react';
 
 interface LoyaltyConfig {
@@ -67,6 +69,10 @@ export default function LoyaltyProgram() {
   const [activeTab, setActiveTab] = useState<'balances' | 'history'>('balances');
 
   const { t } = useLanguage();
+  const tt = (key: string, fallback: string) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
 
   useEffect(() => {
     loadData();
@@ -154,7 +160,7 @@ export default function LoyaltyProgram() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -164,111 +170,98 @@ export default function LoyaltyProgram() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="animate-fade-up space-y-6">
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Gift className="h-[18px] w-[18px]" /></span>}
+        title={tt('loyalty_program', 'Loyalty Program')}
+        subtitle={`${customerBalances.length} ${tt('members', 'Members')}`}
+      />
+
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Users className="h-8 w-8 text-brand-400" />
-            <div>
-              <p className="text-slate-400 text-sm">Members</p>
-              <p className="text-2xl font-bold text-white">{customerBalances.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Star className="h-8 w-8 text-yellow-400" />
-            <div>
-              <p className="text-slate-400 text-sm">Total Points Outstanding</p>
-              <p className="text-2xl font-bold text-yellow-400">
-                {customerBalances.reduce((sum, c) => sum + (c.points_balance || 0), 0).toLocaleString()}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Gift className="h-8 w-8 text-green-400" />
-            <div>
-              <p className="text-slate-400 text-sm">Program Status</p>
-              <Badge className={config.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}>
-                {config.is_active ? 'Active' : 'Inactive'}
-              </Badge>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile icon={Users} label={tt('members', 'Members')} value={customerBalances.length} tone="brand" />
+        <StatTile
+          icon={Star}
+          label={tt('total_points_outstanding', 'Total Points Outstanding')}
+          value={customerBalances.reduce((sum, c) => sum + (c.points_balance || 0), 0).toLocaleString()}
+          tone="gold"
+        />
+        <StatTile
+          icon={Gift}
+          label={tt('program_status', 'Program Status')}
+          value={config.is_active ? tt('active', 'Active') : tt('inactive', 'Inactive')}
+          tone={config.is_active ? 'success' : 'warning'}
+        />
       </div>
 
       {/* Configuration */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-white flex items-center gap-2">
-            <Settings className="h-5 w-5 text-slate-400" />
-            Program Configuration
+          <CardTitle className="text-foreground flex items-center gap-2">
+            <Settings className="h-5 w-5 text-muted-foreground" />
+            {tt('program_configuration', 'Program Configuration')}
           </CardTitle>
           <Button
             size="sm"
             variant="outline"
             onClick={() => setConfigEditing(!configEditing)}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
           >
-            {configEditing ? t('cancel') : 'Edit'}
+            {configEditing ? t('cancel') : tt('edit', 'Edit')}
           </Button>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Points per SAR spent</label>
+              <Label className="text-xs block mb-1">{tt('points_per_sar_spent', 'Points per SAR spent')}</Label>
               {configEditing ? (
-                <Input type="number" value={config.points_per_sar} onChange={(e) => setConfig((c) => ({ ...c, points_per_sar: parseFloat(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
+                <Input type="number" value={config.points_per_sar} onChange={(e) => setConfig((c) => ({ ...c, points_per_sar: parseFloat(e.target.value) || 0 }))} />
               ) : (
-                <p className="text-white font-medium text-lg">{config.points_per_sar}</p>
+                <p className="text-foreground font-medium text-lg tabular-nums">{config.points_per_sar}</p>
               )}
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Redemption Rate (SAR/point)</label>
+              <Label className="text-xs block mb-1">{tt('redemption_rate', 'Redemption Rate (SAR/point)')}</Label>
               {configEditing ? (
-                <Input type="number" step="0.01" value={config.redemption_rate} onChange={(e) => setConfig((c) => ({ ...c, redemption_rate: parseFloat(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
+                <Input type="number" step="0.01" value={config.redemption_rate} onChange={(e) => setConfig((c) => ({ ...c, redemption_rate: parseFloat(e.target.value) || 0 }))} />
               ) : (
-                <p className="text-white font-medium text-lg">{config.redemption_rate}</p>
+                <p className="text-foreground font-medium text-lg tabular-nums">{config.redemption_rate}</p>
               )}
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Min Points to Redeem</label>
+              <Label className="text-xs block mb-1">{tt('min_points_to_redeem', 'Min Points to Redeem')}</Label>
               {configEditing ? (
-                <Input type="number" value={config.min_points_redeem} onChange={(e) => setConfig((c) => ({ ...c, min_points_redeem: parseInt(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
+                <Input type="number" value={config.min_points_redeem} onChange={(e) => setConfig((c) => ({ ...c, min_points_redeem: parseInt(e.target.value) || 0 }))} />
               ) : (
-                <p className="text-white font-medium text-lg">{config.min_points_redeem}</p>
+                <p className="text-foreground font-medium text-lg tabular-nums">{config.min_points_redeem}</p>
               )}
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Points Expiry (days, 0 = never)</label>
+              <Label className="text-xs block mb-1">{tt('points_expiry_days', 'Points Expiry (days, 0 = never)')}</Label>
               {configEditing ? (
-                <Input type="number" value={config.points_expiry_days} onChange={(e) => setConfig((c) => ({ ...c, points_expiry_days: parseInt(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
+                <Input type="number" value={config.points_expiry_days} onChange={(e) => setConfig((c) => ({ ...c, points_expiry_days: parseInt(e.target.value) || 0 }))} />
               ) : (
-                <p className="text-white font-medium text-lg">{config.points_expiry_days ? config.points_expiry_days : 'Never'}</p>
+                <p className="text-foreground font-medium text-lg tabular-nums">{config.points_expiry_days ? config.points_expiry_days : tt('never', 'Never')}</p>
               )}
             </div>
             <div>
-              <label className="text-xs text-slate-400 block mb-1">Status</label>
+              <Label className="text-xs block mb-1">{tt('status', 'Status')}</Label>
               {configEditing ? (
                 <Button
                   size="sm"
                   onClick={() => setConfig((c) => ({ ...c, is_active: !c.is_active }))}
-                  className={config.is_active ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'}
+                  className={config.is_active ? 'bg-success text-white hover:bg-success/90' : 'bg-danger text-white hover:bg-danger/90'}
                 >
-                  {config.is_active ? 'Active' : 'Inactive'}
+                  {config.is_active ? tt('active', 'Active') : tt('inactive', 'Inactive')}
                 </Button>
               ) : (
-                <Badge className={config.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}>
-                  {config.is_active ? 'Active' : 'Inactive'}
-                </Badge>
+                <span className={config.is_active ? 'pill-success' : 'pill-danger'}>
+                  {config.is_active ? tt('active', 'Active') : tt('inactive', 'Inactive')}
+                </span>
               )}
             </div>
           </div>
           {configEditing && (
-            <Button onClick={handleSaveConfig} disabled={submitting} className="mt-4 bg-brand-600 hover:bg-brand-700 text-white">
+            <Button onClick={handleSaveConfig} disabled={submitting} className="mt-4">
               {submitting ? t('loading') : t('save_changes')}
             </Button>
           )}
@@ -276,57 +269,57 @@ export default function LoyaltyProgram() {
       </Card>
 
       {/* Tabs */}
-      <div className="flex gap-2">
-        <Button variant={activeTab === 'balances' ? 'default' : 'outline'} onClick={() => setActiveTab('balances')} className={activeTab === 'balances' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
-          Customer Balances
-        </Button>
-        <Button variant={activeTab === 'history' ? 'default' : 'outline'} onClick={() => setActiveTab('history')} className={activeTab === 'history' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
-          Points History
-        </Button>
+      <div className="dxr-seg">
+        <button data-active={activeTab === 'balances'} onClick={() => setActiveTab('balances')}>
+          {tt('customer_balances', 'Customer Balances')}
+        </button>
+        <button data-active={activeTab === 'history'} onClick={() => setActiveTab('history')}>
+          {tt('points_history', 'Points History')}
+        </button>
       </div>
 
       {activeTab === 'balances' && (
-        <div className="overflow-x-auto rounded-lg border border-slate-700">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
-            <thead className="bg-slate-800">
-              <tr className="text-slate-400">
-                <th className="p-3 text-start">Customer</th>
-                <th className="p-3 text-start">Balance</th>
-                <th className="p-3 text-start">Available</th>
-                <th className="p-3 text-start">Total Earned</th>
-                <th className="p-3 text-start">Total Redeemed</th>
-                <th className="p-3 text-start">Last Activity</th>
-                <th className="p-3 text-start">Actions</th>
+            <thead className="bg-card">
+              <tr className="text-muted-foreground">
+                <th className="p-3 text-start">{tt('customer', 'Customer')}</th>
+                <th className="p-3 text-start">{tt('balance', 'Balance')}</th>
+                <th className="p-3 text-start">{tt('available', 'Available')}</th>
+                <th className="p-3 text-start">{tt('total_earned', 'Total Earned')}</th>
+                <th className="p-3 text-start">{tt('total_redeemed', 'Total Redeemed')}</th>
+                <th className="p-3 text-start">{tt('last_activity', 'Last Activity')}</th>
+                <th className="p-3 text-start">{tt('actions', 'Actions')}</th>
               </tr>
             </thead>
             <tbody>
               {customerBalances.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500">No loyalty members yet</td>
+                  <td colSpan={7} className="p-6 text-center text-muted-foreground">{tt('no_loyalty_members', 'No loyalty members yet')}</td>
                 </tr>
               ) : (
                 customerBalances.map((cust) => (
-                  <tr key={cust.id} className="border-t border-slate-700 text-slate-300">
-                    <td className="p-3 text-white font-medium">{cust.customer_name}</td>
+                  <tr key={cust.id} className="border-t border-border text-foreground/90">
+                    <td className="p-3 text-foreground font-medium">{cust.customer_name}</td>
                     <td className="p-3">
-                      <span className="text-yellow-400 font-bold">{cust.points_balance?.toLocaleString()}</span> pts
+                      <span className="text-gold-600 font-bold tabular-nums">{cust.points_balance?.toLocaleString()}</span> {tt('pts', 'pts')}
                     </td>
                     <td className="p-3">
-                      <span className="text-brand-400 font-bold">
+                      <span className="text-brand font-bold tabular-nums">
                         {(cust.available_points ?? cust.points_balance)?.toLocaleString()}
-                      </span> pts
+                      </span> {tt('pts', 'pts')}
                     </td>
-                    <td className="p-3 text-green-400">{cust.total_earned?.toLocaleString()}</td>
-                    <td className="p-3 text-red-400">{cust.total_redeemed?.toLocaleString()}</td>
+                    <td className="p-3 text-success tabular-nums">{cust.total_earned?.toLocaleString()}</td>
+                    <td className="p-3 text-danger tabular-nums">{cust.total_redeemed?.toLocaleString()}</td>
                     <td className="p-3">{cust.last_activity ? new Date(cust.last_activity).toLocaleDateString() : '—'}</td>
                     <td className="p-3">
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => { setSelectedCustomer(cust); setAdjustOpen(true); }}
-                        className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                        className="text-xs"
                       >
-                        Adjust
+                        {tt('adjust', 'Adjust')}
                       </Button>
                     </td>
                   </tr>
@@ -338,34 +331,34 @@ export default function LoyaltyProgram() {
       )}
 
       {activeTab === 'history' && (
-        <div className="overflow-x-auto rounded-lg border border-slate-700">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
-            <thead className="bg-slate-800">
-              <tr className="text-slate-400">
-                <th className="p-3 text-start">Date</th>
-                <th className="p-3 text-start">Customer</th>
-                <th className="p-3 text-start">Type</th>
-                <th className="p-3 text-start">Points</th>
-                <th className="p-3 text-start">Description</th>
+            <thead className="bg-card">
+              <tr className="text-muted-foreground">
+                <th className="p-3 text-start">{tt('date', 'Date')}</th>
+                <th className="p-3 text-start">{tt('customer', 'Customer')}</th>
+                <th className="p-3 text-start">{tt('type', 'Type')}</th>
+                <th className="p-3 text-start">{tt('points', 'Points')}</th>
+                <th className="p-3 text-start">{tt('description', 'Description')}</th>
               </tr>
             </thead>
             <tbody>
               {transactions.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="p-6 text-center text-slate-500">No transactions yet</td>
+                  <td colSpan={5} className="p-6 text-center text-muted-foreground">{tt('no_transactions', 'No transactions yet')}</td>
                 </tr>
               ) : (
                 transactions.map((tx) => (
-                  <tr key={tx.id} className="border-t border-slate-700 text-slate-300">
+                  <tr key={tx.id} className="border-t border-border text-foreground/90">
                     <td className="p-3">{new Date(tx.created_at).toLocaleDateString()}</td>
-                    <td className="p-3 text-white">{tx.customer_name || '—'}</td>
+                    <td className="p-3 text-foreground">{tx.customer_name || '—'}</td>
                     <td className="p-3">
-                      <Badge className={tx.type === 'earned' || tx.type === 'add' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}>
+                      <span className={tx.type === 'earned' || tx.type === 'add' ? 'pill-success' : 'pill-danger'}>
                         {tx.type}
-                      </Badge>
+                      </span>
                     </td>
                     <td className="p-3">
-                      <span className={tx.type === 'earned' || tx.type === 'add' ? 'text-green-400' : 'text-red-400'}>
+                      <span className={`tabular-nums ${tx.type === 'earned' || tx.type === 'add' ? 'text-success' : 'text-danger'}`}>
                         {tx.type === 'earned' || tx.type === 'add' ? '+' : '-'}{tx.points}
                       </span>
                     </td>
@@ -380,35 +373,35 @@ export default function LoyaltyProgram() {
 
       {/* Adjust Points Dialog */}
       <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">Adjust Points - {selectedCustomer?.customer_name}</DialogTitle>
+            <DialogTitle>{tt('adjust_points', 'Adjust Points')} - {selectedCustomer?.customer_name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="flex gap-2">
               <Button
                 onClick={() => setAdjustType('add')}
-                className={adjustType === 'add' ? 'bg-green-600 text-white flex-1' : 'bg-slate-700 text-slate-300 flex-1'}
+                className={adjustType === 'add' ? 'bg-success text-white flex-1' : 'bg-muted text-foreground/90 flex-1'}
               >
-                <Plus className="h-4 w-4 mr-1" /> Add Points
+                <Plus className="h-4 w-4 me-1" /> {tt('add_points', 'Add Points')}
               </Button>
               <Button
                 onClick={() => setAdjustType('deduct')}
-                className={adjustType === 'deduct' ? 'bg-red-600 text-white flex-1' : 'bg-slate-700 text-slate-300 flex-1'}
+                className={adjustType === 'deduct' ? 'bg-danger text-white flex-1' : 'bg-muted text-foreground/90 flex-1'}
               >
-                <Minus className="h-4 w-4 mr-1" /> Deduct Points
+                <Minus className="h-4 w-4 me-1" /> {tt('deduct_points', 'Deduct Points')}
               </Button>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">Points</label>
-              <Input type="number" value={adjustPoints} onChange={(e) => setAdjustPoints(e.target.value)} placeholder="0" className="bg-slate-700 border-slate-600 text-white" />
+              <Label className="mb-1 block">{tt('points', 'Points')}</Label>
+              <Input type="number" value={adjustPoints} onChange={(e) => setAdjustPoints(e.target.value)} placeholder="0" />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">Reason</label>
-              <Input value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder="Manual adjustment reason" className="bg-slate-700 border-slate-600 text-white" />
+              <Label className="mb-1 block">{tt('reason', 'Reason')}</Label>
+              <Input value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder={tt('manual_adjustment_reason', 'Manual adjustment reason')} />
             </div>
-            <Button onClick={handleAdjustPoints} disabled={submitting || !adjustPoints} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
-              {submitting ? t('loading') : 'Confirm Adjustment'}
+            <Button onClick={handleAdjustPoints} disabled={submitting || !adjustPoints} className="w-full">
+              {submitting ? t('loading') : tt('confirm_adjustment', 'Confirm Adjustment')}
             </Button>
           </div>
         </DialogContent>

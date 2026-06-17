@@ -1,35 +1,21 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Edit2, Trash2, Package } from 'lucide-react';
+import { Plus, Edit2, Trash2, Package } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
+  Dialog, DialogContent, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
+import { cn } from '@/lib/utils';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
-import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import { useLanguage } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { getPackagesList, createPackage, updatePackage, deletePackage } from '@/lib/api';
 
-// MA-07: the canonical feature keys an agent may gate per client (mirrors the
-// backend FEATURE_KEYS). A package's tier is the subset it unlocks.
 const FEATURE_KEYS = [
-  'email_receipts',
-  'sms_receipts',
-  'loyalty',
-  'restaurant',
-  'inventory',
-  'discounts',
-  'zatca',
-  'omnichannel',
+  'email_receipts', 'sms_receipts', 'loyalty', 'restaurant', 'inventory', 'discounts', 'zatca', 'omnichannel',
 ] as const;
 
 interface PackageItem {
@@ -51,21 +37,14 @@ interface PackageFormData {
 }
 
 const emptyForm: PackageFormData = {
-  name: '',
-  client_slots: 0,
-  wholesale_price: 0,
-  suggested_retail_price: 0,
-  features: [],
+  name: '', client_slots: 0, wholesale_price: 0, suggested_retail_price: 0, features: [],
 };
 
 export default function PackageManagement() {
-  const navigate = useNavigate();
-  const { language, setLanguage, t, isRTL } = useLanguage();
+  const { language, t, isRTL } = useLanguage();
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  // UX-02 (F-051): a 403 gets its own in-page permission state rather than
-  // masquerading as a generic load error.
   const [denied, setDenied] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingPackage, setEditingPackage] = useState<PackageItem | null>(null);
@@ -83,11 +62,8 @@ export default function PackageManagement() {
       setLoadError(false);
       setDenied(false);
       const data = await getPackagesList();
-      // The endpoint returns { items, total }; keep a legacy `packages` fallback.
       setPackages(data?.items || data?.packages || []);
     } catch (err: unknown) {
-      // A failed fetch is an error, not an empty catalog — surface it distinctly.
-      // A 403 gets its own permission state rather than a misleading error.
       const status = (err as { response?: { status?: number } })?.response?.status;
       if (status === 403) setDenied(true);
       else setLoadError(true);
@@ -118,9 +94,7 @@ export default function PackageManagement() {
   function toggleFeature(key: string) {
     setForm((prev) => ({
       ...prev,
-      features: prev.features.includes(key)
-        ? prev.features.filter((f) => f !== key)
-        : [...prev.features, key],
+      features: prev.features.includes(key) ? prev.features.filter((f) => f !== key) : [...prev.features, key],
     }));
   }
 
@@ -128,7 +102,6 @@ export default function PackageManagement() {
     if (!form.name.trim()) return;
     try {
       setSaving(true);
-      // Empty selection ⇒ no tier (null), not "a tier that unlocks nothing".
       const tier = form.features.length > 0 ? form.features : null;
       if (editingPackage) {
         await updatePackage(editingPackage.id, { ...form, features: tier });
@@ -157,242 +130,132 @@ export default function PackageManagement() {
   }
 
   return (
-    <div className={`min-h-screen bg-slate-900 text-white ${isRTL ? 'rtl' : 'ltr'}`} dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* Header */}
-      <header className="border-b border-slate-700 bg-slate-800 px-6 py-4">
-        <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate('/master')}
-              className="text-slate-300 hover:text-white"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <h1 className="text-xl font-bold">{t('package_management')}</h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <Select value={language} onValueChange={(val) => setLanguage(val as Language)}>
-              <SelectTrigger className="w-32 border-slate-700 bg-slate-700 text-white">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="border-slate-700 bg-slate-800 text-white">
-                {languageOptions.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-              <DialogTrigger asChild>
-                <Button onClick={openAddDialog} className="bg-brand-600 text-white hover:bg-brand-700">
-                  <Plus className="mr-2 h-4 w-4" />
-                  {t('add_package')}
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="border-slate-700 bg-slate-800 text-white">
-                <DialogHeader>
-                  <DialogTitle>
-                    {editingPackage ? t('edit_package') : t('add_package')}
-                  </DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 pt-4">
-                  <div>
-                    <label className="mb-1 block text-sm text-slate-300">{t('name')}</label>
-                    <Input
-                      value={form.name}
-                      onChange={(e) => setForm({ ...form, name: e.target.value })}
-                      className="border-slate-600 bg-slate-700 text-white"
-                      placeholder={t('package_name_placeholder')}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm text-slate-300">{t('client_slots')}</label>
-                    <Input
-                      type="number"
-                      value={form.client_slots}
-                      onChange={(e) => setForm({ ...form, client_slots: Number(e.target.value) })}
-                      className="border-slate-600 bg-slate-700 text-white"
-                      min={0}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm text-slate-300">{t('wholesale_price')}</label>
-                    <Input
-                      type="number"
-                      value={form.wholesale_price}
-                      onChange={(e) => setForm({ ...form, wholesale_price: Number(e.target.value) })}
-                      className="border-slate-600 bg-slate-700 text-white"
-                      min={0}
-                      step={0.01}
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm text-slate-300">{t('retail_price')}</label>
-                    <Input
-                      type="number"
-                      value={form.suggested_retail_price}
-                      onChange={(e) => setForm({ ...form, suggested_retail_price: Number(e.target.value) })}
-                      className="border-slate-600 bg-slate-700 text-white"
-                      min={0}
-                      step={0.01}
-                    />
-                  </div>
-                  {/* MA-07: feature-entitlement tier */}
-                  <div>
-                    <label className="mb-1 block text-sm text-slate-300">{t('feature_tier')}</label>
-                    <p className="mb-2 text-xs text-slate-400">{t('feature_tier_hint')}</p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {FEATURE_KEYS.map((key) => (
-                        <label
-                          key={key}
-                          className="flex cursor-pointer items-center gap-2 rounded-md border border-slate-600 bg-slate-700/50 px-2 py-1.5 text-sm text-slate-200"
-                        >
-                          <Checkbox
-                            checked={form.features.includes(key)}
-                            onCheckedChange={() => toggleFeature(key)}
-                          />
-                          <span>{t(`feat_${key}`)}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-3 pt-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => setDialogOpen(false)}
-                      className="border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
-                    >
-                      {t('cancel')}
-                    </Button>
-                    <Button
-                      onClick={handleSubmit}
-                      disabled={saving || !form.name.trim()}
-                      className="bg-brand-600 text-white hover:bg-brand-700"
-                    >
-                      {saving ? t('loading') : t('save')}
-                    </Button>
-                  </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
+    <div className="animate-fade-up space-y-5" dir={isRTL ? 'rtl' : 'ltr'}>
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-9 w-9"><Package className="h-[18px] w-[18px]" /></span>}
+        title={t('package_management')}
+        subtitle={`${packages.length} ${t('packages')}`}
+      >
+        <Button onClick={openAddDialog} className="shadow-brand">
+          <Plus className="h-4 w-4" />
+          {t('add_package')}
+        </Button>
+      </PageHeading>
+
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+          <span className="ms-3 text-muted-foreground">{t('loading')}</span>
         </div>
-      </header>
+      )}
 
-      {/* Content */}
-      <main className="mx-auto max-w-6xl p-6">
-        {/* Loading */}
-        {loading && (
-          <div className="flex items-center justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-600 border-t-transparent" />
-            <span className="ml-3 text-slate-400">{t('loading')}</span>
+      {!loading && denied && <PermissionDenied />}
+      {!loading && !denied && loadError && <ErrorState onRetry={fetchPackages} />}
+
+      {!loading && !denied && !loadError && packages.length === 0 && (
+        <div className="dxr-tile flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <Package className="mb-4 h-16 w-16 opacity-25" />
+          <p className="text-lg">{t('no_packages')}</p>
+        </div>
+      )}
+
+      {!loading && !denied && packages.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {packages.map((pkg) => (
+            <div key={pkg.id} className="dxr-tile dxr-hover flex flex-col">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-extrabold tracking-tight">{pkg.name}</h3>
+                <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold', pkg.is_active ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground')}>
+                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                  {pkg.is_active ? t('active') : t('inactive')}
+                </span>
+              </div>
+
+              <div className="mt-3 space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('client_slots')}</span><span className="font-semibold tabular-nums">{pkg.client_slots}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('wholesale_price')}</span><span className="font-semibold tabular-nums">{formatMoney(pkg.wholesale_price || 0, language)}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('retail_price')}</span><span className="font-semibold tabular-nums">{formatMoney(pkg.suggested_retail_price || 0, language)}</span></div>
+              </div>
+
+              <div className="mt-3">
+                <span className="mb-1.5 block text-xs font-semibold text-muted-foreground">{t('feature_tier')}</span>
+                {pkg.features && pkg.features.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {pkg.features.map((f) => (
+                      <span key={f} className="rounded-full bg-brand-500/10 px-2.5 py-0.5 text-xs font-semibold text-brand-700 dark:text-brand-300">{t(`feat_${f}`)}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-xs text-muted-foreground">{t('feature_tier_none')}</span>
+                )}
+              </div>
+
+              <div className="mt-auto flex gap-2 pt-4">
+                <Button variant="outline" size="sm" onClick={() => openEditDialog(pkg)} className="flex-1">
+                  <Edit2 className="h-3.5 w-3.5" />
+                  {t('edit')}
+                </Button>
+                {confirmDeleteId === pkg.id ? (
+                  <div className="flex flex-1 gap-1">
+                    <Button size="sm" onClick={() => handleDelete(pkg.id)} className="flex-1 bg-danger text-white hover:bg-danger/90">{t('yes')}</Button>
+                    <Button size="sm" variant="outline" onClick={() => setConfirmDeleteId(null)} className="flex-1">{t('no')}</Button>
+                  </div>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setConfirmDeleteId(pkg.id)} className="flex-1 border-danger/40 text-danger hover:bg-danger/10">
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {t('deactivate')}
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Add / Edit dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingPackage ? t('edit_package') : t('add_package')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="mb-1 block text-sm text-muted-foreground">{t('name')}</label>
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('package_name_placeholder')} />
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="mb-1 block text-sm text-muted-foreground">{t('client_slots')}</label>
+                <Input type="number" value={form.client_slots} onChange={(e) => setForm({ ...form, client_slots: Number(e.target.value) })} min={0} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm text-muted-foreground">{t('wholesale_price')}</label>
+                <Input type="number" value={form.wholesale_price} onChange={(e) => setForm({ ...form, wholesale_price: Number(e.target.value) })} min={0} step={0.01} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm text-muted-foreground">{t('retail_price')}</label>
+                <Input type="number" value={form.suggested_retail_price} onChange={(e) => setForm({ ...form, suggested_retail_price: Number(e.target.value) })} min={0} step={0.01} />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm text-muted-foreground">{t('feature_tier')}</label>
+              <p className="mb-2 text-xs text-muted-foreground">{t('feature_tier_hint')}</p>
+              <div className="grid grid-cols-2 gap-2">
+                {FEATURE_KEYS.map((key) => (
+                  <label key={key} className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/40 px-2.5 py-2 text-sm">
+                    <Checkbox checked={form.features.includes(key)} onCheckedChange={() => toggleFeature(key)} />
+                    <span>{t(`feat_${key}`)}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>{t('cancel')}</Button>
+              <Button onClick={handleSubmit} disabled={saving || !form.name.trim()}>{saving ? t('loading') : t('save')}</Button>
+            </div>
           </div>
-        )}
-
-        {/* Permission-denied state (in-page, UX-02) */}
-        {!loading && denied && <PermissionDenied />}
-
-        {/* Error state — distinct from empty (UX-02) */}
-        {!loading && !denied && loadError && (
-          <ErrorState onRetry={fetchPackages} />
-        )}
-
-        {/* Empty state */}
-        {!loading && !denied && !loadError && packages.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <Package className="mb-4 h-16 w-16 opacity-30" />
-            <p className="text-lg">{t('no_packages')}</p>
-          </div>
-        )}
-
-        {/* Package grid */}
-        {!loading && !denied && packages.length > 0 && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {packages.map((pkg) => (
-              <Card key={pkg.id} className="border-slate-700 bg-slate-800">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-lg text-white">{pkg.name}</CardTitle>
-                  <Badge className={pkg.is_active ? 'bg-green-600/20 text-green-400' : 'bg-slate-600/30 text-slate-300'}>
-                    {pkg.is_active ? t('active') : t('inactive')}
-                  </Badge>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-400">{t('client_slots')}</span>
-                    <span className="font-medium text-white">{pkg.client_slots}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-400">{t('wholesale_price')}</span>
-                    <span className="font-medium text-white">SAR {pkg.wholesale_price}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-400">{t('retail_price')}</span>
-                    <span className="font-medium text-white">SAR {pkg.suggested_retail_price}</span>
-                  </div>
-                  {/* MA-07: the package's feature tier */}
-                  <div>
-                    <span className="mb-1 block text-xs text-slate-400">{t('feature_tier')}</span>
-                    {pkg.features && pkg.features.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {pkg.features.map((f) => (
-                          <Badge key={f} className="bg-brand-900/40 text-brand-200">
-                            {t(`feat_${f}`)}
-                          </Badge>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-slate-500">{t('feature_tier_none')}</span>
-                    )}
-                  </div>
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openEditDialog(pkg)}
-                      className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
-                    >
-                      <Edit2 className="mr-1 h-3.5 w-3.5" />
-                      {t('edit')}
-                    </Button>
-                    {confirmDeleteId === pkg.id ? (
-                      <div className="flex flex-1 gap-1">
-                        <Button
-                          size="sm"
-                          onClick={() => handleDelete(pkg.id)}
-                          className="flex-1 bg-red-600 text-white hover:bg-red-700"
-                        >
-                          {t('yes')}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setConfirmDeleteId(null)}
-                          className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700 hover:text-white"
-                        >
-                          {t('no')}
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setConfirmDeleteId(pkg.id)}
-                        className="flex-1 border-red-600/50 text-red-400 hover:bg-red-600/20 hover:text-red-300"
-                      >
-                        <Trash2 className="mr-1 h-3.5 w-3.5" />
-                        {t('deactivate')}
-                      </Button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </main>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

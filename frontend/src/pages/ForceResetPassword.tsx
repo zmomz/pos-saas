@@ -84,16 +84,16 @@ export default function ForceResetPassword() {
   return (
     <div
       dir={isRTL ? 'rtl' : 'ltr'}
-      className="min-h-screen flex items-center justify-center bg-slate-900 p-4"
+      className="min-h-screen flex items-center justify-center bg-background p-4"
     >
-      <Card className="w-full max-w-md bg-slate-800 border-slate-700">
+      <Card className="w-full max-w-md bg-card border-border">
         <CardHeader>
-          <CardTitle className="text-white">
+          <CardTitle className="text-foreground">
             {t('set_new_password')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-slate-300">
+          <p className="text-sm text-foreground/90">
             {user?.name ? `${user.name} — ` : ''}
             {t('first_login_reset_prompt')}
           </p>
@@ -101,9 +101,9 @@ export default function ForceResetPassword() {
           {/* CL-02: guided first-login language step. Applies instantly via the
               shared LanguageProvider and persists the choice. */}
           <div className="space-y-1">
-            <label className="text-xs text-slate-400">{t('choose_language')}</label>
+            <label className="text-xs text-muted-foreground">{t('choose_language')}</label>
             <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
-              <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+              <SelectTrigger className="bg-muted border-input text-foreground">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -119,12 +119,12 @@ export default function ForceResetPassword() {
               Only a client tenancy has a business type. */}
           {isClient && (
             <div className="space-y-1">
-              <label className="text-xs text-slate-400">{t('choose_business_type')}</label>
+              <label className="text-xs text-muted-foreground">{t('choose_business_type')}</label>
               <Select
                 value={businessType}
                 onValueChange={(v) => setBusinessType(v as BusinessType)}
               >
-                <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+                <SelectTrigger className="bg-muted border-input text-foreground">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -133,7 +133,7 @@ export default function ForceResetPassword() {
                   <SelectItem value="both">{t('business_type_both')}</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-slate-500">{t('business_type_hint')}</p>
+              <p className="text-xs text-muted-foreground">{t('business_type_hint')}</p>
             </div>
           )}
 
@@ -142,35 +142,31 @@ export default function ForceResetPassword() {
             placeholder={t('current_temp_password')}
             value={currentPassword}
             onChange={(e) => setCurrentPassword(e.target.value)}
-            className="bg-slate-700 border-slate-600 text-white"
           />
           <Input
             type="password"
             placeholder={t('new_password')}
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
-            className="bg-slate-700 border-slate-600 text-white"
           />
           <Input
             type="password"
             placeholder={t('confirm_password')}
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
-            className="bg-slate-700 border-slate-600 text-white"
           />
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-destructive">{error}</p>}
           <div className="flex gap-2 justify-between">
             <Button
               variant="outline"
               onClick={() => logout()}
-              className="border-slate-600 text-slate-300"
+              className="border-input text-foreground/90"
             >
               {t('logout')}
             </Button>
             <Button
               onClick={handleSubmit}
               disabled={submitting}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
             >
               {submitting ? t('saving') : t('save')}
             </Button>

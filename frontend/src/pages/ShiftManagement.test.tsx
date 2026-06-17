@@ -74,13 +74,13 @@ describe('ShiftManagement reads the real shift endpoint shapes (F-016 / POS-09)'
     // The open shift is unwrapped from `{status, shift}` → Active badge shows.
     expect(await screen.findByText('Active')).toBeInTheDocument();
     // ...and the current card maps `opening_cash`/`total_transactions`.
-    expect(screen.getByText('SAR 500.00')).toBeInTheDocument();
+    expect(screen.getByText('500.00 SAR')).toBeInTheDocument();
 
     // History is read from `data.shifts` and snake_case fields are mapped:
     // staff, sales total (`total_sales`), and variance (`cash_difference`).
     expect(screen.getByText('Cashier A')).toBeInTheDocument();
-    expect(screen.getByText('SAR 250.00')).toBeInTheDocument(); // sales_total
-    expect(screen.getByText('+SAR 5.00')).toBeInTheDocument(); // cash_difference → difference
+    expect(screen.getByText('250.00 SAR')).toBeInTheDocument(); // sales_total
+    expect(screen.getByText('+5.00 SAR')).toBeInTheDocument(); // cash_difference → difference
     expect(screen.queryByText('No shift history')).not.toBeInTheDocument();
   });
 

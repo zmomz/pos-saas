@@ -193,3 +193,85 @@
     border-radius: 9999px;
   }
 }
+
+/* ============================================================
+   Dashboard Redesign (bento / spotlight) — shared utilities
+   Used by the Master / Agent / Client dashboards (dxr-* prefix
+   keeps these scoped and collision-free with the rest of the app).
+   ============================================================ */
+@layer components {
+  .dxr-tile {
+    @apply relative overflow-hidden rounded-[20px] border border-border bg-card p-[18px] shadow-sm;
+  }
+  .dxr-hover {
+    @apply transition-transform duration-200 hover:-translate-y-0.5;
+  }
+  /* Dark "ink" spotlight tile — intentionally dark in both light & dark themes. */
+  .dxr-ink {
+    background-image: linear-gradient(135deg, hsl(197 56% 21%), hsl(199 60% 10%));
+    @apply border-transparent text-white;
+    box-shadow: 0 26px 50px -18px hsl(197 60% 12% / 0.5);
+  }
+  .dxr-eyebrow {
+    @apply font-mono text-[10.5px] font-medium uppercase tracking-[0.16em] text-muted-foreground;
+  }
+  .dxr-ink .dxr-eyebrow {
+    @apply text-white/60;
+  }
+  /* Segmented control */
+  .dxr-seg {
+    @apply inline-flex gap-0.5 rounded-[11px] border border-border bg-muted p-[3px];
+  }
+  .dxr-seg button {
+    @apply rounded-lg px-[11px] py-1.5 text-[12px] font-bold text-muted-foreground transition-colors;
+  }
+  .dxr-seg button[data-active='true'] {
+    @apply bg-card text-foreground shadow-sm;
+  }
+  .dxr-seg-ink {
+    @apply border-white/10 bg-white/[0.08];
+  }
+  .dxr-seg-ink button {
+    @apply text-white/70;
+  }
+  .dxr-seg-ink button[data-active='true'] {
+    @apply bg-white/20 text-white shadow-none;
+  }
+  /* Soft icon swatch tints (semantic) */
+  .dxr-sw {
+    @apply flex shrink-0 items-center justify-center rounded-xl;
+  }
+  .dxr-sw-brand { @apply bg-brand-500/10 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300; }
+  .dxr-sw-success { @apply bg-success/10 text-success; }
+  .dxr-sw-violet { @apply bg-violet/10 text-violet; }
+  .dxr-sw-sky { @apply bg-sky/10 text-sky; }
+  .dxr-sw-gold { @apply bg-gold/15 text-gold-600; }
+  .dxr-sw-warning { @apply bg-warning/15 text-warning; }
+  .dxr-sw-danger { @apply bg-danger/10 text-danger; }
+  /* Pill extras to complement the existing pill-* set */
+  .pill-gold { @apply inline-flex items-center gap-1.5 rounded-full bg-gold/15 px-3 py-[5px] text-[12.5px] font-semibold text-gold-600; }
+  /* Insight (needs-attention) row */
+  .dxr-insight {
+    @apply flex items-start gap-3 rounded-[14px] border border-border bg-muted/40 p-3 transition-all hover:border-brand hover:bg-brand-50 dark:hover:bg-brand-500/10;
+  }
+  /* Delta chip */
+  .dxr-delta { @apply inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11.5px] font-extrabold; }
+  .dxr-delta-up { @apply bg-success/10 text-success; }
+  .dxr-delta-down { @apply bg-danger/10 text-danger; }
+  .dxr-delta-flat { @apply bg-muted text-muted-foreground; }
+  .dxr-ink .dxr-delta-up { @apply bg-success/20 text-[hsl(158_55%_70%)]; }
+}
+
+@keyframes dxr-pulse {
+  0% { box-shadow: 0 0 0 0 hsl(192 80% 55% / 0.6); }
+  70% { box-shadow: 0 0 0 9px hsl(192 80% 55% / 0); }
+  100% { box-shadow: 0 0 0 0 hsl(192 80% 55% / 0); }
+}
+.dxr-pulse {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: #36c5e0;
+  animation: dxr-pulse 1.8s infinite;
+}

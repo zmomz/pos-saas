@@ -119,8 +119,8 @@ describe('Tip entry on settle dialog (ISSUE-072)', () => {
     await userEvent.type(tip, '10');
 
     // Tip rides on top: total to charge = 115.00 + 10 = 125.00.
-    expect(await dialog.findByText('125.00')).toBeInTheDocument();
+    expect(await dialog.findByText('125.00 SAR')).toBeInTheDocument();
     // The VAT-bearing amount due is untouched.
-    expect(dialog.getByText('115.00')).toBeInTheDocument();
+    expect(dialog.getByText('115.00 SAR')).toBeInTheDocument();
   });
 });

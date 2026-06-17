@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -13,7 +19,10 @@ import {
 import { client, receivePurchaseOrder, getBranches } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { Truck, Plus, Search, Package, ClipboardList, CheckCircle } from 'lucide-react';
 
 interface Supplier {
@@ -101,7 +110,7 @@ export default function SupplierManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'suppliers' | 'orders'>('suppliers');
 
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
 
   useEffect(() => {
     loadData();
@@ -371,51 +380,51 @@ export default function SupplierManagement() {
   }
 
   function getStatusBadge(status: string) {
-    const colors: Record<string, string> = {
-      draft: 'bg-gray-500/20 text-gray-400',
-      sent: 'bg-brand-500/20 text-brand-400',
-      ordered: 'bg-brand-500/20 text-brand-400',
-      partially_received: 'bg-amber-500/20 text-amber-400',
-      received: 'bg-green-500/20 text-green-400',
-      cancelled: 'bg-red-500/20 text-red-400',
-      active: 'bg-green-500/20 text-green-400',
-      inactive: 'bg-red-500/20 text-red-400',
+    const classes: Record<string, string> = {
+      draft: 'pill-muted',
+      sent: 'pill-sky',
+      ordered: 'pill-sky',
+      partially_received: 'pill-warning',
+      received: 'pill-success',
+      cancelled: 'pill-danger',
+      active: 'pill-success',
+      inactive: 'pill-danger',
     };
-    return <Badge className={colors[status] || 'bg-gray-500/20 text-gray-400'}>{status}</Badge>;
+    return <span className={classes[status] || 'pill-muted'}>{status}</span>;
   }
 
   function renderSupplierForm(onSubmit: () => void, submitLabel: string) {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('supplier_name')} *</label>
-          <Input value={formData.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder={t('company_name')} className="bg-slate-700 border-slate-600 text-white" />
+          <Label className="mb-1 block">{t('supplier_name')} *</Label>
+          <Input value={formData.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder={t('company_name')} />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('contact_person')}</label>
-          <Input value={formData.contact_person} onChange={(e) => handleFormChange('contact_person', e.target.value)} placeholder={t('contact_name_placeholder')} className="bg-slate-700 border-slate-600 text-white" />
+          <Label className="mb-1 block">{t('contact_person')}</Label>
+          <Input value={formData.contact_person} onChange={(e) => handleFormChange('contact_person', e.target.value)} placeholder={t('contact_name_placeholder')} />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('email')}</label>
-          <Input value={formData.email} onChange={(e) => handleFormChange('email', e.target.value)} placeholder="supplier@example.com" className="bg-slate-700 border-slate-600 text-white" />
+          <Label className="mb-1 block">{t('email')}</Label>
+          <Input value={formData.email} onChange={(e) => handleFormChange('email', e.target.value)} placeholder="supplier@example.com" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('phone')}</label>
-          <Input value={formData.phone} onChange={(e) => handleFormChange('phone', e.target.value)} placeholder="+966 5xx xxx xxxx" className="bg-slate-700 border-slate-600 text-white" />
+          <Label className="mb-1 block">{t('phone')}</Label>
+          <Input value={formData.phone} onChange={(e) => handleFormChange('phone', e.target.value)} placeholder="+966 5xx xxx xxxx" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('payment_terms')}</label>
-          <Input value={formData.payment_terms} onChange={(e) => handleFormChange('payment_terms', e.target.value)} placeholder={t('net30')} className="bg-slate-700 border-slate-600 text-white" />
+          <Label className="mb-1 block">{t('payment_terms')}</Label>
+          <Input value={formData.payment_terms} onChange={(e) => handleFormChange('payment_terms', e.target.value)} placeholder={t('net30')} />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('vat_number')}</label>
-          <Input value={formData.vat_number} onChange={(e) => handleFormChange('vat_number', e.target.value)} placeholder="300000000000003" className="bg-slate-700 border-slate-600 text-white" />
+          <Label className="mb-1 block">{t('vat_number')}</Label>
+          <Input value={formData.vat_number} onChange={(e) => handleFormChange('vat_number', e.target.value)} placeholder="300000000000003" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('address')}</label>
-          <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder={t('full_address_placeholder')} className="bg-slate-700 border-slate-600 text-white" />
+          <Label className="mb-1 block">{t('address')}</Label>
+          <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder={t('full_address_placeholder')} />
         </div>
-        <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
+        <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full">
           {submitting ? t('loading') : submitLabel}
         </Button>
       </div>
@@ -425,7 +434,7 @@ export default function SupplierManagement() {
   if (loading && suppliers.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -439,85 +448,72 @@ export default function SupplierManagement() {
   }
 
   return (
-    <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
+    <div className="animate-fade-up space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <PageHeading
+          icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Truck className="h-[18px] w-[18px]" /></span>}
+          title={t('suppliers')}
+          subtitle={`${suppliers.length} ${t('total_suppliers')}`}
+        >
+          <DialogTrigger asChild>
+            <Button onClick={() => setFormData(emptySupplierForm)} className="h-11 rounded-[10px] shadow-brand">
+              <Plus className="h-4 w-4" /> {t('add_supplier')}
+            </Button>
+          </DialogTrigger>
+        </PageHeading>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{t('add_new_supplier')}</DialogTitle>
+          </DialogHeader>
+          {renderSupplierForm(handleAddSupplier, t('add_supplier'))}
+        </DialogContent>
+      </Dialog>
+
       {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Truck className="h-8 w-8 text-brand-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('total_suppliers')}</p>
-              <p className="text-2xl font-bold text-white">{suppliers.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <ClipboardList className="h-8 w-8 text-amber-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('pending_orders')}</p>
-              <p className="text-2xl font-bold text-amber-400">
-                {purchaseOrders.filter((po) => po.status === 'draft' || po.status === 'sent').length}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <CheckCircle className="h-8 w-8 text-green-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('received_this_month')}</p>
-              <p className="text-2xl font-bold text-green-400">
-                {purchaseOrders.filter((po) => {
-                  if (po.status !== 'received' || !po.received_date) return false;
-                  const d = new Date(po.received_date);
-                  const now = new Date();
-                  return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-                }).length}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile icon={Truck} label={t('total_suppliers')} value={suppliers.length} tone="brand" />
+        <StatTile
+          icon={ClipboardList}
+          label={t('pending_orders')}
+          value={purchaseOrders.filter((po) => po.status === 'draft' || po.status === 'sent').length}
+          tone="warning"
+        />
+        <StatTile
+          icon={CheckCircle}
+          label={t('received_this_month')}
+          value={purchaseOrders.filter((po) => {
+            if (po.status !== 'received' || !po.received_date) return false;
+            const d = new Date(po.received_date);
+            const now = new Date();
+            return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+          }).length}
+          tone="success"
+        />
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2">
-        <Button variant={activeTab === 'suppliers' ? 'default' : 'outline'} onClick={() => setActiveTab('suppliers')} className={activeTab === 'suppliers' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
+      <div className="dxr-seg">
+        <button data-active={activeTab === 'suppliers'} onClick={() => setActiveTab('suppliers')}>
           {t('suppliers')}
-        </Button>
-        <Button variant={activeTab === 'orders' ? 'default' : 'outline'} onClick={() => setActiveTab('orders')} className={activeTab === 'orders' ? 'bg-brand-600 text-white' : 'border-slate-600 text-slate-300'}>
+        </button>
+        <button data-active={activeTab === 'orders'} onClick={() => setActiveTab('orders')}>
           {t('purchase_orders')}
-        </Button>
+        </button>
       </div>
 
       {activeTab === 'suppliers' && (
         <>
-          {/* Search + Add */}
-          <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-            <div className="relative flex-1">
-              <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('search_suppliers')} className="ps-10 bg-slate-800 border-slate-600 text-white placeholder:text-slate-500" />
-            </div>
-            <Dialog open={addOpen} onOpenChange={setAddOpen}>
-              <DialogTrigger asChild>
-                <Button onClick={() => setFormData(emptySupplierForm)} className="bg-brand-600 hover:bg-brand-700 text-white">
-                  <Plus className="h-4 w-4 me-2" /> {t('add_supplier')}
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle className="text-white">{t('add_new_supplier')}</DialogTitle>
-                </DialogHeader>
-                {renderSupplierForm(handleAddSupplier, t('add_supplier'))}
-              </DialogContent>
-            </Dialog>
+          {/* Search */}
+          <div className="relative flex-1">
+            <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('search_suppliers')} className="ps-10" />
           </div>
 
           {/* Suppliers Table */}
-          <div className="overflow-x-auto rounded-lg border border-slate-700">
+          <div className="overflow-x-auto rounded-lg border border-border">
             <table className="w-full text-sm">
-              <thead className="bg-slate-800">
-                <tr className="text-slate-400">
+              <thead className="bg-card">
+                <tr className="text-muted-foreground">
                   <th className="p-3 text-start">{t('name')}</th>
                   <th className="p-3 text-start">{t('contact')}</th>
                   <th className="p-3 text-start">{t('email')}</th>
@@ -531,12 +527,12 @@ export default function SupplierManagement() {
               <tbody>
                 {filteredSuppliers.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="p-6 text-center text-slate-500">{t('no_suppliers_found')}</td>
+                    <td colSpan={8} className="p-6 text-center text-muted-foreground">{t('no_suppliers_found')}</td>
                   </tr>
                 ) : (
                   filteredSuppliers.map((supplier) => (
-                    <tr key={supplier.id} className="border-t border-slate-700 text-slate-300">
-                      <td className="p-3 text-white font-medium">{supplier.name}</td>
+                    <tr key={supplier.id} className="border-t border-border text-foreground/90">
+                      <td className="p-3 text-foreground font-medium">{supplier.name}</td>
                       <td className="p-3">{supplier.contact_person || '—'}</td>
                       <td className="p-3">{supplier.email || '—'}</td>
                       <td className="p-3">{supplier.phone || '—'}</td>
@@ -545,11 +541,11 @@ export default function SupplierManagement() {
                       <td className="p-3">{getStatusBadge(supplier.status || 'active')}</td>
                       <td className="p-3">
                         <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => openEdit(supplier)} className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs">{t('edit')}</Button>
-                          <Button size="sm" variant="outline" onClick={() => openCreatePO(supplier)} className="border-brand-600/50 text-brand-400 hover:bg-brand-600/20 text-xs">
+                          <Button size="sm" variant="outline" onClick={() => openEdit(supplier)} className="text-xs">{t('edit')}</Button>
+                          <Button size="sm" variant="outline" onClick={() => openCreatePO(supplier)} className="text-xs">
                             <Package className="h-3 w-3 me-1" /> {t('po_short')}
                           </Button>
-                          <Button size="sm" variant="outline" onClick={() => { setSelectedSupplier(supplier); setDeleteOpen(true); }} className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs">{t('delete')}</Button>
+                          <Button size="sm" variant="destructive" onClick={() => { setSelectedSupplier(supplier); setDeleteOpen(true); }} className="text-xs">{t('delete')}</Button>
                         </div>
                       </td>
                     </tr>
@@ -562,10 +558,10 @@ export default function SupplierManagement() {
       )}
 
       {activeTab === 'orders' && (
-        <div className="overflow-x-auto rounded-lg border border-slate-700">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
-            <thead className="bg-slate-800">
-              <tr className="text-slate-400">
+            <thead className="bg-card">
+              <tr className="text-muted-foreground">
                 <th className="p-3 text-start">{t('order_id')}</th>
                 <th className="p-3 text-start">{t('supplier')}</th>
                 <th className="p-3 text-start">{t('items_label')}</th>
@@ -578,21 +574,21 @@ export default function SupplierManagement() {
             <tbody>
               {purchaseOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500">{t('no_purchase_orders')}</td>
+                  <td colSpan={7} className="p-6 text-center text-muted-foreground">{t('no_purchase_orders')}</td>
                 </tr>
               ) : (
                 purchaseOrders.map((po) => (
-                  <tr key={po.id} className="border-t border-slate-700 text-slate-300">
-                    <td className="p-3 text-white font-mono text-xs">#{po.id.slice(0, 8)}</td>
+                  <tr key={po.id} className="border-t border-border text-foreground/90">
+                    <td className="p-3 text-foreground font-mono text-xs">#{po.id.slice(0, 8)}</td>
                     <td className="p-3">{po.supplier_name || '—'}</td>
                     <td className="p-3">{po.items_count}</td>
-                    <td className="p-3 text-white font-medium">SAR {po.total_amount?.toFixed(2)}</td>
+                    <td className="p-3 text-foreground font-medium tabular-nums">{formatMoney(po.total_amount || 0, language)}</td>
                     <td className="p-3">{getStatusBadge(po.status)}</td>
                     <td className="p-3">{po.order_date ? new Date(po.order_date).toLocaleDateString() : '—'}</td>
                     <td className="p-3">
                       {po.status !== 'received' && po.status !== 'cancelled' && (
-                        <Button size="sm" onClick={() => openReceive(po)} className="bg-green-600 hover:bg-green-700 text-white text-xs">
-                          <CheckCircle className="h-3 w-3 mr-1" />
+                        <Button size="sm" onClick={() => openReceive(po)} className="bg-success text-white hover:bg-success/90 text-xs">
+                          <CheckCircle className="h-3 w-3 me-1" />
                           {po.status === 'partially_received' ? t('receive_remaining') : t('receive_po')}
                         </Button>
                       )}
@@ -607,9 +603,9 @@ export default function SupplierManagement() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('edit_supplier')}</DialogTitle>
+            <DialogTitle>{t('edit_supplier')}</DialogTitle>
           </DialogHeader>
           {renderSupplierForm(handleEditSupplier, t('save'))}
         </DialogContent>
@@ -617,46 +613,46 @@ export default function SupplierManagement() {
 
       {/* Create PO Dialog */}
       <Dialog open={poOpen} onOpenChange={setPoOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto max-w-lg">
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('create_purchase_order')} - {selectedSupplier?.name}</DialogTitle>
+            <DialogTitle>{t('create_purchase_order')} - {selectedSupplier?.name}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             {poForm.items.map((item, idx) => (
               <div key={idx} className="flex gap-2 items-end">
                 <div className="flex-1">
-                  <label className="text-xs text-slate-400">{t('product')}</label>
-                  <select
-                    value={item.product_id}
-                    onChange={(e) => selectPOProduct(idx, e.target.value)}
-                    className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2 text-sm"
-                  >
-                    <option value="">{t('select_product')}</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
+                  <Label className="text-xs">{t('product')}</Label>
+                  <Select value={item.product_id || undefined} onValueChange={(v) => selectPOProduct(idx, v)}>
+                    <SelectTrigger className="text-sm">
+                      <SelectValue placeholder={t('select_product')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {products.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="w-20">
-                  <label className="text-xs text-slate-400">{t('qty')}</label>
-                  <Input type="number" value={item.quantity} onChange={(e) => updatePOItem(idx, 'quantity', parseInt(e.target.value) || 0)} className="bg-slate-700 border-slate-600 text-white text-sm" />
+                  <Label className="text-xs">{t('qty')}</Label>
+                  <Input type="number" value={item.quantity} onChange={(e) => updatePOItem(idx, 'quantity', parseInt(e.target.value) || 0)} className="text-sm" />
                 </div>
                 <div className="w-24">
-                  <label className="text-xs text-slate-400">{t('price')}</label>
-                  <Input type="number" value={item.unit_price} onChange={(e) => updatePOItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="bg-slate-700 border-slate-600 text-white text-sm" />
+                  <Label className="text-xs">{t('price')}</Label>
+                  <Input type="number" value={item.unit_price} onChange={(e) => updatePOItem(idx, 'unit_price', parseFloat(e.target.value) || 0)} className="text-sm" />
                 </div>
                 {poForm.items.length > 1 && (
-                  <Button size="sm" variant="outline" onClick={() => removePOItem(idx)} className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs mb-0.5">×</Button>
+                  <Button size="sm" variant="destructive" onClick={() => removePOItem(idx)} className="text-xs mb-0.5">×</Button>
                 )}
               </div>
             ))}
-            <Button variant="outline" onClick={addPOItem} className="border-slate-600 text-slate-300 hover:bg-slate-700 text-sm w-full">
-              + {t('add_item')}
+            <Button variant="outline" onClick={addPOItem} className="text-sm w-full">
+              <Plus className="h-4 w-4 me-1" /> {t('add_item')}
             </Button>
-            <div className="border-t border-slate-700 pt-3">
-              <p className="text-slate-400 text-sm">{t('total')}: <span className="text-white font-bold">SAR {poForm.items.reduce((s, i) => s + i.quantity * i.unit_price, 0).toFixed(2)}</span></p>
+            <div className="border-t border-border pt-3">
+              <p className="text-muted-foreground text-sm">{t('total')}: <span className="text-foreground font-bold tabular-nums">{formatMoney(poForm.items.reduce((s, i) => s + i.quantity * i.unit_price, 0), language)}</span></p>
             </div>
-            <Button onClick={handleCreatePO} disabled={submitting || poForm.items.some((i) => !i.product_id)} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
+            <Button onClick={handleCreatePO} disabled={submitting || poForm.items.some((i) => !i.product_id)} className="w-full">
               {submitting ? t('loading') : t('create_purchase_order')}
             </Button>
           </div>
@@ -665,46 +661,46 @@ export default function SupplierManagement() {
 
       {/* Receive PO Dialog */}
       <Dialog open={receiveOpen} onOpenChange={setReceiveOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto max-w-lg">
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('receive_stock')}</DialogTitle>
+            <DialogTitle>{t('receive_stock')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-xs text-slate-400 mb-1 block">{t('branch')}</label>
-              <select
-                value={receiveBranchId}
-                onChange={(e) => setReceiveBranchId(e.target.value)}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2 text-sm"
-              >
-                <option value="">{t('client_level_stock')}</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+              <Label className="text-xs mb-1 block">{t('branch')}</Label>
+              <Select value={receiveBranchId || undefined} onValueChange={(v) => setReceiveBranchId(v)}>
+                <SelectTrigger className="text-sm">
+                  <SelectValue placeholder={t('client_level_stock')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {receiveLines.length === 0 ? (
-              <p className="text-slate-500 text-sm">{t('no_receivable_lines')}</p>
+              <p className="text-muted-foreground text-sm">{t('no_receivable_lines')}</p>
             ) : (
               receiveLines.map((line, idx) => {
                 const remaining = Math.max(0, line.ordered - line.received);
                 return (
                   <div key={idx} className="flex gap-2 items-end">
                     <div className="flex-1">
-                      <p className="text-white text-sm">{line.product_name}</p>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-foreground text-sm">{line.product_name}</p>
+                      <p className="text-xs text-muted-foreground">
                         {t('ordered')}: {line.ordered} · {t('remaining')}: {remaining}
                       </p>
                     </div>
                     <div className="w-24">
-                      <label className="text-xs text-slate-400">{t('receive_now')}</label>
+                      <Label className="text-xs">{t('receive_now')}</Label>
                       <Input
                         type="number"
                         min={0}
                         max={remaining}
                         value={line.qty}
                         onChange={(e) => updateReceiveQty(idx, parseInt(e.target.value) || 0)}
-                        className="bg-slate-700 border-slate-600 text-white text-sm"
+                        className="text-sm"
                       />
                     </div>
                   </div>
@@ -714,7 +710,7 @@ export default function SupplierManagement() {
             <Button
               onClick={handleReceiveSubmit}
               disabled={submitting || receiveLines.every((l) => l.qty <= 0)}
-              className="w-full bg-green-600 hover:bg-green-700 text-white"
+              className="w-full bg-success text-white hover:bg-success/90"
             >
               {submitting ? t('loading') : t('receive_stock')}
             </Button>
@@ -724,16 +720,16 @@ export default function SupplierManagement() {
 
       {/* Delete Dialog */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">{t('confirm_delete')}</DialogTitle>
+            <DialogTitle>{t('confirm_delete')}</DialogTitle>
           </DialogHeader>
-          <p className="text-slate-300">
+          <p className="text-foreground/90">
             {t('delete_supplier_confirm')} <strong>{selectedSupplier?.name}</strong>?
           </p>
           <div className="flex gap-3 pt-4">
-            <Button variant="outline" onClick={() => setDeleteOpen(false)} className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700">{t('cancel')}</Button>
-            <Button onClick={handleDeleteSupplier} disabled={submitting} className="flex-1 bg-red-600 hover:bg-red-700 text-white">
+            <Button variant="outline" onClick={() => setDeleteOpen(false)} className="flex-1">{t('cancel')}</Button>
+            <Button variant="destructive" onClick={handleDeleteSupplier} disabled={submitting} className="flex-1">
               {submitting ? t('loading') : t('delete')}
             </Button>
           </div>

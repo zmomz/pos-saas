@@ -82,8 +82,10 @@ describe('CatalogModifiers (retail)', () => {
 
     await userEvent.type(await screen.findByPlaceholderText(/combo name/i), 'Meal deal');
     await userEvent.type(screen.getByPlaceholderText(/bundle price/i), '25');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: /components 1/i }), '1');
-    await userEvent.selectOptions(screen.getByRole('combobox', { name: /components 2/i }), '2');
+    await userEvent.click(screen.getByRole('combobox', { name: /components 1/i }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Mug' }));
+    await userEvent.click(screen.getByRole('combobox', { name: /components 2/i }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Coaster' }));
     await userEvent.click(screen.getByRole('button', { name: /add combo/i }));
 
     await waitFor(() => expect(posted).not.toBeNull());

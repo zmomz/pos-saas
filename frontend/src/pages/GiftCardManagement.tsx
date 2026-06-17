@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import {
   issueGiftCard,
   listGiftCards,
@@ -13,18 +13,19 @@ import {
   type GiftCard,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
 import { Gift, Plus, RefreshCw } from 'lucide-react';
 
-// Gift-card status → badge styling. A card walks active → redeemed / expired / void.
-const STATUS_BADGE: Record<string, string> = {
-  active: 'bg-green-500/20 text-green-400',
-  redeemed: 'bg-slate-500/20 text-slate-300',
-  expired: 'bg-amber-500/20 text-amber-400',
-  void: 'bg-red-500/20 text-red-400',
+// Gift-card status → pill styling. A card walks active → redeemed / expired / void.
+const STATUS_PILL: Record<string, string> = {
+  active: 'pill-success',
+  redeemed: 'pill-muted',
+  expired: 'pill-warning',
+  void: 'pill-danger',
 };
 
 export default function GiftCardManagement() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const PAGE_SIZE = 50;
   const [cards, setCards] = useState<GiftCard[]>([]);
@@ -147,7 +148,7 @@ export default function GiftCardManagement() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -163,39 +164,35 @@ export default function GiftCardManagement() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Gift className="h-6 w-6 text-pink-400" />
-            {t('gift_cards')}
-          </h2>
-          <p className="text-slate-400 text-sm mt-1">{t('gift_cards_desc')}</p>
-        </div>
+    <div className="animate-fade-up space-y-6">
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Gift className="h-[18px] w-[18px]" /></span>}
+        title={t('gift_cards')}
+        subtitle={t('gift_cards_desc')}
+      >
         <Button
           variant="outline"
           onClick={load}
-          className="border-slate-600 text-slate-300 hover:bg-slate-700"
+          className="h-11 rounded-[10px]"
         >
           <RefreshCw className="h-4 w-4 me-2" /> {t('refresh')}
         </Button>
-      </div>
+      </PageHeading>
 
       {actionMsg && (
-        <p className="text-sm text-slate-300" role="status">
+        <p className="text-sm text-foreground/90" role="status">
           {actionMsg}
         </p>
       )}
 
       {/* Issue a new card (CRM-03) */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardContent className="p-4 space-y-3">
-          <div className="flex items-center gap-2 text-white font-semibold">
-            <Plus className="h-5 w-5 text-pink-400" />
+          <div className="flex items-center gap-2 text-foreground font-semibold">
+            <Plus className="h-5 w-5 text-brand" />
             {t('issue_gift_card')}
           </div>
-          <p className="text-slate-400 text-sm">{t('issue_gift_card_hint')}</p>
+          <p className="text-muted-foreground text-sm">{t('issue_gift_card_hint')}</p>
           <div className="flex flex-col sm:flex-row gap-2">
             <Input
               dir="ltr"
@@ -205,7 +202,6 @@ export default function GiftCardManagement() {
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder={t('gift_card_amount')}
-              className="bg-slate-900 border-slate-600 text-white"
             />
             <Input
               dir="ltr"
@@ -213,18 +209,17 @@ export default function GiftCardManagement() {
               value={expiry}
               onChange={(e) => setExpiry(e.target.value)}
               placeholder={t('gift_card_expiry')}
-              className="bg-slate-900 border-slate-600 text-white"
             />
             <Button
               onClick={handleIssue}
               disabled={issuing || !(Number(amount) > 0)}
-              className="bg-pink-600 hover:bg-pink-700 text-white shrink-0"
+              className="shrink-0"
             >
               {issuing ? t('loading') : t('issue')}
             </Button>
           </div>
           {issueMsg && (
-            <p className="text-sm text-slate-300" role="status">
+            <p className="text-sm text-foreground/90" role="status">
               {issueMsg}
             </p>
           )}
@@ -233,19 +228,19 @@ export default function GiftCardManagement() {
 
       {/* Issued cards: empty state vs table */}
       {cards.length === 0 ? (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-10 text-center">
-            <Gift className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-1">{t('no_gift_cards')}</h3>
-            <p className="text-slate-400 text-sm">{t('no_gift_cards_desc')}</p>
+            <Gift className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-1">{t('no_gift_cards')}</h3>
+            <p className="text-muted-foreground text-sm">{t('no_gift_cards_desc')}</p>
           </CardContent>
         </Card>
       ) : (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-0 overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-slate-700 text-slate-400">
+                <tr className="border-b border-border text-muted-foreground">
                   <th className="text-start p-3">{t('gift_card_code')}</th>
                   <th className="text-start p-3">{t('gift_card_balance')}</th>
                   <th className="text-start p-3">{t('gift_card_initial')}</th>
@@ -257,26 +252,26 @@ export default function GiftCardManagement() {
               </thead>
               <tbody>
                 {cards.map((c) => (
-                  <tr key={c.id} className="border-b border-slate-700/50">
-                    <td className="p-3 text-white font-mono" dir="ltr">{c.code}</td>
-                    <td className="p-3 text-slate-300">
-                      {c.balance.toFixed(2)} {c.currency || ''}
+                  <tr key={c.id} className="border-b border-border/50">
+                    <td className="p-3 text-foreground font-mono" dir="ltr">{c.code}</td>
+                    <td className="p-3 text-foreground/90 tabular-nums">
+                      {formatMoney(c.balance, language)}
                     </td>
-                    <td className="p-3 text-slate-400">{c.initial_balance.toFixed(2)}</td>
+                    <td className="p-3 text-muted-foreground tabular-nums">{formatMoney(c.initial_balance, language)}</td>
                     <td className="p-3">
-                      <Badge className={STATUS_BADGE[c.status] || 'bg-slate-500/20 text-slate-300'}>
+                      <span className={STATUS_PILL[c.status] || 'pill-muted'}>
                         {t(`gift_card_status_${c.status}`)}
-                      </Badge>
+                      </span>
                     </td>
-                    <td className="p-3 text-slate-400">
+                    <td className="p-3 text-muted-foreground">
                       {c.expiry_date ? new Date(c.expiry_date).toLocaleDateString() : '—'}
                     </td>
-                    <td className="p-3 text-slate-400">
+                    <td className="p-3 text-muted-foreground">
                       {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
                     </td>
                     <td className="p-3">
                       {c.status === 'void' ? (
-                        <span className="text-slate-500 text-xs">—</span>
+                        <span className="text-muted-foreground text-xs">—</span>
                       ) : reloadId === c.id ? (
                         <div className="flex items-center justify-end gap-2">
                           <Input
@@ -287,13 +282,12 @@ export default function GiftCardManagement() {
                             value={reloadAmount}
                             onChange={(e) => setReloadAmount(e.target.value)}
                             placeholder={t('gift_card_reload_amount')}
-                            className="bg-slate-900 border-slate-600 text-white h-8 w-32"
+                            className="h-8 w-32"
                           />
                           <Button
                             size="sm"
                             onClick={() => handleReload(c.id)}
                             disabled={busyId === c.id || !(Number(reloadAmount) > 0)}
-                            className="bg-pink-600 hover:bg-pink-700 text-white"
                           >
                             {t('gift_card_reload')}
                           </Button>
@@ -308,16 +302,14 @@ export default function GiftCardManagement() {
                               setReloadAmount('');
                             }}
                             disabled={busyId === c.id}
-                            className="border-slate-600 text-slate-300 hover:bg-slate-700"
                           >
                             {t('gift_card_reload')}
                           </Button>
                           <Button
                             size="sm"
-                            variant="outline"
+                            variant="destructive"
                             onClick={() => handleVoid(c.id)}
                             disabled={busyId === c.id}
-                            className="border-red-700 text-red-400 hover:bg-red-900/30"
                           >
                             {t('gift_card_void')}
                           </Button>

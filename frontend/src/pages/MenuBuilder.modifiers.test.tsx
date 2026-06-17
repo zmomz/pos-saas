@@ -66,8 +66,9 @@ describe('MenuBuilder product↔modifier-group attach (ISSUE-040)', () => {
     renderPage();
 
     const card = await screen.findByTestId('product-mods-10');
-    await userEvent.selectOptions(within(card).getByRole('combobox'), '1');
-    await userEvent.click(within(card).getByRole('button', { name: /attach/i }));
+    await userEvent.click(within(card).getByRole('combobox'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Size' }));
+    await userEvent.click(within(card).getByRole('button', { name: /^attach$/i }));
 
     await waitFor(() => expect(attachCall).toEqual({ pid: '10', gid: '1' }));
   });
@@ -102,8 +103,8 @@ describe('MenuBuilder product↔modifier-group attach (ISSUE-040)', () => {
     // The attached "Size" group is shown as a removable badge...
     expect(within(card).getByRole('button', { name: /detach size/i })).toBeInTheDocument();
     // ...and is no longer offered in the attach dropdown (only "Extras" remains).
-    const select = within(card).getByRole('combobox') as HTMLSelectElement;
-    const optionLabels = Array.from(select.options).map((o) => o.textContent);
+    await userEvent.click(within(card).getByRole('combobox'));
+    const optionLabels = (await screen.findAllByRole('option')).map((o) => o.textContent);
     expect(optionLabels).toContain('Extras');
     expect(optionLabels).not.toContain('Size');
   });

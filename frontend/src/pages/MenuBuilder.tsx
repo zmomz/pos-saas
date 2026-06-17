@@ -2,13 +2,23 @@ import { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
+import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import { formatMoney } from '@/lib/format';
 import {
   getModifierGroups,
   createModifierGroup,
@@ -43,7 +53,7 @@ interface ProductLite {
 }
 
 export default function MenuBuilder() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [groups, setGroups] = useState<ModifierGroup[]>([]);
   const [modsByGroup, setModsByGroup] = useState<Record<number, Modifier[]>>({});
@@ -258,7 +268,7 @@ export default function MenuBuilder() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -267,11 +277,11 @@ export default function MenuBuilder() {
   if (denied) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-slate-800 border-slate-700 max-w-md">
+        <Card className="bg-card border-border max-w-md">
           <CardContent className="p-8 text-center">
-            <Lock className="h-12 w-12 text-slate-500 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-2">{t('restaurant_disabled')}</h3>
-            <p className="text-slate-400 text-sm">{t('restaurant_disabled_desc')}</p>
+            <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-2">{t('restaurant_disabled')}</h3>
+            <p className="text-muted-foreground text-sm">{t('restaurant_disabled_desc')}</p>
           </CardContent>
         </Card>
       </div>
@@ -282,11 +292,11 @@ export default function MenuBuilder() {
   if (error) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-slate-800 border-slate-700 max-w-md">
+        <Card className="bg-card border-border max-w-md">
           <CardContent className="p-8 text-center">
-            <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-3" />
-            <p className="text-slate-300 mb-4">{t('menu_load_error')}</p>
-            <Button onClick={load} className="bg-brand-600 hover:bg-brand-700 text-white">
+            <AlertTriangle className="h-12 w-12 text-danger mx-auto mb-3" />
+            <p className="text-foreground/90 mb-4">{t('menu_load_error')}</p>
+            <Button onClick={load}>
               {t('retry')}
             </Button>
           </CardContent>
@@ -296,61 +306,58 @@ export default function MenuBuilder() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="animate-fade-up space-y-6">
       {!online && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-600/40 bg-amber-500/10 px-4 py-2 text-amber-300 text-sm">
+        <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-4 py-2 text-warning text-sm">
           <WifiOff className="h-4 w-4" />
           <span>{t('you_are_offline')}</span>
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <h2 className="text-xl font-bold text-white flex items-center gap-2">
-          <UtensilsCrossed className="h-6 w-6 text-brand-400" />
-          {t('menu_builder')}
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={() => setGroupOpen(true)} className="bg-brand-600 hover:bg-brand-700 text-white">
-            <Plus className="h-4 w-4 mr-2" /> {t('add_modifier_group')}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setComboOpen(true)}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
-          >
-            <Layers className="h-4 w-4 mr-2" /> {t('add_combo')}
-          </Button>
-        </div>
-      </div>
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><UtensilsCrossed className="h-[18px] w-[18px]" /></span>}
+        title={t('menu_builder')}
+      >
+        <Button onClick={() => setGroupOpen(true)} className="h-11 rounded-[10px] shadow-brand">
+          <Plus className="h-4 w-4" /> {t('add_modifier_group')}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => setComboOpen(true)}
+          className="h-11 rounded-[10px]"
+        >
+          <Layers className="h-4 w-4" /> {t('add_combo')}
+        </Button>
+      </PageHeading>
 
       {/* Modifier groups */}
       <div>
-        <h3 className="text-white font-semibold mb-2">{t('modifier_groups')}</h3>
+        <h3 className="text-[16px] font-extrabold tracking-tight mb-2">{t('modifier_groups')}</h3>
         {groups.length === 0 ? (
-          <Card className="bg-slate-800 border-slate-700">
+          <Card className="bg-card border-border">
             <CardContent className="p-8 text-center">
-              <UtensilsCrossed className="h-10 w-10 text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">{t('no_modifier_groups')}</p>
+              <UtensilsCrossed className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+              <p className="text-muted-foreground text-sm">{t('no_modifier_groups')}</p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {groups.map((g) => (
-              <Card key={g.id} className="bg-slate-800 border-slate-700">
+              <Card key={g.id} className="bg-card border-border">
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-white font-medium">{g.name}</span>
+                      <span className="text-foreground font-medium">{g.name}</span>
                       {g.required && (
-                        <Badge className="bg-amber-500/20 text-amber-400">{t('required')}</Badge>
+                        <span className="pill-warning">{t('required')}</span>
                       )}
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-muted-foreground">
                         {g.min_select ?? 0}–{g.max_select ?? 1}
                       </span>
                     </div>
                     <button
                       onClick={() => deleteModifierGroup(g.id).then(load)}
-                      className="text-slate-400 hover:text-red-400"
+                      className="text-muted-foreground hover:text-danger"
                       aria-label={t('delete')}
                     >
                       <Trash2 className="h-4 w-4" />
@@ -360,19 +367,19 @@ export default function MenuBuilder() {
                     {(modsByGroup[g.id] || []).map((m) => (
                       <div
                         key={m.id}
-                        className="flex items-center justify-between text-sm text-slate-300"
+                        className="flex items-center justify-between text-sm text-foreground/90"
                       >
                         <span>{m.name}</span>
                         <span className="flex items-center gap-3">
                           {m.price_delta !== 0 && (
-                            <span className="text-xs text-slate-400">
+                            <span className="text-xs text-muted-foreground">
                               {m.price_delta > 0 ? '+' : ''}
                               {m.price_delta}
                             </span>
                           )}
                           <button
                             onClick={() => deleteModifier(m.id).then(load)}
-                            className="text-slate-500 hover:text-red-400"
+                            className="text-muted-foreground hover:text-danger"
                             aria-label={t('delete')}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -381,7 +388,7 @@ export default function MenuBuilder() {
                       </div>
                     ))}
                     {(modsByGroup[g.id] || []).length === 0 && (
-                      <p className="text-xs text-slate-500">{t('no_modifiers')}</p>
+                      <p className="text-xs text-muted-foreground">{t('no_modifiers')}</p>
                     )}
                   </div>
                   <Button
@@ -391,9 +398,9 @@ export default function MenuBuilder() {
                       setModForm({ name: '', name_ar: '', price_delta: 0 });
                       setModOpen(g);
                     }}
-                    className="mt-3 border-slate-600 text-slate-300 hover:bg-slate-700"
+                    className="mt-3"
                   >
-                    <Plus className="h-3.5 w-3.5 mr-1" /> {t('add_modifier')}
+                    <Plus className="h-3.5 w-3.5" /> {t('add_modifier')}
                   </Button>
                 </CardContent>
               </Card>
@@ -404,38 +411,38 @@ export default function MenuBuilder() {
 
       {/* Combos */}
       <div>
-        <h3 className="text-white font-semibold mb-2">{t('combos')}</h3>
+        <h3 className="text-[16px] font-extrabold tracking-tight mb-2">{t('combos')}</h3>
         {combos.length === 0 ? (
-          <Card className="bg-slate-800 border-slate-700">
+          <Card className="bg-card border-border">
             <CardContent className="p-8 text-center">
-              <Layers className="h-10 w-10 text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">{t('no_combos')}</p>
+              <Layers className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+              <p className="text-muted-foreground text-sm">{t('no_combos')}</p>
             </CardContent>
           </Card>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {combos.map((c) => (
-              <Card key={c.id} className="bg-slate-800 border-slate-700">
+              <Card key={c.id} className="bg-card border-border">
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-white font-medium">{c.name}</span>
+                    <span className="text-foreground font-medium">{c.name}</span>
                     <button
                       onClick={() => deleteCombo(c.id).then(load)}
-                      className="text-slate-400 hover:text-red-400"
+                      className="text-muted-foreground hover:text-danger"
                       aria-label={t('delete')}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
                   </div>
                   <div className="mt-2 text-sm">
-                    <span className="text-white font-semibold">{c.bundle_price.toFixed(2)}</span>
+                    <span className="text-foreground font-semibold tabular-nums">{formatMoney(c.bundle_price, language)}</span>
                     {c.component_sum != null && c.component_sum > c.bundle_price && (
-                      <span className="text-xs text-slate-400 ml-2 line-through">
-                        {c.component_sum.toFixed(2)}
+                      <span className="text-xs text-muted-foreground ms-2 line-through tabular-nums">
+                        {formatMoney(c.component_sum, language)}
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     {t('components')}: {c.components.length}
                   </p>
                 </CardContent>
@@ -447,12 +454,12 @@ export default function MenuBuilder() {
 
       {/* Product modifiers — attach/detach groups to products (ISSUE-040) */}
       <div>
-        <h3 className="text-white font-semibold mb-2">{t('product_modifiers')}</h3>
+        <h3 className="text-[16px] font-extrabold tracking-tight mb-2">{t('product_modifiers')}</h3>
         {products.length === 0 ? (
-          <Card className="bg-slate-800 border-slate-700">
+          <Card className="bg-card border-border">
             <CardContent className="p-8 text-center">
-              <UtensilsCrossed className="h-10 w-10 text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">{t('no_products_for_modifiers')}</p>
+              <UtensilsCrossed className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+              <p className="text-muted-foreground text-sm">{t('no_products_for_modifiers')}</p>
             </CardContent>
           </Card>
         ) : (
@@ -465,61 +472,63 @@ export default function MenuBuilder() {
                 <Card
                   key={p.id}
                   data-testid={`product-mods-${p.id}`}
-                  className="bg-slate-800 border-slate-700"
+                  className="bg-card border-border"
                 >
                   <CardContent className="p-4">
                     <div className="mb-2">
-                      <span className="text-white font-medium">{p.name}</span>
+                      <span className="text-foreground font-medium">{p.name}</span>
                     </div>
                     {attached.length === 0 ? (
-                      <p className="text-xs text-slate-500 mb-2">{t('no_attached_groups')}</p>
+                      <p className="text-xs text-muted-foreground mb-2">{t('no_attached_groups')}</p>
                     ) : (
                       <div className="flex flex-wrap gap-2 mb-2">
                         {attached.map((g) => (
-                          <Badge
+                          <span
                             key={g.id}
-                            className="bg-brand-500/20 text-brand-300 flex items-center gap-1"
+                            className="inline-flex items-center gap-1.5 rounded-full bg-brand-500/10 px-2.5 py-0.5 text-xs font-semibold text-brand-700 dark:text-brand-300"
                           >
                             {g.name}
                             <button
                               onClick={() => handleDetachGroup(p.id, g.id)}
                               disabled={submitting}
-                              className="hover:text-red-400"
+                              className="hover:text-danger"
                               aria-label={`${t('detach')} ${g.name}`}
                             >
                               <Trash2 className="h-3 w-3" />
                             </button>
-                          </Badge>
+                          </span>
                         ))}
                       </div>
                     )}
                     <div className="flex items-center gap-2">
-                      <select
-                        aria-label={`${t('attach_group')} — ${p.name}`}
-                        value={attachChoice[p.id] ?? ''}
-                        onChange={(e) =>
+                      <Select
+                        value={attachChoice[p.id] ? String(attachChoice[p.id]) : 'none'}
+                        onValueChange={(v) =>
                           setAttachChoice((c) => ({
                             ...c,
-                            [p.id]: e.target.value ? parseInt(e.target.value) : '',
+                            [p.id]: v && v !== 'none' ? parseInt(v) : '',
                           }))
                         }
                         disabled={available.length === 0}
-                        className="flex-1 rounded-md bg-slate-700 border border-slate-600 text-white text-sm px-2 py-1.5 disabled:opacity-50"
                       >
-                        <option value="">{t('attach_group')}</option>
-                        {available.map((g) => (
-                          <option key={g.id} value={g.id}>
-                            {g.name}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger aria-label={`${t('attach_group')} — ${p.name}`} className="flex-1">
+                          <SelectValue placeholder={t('attach_group')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">{t('attach_group')}</SelectItem>
+                          {available.map((g) => (
+                            <SelectItem key={g.id} value={String(g.id)}>
+                              {g.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <Button
                         size="sm"
                         onClick={() => handleAttachGroup(p.id)}
                         disabled={submitting || !attachChoice[p.id]}
-                        className="bg-brand-600 hover:bg-brand-700 text-white"
                       >
-                        <Plus className="h-3.5 w-3.5 mr-1" /> {t('attach')}
+                        <Plus className="h-3.5 w-3.5" /> {t('attach')}
                       </Button>
                     </div>
                   </CardContent>
@@ -532,15 +541,15 @@ export default function MenuBuilder() {
 
       {/* Recipes (BOM) — define a product's component recipe (ISSUE-039) */}
       <div>
-        <h3 className="text-white font-semibold mb-2 flex items-center gap-2">
-          <ChefHat className="h-5 w-5 text-brand-400" />
+        <h3 className="text-[16px] font-extrabold tracking-tight mb-2 flex items-center gap-2">
+          <ChefHat className="h-5 w-5 text-brand-700" />
           {t('recipes')}
         </h3>
         {products.length === 0 ? (
-          <Card className="bg-slate-800 border-slate-700">
+          <Card className="bg-card border-border">
             <CardContent className="p-8 text-center">
-              <ChefHat className="h-10 w-10 text-slate-600 mx-auto mb-2" />
-              <p className="text-slate-400 text-sm">{t('no_products_for_recipes')}</p>
+              <ChefHat className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+              <p className="text-muted-foreground text-sm">{t('no_products_for_recipes')}</p>
             </CardContent>
           </Card>
         ) : (
@@ -555,19 +564,19 @@ export default function MenuBuilder() {
                 <Card
                   key={p.id}
                   data-testid={`product-bom-${p.id}`}
-                  className="bg-slate-800 border-slate-700"
+                  className="bg-card border-border"
                 >
                   <CardContent className="p-4">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-white font-medium">{p.name}</span>
+                      <span className="text-foreground font-medium">{p.name}</span>
                       {cogs > 0 && (
-                        <span className="text-xs text-slate-400">
-                          {t('cost_of_goods')}: {cogs.toFixed(2)}
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {t('cost_of_goods')}: {formatMoney(cogs, language)}
                         </span>
                       )}
                     </div>
                     {components.length === 0 ? (
-                      <p className="text-xs text-slate-500 mb-2">{t('no_components')}</p>
+                      <p className="text-xs text-muted-foreground mb-2">{t('no_components')}</p>
                     ) : (
                       <div className="space-y-1 mb-2">
                         {components.map((b) => {
@@ -576,15 +585,15 @@ export default function MenuBuilder() {
                           return (
                             <div
                               key={b.id}
-                              className="flex items-center justify-between text-sm text-slate-300"
+                              className="flex items-center justify-between text-sm text-foreground/90"
                             >
                               <span>
-                                {compName} <span className="text-slate-400">×{b.qty_per}</span>
+                                {compName} <span className="text-muted-foreground">×{b.qty_per}</span>
                               </span>
                               <button
                                 onClick={() => handleRemoveComponent(b.id)}
                                 disabled={submitting}
-                                className="text-slate-500 hover:text-red-400"
+                                className="text-muted-foreground hover:text-danger"
                                 aria-label={`${t('remove')} ${compName}`}
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -595,25 +604,28 @@ export default function MenuBuilder() {
                       </div>
                     )}
                     <div className="flex items-center gap-2">
-                      <select
-                        aria-label={`${t('add_component')} — ${p.name}`}
-                        value={bomChoice[p.id] ?? ''}
-                        onChange={(e) =>
+                      <Select
+                        value={bomChoice[p.id] ? String(bomChoice[p.id]) : 'none'}
+                        onValueChange={(v) =>
                           setBomChoice((c) => ({
                             ...c,
-                            [p.id]: e.target.value ? parseInt(e.target.value) : '',
+                            [p.id]: v && v !== 'none' ? parseInt(v) : '',
                           }))
                         }
                         disabled={available.length === 0}
-                        className="flex-1 rounded-md bg-slate-700 border border-slate-600 text-white text-sm px-2 py-1.5 disabled:opacity-50"
                       >
-                        <option value="">{t('add_component')}</option>
-                        {available.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger aria-label={`${t('add_component')} — ${p.name}`} className="flex-1">
+                          <SelectValue placeholder={t('add_component')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">{t('add_component')}</SelectItem>
+                          {available.map((c) => (
+                            <SelectItem key={c.id} value={String(c.id)}>
+                              {c.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <Input
                         type="number"
                         aria-label={`${t('qty_per')} — ${p.name}`}
@@ -623,15 +635,14 @@ export default function MenuBuilder() {
                         onChange={(e) =>
                           setBomQty((q) => ({ ...q, [p.id]: parseFloat(e.target.value) || 0 }))
                         }
-                        className="w-20 h-9 bg-slate-700 border-slate-600 text-white"
+                        className="w-20 h-9"
                       />
                       <Button
                         size="sm"
                         onClick={() => handleAddComponent(p.id)}
                         disabled={submitting || !bomChoice[p.id]}
-                        className="bg-brand-600 hover:bg-brand-700 text-white"
                       >
-                        <Plus className="h-3.5 w-3.5 mr-1" /> {t('add_component')}
+                        <Plus className="h-3.5 w-3.5" /> {t('add_component')}
                       </Button>
                     </div>
                   </CardContent>
@@ -644,60 +655,55 @@ export default function MenuBuilder() {
 
       {/* Create modifier-group dialog */}
       <Dialog open={groupOpen} onOpenChange={setGroupOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">{t('add_modifier_group')}</DialogTitle>
+            <DialogTitle>{t('add_modifier_group')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('name')}</label>
+              <Label className="mb-1 block">{t('name')}</Label>
               <Input
                 value={groupForm.name}
                 onChange={(e) => setGroupForm((f) => ({ ...f, name: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('name_ar')}</label>
+              <Label className="mb-1 block">{t('name_ar')}</Label>
               <Input
                 value={groupForm.name_ar}
                 onChange={(e) => setGroupForm((f) => ({ ...f, name_ar: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
                 dir="rtl"
               />
             </div>
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input
-                type="checkbox"
+            <label className="flex items-center gap-2 text-sm text-foreground/90">
+              <Checkbox
                 checked={groupForm.required}
-                onChange={(e) => setGroupForm((f) => ({ ...f, required: e.target.checked }))}
+                onCheckedChange={(c) => setGroupForm((f) => ({ ...f, required: c === true }))}
               />
               {t('required')}
             </label>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm text-slate-400 mb-1 block">{t('min_select')}</label>
+                <Label className="mb-1 block">{t('min_select')}</Label>
                 <Input
                   type="number"
                   value={groupForm.min_select}
                   onChange={(e) => setGroupForm((f) => ({ ...f, min_select: parseInt(e.target.value) || 0 }))}
-                  className="bg-slate-700 border-slate-600 text-white"
                 />
               </div>
               <div>
-                <label className="text-sm text-slate-400 mb-1 block">{t('max_select')}</label>
+                <Label className="mb-1 block">{t('max_select')}</Label>
                 <Input
                   type="number"
                   value={groupForm.max_select}
                   onChange={(e) => setGroupForm((f) => ({ ...f, max_select: parseInt(e.target.value) || 1 }))}
-                  className="bg-slate-700 border-slate-600 text-white"
                 />
               </div>
             </div>
             <Button
               onClick={handleCreateGroup}
               disabled={submitting || !groupForm.name.trim()}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full"
             >
               {submitting ? t('loading') : t('save')}
             </Button>
@@ -707,43 +713,40 @@ export default function MenuBuilder() {
 
       {/* Create modifier dialog */}
       <Dialog open={!!modOpen} onOpenChange={(o) => !o && setModOpen(null)}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">
+            <DialogTitle>
               {t('add_modifier')} — {modOpen?.name}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('name')}</label>
+              <Label className="mb-1 block">{t('name')}</Label>
               <Input
                 value={modForm.name}
                 onChange={(e) => setModForm((f) => ({ ...f, name: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('name_ar')}</label>
+              <Label className="mb-1 block">{t('name_ar')}</Label>
               <Input
                 value={modForm.name_ar}
                 onChange={(e) => setModForm((f) => ({ ...f, name_ar: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
                 dir="rtl"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('price_delta')}</label>
+              <Label className="mb-1 block">{t('price_delta')}</Label>
               <Input
                 type="number"
                 value={modForm.price_delta}
                 onChange={(e) => setModForm((f) => ({ ...f, price_delta: parseFloat(e.target.value) || 0 }))}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
             <Button
               onClick={handleCreateModifier}
               disabled={submitting || !modForm.name.trim()}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full"
             >
               {submitting ? t('loading') : t('save')}
             </Button>
@@ -753,54 +756,51 @@ export default function MenuBuilder() {
 
       {/* Create combo dialog */}
       <Dialog open={comboOpen} onOpenChange={setComboOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('add_combo')}</DialogTitle>
+            <DialogTitle>{t('add_combo')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('name')}</label>
+              <Label className="mb-1 block">{t('name')}</Label>
               <Input
                 value={comboForm.name}
                 onChange={(e) => setComboForm((f) => ({ ...f, name: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('bundle_price')}</label>
+              <Label className="mb-1 block">{t('bundle_price')}</Label>
               <Input
                 type="number"
                 value={comboForm.bundle_price}
                 onChange={(e) =>
                   setComboForm((f) => ({ ...f, bundle_price: parseFloat(e.target.value) || 0 }))
                 }
-                className="bg-slate-700 border-slate-600 text-white"
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('components')}</label>
+              <Label className="mb-1 block">{t('components')}</Label>
               <div className="space-y-2 max-h-48 overflow-y-auto">
                 {products.map((p) => {
                   const sel = comboForm.components.find((c) => c.product_id === p.id);
                   return (
                     <label
                       key={p.id}
-                      className="flex items-center justify-between gap-2 text-sm text-slate-300"
+                      className="flex items-center justify-between gap-2 text-sm text-foreground/90"
                     >
                       <span className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
+                        <Checkbox
                           checked={!!sel}
-                          onChange={(e) =>
+                          onCheckedChange={(checked) =>
                             setComboForm((f) => ({
                               ...f,
-                              components: e.target.checked
+                              components: checked === true
                                 ? [...f.components, { product_id: p.id, qty: 1 }]
                                 : f.components.filter((c) => c.product_id !== p.id),
                             }))
                           }
                         />
-                        {p.name} ({p.price})
+                        {p.name} (<span className="tabular-nums">{formatMoney(p.price, language)}</span>)
                       </span>
                       {sel && (
                         <Input
@@ -814,7 +814,7 @@ export default function MenuBuilder() {
                               ),
                             }))
                           }
-                          className="bg-slate-700 border-slate-600 text-white w-20 h-8"
+                          className="w-20 h-8"
                         />
                       )}
                     </label>
@@ -825,7 +825,7 @@ export default function MenuBuilder() {
             <Button
               onClick={handleCreateCombo}
               disabled={submitting || !comboForm.name.trim()}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full"
             >
               {submitting ? t('loading') : t('save')}
             </Button>

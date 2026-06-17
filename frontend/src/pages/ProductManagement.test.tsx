@@ -61,7 +61,9 @@ describe('ProductManagement catalog table (ISSUE-021)', () => {
 
     // Wait for the catalog to populate, then assert the "Total Products" tile.
     await screen.findByText('Espresso');
-    const totalTile = screen.getByText('Total Products').closest('div');
+    // The label sits in a StatTile whose large value is a sibling node; assert on
+    // the enclosing tile (the rounded-2xl card) so the computed total is checked.
+    const totalTile = screen.getByText('Total Products').closest('.rounded-2xl');
     expect(totalTile).toHaveTextContent('2');
   });
 });

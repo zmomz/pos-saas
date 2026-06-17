@@ -10,8 +10,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { client, createStockAdjustment, getBranchTransfers, setMainBranch, type BranchTransfer, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star, History } from 'lucide-react';
 
 const ADJUSTMENT_REASONS: StockAdjustmentReason[] = [
@@ -92,7 +100,11 @@ export default function BranchManagement() {
   const [transfersError, setTransfersError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState('');
 
-  const { t } = useLanguage();
+  const { t, isRTL } = useLanguage();
+  const tt = (key: string, fallback: string) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
 
   useEffect(() => {
     loadBranches();
@@ -316,22 +328,22 @@ export default function BranchManagement() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Branch Name *</label>
-          <Input value={formData.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder="Main Branch" className="bg-slate-700 border-slate-600 text-white" />
+          <label className="text-sm text-muted-foreground mb-1 block">{tt('branch_name', 'Branch Name')} *</label>
+          <Input value={formData.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder={tt('branch_name_placeholder', 'Main Branch')} className="bg-muted border-input text-foreground" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Address</label>
-          <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder="Branch address" className="bg-slate-700 border-slate-600 text-white" />
+          <label className="text-sm text-muted-foreground mb-1 block">{tt('address', 'Address')}</label>
+          <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder={tt('branch_address_placeholder', 'Branch address')} className="bg-muted border-input text-foreground" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Manager Name</label>
-          <Input value={formData.manager_name} onChange={(e) => handleFormChange('manager_name', e.target.value)} placeholder="Branch manager" className="bg-slate-700 border-slate-600 text-white" />
+          <label className="text-sm text-muted-foreground mb-1 block">{tt('manager_name', 'Manager Name')}</label>
+          <Input value={formData.manager_name} onChange={(e) => handleFormChange('manager_name', e.target.value)} placeholder={tt('branch_manager_placeholder', 'Branch manager')} className="bg-muted border-input text-foreground" />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">Phone</label>
-          <Input value={formData.phone} onChange={(e) => handleFormChange('phone', e.target.value)} placeholder="+966 xxx xxxx" className="bg-slate-700 border-slate-600 text-white" />
+          <label className="text-sm text-muted-foreground mb-1 block">{tt('phone', 'Phone')}</label>
+          <Input value={formData.phone} onChange={(e) => handleFormChange('phone', e.target.value)} placeholder="+966 xxx xxxx" className="bg-muted border-input text-foreground" />
         </div>
-        <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full bg-brand-600 hover:bg-brand-700 text-white">
+        <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full shadow-brand">
           {submitting ? t('loading') : submitLabel}
         </Button>
       </div>
@@ -341,102 +353,97 @@ export default function BranchManagement() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="animate-fade-up space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Building2 className="h-6 w-6 text-brand-400" />
-            Branch Management
-          </h2>
-          <p className="text-slate-400 text-sm mt-1">Manage your business locations and inventory</p>
-        </div>
-        <div className="flex gap-2">
-          <Button onClick={() => { setAdjustError(null); setAdjustResult(null); setAdjustData({ branch_id: '', product_id: '', reason: 'count', counted_quantity: 0, note: '' }); setAdjustOpen(true); }} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
-            <ClipboardList className="h-4 w-4 mr-2" /> {t('stock_count')}
-          </Button>
-          <Button onClick={() => { setTransferError(null); setTransferOpen(true); }} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
-            <ArrowRightLeft className="h-4 w-4 mr-2" /> {t('transfer_stock')}
-          </Button>
-          <Button onClick={openHistory} variant="outline" className="border-slate-600 text-slate-300 hover:bg-slate-700">
-            <History className="h-4 w-4 mr-2" /> {t('transfer_history')}
-          </Button>
-          <Dialog open={addOpen} onOpenChange={setAddOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={() => setFormData(emptyForm)} className="bg-brand-600 hover:bg-brand-700 text-white">
-                <Plus className="h-4 w-4 mr-2" /> Add Branch
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle className="text-white">Add New Branch</DialogTitle>
-              </DialogHeader>
-              {renderForm(handleAddBranch, 'Create Branch')}
-            </DialogContent>
-          </Dialog>
-        </div>
-      </div>
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Building2 className="h-[18px] w-[18px]" /></span>}
+        title={tt('branch_management', 'Branch Management')}
+        subtitle={tt('branch_management_desc', 'Manage your business locations and inventory')}
+      >
+        <Button onClick={() => { setAdjustError(null); setAdjustResult(null); setAdjustData({ branch_id: '', product_id: '', reason: 'count', counted_quantity: 0, note: '' }); setAdjustOpen(true); }} variant="outline" className="h-11 rounded-[10px] border-input text-foreground/90 hover:bg-muted">
+          <ClipboardList className="h-4 w-4 me-2" /> {t('stock_count')}
+        </Button>
+        <Button onClick={() => { setTransferError(null); setTransferOpen(true); }} variant="outline" className="h-11 rounded-[10px] border-input text-foreground/90 hover:bg-muted">
+          <ArrowRightLeft className="h-4 w-4 me-2" /> {t('transfer_stock')}
+        </Button>
+        <Button onClick={openHistory} variant="outline" className="h-11 rounded-[10px] border-input text-foreground/90 hover:bg-muted">
+          <History className="h-4 w-4 me-2" /> {t('transfer_history')}
+        </Button>
+        <Dialog open={addOpen} onOpenChange={setAddOpen}>
+          <DialogTrigger asChild>
+            <Button onClick={() => setFormData(emptyForm)} className="h-11 rounded-[10px] shadow-brand">
+              <Plus className="h-4 w-4 me-2" /> {tt('add_branch', 'Add Branch')}
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="bg-card border-border text-foreground max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="text-foreground">{tt('add_new_branch', 'Add New Branch')}</DialogTitle>
+            </DialogHeader>
+            {renderForm(handleAddBranch, tt('create_branch', 'Create Branch'))}
+          </DialogContent>
+        </Dialog>
+      </PageHeading>
 
       {/* Branch Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {branches.length === 0 ? (
-          <Card className="bg-slate-800 border-slate-700 col-span-full">
+          <Card className="bg-card border-border col-span-full">
             <CardContent className="p-8 text-center">
-              <Building2 className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-              <p className="text-slate-400">No branches configured. Add your first branch.</p>
+              <Building2 className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+              <p className="text-muted-foreground">{tt('no_branches_configured', 'No branches configured. Add your first branch.')}</p>
             </CardContent>
           </Card>
         ) : (
           branches.map((branch) => (
-            <Card key={branch.id} className="bg-slate-800 border-slate-700">
+            <Card key={branch.id} className="bg-card border-border">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-white text-lg">{branch.name}</CardTitle>
+                  <CardTitle className="text-foreground text-lg">{branch.name}</CardTitle>
                   <div className="flex items-center gap-2">
                     {branch.is_main && (
-                      <Badge className="bg-brand-500/20 text-brand-300 flex items-center gap-1">
+                      <Badge className="pill-sky flex items-center gap-1">
                         <Star className="h-3 w-3 fill-current" /> {t('main_branch')}
                       </Badge>
                     )}
-                    <Badge className={branch.is_active ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}>
-                      {branch.is_active ? 'Active' : 'Inactive'}
+                    <Badge className={branch.is_active ? 'pill-success' : 'pill-danger'}>
+                      {branch.is_active ? tt('active', 'Active') : tt('inactive', 'Inactive')}
                     </Badge>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 {branch.address && (
-                  <div className="flex items-center gap-2 text-slate-400 text-sm">
+                  <div className="flex items-center gap-2 text-muted-foreground text-sm">
                     <MapPin className="h-4 w-4" />
                     <span>{branch.address}</span>
                   </div>
                 )}
                 {branch.manager_name && (
-                  <p className="text-slate-400 text-sm">Manager: <span className="text-white">{branch.manager_name}</span></p>
+                  <p className="text-muted-foreground text-sm">{tt('manager', 'Manager')}: <span className="text-foreground">{branch.manager_name}</span></p>
                 )}
                 {branch.phone && (
-                  <p className="text-slate-400 text-sm">Phone: <span className="text-white">{branch.phone}</span></p>
+                  <p className="text-muted-foreground text-sm">{tt('phone', 'Phone')}: <span className="text-foreground">{branch.phone}</span></p>
                 )}
                 <div className="flex gap-2 pt-2">
-                  <Button size="sm" variant="outline" onClick={() => openInventory(branch)} className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs flex-1">
-                    <Package className="h-3 w-3 mr-1" /> Inventory
+                  <Button size="sm" variant="outline" onClick={() => openInventory(branch)} className="border-input text-foreground/90 hover:bg-muted text-xs flex-1">
+                    <Package className="h-3 w-3 me-1" /> {tt('inventory', 'Inventory')}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => openEdit(branch)} className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs">
-                    Edit
+                  <Button size="sm" variant="outline" onClick={() => openEdit(branch)} className="border-input text-foreground/90 hover:bg-muted text-xs">
+                    {tt('edit', 'Edit')}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => handleToggleBranch(branch)} className={branch.is_active ? 'border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs' : 'border-green-600/50 text-green-400 hover:bg-green-600/20 text-xs'}>
-                    {branch.is_active ? 'Disable' : 'Enable'}
+                  <Button size="sm" variant="outline" onClick={() => handleToggleBranch(branch)} className={branch.is_active ? 'border-danger/50 text-danger hover:bg-danger/10 text-xs' : 'border-success/50 text-success hover:bg-success/10 text-xs'}>
+                    {branch.is_active ? tt('disable', 'Disable') : tt('enable', 'Enable')}
                   </Button>
                 </div>
                 {!branch.is_main && (
-                  <Button size="sm" variant="outline" onClick={() => handleSetMain(branch)} className="w-full border-brand-600/50 text-brand-300 hover:bg-brand-600/20 text-xs">
-                    <Star className="h-3 w-3 mr-1" /> {t('set_as_main')}
+                  <Button size="sm" variant="outline" onClick={() => handleSetMain(branch)} className="w-full border-brand/50 text-brand hover:bg-brand/10 text-xs">
+                    <Star className="h-3 w-3 me-1" /> {t('set_as_main')}
                   </Button>
                 )}
               </CardContent>
@@ -447,9 +454,9 @@ export default function BranchManagement() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="bg-card border-border text-foreground max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">Edit Branch</DialogTitle>
+            <DialogTitle className="text-foreground">{tt('edit_branch', 'Edit Branch')}</DialogTitle>
           </DialogHeader>
           {renderForm(handleEditBranch, t('save'))}
         </DialogContent>
@@ -457,29 +464,29 @@ export default function BranchManagement() {
 
       {/* Inventory Dialog */}
       <Dialog open={inventoryOpen} onOpenChange={setInventoryOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto max-w-lg">
+        <DialogContent className="bg-card border-border text-foreground max-h-[90vh] overflow-y-auto max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-white">Inventory - {selectedBranch?.name}</DialogTitle>
+            <DialogTitle className="text-foreground">{tt('inventory', 'Inventory')} - {selectedBranch?.name}</DialogTitle>
           </DialogHeader>
           {inventoryLoading ? (
-            <div className="text-center py-8 text-slate-400">{t('loading')}</div>
+            <div className="text-center py-8 text-muted-foreground">{t('loading')}</div>
           ) : branchInventory.length === 0 ? (
-            <div className="text-center py-8 text-slate-500">No inventory data for this branch</div>
+            <div className="text-center py-8 text-muted-foreground">{tt('no_inventory_data', 'No inventory data for this branch')}</div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-slate-700">
+            <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
-                <thead className="bg-slate-700/50">
-                  <tr className="text-slate-400">
-                    <th className="p-2 text-start">Product</th>
-                    <th className="p-2 text-start">Quantity</th>
+                <thead className="bg-muted/50">
+                  <tr className="text-muted-foreground">
+                    <th className="p-2 text-start">{tt('product', 'Product')}</th>
+                    <th className="p-2 text-start">{tt('quantity', 'Quantity')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {branchInventory.map((item, idx) => (
-                    <tr key={idx} className="border-t border-slate-700 text-slate-300">
-                      <td className="p-2 text-white">{item.product_name}</td>
+                    <tr key={idx} className="border-t border-border text-foreground/90">
+                      <td className="p-2 text-foreground">{item.product_name}</td>
                       <td className="p-2">
-                        <Badge className={item.quantity > 10 ? 'bg-green-500/20 text-green-400' : item.quantity > 0 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}>
+                        <Badge className={item.quantity > 10 ? 'pill-success' : item.quantity > 0 ? 'pill-warning' : 'pill-danger'}>
                           {item.quantity}
                         </Badge>
                       </td>
@@ -494,61 +501,70 @@ export default function BranchManagement() {
 
       {/* Transfer Dialog */}
       <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('transfer_stock')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('transfer_stock')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('from_branch')}</label>
-              <select
+              <label className="text-sm text-muted-foreground mb-1 block">{t('from_branch')}</label>
+              <Select
                 value={transferData.from_branch_id}
-                onChange={(e) => setTransferData((d) => ({ ...d, from_branch_id: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                onValueChange={(v) => setTransferData((d) => ({ ...d, from_branch_id: v }))}
               >
-                <option value="">{t('select_branch')}</option>
-                {branches.filter((b) => b.is_active).map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+                <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectValue placeholder={t('select_branch')} />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-input">
+                  {branches.filter((b) => b.is_active).map((b) => (
+                    <SelectItem key={b.id} value={b.id} className="text-foreground hover:bg-muted">{b.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('to_branch')}</label>
-              <select
+              <label className="text-sm text-muted-foreground mb-1 block">{t('to_branch')}</label>
+              <Select
                 value={transferData.to_branch_id}
-                onChange={(e) => setTransferData((d) => ({ ...d, to_branch_id: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                onValueChange={(v) => setTransferData((d) => ({ ...d, to_branch_id: v }))}
               >
-                <option value="">{t('select_branch')}</option>
-                {branches.filter((b) => b.is_active && b.id !== transferData.from_branch_id).map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+                <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectValue placeholder={t('select_branch')} />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-input">
+                  {branches.filter((b) => b.is_active && b.id !== transferData.from_branch_id).map((b) => (
+                    <SelectItem key={b.id} value={b.id} className="text-foreground hover:bg-muted">{b.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('product')}</label>
-              <select
+              <label className="text-sm text-muted-foreground mb-1 block">{t('product')}</label>
+              <Select
                 value={transferData.product_id}
-                onChange={(e) => setTransferData((d) => ({ ...d, product_id: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                onValueChange={(v) => setTransferData((d) => ({ ...d, product_id: v }))}
               >
-                <option value="">{t('select_product')}</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+                <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectValue placeholder={t('select_product')} />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-input">
+                  {products.map((p) => (
+                    <SelectItem key={p.id} value={p.id} className="text-foreground hover:bg-muted">{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('quantity')}</label>
-              <Input type="number" value={transferData.quantity} onChange={(e) => setTransferData((d) => ({ ...d, quantity: parseInt(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
+              <label className="text-sm text-muted-foreground mb-1 block">{t('quantity')}</label>
+              <Input type="number" value={transferData.quantity} onChange={(e) => setTransferData((d) => ({ ...d, quantity: parseInt(e.target.value) || 0 }))} className="bg-muted border-input text-foreground" />
             </div>
             {transferError && (
-              <p role="alert" className="text-sm text-red-400">{transferError}</p>
+              <p role="alert" className="text-sm text-danger">{transferError}</p>
             )}
             <Button
               onClick={handleTransferStock}
               disabled={submitting || !transferData.from_branch_id || !transferData.to_branch_id || !transferData.product_id || transferData.quantity <= 0}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full shadow-brand"
             >
               {submitting ? t('loading') : t('transfer_stock')}
             </Button>
@@ -558,35 +574,39 @@ export default function BranchManagement() {
 
       {/* Transfer History Dialog (ISSUE-060) */}
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto max-w-2xl">
+        <DialogContent className="bg-card border-border text-foreground max-h-[90vh] overflow-y-auto max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('transfer_history')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('transfer_history')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('branch')}</label>
-              <select
-                value={historyFilter}
-                onChange={(e) => handleHistoryFilter(e.target.value)}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              <label className="text-sm text-muted-foreground mb-1 block">{t('branch')}</label>
+              <Select
+                value={historyFilter === '' ? '__all__' : historyFilter}
+                onValueChange={(v) => handleHistoryFilter(v === '__all__' ? '' : v)}
               >
-                <option value="">{t('all_branches')}</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+                <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-input">
+                  <SelectItem value="__all__" className="text-foreground hover:bg-muted">{t('all_branches')}</SelectItem>
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id} className="text-foreground hover:bg-muted">{b.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {transfersError ? (
-              <p role="alert" className="text-sm text-red-400">{transfersError}</p>
+              <p role="alert" className="text-sm text-danger">{transfersError}</p>
             ) : transfersLoading ? (
-              <div className="text-center py-8 text-slate-400">{t('loading')}</div>
+              <div className="text-center py-8 text-muted-foreground">{t('loading')}</div>
             ) : transfers.length === 0 ? (
-              <div className="text-center py-8 text-slate-500">{t('transfer_history_empty')}</div>
+              <div className="text-center py-8 text-muted-foreground">{t('transfer_history_empty')}</div>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-slate-700">
+              <div className="overflow-x-auto rounded-lg border border-border">
                 <table className="w-full text-sm">
-                  <thead className="bg-slate-700/50">
-                    <tr className="text-slate-400">
+                  <thead className="bg-muted/50">
+                    <tr className="text-muted-foreground">
                       <th className="p-2 text-start">{t('date')}</th>
                       <th className="p-2 text-start">{t('from_branch')}</th>
                       <th className="p-2 text-start">{t('to_branch')}</th>
@@ -597,13 +617,13 @@ export default function BranchManagement() {
                   </thead>
                   <tbody>
                     {transfers.map((tr) => (
-                      <tr key={tr.id} className="border-t border-slate-700 text-slate-300">
+                      <tr key={tr.id} className="border-t border-border text-foreground/90">
                         <td className="p-2 whitespace-nowrap">{tr.created_at ? new Date(tr.created_at).toLocaleDateString() : '—'}</td>
                         <td className="p-2">{branchName(tr.from_branch_id)}</td>
                         <td className="p-2">{branchName(tr.to_branch_id)}</td>
-                        <td className="p-2 text-white">{tr.product_name ?? `#${tr.product_id}`}</td>
+                        <td className="p-2 text-foreground">{tr.product_name ?? `#${tr.product_id}`}</td>
                         <td className="p-2">{tr.quantity}</td>
-                        <td className="p-2"><Badge className="bg-brand-500/20 text-brand-300">{tr.status}</Badge></td>
+                        <td className="p-2"><Badge className="pill-sky">{tr.status}</Badge></td>
                       </tr>
                     ))}
                   </tbody>
@@ -616,76 +636,87 @@ export default function BranchManagement() {
 
       {/* Stock Count / Adjustment Dialog (INV-06) */}
       <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('stock_count')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('stock_count')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p className="text-xs text-slate-400">{t('stock_count_hint')}</p>
+            <p className="text-xs text-muted-foreground">{t('stock_count_hint')}</p>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('product')}</label>
-              <select
+              <label className="text-sm text-muted-foreground mb-1 block">{t('product')}</label>
+              <Select
                 value={adjustData.product_id}
-                onChange={(e) => setAdjustData((d) => ({ ...d, product_id: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                onValueChange={(v) => setAdjustData((d) => ({ ...d, product_id: v }))}
               >
-                <option value="">{t('select_product')}</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
+                <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectValue placeholder={t('select_product')} />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-input">
+                  {products.map((p) => (
+                    <SelectItem key={p.id} value={p.id} className="text-foreground hover:bg-muted">{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('branch')}</label>
-              <select
-                value={adjustData.branch_id}
-                onChange={(e) => setAdjustData((d) => ({ ...d, branch_id: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+              <label className="text-sm text-muted-foreground mb-1 block">{t('branch')}</label>
+              <Select
+                value={adjustData.branch_id === '' ? '__client__' : adjustData.branch_id}
+                onValueChange={(v) => setAdjustData((d) => ({ ...d, branch_id: v === '__client__' ? '' : v }))}
               >
-                <option value="">{t('client_level_stock')}</option>
-                {branches.filter((b) => b.is_active).map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+                <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-input">
+                  <SelectItem value="__client__" className="text-foreground hover:bg-muted">{t('client_level_stock')}</SelectItem>
+                  {branches.filter((b) => b.is_active).map((b) => (
+                    <SelectItem key={b.id} value={b.id} className="text-foreground hover:bg-muted">{b.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('reason')}</label>
-              <select
+              <label className="text-sm text-muted-foreground mb-1 block">{t('reason')}</label>
+              <Select
                 value={adjustData.reason}
-                onChange={(e) => setAdjustData((d) => ({ ...d, reason: e.target.value as StockAdjustmentReason }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                onValueChange={(v) => setAdjustData((d) => ({ ...d, reason: v as StockAdjustmentReason }))}
               >
-                {ADJUSTMENT_REASONS.map((r) => (
-                  <option key={r} value={r}>{t(`reason_${r}`)}</option>
-                ))}
-              </select>
+                <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-input">
+                  {ADJUSTMENT_REASONS.map((r) => (
+                    <SelectItem key={r} value={r} className="text-foreground hover:bg-muted">{t(`reason_${r}`)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('counted_quantity')}</label>
-              <Input type="number" min={0} value={adjustData.counted_quantity} onChange={(e) => setAdjustData((d) => ({ ...d, counted_quantity: parseInt(e.target.value) || 0 }))} className="bg-slate-700 border-slate-600 text-white" />
+              <label className="text-sm text-muted-foreground mb-1 block">{t('counted_quantity')}</label>
+              <Input type="number" min={0} value={adjustData.counted_quantity} onChange={(e) => setAdjustData((d) => ({ ...d, counted_quantity: parseInt(e.target.value) || 0 }))} className="bg-muted border-input text-foreground" />
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('adjustment_note')}</label>
-              <Input value={adjustData.note} onChange={(e) => setAdjustData((d) => ({ ...d, note: e.target.value }))} className="bg-slate-700 border-slate-600 text-white" />
+              <label className="text-sm text-muted-foreground mb-1 block">{t('adjustment_note')}</label>
+              <Input value={adjustData.note} onChange={(e) => setAdjustData((d) => ({ ...d, note: e.target.value }))} className="bg-muted border-input text-foreground" />
             </div>
             {adjustResult && (
-              <div className="rounded-lg border border-slate-700 bg-slate-700/30 p-3 text-sm">
-                <div className="flex justify-between text-slate-400"><span>{t('system_quantity')}</span><span className="text-white">{adjustResult.system_quantity}</span></div>
-                <div className="flex justify-between text-slate-400"><span>{t('counted_quantity')}</span><span className="text-white">{adjustResult.counted_quantity}</span></div>
-                <div className="flex justify-between"><span className="text-slate-400">{t('variance')}</span>
-                  <Badge className={adjustResult.variance === 0 ? 'bg-slate-500/20 text-slate-300' : adjustResult.variance > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}>
+              <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
+                <div className="flex justify-between text-muted-foreground"><span>{t('system_quantity')}</span><span className="text-foreground">{adjustResult.system_quantity}</span></div>
+                <div className="flex justify-between text-muted-foreground"><span>{t('counted_quantity')}</span><span className="text-foreground">{adjustResult.counted_quantity}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">{t('variance')}</span>
+                  <Badge className={adjustResult.variance === 0 ? 'pill-muted' : adjustResult.variance > 0 ? 'pill-success' : 'pill-danger'}>
                     {adjustResult.variance > 0 ? `+${adjustResult.variance}` : adjustResult.variance}
                   </Badge>
                 </div>
               </div>
             )}
             {adjustError && (
-              <p role="alert" className="text-sm text-red-400">{adjustError}</p>
+              <p role="alert" className="text-sm text-danger">{adjustError}</p>
             )}
             <Button
               onClick={handleStockAdjust}
               disabled={submitting || !adjustData.product_id}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full shadow-brand"
             >
               {submitting ? t('loading') : t('adjust_stock')}
             </Button>

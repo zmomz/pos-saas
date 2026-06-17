@@ -57,9 +57,9 @@ describe('AuditLog renders against real fields (ISSUE-027)', () => {
     renderPage();
 
     const table = await screen.findByRole('table');
-    expect(within(table).getByText('Create')).toHaveClass('text-green-400');
-    expect(within(table).getByText('Delete')).toHaveClass('text-red-400');
-    // Failed-auth attempts are a recognized, security-relevant verb (red badge).
-    expect(within(table).getByText('Auth Failure')).toHaveClass('text-red-400');
+    expect(within(table).getByText('Create')).toHaveClass('pill-success');
+    expect(within(table).getByText('Delete')).toHaveClass('pill-danger');
+    // Failed-auth attempts are a recognized, security-relevant verb (danger badge).
+    expect(within(table).getByText('Auth Failure')).toHaveClass('pill-danger');
   });
 });

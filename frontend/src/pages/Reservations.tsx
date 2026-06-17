@@ -19,16 +19,18 @@ import {
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import OfflineBanner from '@/components/states/OfflineBanner';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
 import { CalendarClock, ListOrdered, Plus, Users, Armchair, X } from 'lucide-react';
 
-// Status badge tints, brand/neutral tokens only (no hardcoded palette colours).
+// Status badge tints — a seated party reads as a positive outcome (success),
+// while cancelled / no-show fade to muted; active bookings/waits stay brand.
 const STATUS_BADGE: Record<string, string> = {
   booked: 'bg-brand-500/15 text-brand-600',
   waiting: 'bg-brand-500/15 text-brand-600',
-  seated: 'bg-muted text-muted-foreground',
-  cancelled: 'bg-muted text-muted-foreground',
-  no_show: 'bg-muted text-muted-foreground',
+  seated: 'pill-success',
+  cancelled: 'pill-muted',
+  no_show: 'pill-muted',
 };
 
 function statusLabel(t: (k: string) => string, status?: string | null): string {
@@ -186,18 +188,18 @@ export default function Reservations() {
   }
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
+    <div className="animate-fade-up space-y-6 p-4 sm:p-6">
       {!online && <OfflineBanner />}
 
-      <header className="flex items-center gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-500/15 text-brand-600">
-          <CalendarClock className="h-6 w-6" />
-        </span>
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">{t('rw_title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('rw_subtitle')}</p>
-        </div>
-      </header>
+      <PageHeading
+        title={t('rw_title')}
+        subtitle={t('rw_subtitle')}
+        icon={
+          <span className="dxr-sw dxr-sw-brand h-10 w-10">
+            <CalendarClock className="h-[18px] w-[18px]" />
+          </span>
+        }
+      />
 
       {error ? (
         <ErrorState message={t('rw_error')} onRetry={load} />
@@ -263,7 +265,6 @@ export default function Reservations() {
                 <Button
                   onClick={submitReservation}
                   disabled={submitting || !resForm.reserved_at}
-                  className="bg-brand-600 text-white hover:bg-brand-700"
                 >
                   <Plus className="mr-1 h-4 w-4" />
                   {t('rw_add_reservation')}
@@ -347,7 +348,6 @@ export default function Reservations() {
                 <Button
                   onClick={submitWaitlist}
                   disabled={submitting || !waitForm.customer_name.trim()}
-                  className="bg-brand-600 text-white hover:bg-brand-700"
                 >
                   <Plus className="mr-1 h-4 w-4" />
                   {t('rw_add_party')}

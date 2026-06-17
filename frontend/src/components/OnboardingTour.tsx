@@ -188,13 +188,13 @@ const OnboardingTour: React.FC = () => {
 
       {/* Tooltip */}
       <div
-        className="absolute z-[10000] w-[320px] bg-white dark:bg-slate-800 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-600 p-5 animate-in fade-in duration-300"
+        className="absolute z-[10000] w-[320px] bg-white dark:bg-card rounded-xl shadow-2xl border border-border dark:border-input p-5 animate-in fade-in duration-300"
         style={{ top: tooltipPosition.top, left: tooltipPosition.left }}
       >
         {/* Close button */}
         <button
           onClick={handleSkip}
-          className="absolute top-3 right-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+          className="absolute top-3 right-3 text-muted-foreground hover:text-muted-foreground dark:hover:text-foreground"
         >
           <X className="h-4 w-4" />
         </button>
@@ -205,17 +205,17 @@ const OnboardingTour: React.FC = () => {
             <div
               key={i}
               className={`h-1.5 rounded-full flex-1 transition-colors ${
-                i <= currentStep ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-600'
+                i <= currentStep ? 'bg-brand-500' : 'bg-muted dark:bg-muted'
               }`}
             />
           ))}
         </div>
 
         {/* Content */}
-        <h3 className="text-base font-semibold text-slate-900 dark:text-white mb-2">
+        <h3 className="text-base font-semibold text-foreground dark:text-foreground mb-2">
           {step.title}
         </h3>
-        <p className="text-sm text-slate-600 dark:text-slate-300 mb-4 leading-relaxed">
+        <p className="text-sm text-muted-foreground dark:text-foreground/90 mb-4 leading-relaxed">
           {step.description}
         </p>
 
@@ -223,7 +223,7 @@ const OnboardingTour: React.FC = () => {
         <div className="flex items-center justify-between">
           <button
             onClick={handleSkip}
-            className="flex items-center gap-1 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+            className="flex items-center gap-1 text-sm text-muted-foreground dark:text-muted-foreground hover:text-foreground dark:hover:text-foreground transition-colors"
           >
             <SkipForward className="h-3.5 w-3.5" />
             {t('skip') || 'Skip'}

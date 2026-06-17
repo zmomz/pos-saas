@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -28,8 +28,10 @@ import {
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
+import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
-import { UserCheck, UserX, Users } from 'lucide-react';
+import { Plus, UserCheck, UserX, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface StaffMember {
@@ -239,41 +241,38 @@ export default function StaffManagement() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('name')} *</label>
+          <Label className="mb-1 block">{t('name')} *</Label>
           <Input
             value={formData.name}
             onChange={(e) => handleFormChange('name', e.target.value)}
             placeholder={t('stf_name_ph')}
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('email')}</label>
+          <Label className="mb-1 block">{t('email')}</Label>
           <Input
             value={formData.email}
             onChange={(e) => handleFormChange('email', e.target.value)}
             placeholder={t('stf_email_ph')}
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('phone')}</label>
+          <Label className="mb-1 block">{t('phone')}</Label>
           <Input
             value={formData.phone}
             onChange={(e) => handleFormChange('phone', e.target.value)}
             placeholder="+966 5xx xxx xxxx"
-            className="bg-slate-700 border-slate-600 text-white"
           />
         </div>
         <div>
-          <label className="text-sm text-slate-400 mb-1 block">{t('role')} *</label>
+          <Label className="mb-1 block">{t('role')} *</Label>
           <Select value={formData.role} onValueChange={(v) => handleFormChange('role', v)}>
-            <SelectTrigger className="bg-slate-700 border-slate-600 text-white">
+            <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
-            <SelectContent className="bg-slate-800 border-slate-600">
+            <SelectContent>
               {STAFF_ROLES.map((role) => (
-                <SelectItem key={role} value={role} className="text-white hover:bg-slate-700">
+                <SelectItem key={role} value={role}>
                   {t(`role_${role}`)}
                 </SelectItem>
               ))}
@@ -284,7 +283,7 @@ export default function StaffManagement() {
           <Button
             onClick={onSubmit}
             disabled={submitting || !formData.name || !formData.role}
-            className="flex-1 bg-brand-600 hover:bg-brand-700 text-white"
+            className="flex-1"
           >
             {submitting ? t('loading') : submitLabel}
           </Button>
@@ -296,7 +295,7 @@ export default function StaffManagement() {
   if (loading && staff.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -319,63 +318,43 @@ export default function StaffManagement() {
   }
 
   return (
-    <div className="space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <Users className="h-8 w-8 text-brand-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('stf_total_staff')}</p>
-              <p className="text-2xl font-bold text-white">{staff.length}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <UserCheck className="h-8 w-8 text-green-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('active')}</p>
-              <p className="text-2xl font-bold text-green-400">{activeCount}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-slate-800 border-slate-700">
-          <CardContent className="p-4 flex items-center gap-3">
-            <UserX className="h-8 w-8 text-red-400" />
-            <div>
-              <p className="text-slate-400 text-sm">{t('inactive')}</p>
-              <p className="text-2xl font-bold text-red-400">{inactiveCount}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Add Button */}
-      <div className="flex justify-end">
-        <Dialog open={addOpen} onOpenChange={setAddOpen}>
+    <div className="animate-fade-up space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <PageHeading
+          icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><Users className="h-[18px] w-[18px]" /></span>}
+          title={t('stf_total_staff')}
+          subtitle={`${staff.length} ${t('stf_total_staff')}`}
+        >
           <DialogTrigger asChild>
             <Button
               onClick={() => setFormData(emptyForm)}
-              className="bg-brand-600 hover:bg-brand-700 text-white"
+              className="h-11 rounded-[10px] shadow-brand"
             >
-              + {t('stf_add_staff')}
+              <Plus className="h-4 w-4" />
+              {t('stf_add_staff')}
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="text-white">{t('stf_add_title')}</DialogTitle>
-            </DialogHeader>
-            {renderForm(handleAddStaff, t('stf_add_staff'))}
-          </DialogContent>
-        </Dialog>
+        </PageHeading>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{t('stf_add_title')}</DialogTitle>
+          </DialogHeader>
+          {renderForm(handleAddStaff, t('stf_add_staff'))}
+        </DialogContent>
+      </Dialog>
+
+      {/* Stats */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatTile icon={Users} label={t('stf_total_staff')} value={staff.length} tone="brand" />
+        <StatTile icon={UserCheck} label={t('active')} value={activeCount} tone="success" />
+        <StatTile icon={UserX} label={t('inactive')} value={inactiveCount} tone="warning" />
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-slate-700">
+      <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
-          <thead className="bg-slate-800">
-            <tr className="text-slate-400">
+          <thead className="bg-card">
+            <tr className="text-muted-foreground">
               <th className="p-3 text-start">{t('name')}</th>
               <th className="p-3 text-start">{t('email')}</th>
               <th className="p-3 text-start">{t('phone')}</th>
@@ -387,30 +366,24 @@ export default function StaffManagement() {
           <tbody>
             {staff.length === 0 ? (
               <tr>
-                <td colSpan={6} className="p-6 text-center text-slate-500">
+                <td colSpan={6} className="p-6 text-center text-muted-foreground">
                   {t('stf_none')}
                 </td>
               </tr>
             ) : (
               staff.map((member) => (
-                <tr key={member.id} className="border-t border-slate-700 text-slate-300">
-                  <td className="p-3 text-white font-medium">{member.name}</td>
+                <tr key={member.id} className="border-t border-border text-foreground/90">
+                  <td className="p-3 text-foreground font-medium">{member.name}</td>
                   <td className="p-3">{member.email || '—'}</td>
                   <td className="p-3">{member.phone || '—'}</td>
                   <td className="p-3">
-                    <Badge className="bg-slate-700 text-slate-300">
-                      {t(`role_${member.role}`)}
-                    </Badge>
+                    <span className="pill-muted">{t(`role_${member.role}`)}</span>
                   </td>
                   <td className="p-3">
                     {member.is_active !== false ? (
-                      <Badge className="bg-green-600/20 text-green-400 border border-green-600/40">
-                        {t('active')}
-                      </Badge>
+                      <span className="pill-success">{t('active')}</span>
                     ) : (
-                      <Badge className="bg-slate-600/20 text-slate-400 border border-slate-600/40">
-                        {t('inactive')}
-                      </Badge>
+                      <span className="pill-muted">{t('inactive')}</span>
                     )}
                   </td>
                   <td className="p-3">
@@ -419,11 +392,7 @@ export default function StaffManagement() {
                         size="sm"
                         variant="outline"
                         onClick={() => toggleStatus(member)}
-                        className={`text-xs ${
-                          member.is_active !== false
-                            ? 'border-orange-600/50 text-orange-400 hover:bg-orange-600/20'
-                            : 'border-green-600/50 text-green-400 hover:bg-green-600/20'
-                        }`}
+                        className="text-xs"
                       >
                         {member.is_active !== false ? t('stf_deactivate') : t('stf_activate')}
                       </Button>
@@ -431,7 +400,7 @@ export default function StaffManagement() {
                         size="sm"
                         variant="outline"
                         onClick={() => openPermissions(member)}
-                        className="border-brand-600/50 text-brand-400 hover:bg-brand-600/20 text-xs"
+                        className="text-xs"
                       >
                         {t('permissions')}
                       </Button>
@@ -439,15 +408,15 @@ export default function StaffManagement() {
                         size="sm"
                         variant="outline"
                         onClick={() => openEdit(member)}
-                        className="border-slate-600 text-slate-300 hover:bg-slate-700 text-xs"
+                        className="text-xs"
                       >
                         {t('edit')}
                       </Button>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant="destructive"
                         onClick={() => openDelete(member)}
-                        className="border-red-600/50 text-red-400 hover:bg-red-600/20 text-xs"
+                        className="text-xs"
                       >
                         {t('delete')}
                       </Button>
@@ -462,9 +431,9 @@ export default function StaffManagement() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('stf_edit_title')}</DialogTitle>
+            <DialogTitle>{t('stf_edit_title')}</DialogTitle>
           </DialogHeader>
           {renderForm(handleEditStaff, t('save'))}
         </DialogContent>
@@ -472,25 +441,26 @@ export default function StaffManagement() {
 
       {/* Delete Dialog */}
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle className="text-white">{t('stf_confirm_delete')}</DialogTitle>
+            <DialogTitle>{t('stf_confirm_delete')}</DialogTitle>
           </DialogHeader>
-          <p className="text-slate-300">
+          <p className="text-foreground/90">
             {t('stf_delete_q')} <strong>{selectedStaff?.name}</strong>? {t('stf_delete_warn')}
           </p>
           <div className="flex gap-3 pt-4">
             <Button
               variant="outline"
               onClick={() => setDeleteOpen(false)}
-              className="flex-1 border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="flex-1"
             >
               {t('cancel')}
             </Button>
             <Button
+              variant="destructive"
               onClick={handleDeleteStaff}
               disabled={submitting}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+              className="flex-1"
             >
               {submitting ? t('loading') : t('delete')}
             </Button>
@@ -500,17 +470,17 @@ export default function StaffManagement() {
 
       {/* Permissions Dialog (ISSUE-035) */}
       <Dialog open={permsOpen} onOpenChange={setPermsOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-white">
+            <DialogTitle>
               {t('manage_permissions')} — {permsStaff?.name}
             </DialogTitle>
           </DialogHeader>
 
           {permsLoading && perms.length === 0 ? (
-            <div className="py-6 text-center text-slate-400 animate-pulse">{t('loading')}</div>
+            <div className="py-6 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
           ) : !permsHasLogin ? (
-            <p role="alert" className="py-4 text-sm text-orange-400">
+            <p role="alert" className="py-4 text-sm text-warning">
               {t('no_login_permissions')}
             </p>
           ) : (
@@ -519,11 +489,11 @@ export default function StaffManagement() {
                 <div
                   key={p.permission_key}
                   data-perm-row
-                  className="flex items-center justify-between gap-3 rounded-lg border border-slate-700 bg-slate-900/40 p-3"
+                  className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/40 p-3"
                 >
                   <div className="min-w-0">
-                    <p className="font-mono text-sm text-white">{p.permission_key}</p>
-                    <p className="text-xs text-slate-500">
+                    <p className="font-mono text-sm text-foreground">{p.permission_key}</p>
+                    <p className="text-xs text-muted-foreground">
                       {t('role_default')}: {p.role_default ? t('allowed') : t('denied')}
                       {p.override === null && ` · ${t('role_default')}`}
                     </p>
@@ -535,8 +505,8 @@ export default function StaffManagement() {
                       onClick={() => handleSetPermission(p.permission_key, true)}
                       className={`text-xs ${
                         p.effective
-                          ? 'border-green-600 bg-green-600/20 text-green-400'
-                          : 'border-slate-600 text-slate-400 hover:bg-slate-700'
+                          ? 'border-success bg-success/20 text-success'
+                          : 'text-muted-foreground'
                       }`}
                     >
                       {t('allowed')}
@@ -547,8 +517,8 @@ export default function StaffManagement() {
                       onClick={() => handleSetPermission(p.permission_key, false)}
                       className={`text-xs ${
                         !p.effective
-                          ? 'border-red-600 bg-red-600/20 text-red-400'
-                          : 'border-slate-600 text-slate-400 hover:bg-slate-700'
+                          ? 'border-danger bg-danger/20 text-danger'
+                          : 'text-muted-foreground'
                       }`}
                     >
                       {t('denied')}
@@ -559,7 +529,7 @@ export default function StaffManagement() {
                       disabled={p.override === null}
                       onClick={() => handleSetPermission(p.permission_key, null)}
                       title={t('reset_to_default')}
-                      className="text-xs border-slate-600 text-slate-400 hover:bg-slate-700 disabled:opacity-40"
+                      className="text-xs text-muted-foreground disabled:opacity-40"
                     >
                       ↺
                     </Button>

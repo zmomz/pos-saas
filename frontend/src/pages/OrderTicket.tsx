@@ -41,6 +41,8 @@ import {
   type SettleResult,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatMoney } from '@/lib/format';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import {
   ClipboardList,
   Plus,
@@ -49,7 +51,6 @@ import {
   ArrowLeftRight,
   Merge,
   SplitSquareHorizontal,
-  WifiOff,
   AlertTriangle,
   Lock,
   ArrowLeft,
@@ -62,9 +63,9 @@ import {
 const COURSES = ['starters', 'mains', 'dessert', 'drinks'];
 
 const FIRE_BADGE: Record<string, string> = {
-  open: 'bg-slate-500/20 text-slate-300',
-  fired: 'bg-amber-500/20 text-amber-400',
-  bumped: 'bg-green-500/20 text-green-400',
+  open: 'pill-muted',
+  fired: 'pill-warning',
+  bumped: 'pill-success',
 };
 
 interface ProductLite {
@@ -86,7 +87,7 @@ function modifierLabel(serialized?: string | null): string {
 }
 
 export default function OrderTicket() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const navigate = useNavigate();
   const { ticketId: ticketIdParam } = useParams<{ ticketId: string }>();
   const ticketId = Number(ticketIdParam);
@@ -102,7 +103,6 @@ export default function OrderTicket() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [denied, setDenied] = useState(false);
-  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
   const [submitting, setSubmitting] = useState(false);
 
   const [addOpen, setAddOpen] = useState(false);
@@ -142,18 +142,6 @@ export default function OrderTicket() {
   const [settleScope, setSettleScope] = useState<'full' | 'seat' | 'item'>('full');
   const [settleSeat, setSettleSeat] = useState<number | undefined>(undefined);
   const [settleItemIds, setSettleItemIds] = useState<Set<number>>(new Set());
-
-  // Connectivity badge (UX-02 offline state).
-  useEffect(() => {
-    const on = () => setOnline(true);
-    const off = () => setOnline(false);
-    window.addEventListener('online', on);
-    window.addEventListener('offline', off);
-    return () => {
-      window.removeEventListener('online', on);
-      window.removeEventListener('offline', off);
-    };
-  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -388,7 +376,7 @@ export default function OrderTicket() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="text-white animate-pulse">{t('loading')}</div>
+        <div className="text-foreground animate-pulse">{t('loading')}</div>
       </div>
     );
   }
@@ -397,11 +385,11 @@ export default function OrderTicket() {
   if (denied) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-slate-800 border-slate-700 max-w-md">
+        <Card className="bg-card border-border max-w-md">
           <CardContent className="p-8 text-center">
-            <Lock className="h-12 w-12 text-slate-500 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-2">{t('restaurant_disabled')}</h3>
-            <p className="text-slate-400 text-sm">{t('restaurant_disabled_desc')}</p>
+            <Lock className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-2">{t('restaurant_disabled')}</h3>
+            <p className="text-muted-foreground text-sm">{t('restaurant_disabled_desc')}</p>
           </CardContent>
         </Card>
       </div>
@@ -412,11 +400,11 @@ export default function OrderTicket() {
   if (error || !ticket) {
     return (
       <div className="flex items-center justify-center h-64">
-        <Card className="bg-slate-800 border-slate-700 max-w-md">
+        <Card className="bg-card border-border max-w-md">
           <CardContent className="p-8 text-center">
-            <AlertTriangle className="h-12 w-12 text-red-400 mx-auto mb-3" />
-            <p className="text-slate-300 mb-4">{t('ticket_load_error')}</p>
-            <Button onClick={load} className="bg-brand-600 hover:bg-brand-700 text-white">
+            <AlertTriangle className="h-12 w-12 text-danger mx-auto mb-3" />
+            <p className="text-foreground/90 mb-4">{t('ticket_load_error')}</p>
+            <Button onClick={load}>
               {t('retry')}
             </Button>
           </CardContent>
@@ -447,62 +435,53 @@ export default function OrderTicket() {
     (settleScope === 'item' && settleItemIds.size > 0);
 
   return (
-    <div className="space-y-6">
-      {/* Offline banner (UX-02) */}
-      {!online && (
-        <div className="flex items-center gap-2 rounded-md border border-amber-600/40 bg-amber-500/10 px-4 py-2 text-amber-300 text-sm">
-          <WifiOff className="h-4 w-4" />
-          <span>{t('you_are_offline')}</span>
-        </div>
-      )}
-
+    <div className="animate-fade-up space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-        <div>
-          <button
-            onClick={() => navigate('/floor')}
-            className="flex items-center gap-1 text-slate-400 hover:text-white text-sm mb-1"
-          >
-            <ArrowLeft className="h-4 w-4 rtl:rotate-180" /> {t('floor_map')}
-          </button>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <ClipboardList className="h-6 w-6 text-brand-400" />
-            {t('order_ticket')} #{ticket.id}
-          </h2>
-          <p className="text-slate-400 text-sm mt-1">
-            {t(ticket.order_type || 'dine_in')} · {t('status')}: {t('ticket_status_' + (ticket.status || 'open'))}
-          </p>
-        </div>
+      <button
+        onClick={() => navigate('/floor')}
+        className="flex items-center gap-1 text-muted-foreground hover:text-foreground text-sm"
+      >
+        <ArrowLeft className="h-4 w-4 rtl:rotate-180" /> {t('floor_map')}
+      </button>
+      <PageHeading
+        title={`${t('order_ticket')} #${ticket.id}`}
+        subtitle={`${t(ticket.order_type || 'dine_in')} · ${t('status')}: ${t('ticket_status_' + (ticket.status || 'open'))}`}
+        icon={
+          <span className="dxr-sw dxr-sw-brand h-10 w-10">
+            <ClipboardList className="h-[18px] w-[18px]" />
+          </span>
+        }
+      >
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => setAddOpen(true)} className="bg-brand-600 hover:bg-brand-700 text-white">
+          <Button onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4 mr-2" /> {t('add_item')}
           </Button>
           <Button
             variant="outline"
             onClick={() => setTransferOpen(true)}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            className="border-input text-foreground/90 hover:bg-muted"
           >
             <ArrowLeftRight className="h-4 w-4 mr-2" /> {t('transfer')}
           </Button>
           <Button
             variant="outline"
             onClick={() => setMergeOpen(true)}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            className="border-input text-foreground/90 hover:bg-muted"
           >
             <Merge className="h-4 w-4 mr-2" /> {t('merge')}
           </Button>
         </div>
-      </div>
+      </PageHeading>
 
       {/* Print routing driven by order_type (F-058) */}
       {routing && routing.targets.length > 0 && (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-4 flex flex-wrap items-center gap-2">
-            <span className="flex items-center gap-1 text-slate-400 text-sm">
+            <span className="flex items-center gap-1 text-muted-foreground text-sm">
               <Printer className="h-4 w-4" /> {t('print_routing')}:
             </span>
             {routing.targets.map((target) => (
-              <Badge key={target} className="bg-slate-700 text-slate-200">
+              <Badge key={target} className="bg-muted text-foreground">
                 {t('print_target_' + target)}
               </Badge>
             ))}
@@ -512,11 +491,11 @@ export default function OrderTicket() {
 
       {/* Line items grouped by course */}
       {items.length === 0 ? (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-10 text-center">
-            <ClipboardList className="h-12 w-12 text-slate-600 mx-auto mb-3" />
-            <h3 className="text-white font-semibold mb-1">{t('no_ticket_items')}</h3>
-            <p className="text-slate-400 text-sm">{t('no_ticket_items_desc')}</p>
+            <ClipboardList className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <h3 className="text-foreground font-semibold mb-1">{t('no_ticket_items')}</h3>
+            <p className="text-muted-foreground text-sm">{t('no_ticket_items_desc')}</p>
           </CardContent>
         </Card>
       ) : (
@@ -525,15 +504,15 @@ export default function OrderTicket() {
             const courseItems = items.filter((i) => (i.course || 'mains') === course);
             const hasOpen = courseItems.some((i) => (i.fire_state || 'open') === 'open');
             return (
-              <Card key={course} className="bg-slate-800 border-slate-700">
+              <Card key={course} className="bg-card border-border">
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-white font-semibold capitalize">{t('course_' + course)}</h3>
+                    <h3 className="text-foreground font-semibold capitalize">{t('course_' + course)}</h3>
                     {hasOpen && (
                       <Button
                         size="sm"
                         onClick={() => handleFire(course)}
-                        className="bg-amber-600 hover:bg-amber-700 text-white"
+                        className="bg-warning hover:opacity-90 text-white"
                       >
                         <Flame className="h-4 w-4 mr-1" /> {t('fire_course')}
                       </Button>
@@ -545,33 +524,33 @@ export default function OrderTicket() {
                       return (
                         <div
                           key={item.id}
-                          className="flex items-center justify-between rounded-md bg-slate-700/40 px-3 py-2"
+                          className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2"
                         >
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="text-white text-sm">
+                              <span className="text-foreground text-sm">
                                 {item.qty} × {item.name || `#${item.product_id}`}
                               </span>
                               <Badge className={FIRE_BADGE[fs] || FIRE_BADGE.open}>
                                 {t('fire_state_' + fs)}
                               </Badge>
                               {item.seat_no != null && (
-                                <span className="text-xs text-slate-400">
+                                <span className="text-xs text-muted-foreground">
                                   {t('seat')} {item.seat_no}
                                 </span>
                               )}
                             </div>
                             {modifierLabel(item.modifiers) && (
-                              <p className="text-xs text-brand-300 mt-0.5">+ {modifierLabel(item.modifiers)}</p>
+                              <p className="text-xs text-brand-600 mt-0.5">+ {modifierLabel(item.modifiers)}</p>
                             )}
-                            {item.notes && <p className="text-xs text-slate-400 mt-0.5">{item.notes}</p>}
+                            {item.notes && <p className="text-xs text-muted-foreground mt-0.5">{item.notes}</p>}
                           </div>
                           <div className="flex items-center gap-3">
-                            <span className="text-slate-300 text-sm">{item.line_total.toFixed(2)}</span>
+                            <span className="text-foreground/90 text-sm tabular-nums">{formatMoney(item.line_total, language)}</span>
                             {fs === 'open' && (
                               <button
                                 onClick={() => handleVoid(item)}
-                                className="text-slate-400 hover:text-red-400"
+                                className="text-muted-foreground hover:text-danger"
                                 aria-label={t('void')}
                               >
                                 <Trash2 className="h-4 w-4" />
@@ -590,41 +569,41 @@ export default function OrderTicket() {
       )}
 
       {/* Check breakdown — VAT on goods only, service charge outside the VAT base (F-061) */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardContent className="p-4 space-y-2">
           {check ? (
             <div className="space-y-1.5 text-sm">
-              <div className="flex items-center justify-between text-slate-300">
+              <div className="flex items-center justify-between text-foreground/90">
                 <span>{t('subtotal')}</span>
-                <span>{check.subtotal.toFixed(2)}</span>
+                <span className="tabular-nums">{formatMoney(check.subtotal, language)}</span>
               </div>
-              <div className="flex items-center justify-between text-slate-300">
+              <div className="flex items-center justify-between text-foreground/90">
                 <span>{t('vat')}</span>
-                <span>{check.vat_amount.toFixed(2)}</span>
+                <span className="tabular-nums">{formatMoney(check.vat_amount, language)}</span>
               </div>
-              <div className="flex items-center justify-between border-t border-slate-700 pt-1.5 text-slate-200">
+              <div className="flex items-center justify-between border-t border-border pt-1.5 text-foreground">
                 <span>{t('total')}</span>
-                <span>{check.total_amount.toFixed(2)}</span>
+                <span className="tabular-nums">{formatMoney(check.total_amount, language)}</span>
               </div>
               {/* The service charge is its own line, OUTSIDE the VAT base. */}
-              <div className="flex items-center justify-between text-slate-300">
+              <div className="flex items-center justify-between text-foreground/90">
                 <span className="flex items-center gap-1">
                   {t('service_charge')}
                   {check.service_charge.pct > 0 && (
-                    <span className="text-xs text-slate-500">({check.service_charge.pct}%)</span>
+                    <span className="text-xs text-muted-foreground">({check.service_charge.pct}%)</span>
                   )}
-                  <Badge className="bg-slate-700 text-slate-400 text-[10px]">{t('outside_vat')}</Badge>
+                  <Badge className="bg-muted text-muted-foreground text-[10px]">{t('outside_vat')}</Badge>
                 </span>
-                <span>{check.service_charge.amount.toFixed(2)}</span>
+                <span className="tabular-nums">{formatMoney(check.service_charge.amount, language)}</span>
               </div>
-              <div className="flex items-center justify-between border-t border-slate-700 pt-1.5 text-white font-semibold">
+              <div className="flex items-center justify-between border-t border-border pt-1.5 text-foreground font-semibold">
                 <span>{t('amount_due')}</span>
-                <span>{check.amount_due.toFixed(2)}</span>
+                <span className="tabular-nums">{formatMoney(check.amount_due, language)}</span>
               </div>
             </div>
           ) : (
-            <div className="text-white font-semibold">
-              {t('total')}: {grandTotal.toFixed(2)}
+            <div className="text-foreground font-semibold">
+              {t('total')}: <span className="tabular-nums">{formatMoney(grandTotal, language)}</span>
             </div>
           )}
         </CardContent>
@@ -632,23 +611,23 @@ export default function OrderTicket() {
 
       {/* Settled invoice banner (F-059) — replaces the old browser-only flip */}
       {settled && (
-        <Card className="bg-green-900/20 border-green-700/40">
+        <Card className="bg-success/10 border-success/40">
           <CardContent className="p-4 flex items-center gap-3">
-            <CheckCircle2 className="h-5 w-5 text-green-400 shrink-0" />
+            <CheckCircle2 className="h-5 w-5 text-success shrink-0" />
             <div className="text-sm">
-              <p className="text-green-300 font-semibold">
+              <p className="text-success font-semibold">
                 {settled.fully_settled === false ? t('partial_settled_ok') : t('settled_ok')}
               </p>
-              <p className="text-slate-400">
+              <p className="text-muted-foreground">
                 {t('invoice_no')}: {settled.invoice_number} ·{' '}
-                {t('amount_due')}: {settled.amount_due.toFixed(2)}
+                {t('amount_due')}: <span className="tabular-nums">{formatMoney(settled.amount_due, language)}</span>
               </p>
             </div>
           </CardContent>
         </Card>
       )}
       {settleError && (
-        <div className="flex items-center gap-2 rounded-md border border-red-600/40 bg-red-500/10 px-4 py-2 text-red-300 text-sm">
+        <div className="flex items-center gap-2 rounded-md border border-danger/40 bg-danger/10 px-4 py-2 text-danger text-sm">
           <AlertTriangle className="h-4 w-4" />
           <span>{settleError}</span>
         </div>
@@ -656,13 +635,13 @@ export default function OrderTicket() {
 
       {/* Check + settle (F-059) */}
       {(ticket.status || 'open') !== 'settled' && (ticket.status || 'open') !== 'void' && (
-        <Card className="bg-slate-800 border-slate-700">
+        <Card className="bg-card border-border">
           <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <Button
               variant="outline"
               size="sm"
               onClick={handlePrintCheck}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="border-input text-foreground/90 hover:bg-muted"
             >
               <Receipt className="h-4 w-4 mr-1" /> {t('print_check')}
             </Button>
@@ -677,7 +656,7 @@ export default function OrderTicket() {
                 setSettleOpen(true);
               }}
               disabled={items.length === 0}
-              className="bg-green-600 hover:bg-green-700 text-white"
+              className="bg-success hover:opacity-90 text-white"
             >
               <CheckCircle2 className="h-4 w-4 mr-1" /> {t('settle')}
             </Button>
@@ -686,13 +665,13 @@ export default function OrderTicket() {
       )}
 
       {/* Split + service charge actions */}
-      <Card className="bg-slate-800 border-slate-700">
+      <Card className="bg-card border-border">
         <CardContent className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <Button
             variant="outline"
             size="sm"
             onClick={() => setScOpen(true)}
-            className="border-slate-600 text-slate-300 hover:bg-slate-700"
+            className="border-input text-foreground/90 hover:bg-muted"
           >
             <Percent className="h-4 w-4 mr-1" /> {t('service_charge')}
           </Button>
@@ -701,7 +680,7 @@ export default function OrderTicket() {
               variant="outline"
               size="sm"
               onClick={() => handleSplit('seat')}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="border-input text-foreground/90 hover:bg-muted"
             >
               <SplitSquareHorizontal className="h-4 w-4 mr-1" /> {t('split_by_seat')}
             </Button>
@@ -709,7 +688,7 @@ export default function OrderTicket() {
               variant="outline"
               size="sm"
               onClick={() => handleSplit('amount')}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="border-input text-foreground/90 hover:bg-muted"
             >
               {t('split_by_amount')}
             </Button>
@@ -717,7 +696,7 @@ export default function OrderTicket() {
               variant="outline"
               size="sm"
               onClick={() => handleSplit('item')}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700"
+              className="border-input text-foreground/90 hover:bg-muted"
             >
               {t('split_by_item')}
             </Button>
@@ -727,17 +706,17 @@ export default function OrderTicket() {
 
       {/* Add-item dialog */}
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('add_item')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('add_item')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('product')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('product')}</label>
               <select
                 value={addForm.product_id ?? ''}
                 onChange={(e) => handleSelectProduct(e.target.value ? parseInt(e.target.value) : undefined)}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
               >
                 <option value="">—</option>
                 {products.map((p) => (
@@ -751,11 +730,11 @@ export default function OrderTicket() {
             {/* Combo selector (F-056) — a bundle prices the line at its bundle price */}
             {combos.length > 0 && (
               <div>
-                <label className="text-sm text-slate-400 mb-1 block">{t('combo')}</label>
+                <label className="text-sm text-muted-foreground mb-1 block">{t('combo')}</label>
                 <select
                   value={addForm.combo_id ?? ''}
                   onChange={(e) => handleSelectCombo(e.target.value ? parseInt(e.target.value) : undefined)}
-                  className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                  className="w-full bg-muted border border-input text-foreground rounded-md p-2"
                 >
                   <option value="">—</option>
                   {combos.map((c) => (
@@ -772,26 +751,26 @@ export default function OrderTicket() {
               const groupSelected = g.modifiers.filter((m) => selectedMods.has(m.id)).length;
               const unmet = g.required && groupSelected === 0;
               return (
-                <div key={g.id} className="rounded-md border border-slate-700 p-3">
+                <div key={g.id} className="rounded-md border border-border p-3">
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-sm text-white">{g.name}</span>
+                    <span className="text-sm text-foreground">{g.name}</span>
                     {g.required && (
-                      <Badge className={unmet ? 'bg-red-500/20 text-red-400' : 'bg-green-500/20 text-green-400'}>
+                      <Badge className={unmet ? 'pill-danger' : 'pill-success'}>
                         {t('required')}
                       </Badge>
                     )}
                     {g.max_select != null && g.max_select > 1 && (
-                      <span className="text-xs text-slate-400">{t('max')} {g.max_select}</span>
+                      <span className="text-xs text-muted-foreground">{t('max')} {g.max_select}</span>
                     )}
                   </div>
                   {g.modifiers.length === 0 ? (
-                    <p className="text-xs text-slate-500">{t('no_modifiers')}</p>
+                    <p className="text-xs text-muted-foreground">{t('no_modifiers')}</p>
                   ) : (
                     <div className="space-y-1">
                       {g.modifiers.map((m) => (
                         <label
                           key={m.id}
-                          className="flex items-center justify-between gap-2 text-sm text-slate-300 cursor-pointer"
+                          className="flex items-center justify-between gap-2 text-sm text-foreground/90 cursor-pointer"
                         >
                           <span className="flex items-center gap-2">
                             <input
@@ -803,7 +782,7 @@ export default function OrderTicket() {
                             {m.name}
                           </span>
                           {m.price_delta !== 0 && (
-                            <span className="text-xs text-slate-400">
+                            <span className="text-xs text-muted-foreground">
                               {m.price_delta > 0 ? '+' : ''}
                               {m.price_delta}
                             </span>
@@ -817,32 +796,32 @@ export default function OrderTicket() {
             })}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm text-slate-400 mb-1 block">{t('quantity')}</label>
+                <label className="text-sm text-muted-foreground mb-1 block">{t('quantity')}</label>
                 <Input
                   type="number"
                   value={addForm.qty}
                   onChange={(e) => setAddForm((f) => ({ ...f, qty: parseFloat(e.target.value) || 1 }))}
-                  className="bg-slate-700 border-slate-600 text-white"
+                  className="bg-muted border-input text-foreground"
                 />
               </div>
               <div>
-                <label className="text-sm text-slate-400 mb-1 block">{t('seat')}</label>
+                <label className="text-sm text-muted-foreground mb-1 block">{t('seat')}</label>
                 <Input
                   type="number"
                   value={addForm.seat_no ?? ''}
                   onChange={(e) =>
                     setAddForm((f) => ({ ...f, seat_no: e.target.value ? parseInt(e.target.value) : undefined }))
                   }
-                  className="bg-slate-700 border-slate-600 text-white"
+                  className="bg-muted border-input text-foreground"
                 />
               </div>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('course')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('course')}</label>
               <select
                 value={addForm.course}
                 onChange={(e) => setAddForm((f) => ({ ...f, course: e.target.value }))}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
               >
                 {COURSES.map((c) => (
                   <option key={c} value={c}>
@@ -852,17 +831,17 @@ export default function OrderTicket() {
               </select>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('note')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('note')}</label>
               <Input
                 value={addForm.notes}
                 onChange={(e) => setAddForm((f) => ({ ...f, notes: e.target.value }))}
-                className="bg-slate-700 border-slate-600 text-white"
+                className="bg-muted border-input text-foreground"
               />
             </div>
             <Button
               onClick={handleAdd}
               disabled={submitting || !canAdd}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full"
             >
               {submitting ? t('loading') : t('add_item')}
             </Button>
@@ -872,12 +851,12 @@ export default function OrderTicket() {
 
       {/* Transfer dialog */}
       <Dialog open={transferOpen} onOpenChange={setTransferOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('transfer_ticket')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('transfer_ticket')}</DialogTitle>
           </DialogHeader>
           {freeTables.length === 0 ? (
-            <p className="text-slate-400 text-sm">{t('no_free_tables')}</p>
+            <p className="text-muted-foreground text-sm">{t('no_free_tables')}</p>
           ) : (
             <div className="space-y-2">
               {freeTables.map((tb) => (
@@ -886,7 +865,7 @@ export default function OrderTicket() {
                   variant="outline"
                   disabled={submitting}
                   onClick={() => handleTransfer(tb.id)}
-                  className="w-full justify-start border-slate-600 text-slate-300 hover:bg-slate-700"
+                  className="w-full justify-start border-input text-foreground/90 hover:bg-muted"
                 >
                   {tb.name}
                 </Button>
@@ -898,12 +877,12 @@ export default function OrderTicket() {
 
       {/* Merge dialog */}
       <Dialog open={mergeOpen} onOpenChange={setMergeOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('merge_ticket')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('merge_ticket')}</DialogTitle>
           </DialogHeader>
           {otherTickets.length === 0 ? (
-            <p className="text-slate-400 text-sm">{t('no_other_tickets')}</p>
+            <p className="text-muted-foreground text-sm">{t('no_other_tickets')}</p>
           ) : (
             <div className="space-y-2">
               {otherTickets.map((o) => (
@@ -912,7 +891,7 @@ export default function OrderTicket() {
                   variant="outline"
                   disabled={submitting}
                   onClick={() => handleMerge(o.id)}
-                  className="w-full justify-start border-slate-600 text-slate-300 hover:bg-slate-700"
+                  className="w-full justify-start border-input text-foreground/90 hover:bg-muted"
                 >
                   {t('order_ticket')} #{o.id}
                 </Button>
@@ -924,26 +903,26 @@ export default function OrderTicket() {
 
       {/* Service-charge dialog (F-061) */}
       <Dialog open={scOpen} onOpenChange={setScOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('service_charge')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('service_charge')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p className="text-sm text-slate-400">{t('service_charge_desc')}</p>
+            <p className="text-sm text-muted-foreground">{t('service_charge_desc')}</p>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('service_charge_pct')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('service_charge_pct')}</label>
               <Input
                 type="number"
                 min={0}
                 value={scPct}
                 onChange={(e) => setScPct(parseFloat(e.target.value) || 0)}
-                className="bg-slate-700 border-slate-600 text-white"
+                className="bg-muted border-input text-foreground"
               />
             </div>
             <Button
               onClick={handleSetServiceCharge}
               disabled={submitting}
-              className="w-full bg-brand-600 hover:bg-brand-700 text-white"
+              className="w-full"
             >
               {submitting ? t('loading') : t('apply')}
             </Button>
@@ -953,16 +932,16 @@ export default function OrderTicket() {
 
       {/* Settle dialog (F-059) — mint a real ZATCA invoice via the sale core */}
       <Dialog open={settleOpen} onOpenChange={setSettleOpen}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">{t('settle')}</DialogTitle>
+            <DialogTitle className="text-foreground">{t('settle')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <p className="text-sm text-slate-400">{t('settle_desc')}</p>
+            <p className="text-sm text-muted-foreground">{t('settle_desc')}</p>
 
             {/* Settle scope (ISSUE-070): the whole remainder, one seat, or chosen lines */}
             <div>
-              <label htmlFor="settle-scope" className="text-sm text-slate-400 mb-1 block">
+              <label htmlFor="settle-scope" className="text-sm text-muted-foreground mb-1 block">
                 {t('settle_scope')}
               </label>
               <select
@@ -975,7 +954,7 @@ export default function OrderTicket() {
                   setSettleItemIds(new Set());
                   setSettleTip(0);
                 }}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
               >
                 <option value="full">{t('scope_full')}</option>
                 {seatNumbers.length > 0 && <option value="seat">{t('scope_seat')}</option>}
@@ -986,7 +965,7 @@ export default function OrderTicket() {
             {/* By seat — pick which seat's lines to bill */}
             {settleScope === 'seat' && (
               <div>
-                <label htmlFor="settle-seat" className="text-sm text-slate-400 mb-1 block">
+                <label htmlFor="settle-seat" className="text-sm text-muted-foreground mb-1 block">
                   {t('choose_seat')}
                 </label>
                 <select
@@ -994,7 +973,7 @@ export default function OrderTicket() {
                   aria-label={t('choose_seat')}
                   value={settleSeat ?? ''}
                   onChange={(e) => setSettleSeat(e.target.value ? parseInt(e.target.value) : undefined)}
-                  className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                  className="w-full bg-muted border border-input text-foreground rounded-md p-2"
                 >
                   <option value="">—</option>
                   {seatNumbers.map((s) => (
@@ -1009,11 +988,11 @@ export default function OrderTicket() {
             {/* By item — tick the exact lines to bill */}
             {settleScope === 'item' && (
               <div className="space-y-1.5">
-                <span className="text-sm text-slate-400 block">{t('choose_items')}</span>
+                <span className="text-sm text-muted-foreground block">{t('choose_items')}</span>
                 {items.map((item) => (
                   <label
                     key={item.id}
-                    className="flex items-center justify-between gap-2 rounded-md bg-slate-700/40 px-3 py-2 text-sm text-slate-300 cursor-pointer"
+                    className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm text-foreground/90 cursor-pointer"
                   >
                     <span className="flex items-center gap-2">
                       <input
@@ -1031,27 +1010,27 @@ export default function OrderTicket() {
                       />
                       {item.qty} × {item.name || `#${item.product_id}`}
                       {item.seat_no != null && (
-                        <span className="text-xs text-slate-400">
+                        <span className="text-xs text-muted-foreground">
                           ({t('seat')} {item.seat_no})
                         </span>
                       )}
                     </span>
-                    <span className="text-slate-400">{(item.line_total || 0).toFixed(2)}</span>
+                    <span className="text-muted-foreground tabular-nums">{formatMoney(item.line_total || 0, language)}</span>
                   </label>
                 ))}
               </div>
             )}
 
-            <div className="flex items-center justify-between text-white font-semibold">
+            <div className="flex items-center justify-between text-foreground font-semibold">
               <span>{t('amount_due')}</span>
-              <span>{settleBase.toFixed(2)}</span>
+              <span className="tabular-nums">{formatMoney(settleBase, language)}</span>
             </div>
             <div>
-              <label className="text-sm text-slate-400 mb-1 block">{t('payment_method')}</label>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('payment_method')}</label>
               <select
                 value={settleMethod}
                 onChange={(e) => setSettleMethod(e.target.value)}
-                className="w-full bg-slate-700 border border-slate-600 text-white rounded-md p-2"
+                className="w-full bg-muted border border-input text-foreground rounded-md p-2"
               >
                 <option value="cash">{t('pay_cash')}</option>
                 <option value="card">{t('pay_card')}</option>
@@ -1061,7 +1040,7 @@ export default function OrderTicket() {
               </select>
             </div>
             <div>
-              <label htmlFor="settle-tip" className="text-sm text-slate-400 mb-1 block">
+              <label htmlFor="settle-tip" className="text-sm text-muted-foreground mb-1 block">
                 {t('tip')}
               </label>
               <Input
@@ -1071,7 +1050,7 @@ export default function OrderTicket() {
                 step="0.01"
                 value={settleTip || ''}
                 onChange={(e) => setSettleTip(Math.max(0, Number(e.target.value) || 0))}
-                className="bg-slate-700 border-slate-600 text-white"
+                className="bg-muted border-input text-foreground"
               />
               <div className="flex gap-2 mt-2">
                 {[10, 15, 20].map((pct) => {
@@ -1083,7 +1062,7 @@ export default function OrderTicket() {
                       variant="outline"
                       size="sm"
                       onClick={() => setSettleTip(Number(((base * pct) / 100).toFixed(2)))}
-                      className="border-slate-600 text-slate-300 hover:bg-slate-700"
+                      className="border-input text-foreground/90 hover:bg-muted"
                     >
                       {pct}%
                     </Button>
@@ -1092,15 +1071,15 @@ export default function OrderTicket() {
               </div>
             </div>
             {settleTip > 0 && (
-              <div className="flex items-center justify-between text-white font-semibold">
+              <div className="flex items-center justify-between text-foreground font-semibold">
                 <span>{t('total_with_tip')}</span>
-                <span>{(settleBase + settleTip).toFixed(2)}</span>
+                <span className="tabular-nums">{formatMoney(settleBase + settleTip, language)}</span>
               </div>
             )}
             <Button
               onClick={handleSettle}
               disabled={submitting || !canSettle}
-              className="w-full bg-green-600 hover:bg-green-700 text-white"
+              className="w-full bg-success hover:opacity-90 text-white"
             >
               {submitting ? t('loading') : t('settle')}
             </Button>
@@ -1110,9 +1089,9 @@ export default function OrderTicket() {
 
       {/* Split result dialog */}
       <Dialog open={!!split} onOpenChange={(o) => !o && setSplit(null)}>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-white">
+            <DialogTitle className="text-foreground">
               {t('split_bill')} — {split ? t('split_by_' + split.strategy) : ''}
             </DialogTitle>
           </DialogHeader>
@@ -1121,21 +1100,21 @@ export default function OrderTicket() {
               {split.shares.map((s, idx) => (
                 <div
                   key={idx}
-                  className="flex items-center justify-between rounded-md bg-slate-700/40 px-3 py-2 text-sm"
+                  className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-sm"
                 >
-                  <span className="text-slate-300">
+                  <span className="text-foreground/90">
                     {s.seat != null
                       ? `${t('seat')} ${s.seat}`
                       : s.name != null
                         ? s.name
                         : `${t('share')} ${s.share}`}
                   </span>
-                  <span className="text-white">{s.subtotal.toFixed(2)}</span>
+                  <span className="text-foreground tabular-nums">{formatMoney(s.subtotal, language)}</span>
                 </div>
               ))}
-              <div className="flex items-center justify-between border-t border-slate-700 pt-2 text-sm font-semibold">
-                <span className="text-slate-300">{t('total')}</span>
-                <span className="text-white">{split.total.toFixed(2)}</span>
+              <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
+                <span className="text-foreground/90">{t('total')}</span>
+                <span className="text-foreground tabular-nums">{formatMoney(split.total, language)}</span>
               </div>
             </div>
           )}

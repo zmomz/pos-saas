@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Client Dashboard (POS) — Creative Redesign</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="ds.css" />
+<style>
+  .hero-pos { display:flex; flex-direction:column; }
+  .sell-actions { display:flex; gap:10px; margin-top:auto; }
+  .sell-actions .btn { flex:1; }
+  .btn-white { background:#fff; color:var(--brand-700); }
+  .btn-white:hover { background:var(--brand-50); }
+  .drawer-grid { display:grid; grid-template-columns:1fr 1fr; gap:1px; background:var(--line); border:1px solid var(--line); border-radius:var(--r-md); overflow:hidden; }
+  .drawer-grid .c { background:var(--surface); padding:12px 13px; }
+  .drawer-grid .c .k { font-size:11px; color:var(--muted); font-weight:600; }
+  .drawer-grid .c .v { font-size:18px; font-weight:800; letter-spacing:-0.02em; margin-top:3px; }
+  .donut { position:relative; width:130px; height:130px; margin:4px auto 0; }
+  .donut .ring { width:100%; height:100%; border-radius:50%; }
+  .donut .hole { position:absolute; inset:19px; background:var(--surface); border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; box-shadow: inset 0 0 0 1px var(--line-soft); }
+  .donut .hole b { font-size:22px; font-weight:800; letter-spacing:-0.03em; }
+  .donut .hole span { font-size:10.5px; color:var(--muted); font-weight:600; }
+  .leg { display:flex; flex-direction:column; gap:7px; margin-top:12px; }
+  .leg .li { display:flex; align-items:center; gap:8px; font-size:12.5px; }
+  .leg .li .sw { width:10px; height:10px; border-radius:3px; flex:none; }
+  .leg .li b { margin-inline-start:auto; font-variant-numeric:tabular-nums; }
+  .pulse { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--cyan); box-shadow:0 0 0 0 var(--cyan); animation: pulse 1.8s infinite; }
+  @keyframes pulse { 0%{box-shadow:0 0 0 0 oklch(0.80 0.13 205 / .6)} 70%{box-shadow:0 0 0 9px oklch(0.80 0.13 205 / 0)} 100%{box-shadow:0 0 0 0 oklch(0.80 0.13 205 / 0)} }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute"><defs>
+  <linearGradient id="gaugegrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--brand)"/><stop offset="1" stop-color="var(--cyan)"/></linearGradient>
+  <linearGradient id="chartfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--cyan)" stop-opacity=".30"/><stop offset="1" stop-color="var(--cyan)" stop-opacity="0"/></linearGradient>
+</defs></svg>
+
+<div class="app">
+  <aside class="rail">
+    <div class="logo">Q</div>
+    <div class="ri active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="tip">Dashboard</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg><span class="tip">POS Terminal</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg><span class="tip">Orders</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/></svg><span class="tip">Products</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="8" rx="1"/><rect x="12" y="6" width="3" height="12" rx="1"/><rect x="17" y="13" width="3" height="5" rx="1"/></svg><span class="tip">Reports</span></div>
+    <div class="ri"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg><span class="tip">Staff</span></div>
+    <div class="sp"></div>
+    <div class="avatar-rail" id="cmdk-trigger" title="Omar Khalid">OK</div>
+  </aside>
+
+  <div class="main">
+    <header class="cmdbar">
+      <div class="hello">
+        <div class="hi">Qahwa Al-Riyadh</div>
+        <div class="sub">Tue 17 Jun 2026 · King Fahd Rd · register open</div>
+      </div>
+      <div class="sp"></div>
+      <span class="badge"><span class="pulse"></span>Shift live · 7h 38m</span>
+      <div class="cmdk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>Search or scan<span class="kbd"><span>⌘</span><span>K</span></span></div>
+      <button class="iconbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M10.27 21a1.94 1.94 0 0 0 3.46 0"/><path d="M3.5 17h17a1 1 0 0 0 .76-1.65C20.3 14.3 19 12.4 19 9a7 7 0 1 0-14 0c0 3.4-1.3 5.3-2.26 6.35A1 1 0 0 0 3.5 17"/></svg></button>
+    </header>
+
+    <main class="content">
+      <div class="bento">
+
+        <!-- HERO: LIVE REGISTER -->
+        <section class="tile ink spot hero-pos c-8 r-3">
+          <div class="between">
+            <div>
+              <div class="eyebrow ey">Today's Sales · <span class="pulse"></span> live</div>
+              <div class="big num" data-count="4820" data-prefix="SAR ">SAR 0</div>
+              <div class="subrow"><span class="delta up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>+18%</span><span>96 orders · avg ticket SAR 50.2 · vs SAR 4,090 yesterday</span></div>
+            </div>
+            <div class="seg on-ink" data-for="salesChart">
+              <button data-range="TODAY" class="active">Today</button><button data-range="7D">7D</button><button data-range="30D">30D</button>
+            </div>
+          </div>
+
+          <div class="chartwrap" id="salesChart" data-range="TODAY" style="margin-top:14px" data-chart='{"fmt":"sar","series":{"TODAY":[40,120,260,210,180,340,520,610,430,500,690,640,720],"7D":[3850,4120,3990,4460,4780,5210,4820],"30D":[3100,3300,3050,3600,3900,4100,3850,4120,3990,4460,4780,5210,4820]},"labelsByRange":{"TODAY":["07:00","08:00","09:00","10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00","18:00","now"],"7D":["Wed","Thu","Fri","Sat","Sun","Mon","Tue"],"30D":["Wk1","","","","Wk2","","","","Wk3","","","","Tue"]},"xticksByRange":{"TODAY":["07:00","10:00","13:00","16:00","now"],"7D":["WED","THU","FRI","SAT","SUN","MON","TUE"],"30D":["WK1","WK2","WK3","WK4","NOW"]}}'>
+            <svg class="chart" data-h="120" style="width:100%;height:auto;display:block">
+              <line class="grid-l" x1="14" y1="40" x2="626" y2="40"/><line class="grid-l" x1="14" y1="80" x2="626" y2="80"/>
+              <path class="c-area" d="" fill="url(#chartfill)"/>
+              <path class="c-line" d="" fill="none" stroke="var(--cyan)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle class="c-end" r="4.5" fill="var(--cyan)" stroke="#fff" stroke-width="2"/>
+              <line class="crosshair" x1="0" y1="0" x2="0" y2="0"/>
+              <circle class="cdot" r="4"/>
+            </svg>
+            <div class="ctip"></div>
+          </div>
+
+          <div class="sell-actions">
+            <button class="btn btn-white"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>New Sale · F2</button>
+            <button class="btn btn-light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2 3a14 14 0 0 0 6 6l3-2 5 2v4a2 2 0 0 1-2 2A18 18 0 0 1 3 6a2 2 0 0 1 2-2"/></svg>Hold / Recall</button>
+            <button class="btn btn-light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></svg>Refund</button>
+          </div>
+        </section>
+
+        <!-- CURRENT SHIFT / DRAWER -->
+        <section class="tile c-4 r-3">
+          <div class="tile-head"><h2>Current Shift</h2><span class="pill pill-success"><span class="dot"></span>Open</span></div>
+          <div class="row" style="gap:11px">
+            <span class="avatar" style="width:40px;height:40px;border-radius:13px;font-size:14px;background:linear-gradient(135deg,var(--gold),var(--gold-600));color:oklch(0.28 0.06 70)">OK</span>
+            <div><div style="font-weight:700;font-size:14.5px">Omar Khalid</div><div class="muted" style="font-size:12px">Cashier · Drawer #2</div></div>
+          </div>
+          <div class="drawer-grid" style="margin-top:14px">
+            <div class="c"><div class="k">Opened</div><div class="v num">07:00</div></div>
+            <div class="c"><div class="k">Duration</div><div class="v num">7h 38m</div></div>
+            <div class="c"><div class="k">Orders</div><div class="v num" data-count="96">0</div></div>
+            <div class="c"><div class="k">Cash in drawer</div><div class="v num" data-count="1240" data-prefix="SAR ">SAR 0</div></div>
+          </div>
+          <div class="between" style="margin-top:14px;font-size:12px"><span class="muted">Daily goal · SAR 6,000</span><b class="num">80%</b></div>
+          <div class="bar" style="margin-top:7px"><span data-w="80"></span></div>
+          <button class="btn btn-outline btn-block mt-auto" style="margin-top:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg>Close shift &amp; print X-report</button>
+        </section>
+
+        <!-- TOP SELLERS -->
+        <section class="tile c-4 r-3">
+          <div class="tile-head"><h2>Top Sellers</h2><span class="muted" style="font-size:12px">today</span></div>
+          <div class="prow"><span class="pic sw-warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4Z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/></svg></span><div class="grow"><div class="nm">Saudi Coffee</div><div class="mb"><span data-w="100" style="background:var(--gold-600)"></span></div></div><div class="amt"><b class="num" style="font-size:13px">SAR 930</b><div class="muted num" style="font-size:11px">62×</div></div></div>
+          <div class="prow"><span class="pic sw-brand"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/></svg></span><div class="grow"><div class="nm">Cappuccino</div><div class="mb"><span data-w="77" style="background:var(--brand)"></span></div></div><div class="amt"><b class="num" style="font-size:13px">SAR 720</b><div class="muted num" style="font-size:11px">48×</div></div></div>
+          <div class="prow"><span class="pic sw-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2 4 7v6c0 4.5 3.5 7.3 8 9 4.5-1.7 8-4.5 8-9V7Z"/></svg></span><div class="grow"><div class="nm">Date Cake</div><div class="mb"><span data-w="60" style="background:var(--violet)"></span></div></div><div class="amt"><b class="num" style="font-size:13px">SAR 555</b><div class="muted num" style="font-size:11px">37×</div></div></div>
+          <div class="prow"><span class="pic sw-sky"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2h8l-1 9H9Z"/><path d="M9 11v9a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2v-9"/></svg></span><div class="grow"><div class="nm">Mint Lemonade</div><div class="mb"><span data-w="47" style="background:var(--sky)"></span></div></div><div class="amt"><b class="num" style="font-size:13px">SAR 435</b><div class="muted num" style="font-size:11px">29×</div></div></div>
+          <div class="prow"><span class="pic sw-success"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/></svg></span><div class="grow"><div class="nm">Croissant</div><div class="mb"><span data-w="39" style="background:var(--success)"></span></div></div><div class="amt"><b class="num" style="font-size:13px">SAR 288</b><div class="muted num" style="font-size:11px">24×</div></div></div>
+        </section>
+
+        <!-- RECENT TRANSACTIONS -->
+        <section class="tile c-5 r-3">
+          <div class="tile-head"><h2>Recent Transactions</h2><span class="link-more">All orders <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span></div>
+          <table class="tbl">
+            <thead><tr><th>Invoice</th><th>Time</th><th>Payment</th><th>Total</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td class="mono" style="font-size:12.5px">INV-008421</td><td class="muted num" style="font-size:12.5px">14:38</td><td><span class="pill pill-success">Cash</span></td><td class="num" style="font-weight:700">SAR 64.50</td><td><span class="pill pill-success"><span class="dot"></span>Paid</span></td></tr>
+              <tr><td class="mono" style="font-size:12.5px">INV-008420</td><td class="muted num" style="font-size:12.5px">14:22</td><td><span class="pill pill-sky">mada</span></td><td class="num" style="font-weight:700">SAR 31.00</td><td><span class="pill pill-success"><span class="dot"></span>Paid</span></td></tr>
+              <tr><td class="mono" style="font-size:12.5px">INV-008419</td><td class="muted num" style="font-size:12.5px">14:05</td><td><span class="pill pill-sky">Visa</span></td><td class="num" style="font-weight:700">SAR 118.75</td><td><span class="pill pill-success"><span class="dot"></span>Paid</span></td></tr>
+              <tr><td class="mono" style="font-size:12.5px">INV-008418</td><td class="muted num" style="font-size:12.5px">13:51</td><td><span class="pill pill-violet">Split</span></td><td class="num" style="font-weight:700">SAR 15.00</td><td><span class="pill pill-warning"><span class="dot"></span>Refunded</span></td></tr>
+              <tr><td class="mono" style="font-size:12.5px">INV-008417</td><td class="muted num" style="font-size:12.5px">13:40</td><td><span class="pill pill-success">Cash</span></td><td class="num" style="font-weight:700">SAR 47.25</td><td><span class="pill pill-success"><span class="dot"></span>Paid</span></td></tr>
+              <tr><td class="mono" style="font-size:12.5px">INV-008416</td><td class="muted num" style="font-size:12.5px">13:22</td><td><span class="pill pill-sky">mada</span></td><td class="num" style="font-weight:700">SAR 82.00</td><td><span class="pill pill-success"><span class="dot"></span>Paid</span></td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <!-- PAYMENT MIX DONUT -->
+        <section class="tile c-3 r-3">
+          <div class="tile-head"><h3>Payment mix</h3><span class="muted" style="font-size:12px">today</span></div>
+          <div class="donut">
+            <div class="ring" style="background:conic-gradient(var(--brand) 0 54%, var(--sky) 54% 92%, var(--violet) 92% 100%)"></div>
+            <div class="hole"><b class="num">54%</b><span>cash</span></div>
+          </div>
+          <div class="leg">
+            <div class="li"><span class="sw" style="background:var(--brand)"></span>Cash <b class="num">SAR 2,603</b></div>
+            <div class="li"><span class="sw" style="background:var(--sky)"></span>Card · mada/Visa <b class="num">SAR 1,832</b></div>
+            <div class="li"><span class="sw" style="background:var(--violet)"></span>Split <b class="num">SAR 385</b></div>
+          </div>
+        </section>
+
+        <!-- SUBSCRIPTION -->
+        <section class="tile c-5 r-2" style="border-color:oklch(0.76 0.135 70 / .45)">
+          <div class="tile-head"><h3>Subscription</h3><span class="pill pill-warning"><span class="dot"></span>Due soon</span></div>
+          <div class="between">
+            <div><div class="muted" style="font-size:12px">Pro plan · monthly</div><div class="num" style="font-size:23px;font-weight:800;letter-spacing:-0.02em;margin-top:3px">SAR 280</div></div>
+            <div style="text-align:end"><div class="muted" style="font-size:12px">Next billing</div><div class="num" style="font-weight:700;margin-top:3px">25 Jun 2026</div></div>
+          </div>
+          <button class="btn btn-gold btn-block mt-auto" style="margin-top:14px">Pay now · SAR 280</button>
+        </section>
+
+
+        <!-- LOW STOCK -->
+        <section class="tile c-7 r-2">
+          <div class="tile-head"><h3>Low stock</h3><span class="pill pill-danger num">3 items</span></div>
+          <div class="row" style="gap:12px;align-items:stretch">
+            <div class="insight" style="flex:1;margin-bottom:0"><div class="ic sw-warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/></svg></div><div><div class="ti">Milk &middot; 4 left</div><div class="ds">Reorder level 10</div></div></div>
+            <div class="insight" style="flex:1;margin-bottom:0"><div class="ic sw-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/></svg></div><div><div class="ti">Date syrup &middot; 1 left</div><div class="ds">Out of stock soon</div></div></div>
+            <div class="insight" style="flex:1;margin-bottom:0"><div class="ic sw-warning"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/></svg></div><div><div class="ti">Cups (L) &middot; 18 left</div><div class="ds">Reorder level 50</div></div></div>
+          </div>
+          <button class="btn btn-outline btn-block" style="margin-top:11px">Create purchase order</button>
+        </section>
+
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- command palette -->
+<div class="palette-bg" id="palette">
+  <div class="palette">
+    <div class="inp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><input placeholder="Search products, scan barcode, or run a command..." /></div>
+    <div class="grp">
+      <div class="lbl">Quick actions</div>
+      <div class="opt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> New sale <span class="k">F2</span></div>
+      <div class="opt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h4l2 5-2 3a14 14 0 0 0 6 6l3-2 5 2v4a2 2 0 0 1-2 2A18 18 0 0 1 3 6a2 2 0 0 1 2-2"/></svg> Recall held sale</div>
+      <div class="opt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg> Close shift &amp; X-report</div>
+      <div class="opt"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Pay subscription</div>
+    </div>
+  </div>
+</div>
+
+<script src="ds.js"></script>
+</body>
+</html>

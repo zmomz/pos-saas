@@ -76,7 +76,8 @@ describe('BranchManagement transfer history (ISSUE-060)', () => {
     // Choosing a branch in the filter refetches scoped to that branch.
     const dialog = screen.getByRole('dialog');
     const filter = within(dialog).getByRole('combobox');
-    await userEvent.selectOptions(filter, '2');
+    await userEvent.click(filter);
+    await userEvent.click(await screen.findByRole('option', { name: 'Airport' }));
     await waitFor(() => expect(seen).toContain('2'));
   });
 });

@@ -1,14 +1,12 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Bell, AlertTriangle, ArrowLeft, CheckCheck } from 'lucide-react';
+import { Bell, AlertTriangle, CheckCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
+import { useLanguage } from '@/lib/i18n';
+import { cn } from '@/lib/utils';
 import { getNotifications, markNotificationRead } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 
 interface Notification {
   id: string;
@@ -19,12 +17,13 @@ interface Notification {
 }
 
 export default function Notifications() {
-  const navigate = useNavigate();
-  const { language, setLanguage, t, isRTL } = useLanguage();
+  const { language, t, isRTL } = useLanguage();
+  const tt = (key: string, fallback: string) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
-  // UX-02 (F-051): a failed fetch must not collapse into the empty state, and a
-  // 403 gets its own in-page permission state rather than a misleading "empty".
   const [error, setError] = useState(false);
   const [denied, setDenied] = useState(false);
 
@@ -52,9 +51,7 @@ export default function Notifications() {
   async function handleMarkRead(id: string) {
     try {
       await markNotificationRead(id);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
-      );
+      setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
     } catch {
       // silent fail
     }
@@ -70,138 +67,83 @@ export default function Notifications() {
     }
   }
 
-  function getIcon(type: string) {
-    if (type === 'low_stock') {
-      return <AlertTriangle className="h-5 w-5 text-amber-400" />;
-    }
-    return <Bell className="h-5 w-5 text-brand-400" />;
-  }
-
   function formatTime(dateStr: string) {
     try {
       const date = new Date(dateStr);
-      return date.toLocaleString(language === 'ar' ? 'ar-SA' : language === 'hi' ? 'hi-IN' : language === 'ur' ? 'ur-PK' : 'en-US', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-      });
+      return date.toLocaleString(
+        language === 'ar' ? 'ar-SA' : language === 'hi' ? 'hi-IN' : language === 'ur' ? 'ur-PK' : 'en-US',
+        { dateStyle: 'medium', timeStyle: 'short' }
+      );
     } catch {
       return dateStr;
     }
   }
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
+  const title = t('notifications');
+  const markAllLabel = t('mark_all_read');
+  const emptyLabel = t('no_notifications');
 
   return (
-    <div className={`min-h-screen bg-slate-900 text-white ${isRTL ? 'rtl' : 'ltr'}`} dir={isRTL ? 'rtl' : 'ltr'}>
-      {/* Header */}
-      <header className="border-b border-slate-700 bg-slate-800 px-6 py-4">
-        <div className="mx-auto flex max-w-4xl items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => navigate(-1)}
-              className="text-slate-300 hover:text-white"
-            >
-              <ArrowLeft className="h-5 w-5" />
-            </Button>
-            <h1 className="text-xl font-bold">
-              {language === 'ar' ? 'الإشعارات' : language === 'hi' ? 'सूचनाएं' : language === 'ur' ? 'اطلاعات' : 'Notifications'}
-            </h1>
-            {unreadCount > 0 && (
-              <Badge className="bg-brand-600 text-white">{unreadCount}</Badge>
-            )}
-          </div>
-          <Select value={language} onValueChange={(val) => setLanguage(val as Language)}>
-            <SelectTrigger className="w-32 border-slate-700 bg-slate-700 text-white">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent className="border-slate-700 bg-slate-800 text-white">
-              {languageOptions.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </header>
-
-      {/* Content */}
-      <main className="mx-auto max-w-4xl p-6">
-        {/* Mark all read button */}
+    <div className="animate-fade-up space-y-5" dir={isRTL ? 'rtl' : 'ltr'}>
+      <PageHeading
+        icon={<span className="dxr-sw dxr-sw-brand h-9 w-9"><Bell className="h-[18px] w-[18px]" /></span>}
+        title={title}
+        subtitle={unreadCount > 0 ? `${unreadCount} ${tt('unread', 'unread')}` : tt('all_caught_up', 'All caught up')}
+      >
         {unreadCount > 0 && (
-          <div className="mb-4 flex justify-end">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleMarkAllRead}
-              className="border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white"
-            >
-              <CheckCheck className="mr-2 h-4 w-4" />
-              {language === 'ar' ? 'تحديد الكل كمقروء' : language === 'hi' ? 'सभी पढ़ा हुआ चिह्नित करें' : language === 'ur' ? 'سب پڑھا ہوا نشان زد کریں' : 'Mark all as read'}
-            </Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={handleMarkAllRead}>
+            <CheckCheck className="h-4 w-4" />
+            {markAllLabel}
+          </Button>
         )}
+      </PageHeading>
 
-        {/* Loading */}
-        {loading && (
-          <div className="flex items-center justify-center py-20">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand-600 border-t-transparent" />
-            <span className="ml-3 text-slate-400">{t('loading')}</span>
-          </div>
-        )}
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
+          <span className="ms-3 text-muted-foreground">{t('loading')}</span>
+        </div>
+      )}
 
-        {/* Permission-denied state (in-page, UX-02) */}
-        {!loading && denied && <PermissionDenied />}
+      {!loading && denied && <PermissionDenied />}
+      {!loading && !denied && error && <ErrorState onRetry={fetchNotifications} />}
 
-        {/* Error state — distinct from empty (UX-02) */}
-        {!loading && !denied && error && <ErrorState onRetry={fetchNotifications} />}
+      {!loading && !denied && !error && notifications.length === 0 && (
+        <div className="dxr-tile flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <Bell className="mb-4 h-16 w-16 opacity-25" />
+          <p className="text-lg">{emptyLabel}</p>
+        </div>
+      )}
 
-        {/* Empty state */}
-        {!loading && !denied && !error && notifications.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <Bell className="mb-4 h-16 w-16 opacity-30" />
-            <p className="text-lg">
-              {language === 'ar' ? 'لا توجد إشعارات' : language === 'hi' ? 'कोई सूचना नहीं' : language === 'ur' ? 'کوئی اطلاعات نہیں' : 'No notifications'}
-            </p>
-          </div>
-        )}
-
-        {/* Notification list */}
-        {!loading && !denied && !error && notifications.length > 0 && (
-          <div className="space-y-3">
-            {notifications.map((notification) => (
-              <Card
-                key={notification.id}
-                className={`cursor-pointer border-slate-700 bg-slate-800 transition-colors hover:bg-slate-750 ${
-                  !notification.is_read ? 'border-l-4 border-l-brand-500' : 'opacity-70'
-                }`}
-                onClick={() => !notification.is_read && handleMarkRead(notification.id)}
+      {!loading && !denied && !error && notifications.length > 0 && (
+        <div className="space-y-3">
+          {notifications.map((n) => {
+            const isLow = n.type === 'low_stock';
+            return (
+              <div
+                key={n.id}
+                onClick={() => !n.is_read && handleMarkRead(n.id)}
+                className={cn(
+                  'dxr-tile dxr-hover flex items-start gap-4 cursor-pointer p-4',
+                  !n.is_read ? 'border-s-4 border-s-brand' : 'opacity-70'
+                )}
               >
-                <CardContent className="flex items-start gap-4 p-4">
-                  <div className="mt-0.5 flex-shrink-0">
-                    {getIcon(notification.type)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-sm ${!notification.is_read ? 'font-medium text-white' : 'text-slate-400'}`}>
-                      {notification.message}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {formatTime(notification.created_at)}
-                    </p>
-                  </div>
-                  {!notification.is_read && (
-                    <div className="flex-shrink-0">
-                      <div className="h-2.5 w-2.5 rounded-full bg-brand-500" />
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </main>
+                <span className={cn('dxr-sw h-10 w-10', isLow ? 'dxr-sw-warning' : 'dxr-sw-brand')}>
+                  {isLow ? <AlertTriangle className="h-5 w-5" /> : <Bell className="h-5 w-5" />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className={cn('text-sm', !n.is_read ? 'font-semibold text-foreground' : 'text-muted-foreground')}>
+                    {n.message}
+                  </p>
+                  <p className="mt-1 font-mono text-xs text-muted-foreground">{formatTime(n.created_at)}</p>
+                </div>
+                {!n.is_read && <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-brand" />}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import {
   Dialog,
@@ -21,6 +19,7 @@ import {
 import { getAPIBaseURL } from '@/lib/config';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
+import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { toast } from 'sonner';
 import { FileText, Plus, Trash2, Eye, ShoppingCart } from 'lucide-react';
 
@@ -47,7 +46,6 @@ const VAT_RATE = 0.15;
 
 export default function QuotationManagement() {
   const { t, language } = useLanguage();
-  const navigate = useNavigate();
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
@@ -151,144 +149,127 @@ export default function QuotationManagement() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 p-4">
-      <div className="max-w-5xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <FileText className="w-6 h-6 text-brand-400" />
-            <h1 className="text-2xl font-bold text-white">{t('quotations')}</h1>
-          </div>
-          <div className="flex gap-2">
+    <div className="animate-fade-up space-y-6">
+      <Dialog open={open} onOpenChange={setOpen}>
+        <PageHeading
+          icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><FileText className="h-[18px] w-[18px]" /></span>}
+          title={t('quotations')}
+          subtitle={`${quotations.length} ${t('quotations')}`}
+        >
+          <DialogTrigger asChild>
+            <Button className="h-11 rounded-[10px] shadow-brand">
+              <Plus className="h-4 w-4" />
+              {t('new_quotation')}
+            </Button>
+          </DialogTrigger>
+        </PageHeading>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t('new_quotation')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder={t('customer_name')}
+              value={customerName}
+              onChange={(e) => setCustomerName(e.target.value)}
+            />
+            {items.map((it, idx) => (
+              <div key={idx} className="flex gap-2">
+                <Input
+                  placeholder={t('item_name')}
+                  value={it.name}
+                  onChange={(e) => setItem(idx, { name: e.target.value })}
+                  className="flex-1"
+                />
+                <Input
+                  type="number"
+                  min={1}
+                  value={it.quantity}
+                  onChange={(e) => setItem(idx, { quantity: Number(e.target.value) })}
+                  className="w-20"
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={it.price}
+                  onChange={(e) => setItem(idx, { price: Number(e.target.value) })}
+                  className="w-28"
+                />
+              </div>
+            ))}
             <Button
               variant="outline"
-              onClick={() => navigate(-1)}
-              className="border-slate-600 text-slate-300 hover:bg-slate-700"
+              onClick={() => setItems((p) => [...p, { name: '', quantity: 1, price: 0 }])}
+              className="w-full"
             >
-              {t('back')}
+              <Plus className="h-4 w-4 me-2" />
+              {t('add_item')}
             </Button>
-            <Dialog open={open} onOpenChange={setOpen}>
-              <DialogTrigger asChild>
-                <Button className="bg-brand-600 hover:bg-brand-700 text-white">
-                  <Plus className="w-4 h-4 me-2" />
-                  {t('new_quotation')}
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-lg">
-                <DialogHeader>
-                  <DialogTitle>{t('new_quotation')}</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-3">
-                  <Input
-                    placeholder={t('customer_name')}
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="bg-slate-900 border-slate-600 text-white"
-                  />
-                  {items.map((it, idx) => (
-                    <div key={idx} className="flex gap-2">
-                      <Input
-                        placeholder={t('item_name')}
-                        value={it.name}
-                        onChange={(e) => setItem(idx, { name: e.target.value })}
-                        className="bg-slate-900 border-slate-600 text-white flex-1"
-                      />
-                      <Input
-                        type="number"
-                        min={1}
-                        value={it.quantity}
-                        onChange={(e) => setItem(idx, { quantity: Number(e.target.value) })}
-                        className="bg-slate-900 border-slate-600 text-white w-20"
-                      />
-                      <Input
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        value={it.price}
-                        onChange={(e) => setItem(idx, { price: Number(e.target.value) })}
-                        className="bg-slate-900 border-slate-600 text-white w-28"
-                      />
-                    </div>
-                  ))}
-                  <Button
-                    variant="outline"
-                    onClick={() => setItems((p) => [...p, { name: '', quantity: 1, price: 0 }])}
-                    className="border-slate-600 text-slate-300 hover:bg-slate-700 w-full"
-                  >
-                    <Plus className="w-4 h-4 me-2" />
-                    {t('add_item')}
+            <Input
+              type="date"
+              value={validUntil}
+              onChange={(e) => setValidUntil(e.target.value)}
+            />
+            <Input
+              placeholder={t('notes')}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+            />
+            <div className="text-foreground/90 text-sm space-y-1 border-t border-border pt-2">
+              <div className="flex justify-between"><span>{t('subtotal')}</span><span className="tabular-nums">{formatMoney(subtotal, language)}</span></div>
+              <div className="flex justify-between"><span>{t('vat')}</span><span className="tabular-nums">{formatMoney(vatAmount, language)}</span></div>
+              <div className="flex justify-between font-bold text-foreground"><span>{t('total')}</span><span className="tabular-nums">{formatMoney(total, language)}</span></div>
+            </div>
+            <Button
+              onClick={handleSave}
+              disabled={saving}
+              className="w-full"
+            >
+              {t('save')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {loading ? (
+        <p className="text-muted-foreground">{t('loading')}</p>
+      ) : quotations.length === 0 ? (
+        <Card className="bg-card border-border">
+          <CardContent className="p-8 text-center text-muted-foreground">
+            {t('no_quotations')}
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {quotations.map((q) => (
+            <Card key={q.id} className="bg-card border-border">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-foreground font-semibold">{q.quote_number}</p>
+                  <p className="text-muted-foreground text-sm">{q.customer_name || '—'}</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="pill-muted">{q.status || 'draft'}</span>
+                  <span className="text-brand font-bold tabular-nums">{formatMoney(q.total_amount || 0, language)}</span>
+                  {!TERMINAL_STATUSES.includes(q.status || 'draft') && (
+                    <Button size="sm" variant="outline" onClick={() => handleConvert(q.id)}>
+                      <ShoppingCart className="w-4 h-4 me-1" />
+                      {t('convert_to_sale')}
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={() => openDocument(q.id)}>
+                    <Eye className="w-4 h-4" />
                   </Button>
-                  <Input
-                    type="date"
-                    value={validUntil}
-                    onChange={(e) => setValidUntil(e.target.value)}
-                    className="bg-slate-900 border-slate-600 text-white"
-                  />
-                  <Input
-                    placeholder={t('notes')}
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="bg-slate-900 border-slate-600 text-white"
-                  />
-                  <div className="text-slate-300 text-sm space-y-1 border-t border-slate-700 pt-2">
-                    <div className="flex justify-between"><span>{t('subtotal')}</span><span>{formatMoney(subtotal, language)}</span></div>
-                    <div className="flex justify-between"><span>{t('vat')}</span><span>{formatMoney(vatAmount, language)}</span></div>
-                    <div className="flex justify-between font-bold text-white"><span>{t('total')}</span><span>{formatMoney(total, language)}</span></div>
-                  </div>
-                  <Button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="bg-green-600 hover:bg-green-700 text-white w-full"
-                  >
-                    {t('save')}
+                  <Button size="sm" variant="destructive" onClick={() => handleDelete(q.id)}>
+                    <Trash2 className="w-4 h-4" />
                   </Button>
                 </div>
-              </DialogContent>
-            </Dialog>
-          </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
-
-        {loading ? (
-          <p className="text-slate-400">{t('loading')}</p>
-        ) : quotations.length === 0 ? (
-          <Card className="bg-slate-800 border-slate-700">
-            <CardContent className="p-8 text-center text-slate-400">
-              {t('no_quotations')}
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {quotations.map((q) => (
-              <Card key={q.id} className="bg-slate-800 border-slate-700">
-                <CardContent className="p-4 flex items-center justify-between">
-                  <div>
-                    <p className="text-white font-semibold">{q.quote_number}</p>
-                    <p className="text-slate-400 text-sm">{q.customer_name || '—'}</p>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge className="bg-slate-600 text-white">{q.status || 'draft'}</Badge>
-                    <span className="text-brand-400 font-bold">{formatMoney(q.total_amount || 0, language)}</span>
-                    {!TERMINAL_STATUSES.includes(q.status || 'draft') && (
-                      <Button size="sm" variant="outline" onClick={() => handleConvert(q.id)}
-                        className="border-green-700 text-green-400 hover:bg-green-900/40">
-                        <ShoppingCart className="w-4 h-4 me-1" />
-                        {t('convert_to_sale')}
-                      </Button>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => openDocument(q.id)}
-                      className="border-slate-600 text-slate-300 hover:bg-slate-700">
-                      <Eye className="w-4 h-4" />
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => handleDelete(q.id)}
-                      className="border-red-700 text-red-400 hover:bg-red-900/40">
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

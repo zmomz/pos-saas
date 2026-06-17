@@ -77,7 +77,8 @@ describe('MenuBuilder recipe / BOM editor (ISSUE-039)', () => {
     renderPage();
 
     const card = await screen.findByTestId('product-bom-10');
-    await userEvent.selectOptions(within(card).getByRole('combobox'), '11');
+    await userEvent.click(within(card).getByRole('combobox'));
+    await userEvent.click(await screen.findByRole('option', { name: 'Bun' }));
     const qty = within(card).getByLabelText(/qty per/i);
     await userEvent.clear(qty);
     await userEvent.type(qty, '2');
@@ -109,11 +110,13 @@ describe('MenuBuilder recipe / BOM editor (ISSUE-039)', () => {
     const removeBtn = within(card).getByRole('button', { name: /remove bun/i });
     expect(removeBtn).toBeInTheDocument();
     // ...and is no longer offered as a component to add (only Beef remains; not self).
-    const select = within(card).getByRole('combobox') as HTMLSelectElement;
-    const labels = Array.from(select.options).map((o) => o.textContent);
+    await userEvent.click(within(card).getByRole('combobox'));
+    const labels = (await screen.findAllByRole('option')).map((o) => o.textContent);
     expect(labels).toContain('Beef');
     expect(labels).not.toContain('Bun');
     expect(labels).not.toContain('Cheeseburger');
+    // Close the dropdown before clicking the remove button.
+    await userEvent.keyboard('{Escape}');
 
     await userEvent.click(removeBtn);
     await waitFor(() => expect(deleteId).toBe('7'));
