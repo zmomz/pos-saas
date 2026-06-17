@@ -405,10 +405,10 @@ export default function AgentLandingPage() {
             <p className="text-lg md:text-[19px] text-slate-600 leading-relaxed mt-5 max-w-xl">{subtitle}</p>
             <div className="flex flex-wrap gap-3 mt-8">
               <Button onClick={() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })} className="text-white px-6 py-6 text-base font-semibold" style={{ backgroundColor: brand, boxShadow: `0 10px 30px ${tint('30')}` }}>
-                {c.hero_cta}<ArrowRight className={`w-5 h-5 ${isRTL ? 'mr-2 rotate-180' : 'ml-2'}`} />
+                {c.hero_cta}<ArrowRight className={`w-5 h-5 ms-2 ${isRTL ? 'rotate-180' : ''}`} />
               </Button>
               <Button variant="outline" onClick={() => navigate('/login')} className="px-6 py-6 text-base font-semibold border-slate-300 !bg-white" style={{ color: brand700 }}>
-                <Eye className={`w-5 h-5 ${isRTL ? 'ml-2' : 'mr-2'}`} />{c.hero_demo}
+                <Eye className="w-5 h-5 me-2" />{c.hero_demo}
               </Button>
             </div>
             <div className="flex flex-wrap items-center gap-5 mt-8">
@@ -465,7 +465,7 @@ export default function AgentLandingPage() {
               </div>
             </div>
             {/* floating ZATCA QR badge */}
-            <div className={`hidden lg:flex absolute top-[60px] ${isRTL ? '-right-5' : '-left-5'} items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-lg`}>
+            <div className="hidden lg:flex absolute top-[60px] -start-5 items-center gap-2.5 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-lg">
               <span className="w-[34px] h-[34px] rounded-[9px] grid place-items-center bg-sky/10 text-sky"><QrCode className="w-[18px] h-[18px]" /></span>
               <div>
                 <b className="text-sm leading-none block">{c.zatca}</b>
@@ -594,7 +594,7 @@ export default function AgentLandingPage() {
             <Button onClick={() => navigate('/login')} className="text-white px-7 py-6 text-base font-semibold" style={{ backgroundColor: brand }}>{c.hero_cta}</Button>
             {profile.contact_phone && (
               <Button onClick={() => window.open(`https://wa.me/${phone.replace(/\D/g, '')}`)} className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-7 py-6 text-base font-semibold">
-                <Phone className={`w-5 h-5 ${isRTL ? 'ml-2' : 'mr-2'}`} />{c.cta_whatsapp}
+                <Phone className="w-5 h-5 me-2" />{c.cta_whatsapp}
               </Button>
             )}
           </div>

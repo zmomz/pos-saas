@@ -62,9 +62,11 @@ export default {
         // `warning` needs dark ink, not white (avoids the contrast failure).
         success: { DEFAULT: '#23a06b', foreground: '#ffffff' },
         warning: { DEFAULT: '#d6a33a', foreground: '#3a2c10' },
-        violet: '#7b57c9',
-        sky: '#3d9ad1',
-        danger: { DEFAULT: '#d14a3a', foreground: '#ffffff' },
+        // `700` shades back the leaderboard avatar gradients (and any other
+        // two-tone fills) without raw hex. DEFAULT keeps `text-violet`/`bg-sky` working.
+        violet: { DEFAULT: '#7b57c9', 700: '#5b3fa8' },
+        sky: { DEFAULT: '#3d9ad1', 700: '#2a72a0' },
+        danger: { DEFAULT: '#d14a3a', foreground: '#ffffff', 700: '#a8392c' },
         primary: {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',

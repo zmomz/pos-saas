@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { holdLineFromCart, cartLineFromHeld, type CartItem } from './POSTerminal';
+import { holdLineFromCart, cartLineFromHeld, type CartItem, type Product } from './POSTerminal';
 
 // ISSUE-031 (H28): hold→recall dropped `variant_id` and the open price, so a recalled
 // variant SKU collapsed to its parent product (parent stock deducted, variant siblings

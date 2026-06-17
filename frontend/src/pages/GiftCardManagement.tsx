@@ -15,7 +15,7 @@ import {
   type GiftCard,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDate } from '@/lib/format';
 import { Gift, Plus, RefreshCw } from 'lucide-react';
 
 // Gift-card status → pill styling. A card walks active → redeemed / expired / void.
@@ -204,8 +204,8 @@ export default function GiftCardManagement() {
       key: 'expiry',
       header: t('gift_card_expiry'),
       cell: (c) => (
-        <span className="text-muted-foreground">
-          {c.expiry_date ? new Date(c.expiry_date).toLocaleDateString() : '—'}
+        <span className="text-muted-foreground tabular-nums">
+          {c.expiry_date ? formatDate(c.expiry_date, language) : '—'}
         </span>
       ),
     },
@@ -213,8 +213,8 @@ export default function GiftCardManagement() {
       key: 'date',
       header: t('date'),
       cell: (c) => (
-        <span className="text-muted-foreground">
-          {c.created_at ? new Date(c.created_at).toLocaleDateString() : '—'}
+        <span className="text-muted-foreground tabular-nums">
+          {c.created_at ? formatDate(c.created_at, language) : '—'}
         </span>
       ),
     },

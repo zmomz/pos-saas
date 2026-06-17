@@ -220,7 +220,7 @@ export default function ProductManagement() {
       const searchTerm = search.trim() || undefined;
       const data = await getProductsList(categoryId, searchTerm, showArchived);
       // /products/list returns ProductListResponse { items, total } (ISSUE-021).
-      setProducts(Array.isArray(data) ? data : data?.items || []);
+      setProducts((Array.isArray(data?.items) ? data.items : []) as unknown as Product[]);
     } catch (err) {
       console.error('Failed to load products:', err);
       setProducts([]);

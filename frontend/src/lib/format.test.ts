@@ -7,26 +7,26 @@ import {
 } from './format';
 
 describe('format helpers (L10N-03)', () => {
-  it('converts Western digits to Arabic-Indic', () => {
-    expect(toArabicDigits('123')).toBe('١٢٣');
-    expect(toArabicDigits(2026)).toBe('٢٠٢٦');
+  it('toArabicDigits is now a Western-digit pass-through', () => {
+    expect(toArabicDigits('123')).toBe('123');
+    expect(toArabicDigits(2026)).toBe('2026');
   });
 
-  it('keeps Western digits for en, Arabic-Indic for ar/ur', () => {
+  it('uses Western numerals + separators for every language', () => {
     expect(formatNumber(1234.5, 'en')).toBe('1,234.50');
-    expect(formatNumber(1234.5, 'ar')).toBe('١٬٢٣٤٫٥٠');
-    expect(formatNumber(1234.5, 'ur')).toBe('١٬٢٣٤٫٥٠');
+    expect(formatNumber(1234.5, 'ar')).toBe('1,234.50');
+    expect(formatNumber(1234.5, 'ur')).toBe('1,234.50');
   });
 
-  it('renders SAR currency (Western for en, ر.س for Arabic)', () => {
+  it('renders SAR currency (SAR for Latin, ر.س label for Arabic)', () => {
     expect(formatMoney(10, 'en')).toBe('10.00 SAR');
-    expect(formatMoney(10, 'ar')).toContain('ر.س');
-    expect(formatMoney(10, 'ar')).not.toContain('$');
+    expect(formatMoney(10, 'ar')).toBe('10.00 ر.س');
+    expect(formatMoney(10, 'ar')).not.toMatch(/[٠-٩]/);
   });
 
-  it('formatMoneyAr always renders Arabic + ر.س', () => {
+  it('formatMoneyAr renders Western digits + the ر.س label', () => {
     const out = formatMoneyAr(99.5);
-    expect(out).toContain('ر.س');
-    expect(out).toMatch(/[٠-٩]/);
+    expect(out).toBe('99.50 ر.س');
+    expect(out).not.toMatch(/[٠-٩]/);
   });
 });

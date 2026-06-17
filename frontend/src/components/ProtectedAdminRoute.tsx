@@ -21,7 +21,7 @@ const ProtectedAdminRoute: React.FC<ProtectedAdminRouteProps> = ({
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Verifying permissions...</p>
+          <p className="text-muted-foreground">Verifying permissions...</p>
         </div>
       </div>
     );
@@ -35,29 +35,29 @@ const ProtectedAdminRoute: React.FC<ProtectedAdminRouteProps> = ({
   // If the user is not an admin, show an insufficient-permissions page
   if (!isAdmin) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-background">
         <Card className="w-full max-w-md mx-4">
           <CardHeader className="text-center">
-            <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
-              <Shield className="h-8 w-8 text-red-600" />
+            <div className="mx-auto w-16 h-16 bg-danger/10 rounded-full flex items-center justify-center mb-4">
+              <Shield className="h-8 w-8 text-danger" />
             </div>
-            <CardTitle className="text-xl text-gray-900">
+            <CardTitle className="text-xl text-foreground">
               Insufficient Permissions
             </CardTitle>
           </CardHeader>
           <CardContent className="text-center space-y-4">
-            <div className="text-gray-600">
+            <div className="text-muted-foreground">
               <p className="mb-2">
                 The account you are using does not have administrator rights.
               </p>
-              <div className="bg-gray-100 rounded-lg p-3 mb-4">
+              <div className="bg-muted rounded-lg p-3 mb-4">
                 <div className="flex items-center justify-center gap-2 text-sm">
-                  <User className="h-4 w-4 text-gray-500" />
-                  <span className="text-gray-700">
+                  <User className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-foreground">
                     Current account: {user.email}
                   </span>
                 </div>
-                <div className="text-xs text-gray-500 mt-1">
+                <div className="text-xs text-muted-foreground mt-1">
                   Role: {user.role === 'user' ? 'Regular user' : user.role}
                 </div>
               </div>

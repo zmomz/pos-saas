@@ -268,7 +268,7 @@ const Shell: React.FC = () => {
           {/* Avatar */}
           <div
             title={user?.email || 'User'}
-            className="mt-0.5 flex h-[42px] w-[42px] items-center justify-center rounded-[13px] bg-gradient-to-br from-gold to-gold-600 text-sm font-extrabold text-[#3a2c10]"
+            className="mt-0.5 flex h-[42px] w-[42px] items-center justify-center rounded-[13px] bg-gradient-to-br from-gold to-gold-600 text-sm font-extrabold text-warning-foreground"
           >
             {(displayName || user?.email || 'U').charAt(0).toUpperCase()}
           </div>

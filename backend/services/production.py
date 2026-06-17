@@ -497,7 +497,7 @@ class PDFInvoiceService:
         <table>
             <tr><td>المجموع الفرعي</td><td>{format_money_ar(subtotal)} ر.س</td></tr>
             <tr><td>الخصم</td><td>{format_money_ar(discount)} ر.س</td></tr>
-            <tr><td>ضريبة القيمة المضافة (١٥٪)</td><td>{format_money_ar(vat_amount)} ر.س</td></tr>
+            <tr><td>ضريبة القيمة المضافة (15٪)</td><td>{format_money_ar(vat_amount)} ر.س</td></tr>
             <tr><td><strong>الإجمالي</strong></td><td><strong>{format_money_ar(total_amount)} ر.س</strong></td></tr>
         </table>
     </div>

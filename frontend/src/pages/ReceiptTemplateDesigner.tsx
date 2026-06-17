@@ -278,20 +278,20 @@ export default function ReceiptTemplateDesigner() {
                 <div className="text-center font-semibold my-1">{AR.tax_invoice}</div>
                 <hr className="border-dashed border-black/40 my-1" />
                 <div className="flex justify-between">
-                  <span>٢ × ١٠٫٠٠ = ٢٠٫٠٠</span>
+                  <span>2 × 10.00 = 20.00</span>
                   <span>{AR.sample_item}</span>
                 </div>
                 <hr className="border-dashed border-black/40 my-1" />
                 <div className="flex justify-between">
-                  <span>٢٠٫٠٠</span>
+                  <span>20.00</span>
                   <span>{AR.subtotal}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>٣٫٠٠</span>
+                  <span>3.00</span>
                   <span>{AR.vat}</span>
                 </div>
                 <div className="flex justify-between font-bold">
-                  <span>٢٣٫٠٠</span>
+                  <span>23.00</span>
                   <span>{AR.grand_total}</span>
                 </div>
                 {form.show_qr_code && (

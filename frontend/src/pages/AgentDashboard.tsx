@@ -72,7 +72,15 @@ export default function AgentDashboard() {
   async function loadData() {
     try {
       const [clientData, brandData] = await Promise.all([getAgentClients(), getAgentBranding()]);
-      const items = clientData?.items || [];
+      const items: ClientItem[] = (clientData?.items || []).map((c) => ({
+        id: c.id,
+        business_name: c.business_name,
+        email: c.email,
+        phone: c.phone ?? '',
+        is_active: c.is_active,
+        subscription_fee: c.subscription_fee ?? 0,
+        zatca_enabled: c.zatca_enabled,
+      }));
       setClients(items);
       setRemainingSlots(clientData?.remaining_slots ?? 0);
       setTotalClients(clientData?.total ?? items.length);

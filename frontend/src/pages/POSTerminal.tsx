@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, productImageSrc, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
 import { CUSTOMER_DISPLAY_KEY, buildCustomerDisplayPayload, paidCustomerDisplayPayload } from '@/lib/customerDisplay';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney, formatMoneyAr, toArabicDigits } from '@/lib/format';
+import { formatMoney, formatMoneyAr, formatDateTime } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
@@ -676,8 +676,8 @@ export default function POSTerminal() {
     return TINTS[h % TINTS.length];
   }
 
-  // Locale-aware currency display for the sale screen (Arabic-Indic digits for
-  // ar/ur). The always-Arabic fiscal receipt uses formatMoneyAr directly.
+  // Currency display for the sale screen (Western digits in every language,
+  // localized SAR label). The always-Arabic fiscal receipt uses formatMoneyAr.
   const SAR = (n: number) => formatMoney(n || 0, language);
 
   // Per-product quantity already in the cart (drives the tile qty badge).
@@ -1073,7 +1073,7 @@ export default function POSTerminal() {
             <div className="border-t border-border pt-4 space-y-2">
               {receipt.items.map((item, idx) => (
                 <div key={idx} className="flex justify-between text-foreground text-sm">
-                  <span>{item.name} ×{toArabicDigits(item.quantity)}</span>
+                  <span>{item.name} ×{item.quantity}</span>
                   <span>{formatMoneyAr(item.price * item.quantity)}</span>
                 </div>
               ))}
@@ -1130,7 +1130,7 @@ export default function POSTerminal() {
                     <div key={idx} className="flex justify-between text-muted-foreground text-xs">
                       <span>
                         {tenderAr[tn.tender_type] || tn.tender_type}
-                        {tn.last4 ? ` ••${toArabicDigits(tn.last4)}` : ''}
+                        {tn.last4 ? ` ••${tn.last4}` : ''}
                       </span>
                       <span className="font-mono">
                         {tn.network ? `${tn.network} · ` : ''}
@@ -1268,7 +1268,7 @@ export default function POSTerminal() {
                       <div>
                         <p className="text-foreground font-medium text-sm">{txn.invoice_number}</p>
                         <p className="text-muted-foreground text-xs mt-1">
-                          {txn.created_at ? new Date(txn.created_at).toLocaleString() : 'N/A'}
+                          {txn.created_at ? formatDateTime(txn.created_at, language) : 'N/A'}
                         </p>
                       </div>
                       <div className="text-end">

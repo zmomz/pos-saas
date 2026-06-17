@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
+import { selectOption } from '../test/selectOption';
 import { LanguageProvider } from '@/lib/i18n';
 import Reservations from './Reservations';
 
@@ -95,7 +96,7 @@ describe('Reservations & waitlist', () => {
     renderPage();
 
     const seatSelect = await screen.findByLabelText(/seat at table 5/i);
-    await userEvent.selectOptions(seatSelect, '2');
+    await selectOption(seatSelect, /^T2$/);
 
     await waitFor(() => expect(seatedTable).toBe(2));
   });

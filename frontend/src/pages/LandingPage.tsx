@@ -355,10 +355,10 @@ export default function LandingPage() {
             </p>
             <div className="flex flex-wrap gap-3 mt-8">
               <Button onClick={() => scrollTo('packages')} className="bg-brand-500 hover:bg-brand-600 text-white px-6 py-6 text-base font-semibold shadow-brand">
-                {c.hero_cta}<ArrowRight className={`w-5 h-5 ${isRTL ? 'mr-2 rotate-180' : 'ml-2'}`} />
+                {c.hero_cta}<ArrowRight className={`w-5 h-5 ms-2 ${isRTL ? 'rotate-180' : ''}`} />
               </Button>
               <Button variant="outline" onClick={() => navigate('/login')} className="px-6 py-6 text-base font-semibold border-slate-300 hover:border-brand-500 hover:text-brand-700 hover:bg-brand-50 !bg-white">
-                <Headphones className={`w-5 h-5 ${isRTL ? 'ml-2' : 'mr-2'}`} />{c.hero_sales}
+                <Headphones className="w-5 h-5 me-2" />{c.hero_sales}
               </Button>
             </div>
             <div className="flex flex-wrap items-center gap-5 mt-8">
@@ -395,7 +395,7 @@ export default function LandingPage() {
               </div>
             </div>
             {/* floating stat */}
-            <div className={`hidden lg:flex absolute top-9 ${isRTL ? '-right-6' : '-left-6'} items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-lg`}>
+            <div className="hidden lg:flex absolute top-9 -start-6 items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-lg">
               <span className="w-9 h-9 rounded-[9px] bg-success/10 text-success grid place-items-center"><Users className="w-[18px] h-[18px]" /></span>
               <div>
                 <b className="text-base leading-none block tabular-nums">+9</b>
@@ -403,7 +403,7 @@ export default function LandingPage() {
               </div>
             </div>
             {/* handshake chip */}
-            <div className={`hidden lg:grid absolute -bottom-4 ${isRTL ? '-left-3.5' : '-right-3.5'} w-16 h-16 rounded-[18px] bg-gold text-gold-900 place-items-center shadow-lg -rotate-6`}>
+            <div className="hidden lg:grid absolute -bottom-4 -end-3.5 w-16 h-16 rounded-[18px] bg-gold text-gold-900 place-items-center shadow-lg -rotate-6">
               <Handshake className="w-8 h-8" />
             </div>
           </div>

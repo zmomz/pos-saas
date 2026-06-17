@@ -1,63 +1,63 @@
 /**
  * Locale-aware number/currency formatting (SRS L10N-03).
  *
- * Arabic and Urdu render with Arabic-Indic numerals (٠١٢٣٤٥٦٧٨٩) and the Arabic
- * decimal/thousands separators; other languages keep Western digits. The
- * always-Arabic fiscal documents (receipt / invoice / quotation) call the
- * `*Ar` helpers directly so they read natively in Arabic regardless of the UI
- * language the cashier picked.
+ * Numbers render with Western numerals (1234567890) and Western
+ * thousands/decimal separators in EVERY language — including Arabic and the
+ * always-Arabic fiscal documents. (Per product decision 2026-06-18: Eastern
+ * Arabic-Indic digits ٠١٢٣ are never shown unless an explicit user preference
+ * asks for them.) Currency keeps the localized SAR label: `SAR` for Latin
+ * languages, the Arabic abbreviation `ر.س` for Arabic/Urdu and the
+ * always-Arabic documents.
  */
 import type { Language } from './i18n';
 
-const WESTERN_TO_ARABIC: Record<string, string> = {
-  '0': '٠', '1': '١', '2': '٢', '3': '٣', '4': '٤',
-  '5': '٥', '6': '٦', '7': '٧', '8': '٨', '9': '٩',
-};
-
-const ARABIC_DECIMAL = '٫';
-const ARABIC_THOUSANDS = '٬';
-
-/** Replace every Western digit with its Arabic-Indic equivalent. */
-export function toArabicDigits(input: string | number): string {
-  return String(input).replace(/[0-9]/g, (d) => WESTERN_TO_ARABIC[d]);
-}
-
-function usesArabicDigits(lang: Language): boolean {
+function usesArabicLabel(lang: Language): boolean {
   return lang === 'ar' || lang === 'ur';
 }
 
-/** Format a number for the given language (Arabic-Indic digits for ar/ur). */
-export function formatNumber(value: number, lang: Language, decimals = 2): string {
-  const western = value.toLocaleString('en-US', {
+/**
+ * Pass-through kept for backward compatibility. We no longer convert to
+ * Arabic-Indic digits anywhere; this now returns the value as a Western-digit
+ * string. Prefer using the raw value directly.
+ */
+export function toArabicDigits(input: string | number): string {
+  return String(input);
+}
+
+/** Format a number with Western numerals and separators for every language. */
+export function formatNumber(value: number, _lang: Language, decimals = 2): string {
+  return value.toLocaleString('en-US', {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals,
   });
-  if (!usesArabicDigits(lang)) return western;
-  return western
-    .replace(/,/g, ARABIC_THOUSANDS)
-    .replace(/\./g, ARABIC_DECIMAL)
-    .replace(/[0-9]/g, (d) => WESTERN_TO_ARABIC[d]);
 }
 
-/** Always render a number in Arabic-Indic form (for always-Arabic documents). */
+/** Western-numeral number (kept for the always-Arabic fiscal documents). */
 export function formatNumberAr(value: number, decimals = 2): string {
   return formatNumber(value, 'ar', decimals);
 }
 
-/** Currency string. SAR-only system; symbol is the Arabic ﷼ abbreviation ر.س. */
-export function formatMoney(value: number, lang: Language, decimals = 2): string {
-  return `${formatNumber(value, lang, decimals)} ${lang && !usesArabicDigits(lang) ? 'SAR' : 'ر.س'}`;
+/** SAR currency label only — ر.س in RTL languages, SAR otherwise. */
+export function currencyLabel(lang: Language): string {
+  return usesArabicLabel(lang) ? 'ر.س' : 'SAR';
 }
 
-/** Always render money in Arabic (for the always-Arabic receipt/invoice). */
+/** Currency string. SAR-only system; symbol is the Arabic ﷼ abbreviation ر.س. */
+export function formatMoney(value: number, lang: Language, decimals = 2): string {
+  return `${formatNumber(value, lang, decimals)} ${currencyLabel(lang)}`;
+}
+
+/** Money for the always-Arabic receipt/invoice: Western digits + ر.س label. */
 export function formatMoneyAr(value: number, decimals = 2): string {
   return `${formatNumberAr(value, decimals)} ر.س`;
 }
 
 /**
  * Locale-aware date formatting (SRS L10N-04). Gregorian is the required
- * calendar; Arabic/Urdu render Arabic-Indic digits. Pass `{ hijri: true }` to
- * additionally append the Umm al-Qura (Islamic) date in parentheses.
+ * calendar and Western numerals are forced in every language via the
+ * `-nu-latn` numbering-system extension (ar-SA otherwise emits Arabic-Indic
+ * digits). Pass `{ hijri: true }` to additionally append the Umm al-Qura
+ * (Islamic) date in parentheses.
  */
 const LOCALE_BY_LANG: Record<Language, string> = {
   ar: 'ar-SA',
@@ -85,11 +85,12 @@ export function formatDate(
     calendar: 'gregory',
     ...(opts.withTime ? { hour: '2-digit', minute: '2-digit' } : {}),
   };
-  // Force Gregorian even for ar-SA (which defaults to Islamic) via the -u-ca-gregory extension.
-  let out = new Intl.DateTimeFormat(`${LOCALE_BY_LANG[lang]}-u-ca-gregory`, dateOpts).format(date);
+  // Force Gregorian + Western (Latin) numerals even for ar-SA, which otherwise
+  // defaults to the Islamic calendar and Arabic-Indic digits.
+  let out = new Intl.DateTimeFormat(`${LOCALE_BY_LANG[lang]}-u-ca-gregory-nu-latn`, dateOpts).format(date);
 
   if (opts.hijri) {
-    const hijri = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura', {
+    const hijri = new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura-nu-latn', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',

@@ -27,8 +27,8 @@ beforeEach(() => {
   // jsdom's location.assign isn't reconfigurable; swap in a plain stub so the
   // logout-redirect path is observable and pathname stays off /login.
   assignMock = vi.fn();
-  // @ts-expect-error - replace the read-only jsdom location with a stub
-  delete window.location;
+  // replace the read-only jsdom location with a stub
+  delete (window as Partial<Window>).location;
   // @ts-expect-error - assign a minimal stub location
   window.location = { ...realLocation, pathname: '/', assign: assignMock };
 });

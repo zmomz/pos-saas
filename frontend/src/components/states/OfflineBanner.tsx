@@ -44,12 +44,12 @@ export default function OfflineBanner() {
       role="status"
       aria-live="polite"
       dir={isRTL ? 'rtl' : 'ltr'}
-      className="flex items-center justify-center gap-2 border-b border-amber-500/30 bg-amber-500/15 px-4 py-2 text-sm font-medium text-amber-700 dark:text-amber-300"
+      className="flex items-center justify-center gap-2 border-b border-warning/30 bg-warning/15 px-4 py-2 text-sm font-medium text-warning"
     >
       <WifiOff className="h-4 w-4 flex-shrink-0" />
       <span>{t('offline_banner')}</span>
       {queued > 0 && (
-        <span className="rounded-full bg-amber-500/25 px-2 py-0.5 text-xs">
+        <span className="rounded-full bg-warning/25 px-2 py-0.5 text-xs tabular-nums">
           {queued} {t('queued_sales')}
         </span>
       )}

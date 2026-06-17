@@ -335,7 +335,7 @@ export default function OrderTicket() {
       const proforma = await printTicketCheck(ticketId);
       // The always-Arabic 80mm proforma body is returned base64-encoded; a real
       // terminal streams it to the thermal printer. Surface a confirmation here.
-      console.info('Proforma printed', proforma.invoice_number ?? proforma.ticket_id);
+      console.info('Proforma printed', proforma.ticket_id);
       window.alert(t('check_printed'));
     } catch (err) {
       console.error('Failed to print check:', err);

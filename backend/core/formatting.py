@@ -1,39 +1,38 @@
-"""Arabic-Indic numeral formatting helpers (SRS L10N-03).
+"""Numeral formatting helpers for the server-rendered fiscal documents.
 
-The "receipts/quotations always Arabic" rule (SRS §7) means the server-rendered
-fiscal documents must read as Arabic regardless of the caller's UI language —
-and that includes the numerals: amounts and quantities are rendered with
-Arabic-Indic digits (٠١٢٣٤٥٦٧٨٩) and the Arabic decimal separator (٫).
+Product decision (2026-06-18): **Western numerals everywhere, including
+receipts** — overriding the old SRS L10N-03 "receipts always Arabic-Indic" rule.
+The fiscal documents (thermal ESC/POS receipts, PDF invoices/quotations, Z/X
+reports) keep their Arabic *text/labels* and the ``ر.س`` currency label, but the
+digits and numeric separators are now Western (0-9, ``,`` thousands, ``.``
+decimal).
 
-Identifiers (invoice/quotation numbers, VAT registration numbers) are codes, not
-prose, so they are intentionally left in Western digits — converting them would
-change the value a reader types back into a system.
+These helpers are retained by name for back-compat with the document templates;
+they no longer convert digits to Arabic-Indic.
 """
 from typing import Union
 
-# Western 0-9 -> Arabic-Indic ٠-٩
-_ARABIC_DIGITS = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
-
-# Arabic decimal separator (U+066B) and thousands separator (U+066C).
-_ARABIC_DECIMAL = "٫"
-_ARABIC_THOUSANDS = "٬"
-
 
 def to_arabic_digits(text: Union[str, int, float]) -> str:
-    """Convert every Western digit in ``text`` to its Arabic-Indic equivalent."""
-    return str(text).translate(_ARABIC_DIGITS)
+    """Pass ``text`` through unchanged as Western digits.
+
+    Retained for back-compat. As of the 2026-06-18 Western-numerals decision this
+    no longer converts Western digits to Arabic-Indic — it simply returns the
+    stringified value.
+    """
+    return str(text)
 
 
 def format_money_ar(amount: float, decimals: int = 2) -> str:
-    """Render a monetary amount with Arabic-Indic digits and separators.
+    """Render a monetary amount in Western grouped form.
 
-    e.g. ``1234.5`` -> ``"١٬٢٣٤٫٥٠"``. Used by the always-Arabic invoice and
-    quotation documents so the totals read natively in Arabic.
+    e.g. ``1234.5`` -> ``"1,234.50"``. Used by the fiscal documents so the totals
+    print in Western numerals with Western separators (``,`` / ``.``), per the
+    2026-06-18 Western-numerals decision. The Arabic ``ر.س`` currency label is
+    added by the callers, not here.
     """
     try:
         value = float(amount)
     except (TypeError, ValueError):
         value = 0.0
-    western = f"{value:,.{decimals}f}"  # e.g. "1,234.50"
-    western = western.replace(",", _ARABIC_THOUSANDS).replace(".", _ARABIC_DECIMAL)
-    return western.translate(_ARABIC_DIGITS)
+    return f"{value:,.{decimals}f}"  # e.g. "1,234.50"

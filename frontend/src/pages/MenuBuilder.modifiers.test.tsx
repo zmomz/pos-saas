@@ -12,7 +12,17 @@ import MenuBuilder from './MenuBuilder';
 
 const BASE = 'http://127.0.0.1:8000';
 
-const GROUPS = [
+type TestGroup = {
+  id: number;
+  name: string;
+  name_ar: string;
+  required: boolean;
+  min_select: number;
+  max_select: number;
+  modifiers?: unknown[];
+};
+
+const GROUPS: TestGroup[] = [
   { id: 1, name: 'Size', name_ar: 'الحجم', required: true, min_select: 1, max_select: 1 },
   { id: 2, name: 'Extras', name_ar: 'إضافات', required: false, min_select: 0, max_select: 3 },
 ];

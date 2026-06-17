@@ -11,9 +11,11 @@ describe('locale-aware date helper (L10N-04)', () => {
     expect(out).toMatch(/0?3/);
   });
 
-  it('uses Arabic-Indic digits for ar', () => {
+  it('uses Western (Latin) numerals for ar — never Arabic-Indic', () => {
     const out = formatDate(SAMPLE, 'ar');
-    expect(out).toMatch(/[٠-٩]/);
+    expect(out).toMatch(/[0-9]/);
+    expect(out).not.toMatch(/[٠-٩]/);
+    expect(out).toMatch(/2026/);
   });
 
   it('appends a Hijri date when requested', () => {

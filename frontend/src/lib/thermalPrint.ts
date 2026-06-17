@@ -17,7 +17,7 @@ interface USBDeviceLike {
   selectConfiguration(n: number): Promise<void>;
   claimInterface(n: number): Promise<void>;
   configuration?: { interfaces: Array<{ interfaceNumber: number; alternate: { endpoints: Array<{ direction: string; endpointNumber: number }> } }> };
-  transferOut(endpoint: number, data: BufferSource): Promise<unknown>;
+  transferOut(endpoint: number, data: BufferSource | Uint8Array): Promise<unknown>;
   close(): Promise<void>;
 }
 

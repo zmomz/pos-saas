@@ -21,7 +21,7 @@ import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDate } from '@/lib/format';
 import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle } from 'lucide-react';
 
 interface Shift {
@@ -305,7 +305,7 @@ export default function ShiftManagement() {
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                 <div className="bg-muted/50 rounded-lg p-3">
                   <p className="text-muted-foreground text-xs">{t('sm_started')}</p>
-                  <p className="text-foreground font-medium">{new Date(currentShift.opened_at).toLocaleTimeString()}</p>
+                  <p className="text-foreground font-medium tabular-nums">{new Date(currentShift.opened_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
                 </div>
                 <div className="bg-muted/50 rounded-lg p-3">
                   <p className="text-muted-foreground text-xs">{t('sm_duration')}</p>
@@ -430,7 +430,7 @@ export default function ShiftManagement() {
                 ) : (
                   shiftHistory.map((shift) => (
                     <tr key={shift.id} className="border-t border-border text-foreground/90">
-                      <td className="p-3 text-foreground">{new Date(shift.opened_at).toLocaleDateString()}</td>
+                      <td className="p-3 text-foreground tabular-nums">{formatDate(shift.opened_at, language)}</td>
                       <td className="p-3">{shift.staff_name || '—'}</td>
                       <td className="p-3 tabular-nums">{formatMoney(shift.opening_cash || 0, language)}</td>
                       <td className="p-3 tabular-nums">{shift.closing_cash != null ? formatMoney(shift.closing_cash, language) : '—'}</td>

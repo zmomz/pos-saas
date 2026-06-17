@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { getExpenses, createExpense, updateExpense, deleteExpense, getTransactions } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDate } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { DollarSign, TrendingDown, TrendingUp, Receipt, Plus } from 'lucide-react';
@@ -73,8 +73,8 @@ export default function ExpenseTracking() {
     setLoading(true);
     try {
       const [expData, txData] = await Promise.all([getExpenses(), getTransactions(1, 1000)]);
-      const expItems = Array.isArray(expData?.items) ? expData.items : Array.isArray(expData) ? expData : [];
-      setExpenses(expItems);
+      const expItems = Array.isArray(expData?.items) ? expData.items : [];
+      setExpenses(expItems as unknown as Expense[]);
 
       const transactions = Array.isArray(txData?.items) ? txData.items : Array.isArray(txData) ? txData : [];
       const revenue = transactions.reduce((sum: number, tx: { total_amount?: number }) => sum + (tx.total_amount || 0), 0);
@@ -335,8 +335,8 @@ export default function ExpenseTracking() {
             ) : (
               expenses.map((expense) => (
                 <tr key={expense.id} className="border-t border-border text-foreground/90">
-                  <td className="p-3">
-                    {expense.expense_date || (expense.created_at ? new Date(expense.created_at).toLocaleDateString() : '—')}
+                  <td className="p-3 tabular-nums">
+                    {expense.expense_date || (expense.created_at ? formatDate(expense.created_at, language) : '—')}
                   </td>
                   <td className="p-3">
                     <span className="px-2 py-0.5 rounded bg-muted text-foreground/90 text-xs">

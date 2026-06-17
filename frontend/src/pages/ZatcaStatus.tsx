@@ -15,6 +15,7 @@ import {
   type ZatcaDocument,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatDateTime } from '@/lib/format';
 import {
   ShieldCheck,
   AlertTriangle,
@@ -56,7 +57,7 @@ const STATUS_ICON: Record<string, ElementType> = {
 const STATUS_ORDER = ['cleared', 'reported', 'signed', 'pending', 'failed'];
 
 export default function ZatcaStatus() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const DOCS_PAGE_SIZE = 50;
   const [summary, setSummary] = useState<ZatcaDocumentSummary | null>(null);
@@ -268,8 +269,8 @@ export default function ZatcaStatus() {
                           {t(`zatca_doc_${d.status}`)}
                         </Badge>
                       </td>
-                      <td className="p-3 text-muted-foreground">
-                        {d.created_at ? new Date(d.created_at).toLocaleString() : '—'}
+                      <td className="p-3 text-muted-foreground tabular-nums">
+                        {d.created_at ? formatDateTime(d.created_at, language) : '—'}
                       </td>
                     </tr>
                   ))}

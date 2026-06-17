@@ -108,7 +108,8 @@ export default function DiscountManagement() {
     setDenied(false);
     try {
       const data = await getDiscounts();
-      setDiscounts(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []);
+      const list = Array.isArray(data?.items) ? data.items : [];
+      setDiscounts(list as unknown as Discount[]);
     } catch (err: unknown) {
       console.error('Failed to load discounts:', err);
       setDiscounts([]);

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDate, currencyLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
@@ -108,6 +108,10 @@ export default function ClientDashboard() {
   const todaySales = stats?.today_sales || 0;
   const todayTx = stats?.today_transactions || 0;
   const avgTicket = todayTx > 0 ? todaySales / todayTx : 0;
+  // Currency label placement matches formatMoney: trailing in RTL, leading otherwise.
+  const curProps = language === 'ar' || language === 'ur'
+    ? { suffix: ` ${currencyLabel(language)}` }
+    : { prefix: `${currencyLabel(language)} ` };
   const subOverdue = subscription && ['past_due', 'dunning', 'suspended'].includes(subscription.subscription_status);
   const subStatusCls = subscription?.subscription_status === 'active'
     ? 'bg-success/10 text-success'
@@ -143,7 +147,7 @@ export default function ClientDashboard() {
               {subscription.grace_deadline ? ` · ${t('pay_before') || 'pay before'} ${subscription.grace_deadline}` : ''}
             </div>
           </div>
-          <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="bg-gradient-to-b from-gold to-gold-600 text-[#3a2c10] hover:opacity-90">
+          <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="bg-gradient-to-b from-gold to-gold-600 text-warning-foreground hover:opacity-90">
             {paying ? t('loading') : (t('pay_now') || 'Pay now')}
           </Button>
         </div>
@@ -157,7 +161,7 @@ export default function ClientDashboard() {
             <div>
               <div className="dxr-eyebrow">{t('today_sales') || "Today's Sales"}</div>
               <div className="mt-2 text-[clamp(30px,3.6vw,44px)] font-extrabold leading-none tracking-tight tabular-nums">
-                <CountUp value={todaySales} prefix="SAR " />
+                <CountUp value={todaySales} {...curProps} />
               </div>
               <div className="mt-1.5 text-[13px] text-white/65">{todayTx} {t('total_transactions') || 'transactions'} · {t('avg_ticket') || 'avg'} {formatMoney(avgTicket, language)}</div>
             </div>
@@ -193,7 +197,7 @@ export default function ClientDashboard() {
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
           <div className="text-[12.5px] font-semibold text-muted-foreground">{t('total_sales') || 'Total Sales'}</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_sales || 0} prefix="SAR " /></div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_sales || 0} {...curProps} /></div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('all_time') || 'all time'}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
@@ -234,7 +238,7 @@ export default function ClientDashboard() {
               </div>
               <div className="text-end">
                 <div className="text-xs text-muted-foreground">{t('next_billing') || 'Next billing'}</div>
-                <div className="mt-1 font-semibold tabular-nums">{subscription.next_billing_date || '—'}</div>
+                <div className="mt-1 font-semibold tabular-nums">{subscription.next_billing_date ? formatDate(subscription.next_billing_date, language) : '—'}</div>
               </div>
             </div>
             <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="mt-4 w-full shadow-brand">

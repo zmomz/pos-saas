@@ -1026,7 +1026,7 @@ const translations: Record<Language, Record<string, string>> = {
     all_systems_operational: 'جميع الأنظمة تعمل',
     healthy: 'سليم',
     revenue_by_agent: 'الإيراد حسب الوكيل',
-    platform_mrr_trend: 'الإيراد الشهري المتكرر · آخر ١٢ شهرًا',
+    platform_mrr_trend: 'الإيراد الشهري المتكرر · آخر 12 شهرًا',
     trend: 'الاتجاه',
     recent_activity: 'النشاط الأخير',
     view_all: 'عرض الكل',

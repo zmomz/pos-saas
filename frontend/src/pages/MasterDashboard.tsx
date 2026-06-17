@@ -45,14 +45,14 @@ interface Package {
   features: string;
 }
 
-// Avatar gradient palette for leaderboard rows.
+// Avatar gradient palette for leaderboard rows — token-based (no raw hex).
 const AV_GRADS = [
-  'linear-gradient(135deg,#1488a6,#0d6079)',
-  'linear-gradient(135deg,#7b57c9,#5b3fa8)',
-  'linear-gradient(135deg,#3d9ad1,#2a72a0)',
-  'linear-gradient(135deg,#e6b45c,#cd9a40)',
-  'linear-gradient(135deg,#d14a3a,#a8392c)',
-  'linear-gradient(135deg,#84c2d4,#1488a6)',
+  'bg-gradient-to-br from-brand-500 to-brand-700',
+  'bg-gradient-to-br from-violet to-violet-700',
+  'bg-gradient-to-br from-sky to-sky-700',
+  'bg-gradient-to-br from-gold to-gold-600',
+  'bg-gradient-to-br from-danger to-danger-700',
+  'bg-gradient-to-br from-brand-300 to-brand-500',
 ];
 
 function initials(name: string) {
@@ -92,7 +92,7 @@ export default function MasterDashboard() {
     try {
       const [agentData, pkgData] = await Promise.all([getMasterAgents(), getPackages()]);
       setAgents(Array.isArray(agentData) ? agentData : (agentData?.items || agentData?.agents || []));
-      setPackages(Array.isArray(pkgData) ? pkgData : (pkgData?.items || []));
+      setPackages((Array.isArray(pkgData?.items) ? pkgData.items : []) as unknown as Package[]);
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
@@ -342,7 +342,7 @@ export default function MasterDashboard() {
                       <td className={cn('py-3 pe-2 font-mono text-[12px] font-bold', i < 5 ? 'text-gold-600' : 'text-muted-foreground')}>{String(i + 1).padStart(2, '0')}</td>
                       <td className="py-3 pe-3">
                         <div className="flex items-center gap-2.5">
-                          <span className="flex h-8 w-8 items-center justify-center rounded-[10px] text-[12px] font-extrabold text-white" style={{ backgroundImage: AV_GRADS[i % AV_GRADS.length] }}>{initials(a.company_name)}</span>
+                          <span className={cn('flex h-8 w-8 items-center justify-center rounded-[10px] text-[12px] font-extrabold text-white', AV_GRADS[i % AV_GRADS.length])}>{initials(a.company_name)}</span>
                           <span className="font-bold">{a.company_name}</span>
                         </div>
                       </td>
@@ -422,7 +422,7 @@ export default function MasterDashboard() {
                       {e.details || e.action}
                     </div>
                     <div className="mt-0.5 font-mono text-[10.5px] text-muted-foreground">
-                      {e.created_at ? new Date(e.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                      {e.created_at ? new Date(e.created_at).toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
                     </div>
                   </div>
                 </div>

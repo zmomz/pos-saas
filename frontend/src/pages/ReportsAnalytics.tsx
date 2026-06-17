@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { BarChart3, DollarSign, Receipt, TrendingUp, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatNumber } from '@/lib/format';
 import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, downloadReportPdf, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -1472,7 +1472,7 @@ export default function ReportsAnalytics() {
                 <div className="rounded-[14px] bg-muted/40 p-3">
                   <p className="text-xs text-muted-foreground">{tr('total_on_hand')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">
-                    {inventory.total_quantity.toLocaleString()}
+                    {formatNumber(inventory.total_quantity, language, 0)}
                   </p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">

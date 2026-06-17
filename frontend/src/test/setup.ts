@@ -29,8 +29,7 @@ class ResizeObserverStub {
   unobserve() {}
   disconnect() {}
 }
-// @ts-expect-error - assign stub onto window
-window.ResizeObserver = window.ResizeObserver || ResizeObserverStub;
+window.ResizeObserver = window.ResizeObserver || (ResizeObserverStub as unknown as typeof ResizeObserver);
 
 // jsdom doesn't implement scrollIntoView (Radix select/command).
 if (!Element.prototype.scrollIntoView) {

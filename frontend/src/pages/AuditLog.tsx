@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/select';
 import { getAuditLogs } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatDateTime } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
@@ -52,7 +53,7 @@ export default function AuditLog() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
 
   function actionLabel(action: string): string {
     if (action === 'all') return t('audit_all_actions');
@@ -172,7 +173,7 @@ export default function AuditLog() {
                 filteredLogs.map((log) => (
                   <tr key={log.id} className="border-t border-border/70 text-foreground/80 transition-colors hover:bg-muted/40">
                     <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted-foreground" dir="ltr">
-                      {log.created_at ? new Date(log.created_at).toLocaleString() : '—'}
+                      {log.created_at ? formatDateTime(log.created_at, language) : '—'}
                     </td>
                     <td className="px-4 py-3 font-medium text-foreground">{log.user_email || '—'}</td>
                     <td className="px-4 py-3">

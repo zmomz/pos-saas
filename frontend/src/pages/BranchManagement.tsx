@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/select';
 import { client, createStockAdjustment, getBranchTransfers, setMainBranch, type BranchTransfer, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatDate } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star, History } from 'lucide-react';
@@ -101,7 +102,7 @@ export default function BranchManagement() {
   const [transfersError, setTransfersError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState('');
 
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
   const tt = (key: string, fallback: string) => {
     const v = t(key);
     return v === key ? fallback : v;
@@ -612,7 +613,7 @@ export default function BranchManagement() {
                     {
                       key: 'date',
                       header: t('date'),
-                      cell: (tr) => <span className="whitespace-nowrap">{tr.created_at ? new Date(tr.created_at).toLocaleDateString() : '—'}</span>,
+                      cell: (tr) => <span className="whitespace-nowrap tabular-nums">{tr.created_at ? formatDate(tr.created_at, language) : '—'}</span>,
                     },
                     { key: 'from', header: t('from_branch'), cell: (tr) => branchName(tr.from_branch_id) },
                     { key: 'to', header: t('to_branch'), cell: (tr) => branchName(tr.to_branch_id) },

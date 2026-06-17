@@ -18,7 +18,7 @@ import {
   type ChannelOrder,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDateTime } from '@/lib/format';
 import { Globe, ShoppingCart, RefreshCw, Link2, CheckCircle2 } from 'lucide-react';
 
 // Channel-order status → badge styling. The OMN order line is
@@ -175,8 +175,8 @@ export default function ChannelOrders() {
       key: 'date',
       header: t('date'),
       cell: (o) => (
-        <span className="text-muted-foreground">
-          {o.created_at ? new Date(o.created_at).toLocaleString() : '—'}
+        <span className="text-muted-foreground tabular-nums">
+          {o.created_at ? formatDateTime(o.created_at, language) : '—'}
         </span>
       ),
     },

@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
+import { selectOption } from '../test/selectOption';
 import { LanguageProvider } from '@/lib/i18n';
 import OrderTicket from './OrderTicket';
 
@@ -113,8 +114,8 @@ describe('Partial settlement UI (ISSUE-070)', () => {
     const dialog = await openSettleDialog();
 
     // Choose the "by seat" scope, then pick seat 2.
-    await userEvent.selectOptions(dialog.getByLabelText(/what to settle/i), 'seat');
-    await userEvent.selectOptions(dialog.getByLabelText(/seat/i), '2');
+    await selectOption(dialog.getByLabelText(/what to settle/i), /by seat/i);
+    await selectOption(dialog.getByLabelText(/^seat$/i), /seat 2/i);
 
     await userEvent.click(dialog.getByRole('button', { name: /^settle$/i }));
 
@@ -137,7 +138,7 @@ describe('Partial settlement UI (ISSUE-070)', () => {
     const dialog = await openSettleDialog();
 
     // Choose the "by item" scope, then tick the Shawarma line (id 1).
-    await userEvent.selectOptions(dialog.getByLabelText(/what to settle/i), 'item');
+    await selectOption(dialog.getByLabelText(/what to settle/i), /by item/i);
     await userEvent.click(dialog.getByLabelText(/Shawarma/));
 
     await userEvent.click(dialog.getByRole('button', { name: /^settle$/i }));

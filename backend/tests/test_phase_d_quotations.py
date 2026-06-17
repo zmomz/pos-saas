@@ -50,8 +50,9 @@ async def test_quotation_document_is_always_arabic_and_not_a_tax_invoice(client)
     # invoice (the disclaimer text *mentions* the phrase, the heading must not).
     assert "<h1>فاتورة ضريبية</h1>" not in html
     assert "عرض سعر وليس فاتورة ضريبية" in html
-    # Arabic-Indic numerals in the totals (L10N-03): 115.00 -> ١١٥٫٠٠
-    assert "١" in html
+    # Western numerals in the totals (2026-06-18 decision): 115.00, no Arabic-Indic.
+    assert "115.00" in html
+    assert not any(c in html for c in "٠١٢٣٤٥٦٧٨٩")
 
 
 async def test_quotation_is_owner_scoped(client):

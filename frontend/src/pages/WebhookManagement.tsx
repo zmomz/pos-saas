@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { client } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatDateTime } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
 import EmptyState from '@/components/states/EmptyState';
 import PermissionDenied from '@/components/states/PermissionDenied';
@@ -96,7 +97,7 @@ export default function WebhookManagement() {
   const [activeTab, setActiveTab] = useState<'webhooks' | 'logs'>('webhooks');
   const [copied, setCopied] = useState(false);
 
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
 
   useEffect(() => {
     loadData();
@@ -318,7 +319,7 @@ export default function WebhookManagement() {
     {
       header: t('webhook_col_time'),
       cell: (log) => (
-        <span className="whitespace-nowrap text-xs" dir="ltr">{new Date(log.created_at).toLocaleString()}</span>
+        <span className="whitespace-nowrap text-xs tabular-nums" dir="ltr">{formatDateTime(log.created_at, language)}</span>
       ),
     },
     {

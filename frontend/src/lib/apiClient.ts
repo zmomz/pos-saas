@@ -10,7 +10,7 @@
  * and attached as a Bearer token on every request. The old SDK `auth` shim
  * (`me`/`login`/`toLogin`) was migration cruft with no callers and is gone.
  */
-import axios, { AxiosInstance, InternalAxiosRequestConfig, Method } from 'axios';
+import axios, { AxiosInstance, AxiosRequestHeaders, InternalAxiosRequestConfig, Method } from 'axios';
 import { getAPIBaseURL } from './config';
 
 const TOKEN_KEY = 'pos_auth_token';
@@ -56,7 +56,7 @@ function makeHttp(): AxiosInstance {
     config.baseURL = getAPIBaseURL();
     const token = getToken();
     if (token) {
-      config.headers = config.headers ?? {};
+      config.headers ??= {} as AxiosRequestHeaders;
       (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
     }
     return config;
@@ -120,12 +120,21 @@ const http = makeHttp();
 type InvokeArgs = {
   url: string;
   method?: Method | string;
-  data?: Record<string, unknown>;
+  // `object`, not `Record<string, unknown>`: a plain interface (e.g.
+  // ReceiptTemplateInput) has no index signature and so isn't assignable to
+  // Record<string, unknown>, even though it's a perfectly valid JSON body.
+  data?: object;
 };
 
 type SdkResponse<T = unknown> = { data: T };
 
-async function invoke<T = unknown>({ url, method = 'GET', data }: InvokeArgs): Promise<SdkResponse<T>> {
+// The dynamic client's read methods (`invoke`/entities `query` etc.) default
+// their payload type to `any`, not `unknown`: callers that want type safety pass
+// an explicit `<T>` (and the typed wrappers in `lib/api.ts` do), while the many
+// ad-hoc call sites that read `res.data.<field>` directly stay ergonomic instead
+// of each needing a cast. `unknown` here would force ~100 unsafe-access casts
+// across pages for zero runtime benefit.
+async function invoke<T = any>({ url, method = 'GET', data }: InvokeArgs): Promise<SdkResponse<T>> {
   const m = String(method).toUpperCase();
   const isBodyless = m === 'GET' || m === 'DELETE' || m === 'HEAD';
   const response = await http.request<T>({
@@ -160,23 +169,23 @@ function buildEntity(name: string) {
   }
 
   return {
-    async query<T = unknown>(args: QueryArgs = {}): Promise<SdkResponse<T>> {
+    async query<T = any>(args: QueryArgs = {}): Promise<SdkResponse<T>> {
       const res = await http.get<T>(base, { params: listParams(args) });
       return { data: res.data };
     },
-    async queryAll<T = unknown>(args: QueryArgs = {}): Promise<SdkResponse<T>> {
+    async queryAll<T = any>(args: QueryArgs = {}): Promise<SdkResponse<T>> {
       const res = await http.get<T>(`${base}/all`, { params: listParams(args) });
       return { data: res.data };
     },
-    async create<T = unknown>(args: { data: Record<string, unknown> }): Promise<SdkResponse<T>> {
+    async create<T = any>(args: { data: object }): Promise<SdkResponse<T>> {
       const res = await http.post<T>(base, args.data);
       return { data: res.data };
     },
-    async update<T = unknown>(args: { id: string | number; data: Record<string, unknown> }): Promise<SdkResponse<T>> {
+    async update<T = any>(args: { id: string | number; data: object }): Promise<SdkResponse<T>> {
       const res = await http.put<T>(`${base}/${args.id}`, args.data);
       return { data: res.data };
     },
-    async delete<T = unknown>(args: { id: string | number }): Promise<SdkResponse<T>> {
+    async delete<T = any>(args: { id: string | number }): Promise<SdkResponse<T>> {
       const res = await http.delete<T>(`${base}/${args.id}`);
       return { data: res.data };
     },

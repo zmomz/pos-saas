@@ -23,7 +23,7 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDate } from '@/lib/format';
 import { Truck, Plus, Search, Package, ClipboardList, CheckCircle } from 'lucide-react';
 
 interface Supplier {
@@ -480,7 +480,7 @@ export default function SupplierManagement() {
     {
       key: 'date',
       header: t('date'),
-      cell: (po) => (po.order_date ? new Date(po.order_date).toLocaleDateString() : '—'),
+      cell: (po) => (po.order_date ? formatDate(po.order_date, language) : '—'),
     },
     {
       key: 'actions',

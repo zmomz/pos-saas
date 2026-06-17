@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { client } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { formatNumber, formatDate } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
@@ -69,7 +70,7 @@ export default function LoyaltyProgram() {
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'balances' | 'history'>('balances');
 
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const tt = (key: string, fallback: string) => {
     const v = t(key);
     return v === key ? fallback : v;
@@ -181,7 +182,7 @@ export default function LoyaltyProgram() {
       header: tt('balance', 'Balance'),
       cell: (cust) => (
         <span className="text-foreground/90">
-          <span className="text-gold-600 font-bold tabular-nums">{cust.points_balance?.toLocaleString()}</span> {tt('pts', 'pts')}
+          <span className="text-gold-600 font-bold tabular-nums">{formatNumber(cust.points_balance ?? 0, language, 0)}</span> {tt('pts', 'pts')}
         </span>
       ),
     },
@@ -191,7 +192,7 @@ export default function LoyaltyProgram() {
       cell: (cust) => (
         <span className="text-foreground/90">
           <span className="text-brand font-bold tabular-nums">
-            {(cust.available_points ?? cust.points_balance)?.toLocaleString()}
+            {formatNumber((cust.available_points ?? cust.points_balance) ?? 0, language, 0)}
           </span> {tt('pts', 'pts')}
         </span>
       ),
@@ -199,18 +200,18 @@ export default function LoyaltyProgram() {
     {
       key: 'total_earned',
       header: tt('total_earned', 'Total Earned'),
-      cell: (cust) => <span className="text-success tabular-nums">{cust.total_earned?.toLocaleString()}</span>,
+      cell: (cust) => <span className="text-success tabular-nums">{formatNumber(cust.total_earned ?? 0, language, 0)}</span>,
     },
     {
       key: 'total_redeemed',
       header: tt('total_redeemed', 'Total Redeemed'),
-      cell: (cust) => <span className="text-danger tabular-nums">{cust.total_redeemed?.toLocaleString()}</span>,
+      cell: (cust) => <span className="text-danger tabular-nums">{formatNumber(cust.total_redeemed ?? 0, language, 0)}</span>,
     },
     {
       key: 'last_activity',
       header: tt('last_activity', 'Last Activity'),
       cell: (cust) => (
-        <span className="text-foreground/90">{cust.last_activity ? new Date(cust.last_activity).toLocaleDateString() : '—'}</span>
+        <span className="text-foreground/90 tabular-nums">{cust.last_activity ? formatDate(cust.last_activity, language) : '—'}</span>
       ),
     },
     {
@@ -233,7 +234,7 @@ export default function LoyaltyProgram() {
     {
       key: 'date',
       header: tt('date', 'Date'),
-      cell: (tx) => <span className="text-foreground/90">{new Date(tx.created_at).toLocaleDateString()}</span>,
+      cell: (tx) => <span className="text-foreground/90 tabular-nums">{formatDate(tx.created_at, language)}</span>,
     },
     {
       key: 'customer',
@@ -279,7 +280,7 @@ export default function LoyaltyProgram() {
         <StatTile
           icon={Star}
           label={tt('total_points_outstanding', 'Total Points Outstanding')}
-          value={customerBalances.reduce((sum, c) => sum + (c.points_balance || 0), 0).toLocaleString()}
+          value={formatNumber(customerBalances.reduce((sum, c) => sum + (c.points_balance || 0), 0), language, 0)}
           tone="gold"
         />
         <StatTile
