@@ -18,15 +18,18 @@ describe('format helpers (L10N-03)', () => {
     expect(formatNumber(1234.5, 'ur')).toBe('1,234.50');
   });
 
-  it('renders SAR currency (SAR for Latin, ر.س label for Arabic)', () => {
-    expect(formatMoney(10, 'en')).toBe('10.00 SAR');
-    expect(formatMoney(10, 'ar')).toBe('10.00 ر.س');
+  it('renders the Saudi Riyal symbol (U+20C1) in every language', () => {
+    expect(formatMoney(10, 'en')).toBe('10.00 ⃁');
+    expect(formatMoney(10, 'ar')).toBe('10.00 ⃁');
+    // Western digits only — never Arabic-Indic.
     expect(formatMoney(10, 'ar')).not.toMatch(/[٠-٩]/);
+    // The symbol is the new SAR sign, not the old text labels.
+    expect(formatMoney(10, 'en')).not.toMatch(/SAR|ر\.س/);
   });
 
-  it('formatMoneyAr renders Western digits + the ر.س label', () => {
+  it('formatMoneyAr renders Western digits + the Riyal symbol', () => {
     const out = formatMoneyAr(99.5);
-    expect(out).toBe('99.50 ر.س');
+    expect(out).toBe('99.50 ⃁');
     expect(out).not.toMatch(/[٠-٩]/);
   });
 });

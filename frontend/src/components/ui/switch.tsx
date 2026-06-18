@@ -17,7 +17,13 @@ const Switch = React.forwardRef<
   >
     <SwitchPrimitives.Thumb
       className={cn(
-        'pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-5 data-[state=unchecked]:translate-x-0'
+        // Direction-aware thumb travel. `translate-x` is physical (always toward
+        // the visual right), so in RTL the checked thumb has to move the other
+        // way: the `rtl:` override (higher specificity via the [dir=rtl] ancestor)
+        // mirrors the motion. Unchecked sits at translate-0 — the track's start
+        // edge in both directions — so it needs no RTL variant.
+        'pointer-events-none block h-5 w-5 rounded-full bg-background shadow-lg ring-0 transition-transform',
+        'data-[state=unchecked]:translate-x-0 data-[state=checked]:translate-x-5 rtl:data-[state=checked]:-translate-x-5'
       )}
     />
   </SwitchPrimitives.Root>

@@ -293,7 +293,7 @@ export default function AgentDashboard() {
             <div>
               <div className="dxr-eyebrow">{t('revenue_commission') || 'Revenue & Margin'}</div>
               <div className="mt-2 text-[clamp(28px,3.4vw,40px)] font-extrabold leading-none tracking-tight tabular-nums">
-                <CountUp value={hasRevenue ? collected : totalMonthlyRevenue} prefix="SAR " />
+                <CountUp value={hasRevenue ? collected : totalMonthlyRevenue} prefix="⃁ " />
               </div>
               <div className="mt-1.5 text-[13px] text-white/65">{t('revenue_collected') || 'Collected'} · {activeClients.length} {t('active_subscriptions') || 'subscriptions'}</div>
             </div>

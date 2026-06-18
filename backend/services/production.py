@@ -7,11 +7,13 @@ bulk import/export, search, analytics, and offline sync services.
 
 import base64
 import csv
+import functools
 import hashlib
 import hmac
 import io
 import json
 import logging
+import os
 import time
 import uuid
 from collections import defaultdict
@@ -26,6 +28,35 @@ from core.formatting import format_money_ar, to_arabic_digits
 from services.zatca import INITIAL_PIH
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=1)
+def _riyal_font_face() -> str:
+    """An ``@font-face`` block embedding the Saudi Riyal glyph (U+20C1) inline.
+
+    The always-Arabic HTML documents render in 'Noto Sans Arabic', which has no
+    glyph for the new Riyal sign. Embedding the tiny single-glyph webfont as a
+    base64 data-URI (scoped to U+20C1 via ``unicode-range``) makes the symbol
+    render in any browser or HTML→PDF engine, with every other character falling
+    through to the Arabic body font — the document-side analogue of the frontend
+    build's index.css trick. Returns ``""`` if the font file is missing.
+    """
+    path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "assets",
+        "fonts",
+        "SaudiRiyal-Regular.woff2",
+    )
+    try:
+        with open(path, "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode("ascii")
+    except OSError:  # pragma: no cover - font ships with the repo
+        return ""
+    return (
+        "@font-face{font-family:'Saudi Riyal';"
+        f"src:url(data:font/woff2;base64,{b64}) format('woff2');"
+        "unicode-range:U+20C1;font-display:swap;}"
+    )
 
 
 # =============================================================================
@@ -426,8 +457,8 @@ class PDFInvoiceService:
                 <td>{to_arabic_digits(idx)}</td>
                 <td>{item.get('name', '')}</td>
                 <td>{to_arabic_digits(item.get('quantity', 1))}</td>
-                <td>{format_money_ar(item.get('price', 0))} ر.س</td>
-                <td>{format_money_ar(item_total)} ر.س</td>
+                <td>{format_money_ar(item.get('price', 0))} ⃁</td>
+                <td>{format_money_ar(item_total)} ⃁</td>
             </tr>"""
 
         buyer_vat_html = (
@@ -439,7 +470,8 @@ class PDFInvoiceService:
 <head>
     <meta charset="UTF-8">
     <style>
-        body {{ font-family: 'Noto Sans Arabic', 'Arial', sans-serif; direction: rtl; padding: 20px; }}
+        {_riyal_font_face()}
+        body {{ font-family: 'Saudi Riyal', 'Noto Sans Arabic', 'Arial', sans-serif; direction: rtl; padding: 20px; }}
         .header {{ text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; }}
         .header h1 {{ margin: 0; font-size: 24px; }}
         .info {{ display: flex; justify-content: space-between; margin: 15px 0; }}
@@ -495,10 +527,10 @@ class PDFInvoiceService:
 
     <div class="totals">
         <table>
-            <tr><td>المجموع الفرعي</td><td>{format_money_ar(subtotal)} ر.س</td></tr>
-            <tr><td>الخصم</td><td>{format_money_ar(discount)} ر.س</td></tr>
-            <tr><td>ضريبة القيمة المضافة (15٪)</td><td>{format_money_ar(vat_amount)} ر.س</td></tr>
-            <tr><td><strong>الإجمالي</strong></td><td><strong>{format_money_ar(total_amount)} ر.س</strong></td></tr>
+            <tr><td>المجموع الفرعي</td><td>{format_money_ar(subtotal)} ⃁</td></tr>
+            <tr><td>الخصم</td><td>{format_money_ar(discount)} ⃁</td></tr>
+            <tr><td>ضريبة القيمة المضافة (15٪)</td><td>{format_money_ar(vat_amount)} ⃁</td></tr>
+            <tr><td><strong>الإجمالي</strong></td><td><strong>{format_money_ar(total_amount)} ⃁</strong></td></tr>
         </table>
     </div>
 
@@ -546,8 +578,8 @@ class PDFInvoiceService:
                 <td>{to_arabic_digits(idx)}</td>
                 <td>{item.get('name', '')}</td>
                 <td>{to_arabic_digits(item.get('quantity', 1))}</td>
-                <td>{format_money_ar(item.get('price', 0))} ر.س</td>
-                <td>{format_money_ar(item_total)} ر.س</td>
+                <td>{format_money_ar(item.get('price', 0))} ⃁</td>
+                <td>{format_money_ar(item_total)} ⃁</td>
             </tr>"""
 
         notes_html = (
@@ -559,7 +591,8 @@ class PDFInvoiceService:
 <head>
     <meta charset="UTF-8">
     <style>
-        body {{ font-family: 'Noto Sans Arabic', 'Arial', sans-serif; direction: rtl; padding: 20px; }}
+        {_riyal_font_face()}
+        body {{ font-family: 'Saudi Riyal', 'Noto Sans Arabic', 'Arial', sans-serif; direction: rtl; padding: 20px; }}
         .header {{ text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; }}
         .header h1 {{ margin: 0; font-size: 24px; }}
         .info {{ display: flex; justify-content: space-between; margin: 15px 0; }}
@@ -615,10 +648,10 @@ class PDFInvoiceService:
 
     <div class="totals">
         <table>
-            <tr><td>المجموع الفرعي</td><td>{format_money_ar(subtotal)} ر.س</td></tr>
-            <tr><td>الخصم</td><td>{format_money_ar(discount)} ر.س</td></tr>
-            <tr><td>ضريبة القيمة المضافة</td><td>{format_money_ar(vat_amount)} ر.س</td></tr>
-            <tr><td><strong>الإجمالي التقديري</strong></td><td><strong>{format_money_ar(total_amount)} ر.س</strong></td></tr>
+            <tr><td>المجموع الفرعي</td><td>{format_money_ar(subtotal)} ⃁</td></tr>
+            <tr><td>الخصم</td><td>{format_money_ar(discount)} ⃁</td></tr>
+            <tr><td>ضريبة القيمة المضافة</td><td>{format_money_ar(vat_amount)} ⃁</td></tr>
+            <tr><td><strong>الإجمالي التقديري</strong></td><td><strong>{format_money_ar(total_amount)} ⃁</strong></td></tr>
         </table>
     </div>
 
@@ -678,7 +711,7 @@ class PDFInvoiceService:
             <tr>
                 <td>{label}</td>
                 <td>{to_arabic_digits(tender.get('count', 0))}</td>
-                <td>{format_money_ar(tender.get('amount', 0))} ر.س</td>
+                <td>{format_money_ar(tender.get('amount', 0))} ⃁</td>
             </tr>"""
         if not tender_rows:
             tender_rows = '<tr><td colspan="3">لا توجد مبيعات</td></tr>'
@@ -687,13 +720,13 @@ class PDFInvoiceService:
         recon = cash.get("reconciliation")
         recon_ar = {"balanced": "مطابق", "over": "زيادة", "short": "عجز"}.get(recon or "", "—")
         counted_html = (
-            f"<tr><td>النقد المحسوب</td><td>{format_money_ar(cash.get('counted_cash', 0))} ر.س</td></tr>"
+            f"<tr><td>النقد المحسوب</td><td>{format_money_ar(cash.get('counted_cash', 0))} ⃁</td></tr>"
             if cash.get("counted_cash") is not None
             else ""
         )
         variance_html = (
             f"<tr><td><strong>الفرق ({recon_ar})</strong></td>"
-            f"<td><strong>{format_money_ar(cash.get('variance', 0))} ر.س</strong></td></tr>"
+            f"<td><strong>{format_money_ar(cash.get('variance', 0))} ⃁</strong></td></tr>"
             if cash.get("variance") is not None
             else "<tr><td colspan='2'>لم يتم جرد الدرج بعد</td></tr>"
         )
@@ -703,7 +736,8 @@ class PDFInvoiceService:
 <head>
     <meta charset="UTF-8">
     <style>
-        body {{ font-family: 'Noto Sans Arabic', 'Arial', sans-serif; direction: rtl; padding: 20px; }}
+        {_riyal_font_face()}
+        body {{ font-family: 'Saudi Riyal', 'Noto Sans Arabic', 'Arial', sans-serif; direction: rtl; padding: 20px; }}
         .header {{ text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; }}
         .header h1 {{ margin: 0; font-size: 22px; }}
         .meta {{ margin: 15px 0; font-size: 14px; }}
@@ -741,27 +775,27 @@ class PDFInvoiceService:
     <h3>الإجماليات</h3>
     <div class="totals">
         <table>
-            <tr><td>إجمالي المبيعات ({to_arabic_digits(totals.get('sale_count', 0))} فاتورة)</td><td>{format_money_ar(totals.get('gross_sales', 0))} ر.س</td></tr>
-            <tr><td>المرتجعات ({to_arabic_digits(totals.get('refund_count', 0))})</td><td>{format_money_ar(totals.get('refunds', 0))} ر.س</td></tr>
-            <tr><td>الإلغاءات ({to_arabic_digits(totals.get('void_count', 0))})</td><td>{format_money_ar(totals.get('voids', 0))} ر.س</td></tr>
-            <tr><td>الخصومات</td><td>{format_money_ar(totals.get('discounts', 0))} ر.س</td></tr>
-            <tr><td>البقشيش (خارج وعاء الضريبة)</td><td>{format_money_ar(totals.get('tips', 0))} ر.س</td></tr>
-            <tr><td>ضريبة القيمة المضافة المحصّلة</td><td>{format_money_ar(totals.get('vat_collected', 0))} ر.س</td></tr>
-            <tr><td>ضريبة القيمة المضافة المعكوسة</td><td>{format_money_ar(totals.get('vat_reversed', 0))} ر.س</td></tr>
-            <tr><td><strong>صافي المبيعات</strong></td><td><strong>{format_money_ar(totals.get('net_sales', 0))} ر.س</strong></td></tr>
+            <tr><td>إجمالي المبيعات ({to_arabic_digits(totals.get('sale_count', 0))} فاتورة)</td><td>{format_money_ar(totals.get('gross_sales', 0))} ⃁</td></tr>
+            <tr><td>المرتجعات ({to_arabic_digits(totals.get('refund_count', 0))})</td><td>{format_money_ar(totals.get('refunds', 0))} ⃁</td></tr>
+            <tr><td>الإلغاءات ({to_arabic_digits(totals.get('void_count', 0))})</td><td>{format_money_ar(totals.get('voids', 0))} ⃁</td></tr>
+            <tr><td>الخصومات</td><td>{format_money_ar(totals.get('discounts', 0))} ⃁</td></tr>
+            <tr><td>البقشيش (خارج وعاء الضريبة)</td><td>{format_money_ar(totals.get('tips', 0))} ⃁</td></tr>
+            <tr><td>ضريبة القيمة المضافة المحصّلة</td><td>{format_money_ar(totals.get('vat_collected', 0))} ⃁</td></tr>
+            <tr><td>ضريبة القيمة المضافة المعكوسة</td><td>{format_money_ar(totals.get('vat_reversed', 0))} ⃁</td></tr>
+            <tr><td><strong>صافي المبيعات</strong></td><td><strong>{format_money_ar(totals.get('net_sales', 0))} ⃁</strong></td></tr>
         </table>
     </div>
 
     <h3>تسوية النقدية في الدرج</h3>
     <div class="cash">
         <table>
-            <tr><td>النقد الافتتاحي</td><td>{format_money_ar(cash.get('opening_cash', 0))} ر.س</td></tr>
-            <tr><td>مبيعات نقدية</td><td>{format_money_ar(cash.get('cash_sales', 0))} ر.س</td></tr>
-            <tr><td>مرتجعات نقدية</td><td>{format_money_ar(cash.get('cash_refunds', 0))} ر.س</td></tr>
-            <tr><td>إيداع نقدي بالدرج</td><td>{format_money_ar(cash.get('pay_in', 0))} ر.س</td></tr>
-            <tr><td>مدفوعات نقدية من الدرج</td><td>{format_money_ar(cash.get('pay_out', 0))} ر.س</td></tr>
-            <tr><td>سحب نقدي للخزنة</td><td>{format_money_ar(cash.get('cash_drops', 0))} ر.س</td></tr>
-            <tr><td><strong>النقد المتوقع</strong></td><td><strong>{format_money_ar(cash.get('expected_cash', 0))} ر.س</strong></td></tr>
+            <tr><td>النقد الافتتاحي</td><td>{format_money_ar(cash.get('opening_cash', 0))} ⃁</td></tr>
+            <tr><td>مبيعات نقدية</td><td>{format_money_ar(cash.get('cash_sales', 0))} ⃁</td></tr>
+            <tr><td>مرتجعات نقدية</td><td>{format_money_ar(cash.get('cash_refunds', 0))} ⃁</td></tr>
+            <tr><td>إيداع نقدي بالدرج</td><td>{format_money_ar(cash.get('pay_in', 0))} ⃁</td></tr>
+            <tr><td>مدفوعات نقدية من الدرج</td><td>{format_money_ar(cash.get('pay_out', 0))} ⃁</td></tr>
+            <tr><td>سحب نقدي للخزنة</td><td>{format_money_ar(cash.get('cash_drops', 0))} ⃁</td></tr>
+            <tr><td><strong>النقد المتوقع</strong></td><td><strong>{format_money_ar(cash.get('expected_cash', 0))} ⃁</strong></td></tr>
             {counted_html}
             {variance_html}
         </table>
@@ -828,7 +862,7 @@ class EmailService:
     ) -> Dict[str, Any]:
         """Send transaction receipt email."""
         subject = f"إيصال المعاملة - {invoice_number}"
-        body = f"رقم الفاتورة: {invoice_number}\nالإجمالي: {total:.2f} ر.س"
+        body = f"رقم الفاتورة: {invoice_number}\nالإجمالي: {total:.2f} ⃁"
         return await EmailService.send_email(to_email, subject, body)
 
 

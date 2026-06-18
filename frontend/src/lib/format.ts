@@ -5,15 +5,18 @@
  * thousands/decimal separators in EVERY language — including Arabic and the
  * always-Arabic fiscal documents. (Per product decision 2026-06-18: Eastern
  * Arabic-Indic digits ٠١٢٣ are never shown unless an explicit user preference
- * asks for them.) Currency keeps the localized SAR label: `SAR` for Latin
- * languages, the Arabic abbreviation `ر.س` for Arabic/Urdu and the
- * always-Arabic documents.
+ * asks for them.)
+ *
+ * Currency uses the **official Saudi Riyal symbol** ﷼ (U+20C1) in every
+ * language — a single, language-neutral mark like `$` or `€`, replacing the
+ * older `SAR` / `ر.س` text labels (product decision 2026-06-18). The glyph is
+ * supplied by the bundled `Saudi Riyal` webfont (scoped to U+20C1 via
+ * `unicode-range`; see index.css), so it renders in plain strings everywhere.
  */
 import type { Language } from './i18n';
 
-function usesArabicLabel(lang: Language): boolean {
-  return lang === 'ar' || lang === 'ur';
-}
+/** Official Saudi Riyal sign (U+20C1). Use this everywhere instead of literals. */
+export const RIYAL = '⃁';
 
 /**
  * Pass-through kept for backward compatibility. We no longer convert to
@@ -37,19 +40,19 @@ export function formatNumberAr(value: number, decimals = 2): string {
   return formatNumber(value, 'ar', decimals);
 }
 
-/** SAR currency label only — ر.س in RTL languages, SAR otherwise. */
-export function currencyLabel(lang: Language): string {
-  return usesArabicLabel(lang) ? 'ر.س' : 'SAR';
+/** Currency symbol — the Saudi Riyal sign (U+20C1) in every language. */
+export function currencyLabel(_lang?: Language): string {
+  return RIYAL;
 }
 
-/** Currency string. SAR-only system; symbol is the Arabic ﷼ abbreviation ر.س. */
+/** Currency string. SAR-only system; the symbol is the Saudi Riyal sign ﷼. */
 export function formatMoney(value: number, lang: Language, decimals = 2): string {
-  return `${formatNumber(value, lang, decimals)} ${currencyLabel(lang)}`;
+  return `${formatNumber(value, lang, decimals)} ${RIYAL}`;
 }
 
-/** Money for the always-Arabic receipt/invoice: Western digits + ر.س label. */
+/** Money for the always-Arabic receipt/invoice: Western digits + Riyal sign. */
 export function formatMoneyAr(value: number, decimals = 2): string {
-  return `${formatNumberAr(value, decimals)} ر.س`;
+  return `${formatNumberAr(value, decimals)} ${RIYAL}`;
 }
 
 /**

@@ -264,7 +264,7 @@ export default function MasterDashboard() {
             <div>
               <div className="dxr-eyebrow">{tt('platform_mrr', 'Platform MRR')}</div>
               <div className="mt-2 text-[clamp(32px,4vw,46px)] font-extrabold leading-none tracking-tight tabular-nums">
-                <CountUp value={mrr} prefix="SAR " />
+                <CountUp value={mrr} prefix="⃁ " />
               </div>
               <div className="mt-3 flex items-center gap-2.5 text-[13px] text-white/70">
                 <span className="dxr-delta dxr-delta-up"><TrendingUp className="h-3 w-3" />+11.4%</span>
@@ -307,9 +307,9 @@ export default function MasterDashboard() {
 
         {/* KPI chips */}
         <KpiChip label={tt('total_agents', 'Total Agents')} value={<CountUp value={totalAgents} />} delta={{ dir: 'up', text: `${activeAgents} ${tt('active', 'active')}` }} foot={`${totalSlots} ${tt('slots', 'slots')} total`} />
-        <KpiChip label={t('arr')} value={<CountUp value={economics?.arr ?? 0} prefix="SAR " />} foot={tt('annual_run_rate', 'annual run-rate')} />
+        <KpiChip label={t('arr')} value={<CountUp value={economics?.arr ?? 0} prefix="⃁ " />} foot={tt('annual_run_rate', 'annual run-rate')} />
         <KpiChip label={tt('churn_rate', 'Churn Rate')} value={<CountUp value={(economics?.churn_rate ?? 0) * 100} decimals={1} suffix="%" />} delta={{ dir: 'down', text: tt('below_target', 'on target') }} foot={tt('below_3_target', 'below 3% target')} />
-        <KpiChip label={tt('collected', 'Collected')} value={<CountUp value={economics?.collected ?? 0} prefix="SAR " />} foot={`${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
+        <KpiChip label={tt('collected', 'Collected')} value={<CountUp value={economics?.collected ?? 0} prefix="⃁ " />} foot={`${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
 
         {/* Leaderboard */}
         <section className="dxr-tile lg:col-span-8 lg:row-span-4">

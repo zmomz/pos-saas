@@ -146,10 +146,12 @@ const AppRoutes = () => (
       <Route path="/store-settings" element={<StoreSettings />} />
     </Route>
 
-    {/* Shared routes (agent + client) */}
+    {/* Merchant-data routes (client only). These pages read client-scoped
+        endpoints (products/reports/customers/…) that 403 for an agent, so they
+        are not shared with the agent reseller role. */}
     <Route
       element={
-        <ProtectedRoute allowedRoles={['agent', 'client']}>
+        <ProtectedRoute allowedRoles={['client']}>
           <DashboardLayout />
         </ProtectedRoute>
       }

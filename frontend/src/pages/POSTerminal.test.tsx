@@ -137,9 +137,9 @@ describe('POSTerminal refund panel renders amounts in SAR, not USD (ISSUE-102)',
     fireEvent.click(await screen.findByText('INV-001'));
 
     // The refund amount (and the line/list amounts) read in SAR…
-    // (formatMoney renders "<number> SAR" for the en locale).
+    // (formatMoney renders "<number> ⃁" with the Saudi Riyal sign for the en locale).
     expect(await screen.findByText('Refund Amount')).toBeInTheDocument();
-    expect(screen.getAllByText(/[\d,]+\.\d{2}\s*SAR/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/[\d,]+\.\d{2}\s*⃁/).length).toBeGreaterThan(0);
 
     // …and the USD symbol is gone from the refund path.
     expect(screen.queryByText(/\$\s*[\d,]/)).not.toBeInTheDocument();

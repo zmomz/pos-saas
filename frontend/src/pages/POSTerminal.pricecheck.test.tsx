@@ -73,7 +73,7 @@ describe('POSTerminal price / stock check (ISSUE-076)', () => {
 
     // The product's current price and on-hand stock are shown.
     await waitFor(() => expect(screen.getByText('Widget')).toBeInTheDocument());
-    expect(screen.getByText(/9\.50\s*SAR/)).toBeInTheDocument();
+    expect(screen.getByText(/9\.50\s*⃁/)).toBeInTheDocument();
     expect(screen.getByText(/7/)).toBeInTheDocument();
   });
 

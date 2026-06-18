@@ -3,6 +3,40 @@
 @tailwind utilities;
 
 /* ============================================================
+   Saudi Riyal currency symbol (U+20C1)
+   The new SAR sign was encoded after most shipping fonts froze,
+   so neither Hanken Grotesk, IBM Plex Sans Arabic nor system
+   fonts render it — they emit tofu. We self-host the official
+   open-source glyph (@emran-alhaddad/saudi-riyal-font) and scope
+   it to *only* U+20C1 via `unicode-range`. Listing this family
+   first in every font stack means the browser reaches for it for
+   the symbol alone and falls through to the real UI/Arabic font
+   for every other character. Result: the symbol renders in plain
+   strings everywhere (prices, tables, dashboards, toasts, API
+   content) with zero per-call-site markup.
+   ============================================================ */
+@font-face {
+  font-family: 'Saudi Riyal';
+  font-style: normal;
+  font-weight: 100 600;
+  font-display: swap;
+  src:
+    url('/fonts/saudi_riyal_regular.woff2') format('woff2'),
+    url('/fonts/saudi_riyal_regular.woff') format('woff');
+  unicode-range: U+20C1;
+}
+@font-face {
+  font-family: 'Saudi Riyal';
+  font-style: normal;
+  font-weight: 700 900;
+  font-display: swap;
+  src:
+    url('/fonts/saudi_riyal_bold.woff2') format('woff2'),
+    url('/fonts/saudi_riyal_bold.woff') format('woff');
+  unicode-range: U+20C1;
+}
+
+/* ============================================================
    Cloud POS — Design System (petrol teal-blue + warm gold)
    shadcn tokens are tuned to the design handoff; the whole app
    re-skins from these. White-label swaps --primary at runtime.
@@ -107,7 +141,9 @@
   }
 
   html {
-    font-family: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    /* 'Saudi Riyal' first so U+20C1 resolves to the bundled glyph; everything
+       else falls through to Hanken Grotesk (see the @font-face note above). */
+    font-family: 'Saudi Riyal', 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
   }
 
   body {
@@ -126,10 +162,33 @@
       radial-gradient(50rem 50rem at -10% 110%, hsl(228 60% 45% / 0.08), transparent 60%);
   }
 
-  /* Arabic / Urdu use IBM Plex Sans Arabic; applied via `font-arabic` in RTL. */
+  /* Arabic / Urdu use IBM Plex Sans Arabic — a modern, highly legible humanist
+     Arabic face that pairs cleanly with Hanken Grotesk. Applied via `font-arabic`
+     and on the RTL root. 'Saudi Riyal' leads the stack so the currency glyph
+     resolves; Arabic text falls through to IBM Plex Sans Arabic.
+
+     Arabic script sits taller and denser than Latin, so it reads better with a
+     little more line-height. Crucially, letter-spacing is left at 0 — any
+     tracking breaks the cursive joins between Arabic letters — and `kern`/`liga`
+     keep the joined letterforms clean. These sit in @layer base, so explicit
+     Tailwind `leading-*`/`tracking-*` utilities still win on the components that
+     set them; only un-styled body text inherits the looser default. */
   .font-arabic,
   [dir='rtl'] {
-    font-family: 'IBM Plex Sans Arabic', 'Hanken Grotesk', system-ui, sans-serif;
+    font-family: 'Saudi Riyal', 'IBM Plex Sans Arabic', 'Hanken Grotesk', system-ui, sans-serif;
+    line-height: 1.7;
+    letter-spacing: normal;
+    font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1;
+  }
+
+  /* Latin `tracking-tight` (negative letter-spacing) on headings harms Arabic
+     joins, so neutralise it and give Arabic headings a fuller line-height. */
+  [dir='rtl'] h1,
+  [dir='rtl'] h2,
+  [dir='rtl'] h3,
+  [dir='rtl'] h4 {
+    letter-spacing: normal;
+    line-height: 1.45;
   }
 
   h1, h2, h3, h4 {

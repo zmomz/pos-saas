@@ -123,14 +123,14 @@ async def _send_dunning_notice(merchant: Clients, transition: DunningTransition,
             subject = "تعليق الاشتراك — Subscription suspended"
             body = (
                 f"عزيزنا {merchant.business_name}،\n\n"
-                f"تم تعليق اشتراكك بعد تعذّر تحصيل الرسوم المستحقة ({fee:.2f} ر.س).\n"
+                f"تم تعليق اشتراكك بعد تعذّر تحصيل الرسوم المستحقة ({fee:.2f} ⃁).\n"
                 "يرجى سداد المبلغ المتأخر لإعادة تفعيل حسابك.\n"
             )
         else:
             subject = "تذكير بسداد الاشتراك — Subscription payment reminder"
             body = (
                 f"عزيزنا {merchant.business_name}،\n\n"
-                f"لم نتمكن من تحصيل رسوم اشتراكك المستحقة ({fee:.2f} ر.س).\n"
+                f"لم نتمكن من تحصيل رسوم اشتراكك المستحقة ({fee:.2f} ⃁).\n"
                 f"يرجى السداد قبل {grace_deadline or '—'} لتفادي تعليق الحساب.\n"
             )
         await send_email(merchant.email, subject, body)

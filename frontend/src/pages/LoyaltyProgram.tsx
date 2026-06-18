@@ -309,7 +309,7 @@ export default function LoyaltyProgram() {
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <div>
-              <Label className="text-xs block mb-1">{tt('points_per_sar_spent', 'Points per SAR spent')}</Label>
+              <Label className="text-xs block mb-1">{tt('points_per_sar_spent', 'Points per ⃁ spent')}</Label>
               {configEditing ? (
                 <Input type="number" value={config.points_per_sar} onChange={(e) => setConfig((c) => ({ ...c, points_per_sar: parseFloat(e.target.value) || 0 }))} />
               ) : (
@@ -317,7 +317,7 @@ export default function LoyaltyProgram() {
               )}
             </div>
             <div>
-              <Label className="text-xs block mb-1">{tt('redemption_rate', 'Redemption Rate (SAR/point)')}</Label>
+              <Label className="text-xs block mb-1">{tt('redemption_rate', 'Redemption Rate (⃁/point)')}</Label>
               {configEditing ? (
                 <Input type="number" step="0.01" value={config.redemption_rate} onChange={(e) => setConfig((c) => ({ ...c, redemption_rate: parseFloat(e.target.value) || 0 }))} />
               ) : (

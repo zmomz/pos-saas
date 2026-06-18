@@ -2101,7 +2101,7 @@ async def sms_invoice_receipt(
     if not to_number:
         raise HTTPException(status_code=400, detail="to_number is required")
 
-    body = f"إيصال {txn.invoice_number}: الإجمالي {txn.total_amount:.2f} ر.س"
+    body = f"إيصال {txn.invoice_number}: الإجمالي {txn.total_amount:.2f} ⃁"
     delivered = await send_sms(to_number, body)
     return {
         "status": "sent" if delivered else "logged",

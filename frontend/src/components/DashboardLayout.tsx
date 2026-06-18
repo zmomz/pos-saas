@@ -54,16 +54,14 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: Shield, label: 'audit_log', path: '/audit' },
     { icon: Bell, label: 'notifications', path: '/notifications' },
   ],
+  // Agents are resellers: they manage white-label branding and their own
+  // merchant clients, but own no catalog/sales of their own. The merchant-data
+  // pages (products, categories, customers, staff, expenses, discounts,
+  // reports) are all client-scoped on the backend and 403 for an agent, so they
+  // are intentionally absent here rather than advertised as broken links.
   agent: [
     { icon: LayoutDashboard, label: 'dashboard', path: '/agent' },
     { icon: Palette, label: 'branding', path: '/branding' },
-    { icon: ShoppingBag, label: 'products', path: '/products' },
-    { icon: FolderTree, label: 'categories', path: '/categories' },
-    { icon: UserCheck, label: 'customers', path: '/customers' },
-    { icon: Users, label: 'staff', path: '/staff' },
-    { icon: Receipt, label: 'expenses', path: '/expenses' },
-    { icon: Tag, label: 'discounts', path: '/discounts' },
-    { icon: BarChart3, label: 'reports', path: '/reports' },
     { icon: Shield, label: 'audit_log', path: '/audit' },
     { icon: Bell, label: 'notifications', path: '/notifications' },
   ],

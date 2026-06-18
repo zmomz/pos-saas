@@ -72,7 +72,7 @@ describe('MasterDashboard package retail price (ISSUE-024)', () => {
 
     const pkgName = await screen.findByText('Starter');
     const card = pkgName.closest('div[class*="rounded-2xl"]')!;
-    // The per-client retail price (99.00 SAR), not the always-0 placeholder.
-    expect(within(card as HTMLElement).getByText(/99\.00 SAR/)).toBeInTheDocument();
+    // The per-client retail price (99.00 ⃁), not the always-0 placeholder.
+    expect(within(card as HTMLElement).getByText(/99\.00 ⃁/)).toBeInTheDocument();
   });
 });

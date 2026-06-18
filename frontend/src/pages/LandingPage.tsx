@@ -40,7 +40,7 @@ const content = {
     step_4_t: 'Collect monthly fees', step_4_d: 'We bill, you keep the margin. Watch your MRR compound.',
     pkg_eyebrow: 'Distributor packages', pkg_title: 'Choose your slot capacity.',
     pkg_sub: 'Pick a package by how many merchants you plan to serve. Upgrade anytime.',
-    most_popular: 'Most popular', per_mo: '/mo', cur: 'SAR',
+    most_popular: 'Most popular', per_mo: '/mo', cur: '⃁',
     plans: [
       { name: 'Starter', desc: 'For new resellers testing the market.', price: '1,490',
         features: [{ label: 'Up to 25 merchant slots' }, { label: 'White-label landing page' }, { label: 'Branding editor' }, { label: 'Email support' }, { label: 'Custom domain', off: true }],
@@ -55,7 +55,7 @@ const content = {
     stories_eyebrow: 'Success stories', stories_title: 'Partners growing across the Kingdom.',
     storyItems: [
       { quote: '"We went from zero to 180 merchants in eight months. Cloud POS handles everything technical — we just sell and support."', name: 'Khalid Tamimi', org: 'Tamkeen Tech · Riyadh', initials: 'TT', growth: '+186', growthLabel: 'merchants' },
-      { quote: '"The white-label is genuinely ours. Our clients have no idea there’s a platform behind it. That’s the whole game."', name: 'Nora Al-Bayan', org: 'Bayan Solutions · Jeddah', initials: 'BS', growth: 'SAR 35K', growthLabel: 'MRR' },
+      { quote: '"The white-label is genuinely ours. Our clients have no idea there’s a platform behind it. That’s the whole game."', name: 'Nora Al-Bayan', org: 'Bayan Solutions · Jeddah', initials: 'BS', growth: '⃁ 35K', growthLabel: 'MRR' },
       { quote: '"Recurring revenue changed our agency. Predictable income every month, and it keeps compounding as we add merchants."', name: 'Yousef Qimam', org: 'Qimam Digital · Dammam', initials: 'QD', growth: '+132', growthLabel: 'merchants' },
     ] as Story[],
     cta_title: 'Ready to build your POS business?',
@@ -97,7 +97,7 @@ const content = {
     step_4_t: 'احصّل الرسوم الشهرية', step_4_d: 'نحن نفوتر وأنت تحتفظ بالهامش. شاهد دخلك ينمو.',
     pkg_eyebrow: 'باقات الموزعين', pkg_title: 'اختر سعة الحصص.',
     pkg_sub: 'اختر باقة حسب عدد التجار الذين تنوي خدمتهم. رقِّ في أي وقت.',
-    most_popular: 'الأكثر شعبية', per_mo: '/شهرياً', cur: 'ر.س',
+    most_popular: 'الأكثر شعبية', per_mo: '/شهرياً', cur: '⃁',
     plans: [
       { name: 'المبتدئ', desc: 'للموزعين الجدد الذين يختبرون السوق.', price: '1,490',
         features: [{ label: 'حتى 25 حصة تاجر' }, { label: 'صفحة هبوط بعلامة بيضاء' }, { label: 'محرر العلامة التجارية' }, { label: 'دعم بالبريد' }, { label: 'نطاق مخصص', off: true }],
@@ -112,7 +112,7 @@ const content = {
     stories_eyebrow: 'قصص النجاح', stories_title: 'شركاء ينمون في أنحاء المملكة.',
     storyItems: [
       { quote: '"انتقلنا من الصفر إلى 180 تاجراً في ثمانية أشهر. كلاود بوس يتولى كل ما هو تقني — ونحن نبيع وندعم فقط."', name: 'خالد التميمي', org: 'تمكين تك · الرياض', initials: 'TT', growth: '+186', growthLabel: 'تاجر' },
-      { quote: '"العلامة البيضاء ملكنا حقاً. عملاؤنا لا يعرفون أن هناك منصة خلفها. هذا هو بيت القصيد."', name: 'نورة البيان', org: 'حلول بيان · جدة', initials: 'BS', growth: '35 ألف ر.س', growthLabel: 'دخل شهري' },
+      { quote: '"العلامة البيضاء ملكنا حقاً. عملاؤنا لا يعرفون أن هناك منصة خلفها. هذا هو بيت القصيد."', name: 'نورة البيان', org: 'حلول بيان · جدة', initials: 'BS', growth: '35 ألف ⃁', growthLabel: 'دخل شهري' },
       { quote: '"الدخل المتكرر غيّر وكالتنا. دخل متوقع كل شهر، ويتراكم كلما أضفنا تجاراً."', name: 'يوسف قمم', org: 'قمم ديجيتال · الدمام', initials: 'QD', growth: '+132', growthLabel: 'تاجر' },
     ] as Story[],
     cta_title: 'مستعد لبناء عمل نقاط البيع الخاص بك؟',
@@ -154,7 +154,7 @@ const content = {
     step_4_t: 'मासिक शुल्क लें', step_4_d: 'हम बिल करते हैं, आप मार्जिन रखते हैं। अपना MRR बढ़ते देखें।',
     pkg_eyebrow: 'डिस्ट्रीब्यूटर पैकेज', pkg_title: 'अपनी स्लॉट क्षमता चुनें।',
     pkg_sub: 'आप कितने व्यापारियों की सेवा करना चाहते हैं, उसके अनुसार पैकेज चुनें। कभी भी अपग्रेड करें।',
-    most_popular: 'सबसे लोकप्रिय', per_mo: '/माह', cur: 'SAR',
+    most_popular: 'सबसे लोकप्रिय', per_mo: '/माह', cur: '⃁',
     plans: [
       { name: 'स्टार्टर', desc: 'बाजार आज़माने वाले नए रीसेलर्स के लिए।', price: '1,490',
         features: [{ label: '25 व्यापारी स्लॉट तक' }, { label: 'व्हाइट-लेबल लैंडिंग पेज' }, { label: 'ब्रांडिंग एडिटर' }, { label: 'ईमेल सहायता' }, { label: 'कस्टम डोमेन', off: true }],
@@ -169,7 +169,7 @@ const content = {
     stories_eyebrow: 'सफलता की कहानियां', stories_title: 'पूरे किंगडम में बढ़ते पार्टनर।',
     storyItems: [
       { quote: '"हम आठ महीनों में शून्य से 180 व्यापारियों तक पहुंचे। Cloud POS सब कुछ तकनीकी संभालता है — हम बस बेचते और सहायता करते हैं।"', name: 'खालिद तमीमी', org: 'तमकीन टेक · रियाद', initials: 'TT', growth: '+186', growthLabel: 'व्यापारी' },
-      { quote: '"व्हाइट-लेबल वाकई हमारा है। हमारे क्लाइंट्स को पता ही नहीं कि पीछे कोई प्लेटफॉर्म है। यही पूरा खेल है।"', name: 'नोरा अल-बयान', org: 'बयान सॉल्यूशंस · जेद्दा', initials: 'BS', growth: 'SAR 35K', growthLabel: 'MRR' },
+      { quote: '"व्हाइट-लेबल वाकई हमारा है। हमारे क्लाइंट्स को पता ही नहीं कि पीछे कोई प्लेटफॉर्म है। यही पूरा खेल है।"', name: 'नोरा अल-बयान', org: 'बयान सॉल्यूशंस · जेद्दा', initials: 'BS', growth: '⃁ 35K', growthLabel: 'MRR' },
       { quote: '"आवर्ती राजस्व ने हमारी एजेंसी बदल दी। हर महीने अनुमानित आय, और व्यापारी जोड़ने पर बढ़ती जाती है।"', name: 'यूसुफ क़िमाम', org: 'क़िमाम डिजिटल · दम्माम', initials: 'QD', growth: '+132', growthLabel: 'व्यापारी' },
     ] as Story[],
     cta_title: 'अपना POS व्यवसाय बनाने के लिए तैयार?',
@@ -211,7 +211,7 @@ const content = {
     step_4_t: 'ماہانہ فیس وصول کریں', step_4_d: 'ہم بل کرتے ہیں، آپ مارجن رکھتے ہیں۔ اپنا MRR بڑھتے دیکھیں۔',
     pkg_eyebrow: 'ڈسٹریبیوٹر پیکجز', pkg_title: 'اپنی سلاٹ گنجائش منتخب کریں۔',
     pkg_sub: 'آپ کتنے تاجروں کی خدمت کرنا چاہتے ہیں اس کے مطابق پیکج منتخب کریں۔ کسی بھی وقت اپ گریڈ کریں۔',
-    most_popular: 'سب سے مقبول', per_mo: '/ماہ', cur: 'ر.س',
+    most_popular: 'سب سے مقبول', per_mo: '/ماہ', cur: '⃁',
     plans: [
       { name: 'اسٹارٹر', desc: 'مارکیٹ آزمانے والے نئے ری سیلرز کے لیے۔', price: '1,490',
         features: [{ label: '25 تاجر سلاٹ تک' }, { label: 'وائٹ لیبل لینڈنگ پیج' }, { label: 'برانڈنگ ایڈیٹر' }, { label: 'ای میل سپورٹ' }, { label: 'کسٹم ڈومین', off: true }],
@@ -226,7 +226,7 @@ const content = {
     stories_eyebrow: 'کامیابی کی کہانیاں', stories_title: 'پورے مملکت میں بڑھتے پارٹنرز۔',
     storyItems: [
       { quote: '"ہم آٹھ ماہ میں صفر سے 180 تاجروں تک پہنچے۔ Cloud POS ہر تکنیکی چیز سنبھالتا ہے — ہم بس بیچتے اور سپورٹ کرتے ہیں۔"', name: 'خالد تمیمی', org: 'تمکین ٹیک · ریاض', initials: 'TT', growth: '+186', growthLabel: 'تاجر' },
-      { quote: '"وائٹ لیبل واقعی ہمارا ہے۔ ہمارے کلائنٹس کو معلوم ہی نہیں کہ پیچھے کوئی پلیٹ فارم ہے۔ یہی سارا کھیل ہے۔"', name: 'نورہ البیان', org: 'بیان سلوشنز · جدہ', initials: 'BS', growth: 'SAR 35K', growthLabel: 'MRR' },
+      { quote: '"وائٹ لیبل واقعی ہمارا ہے۔ ہمارے کلائنٹس کو معلوم ہی نہیں کہ پیچھے کوئی پلیٹ فارم ہے۔ یہی سارا کھیل ہے۔"', name: 'نورہ البیان', org: 'بیان سلوشنز · جدہ', initials: 'BS', growth: '⃁ 35K', growthLabel: 'MRR' },
       { quote: '"بار بار آمدنی نے ہماری ایجنسی بدل دی۔ ہر ماہ متوقع آمدنی، اور تاجر شامل کرنے پر بڑھتی جاتی ہے۔"', name: 'یوسف قمم', org: 'قمم ڈیجیٹل · دمام', initials: 'QD', growth: '+132', growthLabel: 'تاجر' },
     ] as Story[],
     cta_title: 'اپنا POS کاروبار بنانے کے لیے تیار؟',

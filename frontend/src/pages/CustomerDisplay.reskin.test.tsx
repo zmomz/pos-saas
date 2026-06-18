@@ -64,7 +64,7 @@ describe('CustomerDisplay re-skin (i18n/RTL)', () => {
     expect(screen.getByText('Latte')).toBeInTheDocument();
     // Line amount renders (price × qty, locale-formatted). The subtotal is also
     // 20.00 here, so the formatted figure appears more than once.
-    expect(screen.getAllByText('20.00 SAR').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('20.00 ⃁').length).toBeGreaterThan(0);
   });
 
   it('renders the paid/thank-you state in English only', () => {

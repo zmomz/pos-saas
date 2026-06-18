@@ -17,13 +17,31 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-_FONT_PATH = os.path.join(
+_FONTS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "assets",
     "fonts",
-    "Amiri-Regular.ttf",
 )
+_FONT_PATH = os.path.join(_FONTS_DIR, "Amiri-Regular.ttf")
 _FONT_FAMILY = "Amiri"
+
+# The new Saudi Riyal sign (U+20C1) was encoded after Amiri shipped, so Amiri has
+# no glyph for it. We register this tiny single-glyph font and add it as a *font
+# fallback* (fpdf2 ≥2.7) so the symbol renders automatically wherever it appears
+# in the always-Arabic documents — the PDF analogue of the web build's
+# unicode-range trick. See index.css for the matching frontend approach.
+_RIYAL_FONT_PATH = os.path.join(_FONTS_DIR, "SaudiRiyal-Regular.ttf")
+_RIYAL_FAMILY = "SaudiRiyal"
+
+
+def _add_arabic_fonts(pdf) -> None:
+    """Register the Amiri body font + the Saudi Riyal fallback on ``pdf``."""
+    pdf.add_font(_FONT_FAMILY, "", _FONT_PATH, uni=True)
+    try:
+        pdf.add_font(_RIYAL_FAMILY, "", _RIYAL_FONT_PATH, uni=True)
+        pdf.set_fallback_fonts([_RIYAL_FAMILY])
+    except Exception as exc:  # pragma: no cover - fallback is best-effort
+        logger.warning("Saudi Riyal fallback font unavailable (%s)", exc)
 
 # Arabic labels for the always-Arabic invoice (with English in parentheses where
 # helpful for non-Arabic readers).
@@ -43,7 +61,7 @@ _L = {
     "discount": "الخصم",
     "vat": "ضريبة القيمة المضافة",
     "grand_total": "الإجمالي شامل الضريبة",
-    "sar": "ر.س",
+    "sar": "⃁",
 }
 
 
@@ -58,12 +76,23 @@ def _arabic_available() -> bool:
     return True
 
 
+# The new Riyal sign (U+20C1) has no bidi class in the bundled python-bidi, so it
+# crashes get_display(). Shape with the generic currency sign ¤ (U+00A4) as a
+# bidi-equivalent stand-in and restore it afterwards; fpdf2 then renders the
+# restored U+20C1 via the SaudiRiyal fallback font. 1:1 so positions are kept.
+_RIYAL_SIGN = "⃁"
+_BIDI_RIYAL_PROXY = "¤"
+
+
 def _shape(text: object) -> str:
     """Reshape + bidi-reorder a string for correct Arabic rendering."""
     import arabic_reshaper
     from bidi.algorithm import get_display
 
     s = "" if text is None else str(text)
+    if _RIYAL_SIGN in s:
+        shaped = get_display(arabic_reshaper.reshape(s.replace(_RIYAL_SIGN, _BIDI_RIYAL_PROXY)))
+        return shaped.replace(_BIDI_RIYAL_PROXY, _RIYAL_SIGN)
     return get_display(arabic_reshaper.reshape(s))
 
 
@@ -92,7 +121,7 @@ def _render_arabic(
 
     pdf = FPDF(unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_font(_FONT_FAMILY, "", _FONT_PATH, uni=True)
+    _add_arabic_fonts(pdf)
     pdf.add_page()
 
     def line(text, size=10, align="R", h=6, ln=True):
@@ -243,7 +272,7 @@ _LSUB = {
     "vat": "ضريبة القيمة المضافة",
     "grand_total": "الإجمالي شامل الضريبة",
     "status": "حالة الدفع",
-    "sar": "ر.س",
+    "sar": "⃁",
     "not_tax_note": "فاتورة اشتراك في الخدمة",
 }
 
@@ -313,7 +342,7 @@ def _render_subscription_arabic(rows: List[tuple]) -> bytes:
 
     pdf = FPDF(unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_font(_FONT_FAMILY, "", _FONT_PATH, uni=True)
+    _add_arabic_fonts(pdf)
     pdf.add_page()
 
     def line(text, size=11, align="R", h=7, ln=True):
@@ -453,7 +482,7 @@ def _render_report_arabic(title, meta, sections) -> bytes:
     pdf = FPDF(unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.set_margins(10, 10, 10)
-    pdf.add_font(_FONT_FAMILY, "", _FONT_PATH, uni=True)
+    _add_arabic_fonts(pdf)
     pdf.add_page()
     epw = pdf.w - pdf.l_margin - pdf.r_margin
 

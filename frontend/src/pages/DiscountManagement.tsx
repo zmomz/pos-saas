@@ -257,14 +257,14 @@ export default function DiscountManagement() {
                 {t('discount_percentage')} (%)
               </SelectItem>
               <SelectItem value="fixed">
-                {t('discount_fixed')} (SAR)
+                {t('discount_fixed')} (⃁)
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
         <div>
           <Label className="mb-1 block">
-            {t('discount_value')} * {formData.type === 'percentage' ? '(%)' : '(SAR)'}
+            {t('discount_value')} * {formData.type === 'percentage' ? '(%)' : '(⃁)'}
           </Label>
           <Input
             type="number"
@@ -274,7 +274,7 @@ export default function DiscountManagement() {
           />
         </div>
         <div>
-          <Label className="mb-1 block">{t('min_purchase')} (SAR)</Label>
+          <Label className="mb-1 block">{t('min_purchase')} (⃁)</Label>
           <Input
             type="number"
             value={formData.min_purchase}

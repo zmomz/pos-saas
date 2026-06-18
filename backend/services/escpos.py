@@ -40,6 +40,74 @@ _FONT_PATH = os.path.join(
     "Amiri-Regular.ttf",
 )
 
+# The new Saudi Riyal sign (U+20C1) is absent from Amiri (and every shipping
+# Arabic face), so we composite it from this single-glyph font when drawing the
+# receipt image. The drawing helpers below switch to it for that one codepoint
+# and fall back to the Arabic font for everything else — the bitmap analogue of
+# the PDF's fallback font and the web build's unicode-range trick.
+_RIYAL = "⃁"
+_RIYAL_FONT_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "assets",
+    "fonts",
+    "SaudiRiyal-Regular.ttf",
+)
+_riyal_font_cache: dict = {}
+
+
+def _riyal_font(size: int):
+    """Return (cached) the Saudi Riyal glyph font at ``size`` px."""
+    font = _riyal_font_cache.get(size)
+    if font is None:
+        from PIL import ImageFont
+
+        font = ImageFont.truetype(_RIYAL_FONT_PATH, size)
+        _riyal_font_cache[size] = font
+    return font
+
+
+def _riyal_runs(text: str):
+    """Split ``text`` into ``(is_riyal, run)`` segments of consecutive chars."""
+    runs = []
+    for ch in text:
+        is_r = ch == _RIYAL
+        if runs and runs[-1][0] == is_r:
+            runs[-1][1] += ch
+        else:
+            runs.append([is_r, ch])
+    return runs
+
+
+def _mixed_width(draw, text: str, font) -> float:
+    """``textlength`` that accounts for the Riyal glyph being drawn in its own font."""
+    if _RIYAL not in text:
+        return draw.textlength(text, font=font)
+    rfont = _riyal_font(getattr(font, "size", 26))
+    return sum(
+        draw.textlength(run, font=(rfont if is_r else font))
+        for is_r, run in _riyal_runs(text)
+    )
+
+
+def _draw_mixed(draw, xy, text: str, font, fill) -> None:
+    """Draw ``text`` left-to-right, rendering U+20C1 with the Riyal font.
+
+    Non-Riyal runs keep the Arabic font (and its shaping); the Riyal run is
+    baseline-aligned by offsetting for the ascent difference between the fonts.
+    Strings without the symbol take the plain single-font fast path so every
+    other line is pixel-identical to before.
+    """
+    if _RIYAL not in text:
+        draw.text(xy, text, font=font, fill=fill)
+        return
+    x, y = xy
+    rfont = _riyal_font(getattr(font, "size", 26))
+    dy = font.getmetrics()[0] - rfont.getmetrics()[0]  # align baselines
+    for is_r, run in _riyal_runs(text):
+        f = rfont if is_r else font
+        draw.text((x, y + (dy if is_r else 0)), run, font=f, fill=fill)
+        x += draw.textlength(run, font=f)
+
 # 80mm thermal heads are 576 dots wide at 203dpi (a multiple of 8, so no row
 # padding is needed for the raster command); 58mm heads have a 384-dot printable
 # area. Both are multiples of 8. 80mm stays the default (ISSUE-046 / H26).
@@ -64,7 +132,7 @@ _L = {
     "subtotal": "المجموع الفرعي",
     "discount": "الخصم",
     "vat": "ضريبة القيمة المضافة",
-    "grand_total": "الإجمالي شامل الضريبة (ر.س)",
+    "grand_total": "الإجمالي شامل الضريبة (⃁)",
     # F-061: service charge collected on top of the tax-invoice total, OUTSIDE the
     # VAT base (exactly like a tip). Shown only when a service charge applies.
     "service_charge": "رسوم الخدمة",
@@ -72,7 +140,7 @@ _L = {
     # the amount the customer actually paid (total + service charge + tip). Shown
     # only when tipped / a service charge applies.
     "tip": "البقشيش",
-    "total_paid": "المبلغ المدفوع (ر.س)",
+    "total_paid": "المبلغ المدفوع (⃁)",
     "thanks": "شكراً لزيارتكم",
     # ISSUE-075: a reprint of a past sale is NOT a fresh fiscal issuance. The
     # duplicate is stamped *نسخة — إعادة طباعة* ("copy — reprint") so the printed
@@ -256,12 +324,23 @@ def _arabic_render_available() -> bool:
     return True
 
 
+# The new Riyal sign (U+20C1) is too new for the bundled python-bidi's character
+# database — it has no bidi class, which makes get_display() raise. We shape with
+# the generic currency sign ¤ (U+00A4) as a stand-in (same ET bidi behaviour, so
+# it orders identically) and restore the Riyal afterwards; the glyph is then
+# composited by _draw_mixed. 1:1 substitution keeps every position intact.
+_BIDI_RIYAL_PROXY = "¤"
+
+
 def _shape(text: object) -> str:
     """Reshape + bidi-reorder a string for correct connected/RTL Arabic."""
     import arabic_reshaper
     from bidi.algorithm import get_display
 
     s = "" if text is None else str(text)
+    if _RIYAL in s:
+        shaped = get_display(arabic_reshaper.reshape(s.replace(_RIYAL, _BIDI_RIYAL_PROXY)))
+        return shaped.replace(_BIDI_RIYAL_PROXY, _RIYAL)
     return get_display(arabic_reshaper.reshape(s))
 
 
@@ -337,24 +416,25 @@ def _render_receipt_image(
     def center(text, font) -> None:
         nonlocal y
         t = _shape(text)
-        w = draw.textlength(t, font=font)
-        draw.text(((width - w) / 2, y), t, font=font, fill=0)
+        w = _mixed_width(draw, t, font)
+        _draw_mixed(draw, ((width - w) / 2, y), t, font, 0)
         y += row_h(font)
 
     def right(text, font) -> None:
         nonlocal y
         t = _shape(text)
-        w = draw.textlength(t, font=font)
-        draw.text((width - margin - w, y), t, font=font, fill=0)
+        w = _mixed_width(draw, t, font)
+        _draw_mixed(draw, (width - margin - w, y), t, font, 0)
         y += row_h(font)
 
     def lr(right_text, left_text, font) -> None:
-        # Arabic label on the right (RTL), the code/amount on the left.
+        # Arabic label on the right (RTL), the code/amount on the left. The label
+        # may carry the Riyal sign, so it goes through the mixed-font drawer.
         nonlocal y
         rt = _shape(right_text)
-        rw = draw.textlength(rt, font=font)
-        draw.text((width - margin - rw, y), rt, font=font, fill=0)
-        draw.text((margin, y), str(left_text), font=font, fill=0)
+        rw = _mixed_width(draw, rt, font)
+        _draw_mixed(draw, (width - margin - rw, y), rt, font, 0)
+        _draw_mixed(draw, (margin, y), str(left_text), font, 0)
         y += row_h(font)
 
     def rule() -> None:

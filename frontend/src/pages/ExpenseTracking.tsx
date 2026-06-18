@@ -189,7 +189,7 @@ export default function ExpenseTracking() {
           </Select>
         </div>
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('expense_amount_sar', 'Amount (SAR)')} *</label>
+          <label className="text-sm text-muted-foreground mb-1 block">{tt('expense_amount_sar', 'Amount (⃁)')} *</label>
           <Input
             type="number"
             value={formData.amount}

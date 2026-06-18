@@ -68,7 +68,7 @@ const content = {
     ] as Story[],
     price_eyebrow: 'Simple pricing', price_title: 'Plans that grow with you.',
     price_sub: 'Start with a 14-day free trial. Switch or cancel anytime.',
-    most_popular: 'Most popular', per_mo: '/mo', cur: 'SAR', trial_cta: 'Start 14-day trial',
+    most_popular: 'Most popular', per_mo: '/mo', cur: '⃁', trial_cta: 'Start 14-day trial',
     plans: [
       { name: 'Basic', desc: 'For a single shop getting started.', price: '150',
         features: [{ label: '1 branch' }, { label: 'Inventory management' }, { label: 'ZATCA e-invoicing' }, { label: 'Daily sales reports' }, { label: 'Loyalty & gift cards', off: true }] },
@@ -126,7 +126,7 @@ const content = {
     ] as Story[],
     price_eyebrow: 'أسعار بسيطة', price_title: 'باقات تنمو معك.',
     price_sub: 'ابدأ بتجربة مجانية 14 يوماً. غيّر أو ألغِ في أي وقت.',
-    most_popular: 'الأكثر شعبية', per_mo: '/شهرياً', cur: 'ر.س', trial_cta: 'ابدأ تجربة 14 يوماً',
+    most_popular: 'الأكثر شعبية', per_mo: '/شهرياً', cur: '⃁', trial_cta: 'ابدأ تجربة 14 يوماً',
     plans: [
       { name: 'أساسي', desc: 'لمتجر واحد يبدأ للتو.', price: '150',
         features: [{ label: 'فرع واحد' }, { label: 'إدارة المخزون' }, { label: 'فوترة زاتكا الإلكترونية' }, { label: 'تقارير مبيعات يومية' }, { label: 'الولاء وبطاقات الهدايا', off: true }] },
@@ -184,7 +184,7 @@ const content = {
     ] as Story[],
     price_eyebrow: 'सरल मूल्य', price_title: 'योजनाएं जो आपके साथ बढ़ें।',
     price_sub: '14-दिन मुफ्त ट्रायल से शुरू करें। कभी भी बदलें या रद्द करें।',
-    most_popular: 'सबसे लोकप्रिय', per_mo: '/माह', cur: 'SAR', trial_cta: '14-दिन ट्रायल शुरू करें',
+    most_popular: 'सबसे लोकप्रिय', per_mo: '/माह', cur: '⃁', trial_cta: '14-दिन ट्रायल शुरू करें',
     plans: [
       { name: 'बेसिक', desc: 'शुरुआत करती एकल दुकान के लिए।', price: '150',
         features: [{ label: '1 शाखा' }, { label: 'इन्वेंटरी प्रबंधन' }, { label: 'ZATCA ई-इनवॉइसिंग' }, { label: 'दैनिक बिक्री रिपोर्ट' }, { label: 'लॉयल्टी व गिफ्ट कार्ड', off: true }] },
@@ -242,7 +242,7 @@ const content = {
     ] as Story[],
     price_eyebrow: 'سادہ قیمتیں', price_title: 'پلانز جو آپ کے ساتھ بڑھیں۔',
     price_sub: '14 دن مفت ٹرائل سے شروع کریں۔ کسی بھی وقت بدلیں یا منسوخ کریں۔',
-    most_popular: 'سب سے مقبول', per_mo: '/ماہ', cur: 'ر.س', trial_cta: '14 دن ٹرائل شروع کریں',
+    most_popular: 'سب سے مقبول', per_mo: '/ماہ', cur: '⃁', trial_cta: '14 دن ٹرائل شروع کریں',
     plans: [
       { name: 'بنیادی', desc: 'شروعات کرتی واحد دکان کے لیے۔', price: '150',
         features: [{ label: '1 برانچ' }, { label: 'انوینٹری مینجمنٹ' }, { label: 'ZATCA ای-انوائسنگ' }, { label: 'روزانہ سیلز رپورٹس' }, { label: 'لائلٹی و گفٹ کارڈز', off: true }] },
@@ -348,9 +348,9 @@ export default function AgentLandingPage() {
     { Icon: Shirt, brandIcon: true },
   ];
   const saleLines = [
-    { tone: 'bg-warning/15', price: 'SAR 16' },
-    { tone: 'bg-gold-50', price: 'SAR 13' },
-    { tone: 'bg-success/15', price: 'SAR 24' },
+    { tone: 'bg-warning/15', price: '⃁ 16' },
+    { tone: 'bg-gold-50', price: '⃁ 13' },
+    { tone: 'bg-success/15', price: '⃁ 24' },
   ];
 
   return (
@@ -458,8 +458,8 @@ export default function AgentLandingPage() {
                   </div>
                 ))}
                 <div className="mt-auto pt-3">
-                  <div className="flex justify-between text-[11px] text-slate-500 mb-1"><span>{c.vat_label}</span><span>SAR 7.95</span></div>
-                  <div className="flex justify-between items-baseline mb-2.5"><span className="text-xs font-bold">{c.total_label}</span><b className="text-[19px] font-extrabold tabular-nums">SAR 60.95</b></div>
+                  <div className="flex justify-between text-[11px] text-slate-500 mb-1"><span>{c.vat_label}</span><span>⃁ 7.95</span></div>
+                  <div className="flex justify-between items-baseline mb-2.5"><span className="text-xs font-bold">{c.total_label}</span><b className="text-[19px] font-extrabold tabular-nums">⃁ 60.95</b></div>
                   <div className="text-center py-2.5 rounded-[9px] text-white text-[13px] font-bold" style={{ backgroundColor: brand }}>{c.pay}</div>
                 </div>
               </div>

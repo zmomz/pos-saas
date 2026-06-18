@@ -21,10 +21,14 @@ export default {
       },
     },
     extend: {
+      // 'Saudi Riyal' leads every stack so the U+20C1 currency glyph resolves to
+      // the bundled webfont (scoped to that codepoint via unicode-range in
+      // index.css); all other characters fall through to the real family. This
+      // matters for `font-mono` prices too — JetBrains Mono lacks the glyph.
       fontFamily: {
-        sans: ['Hanken Grotesk', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
-        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
-        arabic: ['IBM Plex Sans Arabic', 'Hanken Grotesk', 'system-ui', 'sans-serif'],
+        sans: ['Saudi Riyal', 'Hanken Grotesk', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        mono: ['Saudi Riyal', 'JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+        arabic: ['Saudi Riyal', 'IBM Plex Sans Arabic', 'Hanken Grotesk', 'system-ui', 'sans-serif'],
       },
       colors: {
         border: 'hsl(var(--border))',
