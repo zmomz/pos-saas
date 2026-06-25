@@ -86,7 +86,7 @@ async def test_global_sweep_advances_overdue_clients_across_all_agents(client, m
 @pytest.mark.asyncio
 async def test_global_sweep_is_idempotent(client):
     """Re-running the sweep does not double-charge or double-advance (AC3). With no
-    Stripe configured the charge fails open to a settled 'manual' payment, so the
+    Moyasar keys configured the charge settles through the sandbox gateway, so the
     first pass recovers the merchant and advances billing; the second pass finds it
     already settled this period and records nothing new."""
     from services.dunning import run_global_dunning
@@ -137,7 +137,8 @@ async def test_scheduler_entry_point_runs_sweep_without_manual_trigger(client, m
 
     summary = await run_billing_sweep_once()
 
-    assert summary["processed"] >= 1
+    # The tick runs both rails; the merchant subscription sweep drained the backlog.
+    assert summary["merchant_subscriptions"]["processed"] >= 1
     row = await _client_row(cid)
     assert row.subscription_status == "past_due"
     assert row.dunning_attempts == 1

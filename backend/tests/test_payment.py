@@ -1,13 +1,14 @@
 """F-006 — the orphaned Stripe Checkout router (`routers/payment.py`) is removed.
 
 The generic Stripe Checkout endpoints (`POST /api/v1/payments/checkout`,
-`GET /api/v1/payments/status/{session_id}`) had **no frontend caller** — the
-subscription flow charges through the `tenant.py` Stripe Connect path, and the
-Saudi-real payment stack is Moyasar/Geidea (F-001/F-002/F-005), not Stripe
-Checkout. The dead surface shared the `/api/v1/payments` prefix with the real
-gateway router, so removing it also clears that collision. These tests lock the
-removal in: re-mounting the orphan would fail the first two, and accidentally
-deleting the live gateway surface alongside it would fail the third.
+`GET /api/v1/payments/status/{session_id}`) had **no frontend caller** — the whole
+payment stack is Moyasar/Geidea (F-001/F-002/F-005): in-store and online sales
+capture through the gateway router, and the subscription rails (the agent's quota
+and merchant subscriptions) charge through Moyasar in `tenant.py`. The dead
+Checkout surface shared the `/api/v1/payments` prefix with the real gateway router,
+so removing it also clears that collision. These tests lock the removal in:
+re-mounting the orphan would fail the first two, and accidentally deleting the live
+gateway surface alongside it would fail the third.
 """
 from conftest import auth_headers, register_user
 

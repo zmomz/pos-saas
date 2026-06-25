@@ -146,8 +146,8 @@ async def test_failed_charge_walks_client_past_due_to_suspended(client, monkeypa
 
 @pytest.mark.asyncio
 async def test_successful_retry_recovers_and_records_payment(client):
-    # No Stripe configured (conftest strips the key) -> charge fails open to a
-    # settled "manual" payment, so a sweep over a past_due account recovers it.
+    # No Moyasar keys configured -> charge settles through the sandbox gateway, so
+    # a sweep over a past_due account recovers it.
     _au, a_token, a_id = await make_agent_account(client)
     _cu, _ct, client_id = await _make_overdue_client(
         client, agent_id=a_id, status="dunning"

@@ -282,7 +282,8 @@ _SUB_CYCLE_AR = {"monthly": "شهري", "yearly": "سنوي"}
 _SUB_STATUS_AR = {
     "paid": "مدفوعة",
     "manual": "مدفوعة (يدوي)",
-    "stripe": "مدفوعة (بطاقة)",
+    "moyasar": "مدفوعة (بطاقة)",
+    "sandbox": "مدفوعة (بطاقة)",
     "active": "مدفوعة",
 }
 

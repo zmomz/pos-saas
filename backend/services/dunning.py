@@ -162,15 +162,34 @@ async def run_client_dunning(
     period_start = now.date().isoformat()
     period_end = _advance(now, cycle)
 
-    agent_stripe_account = getattr(agent_row, "stripe_account_id", None) if agent_row is not None else None
+    # Charge through the owning agent's own Moyasar account against the merchant's
+    # stored card-on-file (Rail 2). No agent key / no card on file fails the charge,
+    # which advances dunning exactly like a decline.
+    agent_moyasar_key = None
+    if agent_row is not None and getattr(agent_row, "moyasar_secret_key_enc", None):
+        from core.crypto import decrypt_secret
+
+        try:
+            agent_moyasar_key = decrypt_secret(agent_row.moyasar_secret_key_enc)
+        except Exception:  # unreadable key — treat as not configured
+            agent_moyasar_key = None
+    card_token = None
+    if getattr(merchant, "moyasar_card_token_enc", None):
+        from core.crypto import decrypt_secret
+
+        try:
+            card_token = decrypt_secret(merchant.moyasar_card_token_enc)
+        except Exception:
+            card_token = None
 
     charge_ok = True
     charge = None
     try:
         charge = await charge_subscription(
             amount=float(merchant.subscription_fee or 0),
-            currency=str(getattr(settings, "subscription_currency", "sar") or "sar"),
-            agent_stripe_account=agent_stripe_account,
+            currency=str(getattr(settings, "subscription_currency", "SAR") or "SAR"),
+            agent_moyasar_key=agent_moyasar_key,
+            card_token=card_token,
             client_id=merchant.id,
             idempotency_key=f"dun-{merchant.id}-{period_start}",
         )
@@ -239,10 +258,10 @@ async def run_global_dunning(
 
     Unlike :func:`run_agent_dunning` (owner-scoped to one calling agent), this is
     platform-wide: it drains the whole backlog without a manual agent trigger. Each
-    merchant's owning agent row is resolved (and cached) so the commission split
-    still routes correctly. Idempotent: a recovered merchant's ``next_billing_date``
+    merchant's owning agent row is resolved (and cached) so the charge routes through
+    that agent's Moyasar account. Idempotent: a recovered merchant's ``next_billing_date``
     moves into the future and a suspended one becomes terminal, so a re-run selects
-    nothing already settled this period; the per-period Stripe idempotency key
+    nothing already settled this period; the per-period Moyasar idempotency key
     (``dun-{id}-{period_start}``) blocks a double-charge within the same day.
     Commits the whole batch once.
     """

@@ -1,6 +1,6 @@
 from core.database import Base
 from datetime import datetime
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
 
 
 class Agents(Base):
@@ -26,9 +26,35 @@ class Agents(Base):
     button_radius = Column(String, nullable=True, default='8px', server_default='8px')
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
     default_language = Column(String, nullable=True, default='en', server_default='en')
-    # Stripe Connect: the agent's connected-account id. When set, a client's
-    # subscription charge is routed to the agent's gateway (CL-04 production path).
-    stripe_account_id = Column(String, nullable=True)
+    # ---- Rail 2: the agent's OWN Moyasar account (collects from his merchants) ----
+    # An agent resells subscriptions to his merchants and collects that money into
+    # his own Moyasar account — the platform only hosts the UI. The secret/webhook
+    # keys are encrypted at rest (core.crypto); the publishable key is browser-safe.
+    # All null until the agent connects his Moyasar account; until then merchant
+    # subscription charges fail closed with a 402 (never a silent free pass).
+    moyasar_secret_key_enc = Column(String, nullable=True)
+    moyasar_publishable_key = Column(String, nullable=True)
+    moyasar_webhook_secret_enc = Column(String, nullable=True)
+    # ---- Rail 1: the agent's card-on-file for paying the PLATFORM (quota fee) ----
+    # The platform sells the agent a fixed-price quota of client slots; the agent
+    # pays for it through the platform's Moyasar account using a stored reusable
+    # card token (PAN never reaches us — PAY-09). Encrypted at rest.
+    quota_card_token_enc = Column(String, nullable=True)
+    quota_card_last4 = Column(String, nullable=True)
+    quota_card_brand = Column(String, nullable=True)
+    # ---- Rail 1: the agent's quota subscription lifecycle (mirror of a client's) --
+    # ``quota_price`` is what the agent pays the platform per cycle (defaults from
+    # the package wholesale price at provisioning); ``quota_cycle`` is
+    # 'monthly'|'yearly'. ``quota_status`` walks active -> past_due -> dunning ->
+    # suspended on failed renewals; a suspended agent is blocked at auth and his
+    # merchants go dark with him (cascade). ``next_quota_billing_date`` is the ISO
+    # date the next quota charge is due.
+    quota_price = Column(Float, nullable=True)
+    quota_cycle = Column(String, nullable=True, default='monthly', server_default='monthly')
+    quota_status = Column(String, nullable=True, default='active', server_default='active')
+    quota_dunning_attempts = Column(Integer, nullable=True, default=0, server_default='0')
+    quota_grace_deadline = Column(String, nullable=True)
+    next_quota_billing_date = Column(String, nullable=True)
     # AG-05 deep white-label: the agent's own domain (e.g. "pos.acme.sa"). When set,
     # a request arriving on this host resolves the agent's branding so the merchant
     # login + funnel are served under the agent's brand, never the platform's.

@@ -21,7 +21,7 @@ class Subscription_payments(Base):
     period_start = Column(String, nullable=True)
     period_end = Column(String, nullable=True)
     method = Column(String, nullable=True, default='manual')
-    # Stripe PaymentIntent id when charged through the gateway (CL-04); null for
+    # Moyasar payment id when charged through the gateway (CL-04, Rail 2); null for
     # manually-settled payments.
     reference = Column(String, nullable=True)
     note = Column(String, nullable=True)

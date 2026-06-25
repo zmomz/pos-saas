@@ -22,7 +22,7 @@ go-live. This module implements the compliance-critical primitives for real:
 
 Network calls require ``ZATCA_API_BASE_URL`` (or a recognised
 ``ZATCA_ENVIRONMENT``) to be set; otherwise callers surface a 503 — the same
-honest "stub until configured" contract used for Stripe/SMTP in Phase A. All
+honest "stub until configured" contract used for the Moyasar/SMTP integrations. All
 cryptography here works fully offline (no network, no external SDK).
 """
 from __future__ import annotations
@@ -36,7 +36,6 @@ from typing import Any, Dict, Optional, Tuple
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.x509 import (
     CertificateSigningRequestBuilder,
     DirectoryName,
@@ -102,7 +101,7 @@ def resolve_base_url(environment: Optional[str] = None) -> Optional[str]:
       published Fatoora gateway URL is used.
 
     With neither set the integration is "not configured" and routers fail closed
-    with a 503 — the same contract as Stripe/SMTP in Phase A.
+    with a 503 — the same contract as the Moyasar/SMTP integrations.
     """
     override = getattr(settings, "zatca_api_base_url", None)
     if override:
@@ -115,29 +114,10 @@ def resolve_base_url(environment: Optional[str] = None) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Secrets at rest — AES-256-GCM
 # ---------------------------------------------------------------------------
-def _aes_key() -> bytes:
-    """Derive a 32-byte AES-256 key.
-
-    Prefers ``ZATCA_ENCRYPTION_KEY``; falls back to the JWT secret so the
-    feature works out-of-the-box in dev. Production deployments MUST set a
-    dedicated key — losing it makes stored CSIDs/keys unrecoverable.
-    """
-    raw = getattr(settings, "zatca_encryption_key", None) or settings.jwt_secret_key
-    return hashlib.sha256(raw.encode("utf-8")).digest()
-
-
-def encrypt_secret(plaintext: str) -> str:
-    """AES-256-GCM encrypt and base64-encode ``nonce || ciphertext||tag``."""
-    nonce = os.urandom(12)
-    ct = AESGCM(_aes_key()).encrypt(nonce, plaintext.encode("utf-8"), None)
-    return base64.b64encode(nonce + ct).decode("ascii")
-
-
-def decrypt_secret(token: str) -> str:
-    """Inverse of :func:`encrypt_secret`. Raises on tamper/wrong key."""
-    raw = base64.b64decode(token)
-    nonce, ct = raw[:12], raw[12:]
-    return AESGCM(_aes_key()).decrypt(nonce, ct, None).decode("utf-8")
+# The implementation lives in ``core.crypto`` (shared with the billing rails'
+# stored gateway keys / card tokens); re-exported here so existing ZATCA call
+# sites are unchanged.
+from core.crypto import decrypt_secret, encrypt_secret  # noqa: E402,F401
 
 
 # ---------------------------------------------------------------------------

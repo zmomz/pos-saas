@@ -34,7 +34,9 @@ export async function toggleAgent(agentId: number) {
 
 // MA-08 / RSL-08 / RPT-09 (F-023): platform-wide economics for the master operator
 // console — MRR (yearly plans normalized to fee/12), churn (suspended share),
-// active merchants, and a revenue-by-agent leaderboard from the commission ledger.
+// active merchants, and a revenue-by-agent leaderboard. `collected` is the agent's
+// GMV from his own merchants (his money); `quota_paid` is what he paid the platform
+// for his quota (Rail 1 — the platform's revenue from this agent).
 export interface AgentEconomics {
   agent_id: number;
   company_name: string;
@@ -43,8 +45,7 @@ export interface AgentEconomics {
   active_clients: number;
   mrr: number;
   collected: number;
-  master_owed: number;
-  net: number;
+  quota_paid: number;
   payments: number;
 }
 
@@ -115,21 +116,18 @@ export async function getAgentBranding() {
   return response.data;
 }
 
-// RSL-01/02 (F-029): the agent's settled-subscription economics from the
-// commission/revenue-split ledger. collected == master_owed + net.
+// The agent's settled-subscription revenue, summed from his merchants' payments.
+// This is entirely the agent's money — the platform takes no cut here (the
+// platform's revenue is the wholesale quota the agent buys, Rail 1).
 export interface RevenueByClient {
   client_id: number;
   business_name: string;
   collected: number;
-  master_owed: number;
-  net: number;
   payments: number;
 }
 
 export interface AgentRevenue {
   collected: number;
-  master_owed: number;
-  net: number;
   payments: number;
   by_client: RevenueByClient[];
 }
@@ -143,15 +141,13 @@ export async function getAgentRevenue(): Promise<AgentRevenue> {
   return response.data;
 }
 
-// RSL-02 (ISSUE-055): per-period commission statements for the agent, each with
-// line items by client. collected == master_owed + net within every line and
-// period total (the split reconciles).
+// Per-period subscription-collection statements for the agent, each with line
+// items by client. The period total is the sum of the period's payments (the
+// agent's own revenue — no platform cut).
 export interface CommissionStatementLine {
   client_id: number;
   business_name: string;
   collected: number;
-  master_owed: number;
-  net: number;
   payments: number;
 }
 
@@ -160,8 +156,6 @@ export interface CommissionStatement {
   period_end: string;
   billing_cycle: string;
   collected: number;
-  master_owed: number;
-  net: number;
   payments: number;
   by_client: CommissionStatementLine[];
 }
@@ -2468,12 +2462,113 @@ export async function getClientSubscription() {
   return response.data;
 }
 
-// Client: pay the current subscription period (CL-04)
+// Client: pay the current subscription period (CL-04). Charges the merchant's
+// card-on-file through the owning agent's Moyasar account (Rail 2).
 export async function payClientSubscription() {
   const response = await client.apiCall.invoke<SubscriptionStatus>({
     url: '/api/v1/tenant/client/subscription/pay',
     method: 'POST',
     data: {},
+  });
+  return response.data;
+}
+
+// A reusable card token from moyasar.js (PAN never reaches the server — PAY-09).
+export interface SaveCardResult {
+  saved: boolean;
+  card_last4?: string | null;
+  card_brand?: string | null;
+}
+
+// Client: store the card used to pay the subscription (Rail 2).
+export async function saveSubscriptionCard(data: {
+  token: string;
+  last4?: string;
+  brand?: string;
+}): Promise<SaveCardResult> {
+  const response = await client.apiCall.invoke<SaveCardResult>({
+    url: '/api/v1/tenant/client/subscription/card',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+// ---- Rail 1: the agent's quota (what the agent pays the platform) ----
+export interface QuotaPaymentLine {
+  amount: number;
+  billing_cycle?: string | null;
+  period_start?: string | null;
+  period_end?: string | null;
+  method?: string | null;
+  reference?: string | null;
+}
+
+export interface QuotaStatus {
+  quota_price?: number | null;
+  quota_cycle?: string | null;
+  quota_status?: string | null;
+  next_quota_billing_date?: string | null;
+  has_card: boolean;
+  card_last4?: string | null;
+  card_brand?: string | null;
+  has_moyasar_account: boolean;
+  moyasar_publishable_key?: string | null;
+  payments: QuotaPaymentLine[];
+}
+
+// Agent: read quota status (price, cycle, next bill, card-on-file) + history.
+export async function getQuotaStatus(): Promise<QuotaStatus> {
+  const response = await client.apiCall.invoke<QuotaStatus>({
+    url: '/api/v1/tenant/agent/quota',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// Agent: store the card used to pay the platform for the quota (Rail 1).
+export async function saveQuotaCard(data: {
+  token: string;
+  last4?: string;
+  brand?: string;
+}): Promise<SaveCardResult> {
+  const response = await client.apiCall.invoke<SaveCardResult>({
+    url: '/api/v1/tenant/agent/quota/card',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+// Agent: pay / renew the current quota period (Rail 1).
+export async function payQuota(): Promise<QuotaStatus> {
+  const response = await client.apiCall.invoke<QuotaStatus>({
+    url: '/api/v1/tenant/agent/quota/pay',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// ---- Rail 2: the agent's OWN Moyasar account (collects from his merchants) ----
+export interface SaveAgentMoyasarResult {
+  saved: boolean;
+  valid: boolean;
+  detail: string;
+  publishable_key?: string | null;
+}
+
+// Agent: connect / update his own Moyasar account credentials.
+export async function saveAgentMoyasarKeys(data: {
+  secret_key: string;
+  publishable_key?: string;
+  webhook_secret?: string;
+}): Promise<SaveAgentMoyasarResult> {
+  const response = await client.apiCall.invoke<SaveAgentMoyasarResult>({
+    url: '/api/v1/tenant/agent/moyasar',
+    method: 'PUT',
+    data,
   });
   return response.data;
 }

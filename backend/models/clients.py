@@ -28,6 +28,14 @@ class Clients(Base):
     dunning_attempts = Column(Integer, nullable=True, default=0, server_default='0')
     grace_deadline = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
+    # Card-on-file for subscription billing (Rail 2). The merchant tokenizes their
+    # card once via moyasar.js (PAN never reaches us — PAY-09) and the reusable
+    # token is stored encrypted (core.crypto); each billing cycle charges it
+    # through the owning AGENT's Moyasar account. Null until a card is saved — a
+    # charge with no card on file fails closed (402), never a silent free pass.
+    moyasar_card_token_enc = Column(String, nullable=True)
+    card_last4 = Column(String, nullable=True)
+    card_brand = Column(String, nullable=True)
     # Subscription coupon (ISSUE-054). A coupon discounts the subscription fee for
     # a bounded number of billing periods: ``coupon_type`` is 'percentage'|'fixed',
     # ``coupon_value`` the percent/flat amount off, and ``coupon_duration_remaining``

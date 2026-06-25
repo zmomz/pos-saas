@@ -18,14 +18,18 @@ const STATEMENTS = {
       period_end: '2026-07-01',
       billing_cycle: 'monthly',
       collected: 15,
-      master_owed: 8,
-      net: 7,
       payments: 1,
       by_client: [
-        { client_id: 3, business_name: 'Corner Shop', collected: 15, master_owed: 8, net: 7, payments: 1 },
+        { client_id: 3, business_name: 'Corner Shop', collected: 15, payments: 1 },
       ],
     },
   ],
+};
+
+const QUOTA = {
+  quota_price: 80, quota_cycle: 'monthly', quota_status: 'active',
+  next_quota_billing_date: '2026-07-01', has_card: false, has_moyasar_account: false,
+  payments: [],
 };
 
 function renderPage() {
@@ -47,7 +51,8 @@ describe('AgentDashboard commission statements (ISSUE-055)', () => {
     server.use(
       http.get(`${BASE}/api/v1/tenant/agent/clients`, () => HttpResponse.json({ items: [], total: 0, remaining_slots: 5 })),
       http.get(`${BASE}/api/v1/tenant/agent/branding`, () => HttpResponse.json({})),
-      http.get(`${BASE}/api/v1/tenant/agent/revenue`, () => HttpResponse.json({ collected: 15, master_owed: 8, net: 7, payments: 1, by_client: [] })),
+      http.get(`${BASE}/api/v1/tenant/agent/revenue`, () => HttpResponse.json({ collected: 15, payments: 1, by_client: [] })),
+      http.get(`${BASE}/api/v1/tenant/agent/quota`, () => HttpResponse.json(QUOTA)),
       http.get(`${BASE}/api/v1/tenant/agent/commission/statements`, () => HttpResponse.json(STATEMENTS))
     );
     renderPage();

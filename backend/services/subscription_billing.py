@@ -1,21 +1,24 @@
-"""Subscription charging via the agent's Stripe Connect gateway (Phase 5 CL-04).
+"""Merchant subscription charging via the AGENT's own Moyasar account (Rail 2, CL-04).
 
-When ``STRIPE_SECRET_KEY`` is configured, a client's subscription payment is
-charged through Stripe. If the owning agent has a connected account
-(``agents.stripe_account_id``), the charge is routed to that account (Stripe
-Connect, ``stripe_account`` request option) so the white-label reseller collects
-the fee directly.
+A white-label agent resells subscriptions to his merchants and collects that money
+into **his own** Moyasar account — the platform only hosts the billing UI; the
+revenue is the agent's, not ours (our revenue is the wholesale quota the agent buys
+from us, see ``services.quota_billing``). So a merchant subscription charge is
+routed through the owning agent's Moyasar secret key (stored encrypted on the agent
+row) against the merchant's stored card-on-file token (PAN never reaches us —
+PAY-09; the token is tokenized by moyasar.js and stored encrypted on the client).
 
-When Stripe is **not** configured the function fails open to a ``manual`` settled
-record — preserving the pre-Stripe behaviour so dev/CI and self-hosted installs
-without a gateway keep working. A genuine card decline (Stripe configured) raises
-:class:`SubscriptionChargeError` so the caller can return 402 and *not* advance
-the billing period.
+The charge **fails closed**: if the agent has not connected a Moyasar account, or
+the merchant has no card on file, a :class:`SubscriptionChargeError` is raised so
+the caller returns 402 and the billing period is *not* advanced. There is no
+silent "manual = free" path — that would let merchants run unbilled. The only
+credential-free path is the deterministic sandbox gateway (when neither the agent
+nor the platform has any Moyasar key, e.g. dev/CI), which still produces a real
+approve/decline so the flow is demonstrable without onboarding (OPS-08).
 """
 import logging
 from dataclasses import dataclass
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from core.config import settings
@@ -82,67 +85,77 @@ def is_in_trial(trial_end: Optional[str], today: date) -> bool:
 
 
 class SubscriptionChargeError(Exception):
-    """A configured Stripe charge was attempted and declined/failed."""
+    """A Moyasar subscription charge was attempted and declined/failed."""
 
 
 @dataclass
 class ChargeResult:
-    charged: bool  # True only when money actually moved through Stripe
-    status: str  # "paid" | "manual"
-    method: str  # "stripe" | "manual"
-    reference: Optional[str]  # Stripe PaymentIntent id when charged
+    charged: bool  # True only when money actually moved through a gateway
+    status: str  # "paid"
+    method: str  # "moyasar" | "sandbox"
+    reference: Optional[str]  # Moyasar payment id when charged
 
 
-def _stripe_configured() -> bool:
-    return bool(getattr(settings, "stripe_secret_key", None))
+def _platform_moyasar_key() -> str:
+    return (getattr(settings, "moyasar_api_key", "") or "").strip()
 
 
 async def charge_subscription(
     *,
     amount: float,
-    currency: str = "sar",
-    agent_stripe_account: Optional[str] = None,
+    currency: str = "SAR",
+    agent_moyasar_key: Optional[str] = None,
+    card_token: Optional[str] = None,
     client_id: int,
     idempotency_key: Optional[str] = None,
 ) -> ChargeResult:
-    """Charge a subscription fee. See module docstring for the gating semantics."""
-    if not _stripe_configured():
-        logger.info("Stripe not configured; recording manual subscription payment.")
-        return ChargeResult(charged=False, status="manual", method="manual", reference=None)
+    """Charge a merchant subscription through the agent's Moyasar account (Rail 2).
 
-    import stripe
+    ``agent_moyasar_key`` is the owning agent's **decrypted** Moyasar secret key;
+    ``card_token`` is the merchant's stored reusable card token. Fails closed: with
+    no agent key AND no platform fallback key, or no card token, a
+    :class:`SubscriptionChargeError` is raised (→ 402, period not advanced) rather
+    than a silent free pass. With no key configured anywhere, the deterministic
+    sandbox gateway runs so the flow stays demonstrable on un-onboarded installs.
+    """
+    from services.payment_gateway import (
+        GatewayNotConfigured,
+        PaymentDeclined,
+        SandboxGateway,
+        recurring_gateway,
+    )
 
-    from services.payment import initialize_stripe
+    key = (agent_moyasar_key or "").strip() or _platform_moyasar_key()
+    gateway = recurring_gateway(key)
 
-    if not stripe.api_key:
-        await initialize_stripe()
-
-    amount_cents = int((Decimal(str(amount)) * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    request_options = {}
-    if idempotency_key:
-        request_options["idempotency_key"] = idempotency_key
-    if agent_stripe_account:
-        # Route the charge to the agent's connected account (Stripe Connect).
-        request_options["stripe_account"] = agent_stripe_account
+    # Live (real money) requires a card on file; the sandbox synthesizes its own.
+    if not isinstance(gateway, SandboxGateway) and not card_token:
+        raise SubscriptionChargeError("No card on file for this subscription")
 
     try:
-        intent = await stripe.PaymentIntent.create_async(
-            amount=amount_cents,
+        result = await gateway.charge(
+            amount=amount,
+            tender_type="card",
             currency=currency,
-            confirm=True,
-            automatic_payment_methods={"enabled": True, "allow_redirects": "never"},
-            metadata={"client_id": str(client_id), "kind": "subscription"},
-            **request_options,
+            token=card_token,
+            metadata={
+                "recurring": True,
+                "description": f"Subscription (client {client_id})",
+                "client_id": str(client_id),
+                "idempotency_key": idempotency_key,
+            },
         )
-    except stripe.error.CardError as exc:
-        raise SubscriptionChargeError(f"Card declined: {exc}") from exc
-    except stripe.error.StripeError as exc:
-        raise SubscriptionChargeError(f"Stripe charge failed: {exc}") from exc
+    except PaymentDeclined as exc:
+        raise SubscriptionChargeError(f"Card declined: {exc.reason}") from exc
+    except GatewayNotConfigured as exc:
+        raise SubscriptionChargeError(str(exc)) from exc
 
-    if getattr(intent, "status", None) != "succeeded":
-        raise SubscriptionChargeError(f"Charge not completed (status={getattr(intent, 'status', '?')})")
+    if not result.approved:
+        raise SubscriptionChargeError(f"Card declined: {result.decline_reason or 'declined'}")
 
-    return ChargeResult(charged=True, status="paid", method="stripe", reference=intent.id)
+    return ChargeResult(
+        charged=True, status="paid", method=result.gateway, reference=result.gateway_ref
+    )
 
 
 async def record_settled_payment(
@@ -157,27 +170,27 @@ async def record_settled_payment(
     agent_row=None,
     amount: Optional[float] = None,
 ):
-    """Persist a settled subscription payment + a balanced commission row, advance
-    the billing period, and clear any dunning state (status -> active).
+    """Persist a settled merchant subscription payment, advance the billing period,
+    and clear any dunning state (status -> active).
 
     ``amount`` is the actual amount collected this period; when omitted it falls
     back to the merchant's full ``subscription_fee``. A subscription coupon
-    (ISSUE-054) passes the discounted net here so the recorded payment and the
-    commission split's gross both reflect what the client was charged.
+    (ISSUE-054) passes the discounted net here so the recorded payment reflects
+    what the client was charged. This payment is entirely the agent's revenue —
+    the platform takes no cut here (our revenue is the wholesale quota the agent
+    buys, ``agent_quota_payments``); there is no commission split.
 
     Shared by the interactive pay endpoint (CL-04) and the dunning sweep (CL-06)
-    so a successful retry records the payment exactly like a manual pay. Runs in
-    the caller's transaction (no commit). Returns the persisted payment row.
+    so a successful retry records the payment exactly like a manual pay. ``agent_row``
+    is accepted for call-site symmetry but is not needed here. Runs in the caller's
+    transaction (no commit). Returns the persisted payment row.
     """
     # Local imports keep this module importable without the full model graph and
     # avoid a circular import with the tenant router.
-    from sqlalchemy import select, update
+    from sqlalchemy import update
 
     from models.clients import Clients
-    from models.commission_ledger import Commission_ledger
-    from models.packages import Packages
     from models.subscription_payments import Subscription_payments
-    from services.commission import compute_commission_split
 
     collected = float(merchant.subscription_fee or 0) if amount is None else float(amount)
     payment = Subscription_payments(
@@ -191,39 +204,7 @@ async def record_settled_payment(
         reference=charge.reference,
     )
     db.add(payment)
-    # Flush so the payment gets its id; the commission row references it 1:1.
-    await db.flush()
-
-    # RSL-01: decompose the gross fee into the platform master's cut (per-client
-    # amortized package wholesale) and the agent's net margin, written atomically
-    # with the payment. An unresolvable package degrades to master_cut=0 (whole
-    # fee to the agent) — still balanced, never blocking.
-    package = None
-    if agent_row is not None and getattr(agent_row, "package_type", None) is not None:
-        package = (
-            await db.execute(select(Packages).where(Packages.id == agent_row.package_type))
-        ).scalar_one_or_none()
-    fee = collected
-    master_cut, agent_net = compute_commission_split(
-        gross=fee,
-        wholesale_price=float(getattr(package, "wholesale_price", 0) or 0),
-        client_slots=int(getattr(package, "client_slots", 0) or 0),
-    )
-    db.add(
-        Commission_ledger(
-            user_id=(agent_row.user_id if agent_row is not None else str(payer_user_id)),
-            agent_id=merchant.agent_id,
-            client_id=merchant.id,
-            subscription_payment_id=payment.id,
-            package_id=(package.id if package is not None else None),
-            gross=round(fee, 2),
-            master_cut=master_cut,
-            agent_net=agent_net,
-            billing_cycle=cycle,
-            period_start=period_start,
-            period_end=period_end,
-        )
-    )
+    await db.flush()  # assign the payment id
 
     # Recover the subscription: active again, billing advanced, dunning cleared.
     await db.execute(

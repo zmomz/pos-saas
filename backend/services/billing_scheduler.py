@@ -52,13 +52,21 @@ async def run_billing_sweep_once() -> dict:
     """Run one platform-wide dunning/retry sweep in a fresh session and commit.
 
     The background loop calls this each tick; tests call it directly to exercise
-    the unattended path. Returns the sweep summary.
+    the unattended path. Runs BOTH billing rails each tick: the merchant
+    subscription sweep (:func:`services.dunning.run_global_dunning`, Rail 2 — money
+    the agent collects from his merchants) and the agent quota sweep
+    (:func:`services.quota_billing.run_global_quota_dunning`, Rail 1 — money the
+    platform collects from the agent). Returns the combined summary keyed by rail.
     """
     from core.database import db_manager
     from services.dunning import run_global_dunning
+    from services.quota_billing import run_global_quota_dunning
 
     async with db_manager.async_session_maker() as db:
-        return await run_global_dunning(db, actor_user_id=SYSTEM_ACTOR)
+        merchant = await run_global_dunning(db, actor_user_id=SYSTEM_ACTOR)
+    async with db_manager.async_session_maker() as db:
+        quota = await run_global_quota_dunning(db, actor_user_id=SYSTEM_ACTOR)
+    return {"merchant_subscriptions": merchant, "agent_quota": quota}
 
 
 async def _scheduler_loop(interval: int) -> None:

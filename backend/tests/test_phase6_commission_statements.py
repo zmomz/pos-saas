@@ -1,11 +1,12 @@
-"""RSL-02 (ISSUE-055): periodic agent commission statements.
+"""Periodic agent subscription-collection statements.
 
-``GET /tenant/agent/revenue`` summarizes an agent's settled-subscription
-economics across *all* time. A statement adds the **period** dimension: one
-statement per billing period, with line items by client, summing back to the
-same gross/master/net the underlying ``commission_ledger`` rows carry (so the
-statement reconciles). Reads are scoped to the caller's own agent rows — one
-agent can never see another agent's statements (SEC-02).
+``GET /tenant/agent/revenue`` summarizes an agent's settled-subscription revenue
+across *all* time. A statement adds the **period** dimension: one statement per
+billing period, with line items by client, summing back to the underlying
+``subscription_payments`` rows. This revenue is entirely the agent's (the platform
+takes no cut — the platform's revenue is the wholesale quota the agent buys, Rail
+1), so there is no master/net split. Reads are scoped to the caller's own clients —
+one agent can never see another agent's statements (SEC-02).
 """
 import uuid
 
@@ -15,8 +16,8 @@ from conftest import auth_headers, register_user, unique_email
 from core.database import db_manager
 from models.agents import Agents
 from models.clients import Clients
-from models.commission_ledger import Commission_ledger
 from models.packages import Packages
+from models.subscription_payments import Subscription_payments
 
 
 async def _make_agent_with_package(client, *, wholesale: float, slots: int):
@@ -82,9 +83,11 @@ async def _make_paying_client(client, *, agent_id: int, fee: float, cycle: str =
 
 
 @pytest.mark.asyncio
-async def test_statement_for_a_paid_period_lists_client_and_reconciles(client):
+async def test_statement_for_a_paid_period_lists_client(client):
     _au, a_token, a_id, _pkg = await _make_agent_with_package(client, wholesale=80.0, slots=10)
     _cu, c_token, c_id = await _make_paying_client(client, agent_id=a_id, fee=15.0)
+    # With no Moyasar keys configured (test env), the pay path settles through the
+    # deterministic sandbox gateway and records the payment.
     assert (
         await client.post(
             "/api/v1/tenant/client/subscription/pay", headers=auth_headers(c_token)
@@ -102,11 +105,7 @@ async def test_statement_for_a_paid_period_lists_client_and_reconciles(client):
     stmt = statements[0]
     assert stmt["period_start"]  # carries the period it covers
     assert stmt["collected"] == 15.0
-    assert stmt["master_owed"] == 8.0
-    assert stmt["net"] == 7.0
     assert stmt["payments"] == 1
-    # The statement reconciles: master + net == collected.
-    assert round(stmt["master_owed"] + stmt["net"], 2) == stmt["collected"]
 
     # Line items by client.
     assert len(stmt["by_client"]) == 1
@@ -114,25 +113,20 @@ async def test_statement_for_a_paid_period_lists_client_and_reconciles(client):
     assert line["client_id"] == c_id
     assert line["business_name"] == "Corner Shop"
     assert line["collected"] == 15.0
-    assert line["master_owed"] == 8.0
-    assert line["net"] == 7.0
 
 
-async def _seed_ledger(agent_user_id, agent_id, client_id, *, period_start, gross, master, net):
-    """Insert one commission_ledger row for a given billing period."""
+async def _seed_payment(agent_user_id, client_id, *, period_start, amount):
+    """Insert one subscription_payments row for a given billing period."""
     async with db_manager.async_session_maker() as db:
         db.add(
-            Commission_ledger(
+            Subscription_payments(
                 user_id=agent_user_id,
-                agent_id=agent_id,
                 client_id=client_id,
-                subscription_payment_id=0,
-                gross=gross,
-                master_cut=master,
-                agent_net=net,
+                amount=amount,
                 billing_cycle="monthly",
                 period_start=period_start,
                 period_end=period_start,
+                method="moyasar",
             )
         )
         await db.commit()
@@ -144,13 +138,13 @@ async def test_statements_split_by_period_and_owner_scoped(client):
     _cu, _ct, c_id = await _make_paying_client(client, agent_id=a_id, fee=15.0)
 
     # Two distinct billing periods for the same client.
-    await _seed_ledger(a_user["id"], a_id, c_id, period_start="2026-05-01", gross=15.0, master=8.0, net=7.0)
-    await _seed_ledger(a_user["id"], a_id, c_id, period_start="2026-06-01", gross=15.0, master=8.0, net=7.0)
+    await _seed_payment(a_user["id"], c_id, period_start="2026-05-01", amount=15.0)
+    await _seed_payment(a_user["id"], c_id, period_start="2026-06-01", amount=15.0)
 
-    # A different agent's row in the same period must not bleed in.
+    # A different agent's payment in the same period must not bleed in.
     b_user, _bt, b_id, _pkg2 = await _make_agent_with_package(client, wholesale=350.0, slots=50)
     _cu2, _ct2, c2_id = await _make_paying_client(client, agent_id=b_id, fee=20.0)
-    await _seed_ledger(b_user["id"], b_id, c2_id, period_start="2026-06-01", gross=20.0, master=7.0, net=13.0)
+    await _seed_payment(b_user["id"], c2_id, period_start="2026-06-01", amount=20.0)
 
     resp = await client.get(
         "/api/v1/tenant/agent/commission/statements", headers=auth_headers(a_token)
@@ -158,13 +152,10 @@ async def test_statements_split_by_period_and_owner_scoped(client):
     assert resp.status_code == 200, resp.text
     statements = resp.json()["statements"]
 
-    # Two periods -> two statements, newest first; agent B's row excluded.
+    # Two periods -> two statements, newest first; agent B's payment excluded.
     assert [s["period_start"] for s in statements] == ["2026-06-01", "2026-05-01"]
     for stmt in statements:
         assert stmt["collected"] == 15.0
-        assert stmt["master_owed"] == 8.0
-        assert stmt["net"] == 7.0
-        assert round(stmt["master_owed"] + stmt["net"], 2) == stmt["collected"]
 
 
 @pytest.mark.asyncio

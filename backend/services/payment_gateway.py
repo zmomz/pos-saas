@@ -243,11 +243,20 @@ class MoyasarGateway(PaymentGateway):
         import httpx  # local import keeps module import cheap
 
         amount_minor = int(round(amount * 100))
+        meta = metadata or {}
+        # A merchant-initiated recurring charge (a stored card-on-file billed each
+        # cycle — subscription quota / merchant subscription) reuses a saved token
+        # with no customer present: auto-capture (manual=false) and no 3-D Secure
+        # challenge. A one-shot interactive POS sale leaves both at their defaults.
+        token_source: dict = {"type": "token", "token": token}
+        if meta.get("recurring"):
+            token_source["manual"] = "false"
+            token_source["3ds"] = "false"
         payload = {
             "amount": amount_minor,
             "currency": currency,
-            "source": {"type": "token", "token": token},
-            "description": (metadata or {}).get("description", "POS sale"),
+            "source": token_source,
+            "description": meta.get("description", "POS sale"),
         }
         try:
             async with httpx.AsyncClient(timeout=30.0) as http:
@@ -518,3 +527,51 @@ def get_gateway_for(gateway_name: Optional[str]) -> PaymentGateway:
         )
     # Unknown/legacy capture gateway — fall back to the active gateway.
     return get_gateway()
+
+
+# ---------------------------------------------------------------------------
+# Recurring billing helpers (subscription rails — see services.quota_billing /
+# services.subscription_billing)
+# ---------------------------------------------------------------------------
+def recurring_gateway(api_key: Optional[str]) -> PaymentGateway:
+    """Resolve the gateway used to bill a stored card-on-file each cycle.
+
+    ``api_key`` is the Moyasar secret key for the collecting account — the
+    *platform's* key for the agent's quota (Rail 1), or an *agent's own* key for a
+    merchant subscription (Rail 2). With a key, a live :class:`MoyasarGateway`;
+    without one, the deterministic :class:`SandboxGateway` so the recurring flow is
+    demonstrable on un-onboarded installs (OPS-08). The caller decides whether a
+    missing key should instead fail closed (the subscription rails do, returning
+    402 rather than silently billing for free).
+    """
+    key = (api_key or "").strip()
+    return MoyasarGateway(key) if key else SandboxGateway()
+
+
+async def validate_moyasar_credentials(api_key: str) -> tuple[bool, str]:
+    """Verify a Moyasar secret key authenticates, for the agent key-entry screen.
+
+    Makes one cheap authenticated read against the Moyasar API. Returns
+    ``(ok, message)`` — never raises — so the key-entry endpoint can report a clear
+    result instead of a 500. A blank key is invalid; a sandbox/test environment
+    with no outbound network reports the failure rather than a false positive.
+    """
+    key = (api_key or "").strip()
+    if not key:
+        return False, "empty_key"
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as http:
+            resp = await http.get(
+                f"{MoyasarGateway._BASE_URL}/payments",
+                params={"per": 1},
+                auth=(key, ""),
+            )
+    except httpx.HTTPError as exc:
+        return False, f"network_error: {exc}"
+    if resp.status_code in (401, 403):
+        return False, "unauthorized"
+    if resp.status_code >= 400:
+        return False, f"moyasar_error_{resp.status_code}"
+    return True, "ok"

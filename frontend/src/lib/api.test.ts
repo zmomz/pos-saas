@@ -150,16 +150,12 @@ describe('getAgentCommissionStatements', () => {
                 period_end: '2026-07-01',
                 billing_cycle: 'monthly',
                 collected: 15,
-                master_owed: 8,
-                net: 7,
                 payments: 1,
                 by_client: [
                   {
                     client_id: 3,
                     business_name: 'Corner Shop',
                     collected: 15,
-                    master_owed: 8,
-                    net: 7,
                     payments: 1,
                   },
                 ],

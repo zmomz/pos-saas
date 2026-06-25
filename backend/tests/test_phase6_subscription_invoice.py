@@ -71,7 +71,7 @@ def test_subscription_invoice_renders_vat_block_when_seller_registered():
         fee=100.0,
         vat_amount=15.0,
         payment_status="paid",
-        payment_method="stripe",
+        payment_method="moyasar",
     )
     kinds = [r[0] for r in rows]
     assert "seller_vat" in kinds  # registered agent → seller VAT shown

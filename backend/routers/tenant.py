@@ -31,9 +31,8 @@ from models.transactions import Transactions
 from models.agent_features import Agent_features
 from models.client_features import Client_features
 from models.subscription_payments import Subscription_payments
-from models.commission_ledger import Commission_ledger
+from models.agent_quota_payments import Agent_quota_payments
 from models.audit_logs import Audit_logs
-from services.commission import compute_commission_split
 from services.system_settings import (
     GLOBAL_TAX_RATE_KEY,
     get_global_tax_rate,
@@ -180,6 +179,11 @@ class CreateAgentRequest(BaseModel):
     # pass an explicit slot count. package_id wins when both are given.
     package_id: Optional[int] = None
     slots: Optional[int] = None
+    # Rail 1 quota price the agent pays the platform per cycle. Defaults from the
+    # package ``wholesale_price`` when a package is referenced; an explicit value
+    # overrides it. ``quota_cycle`` is 'monthly'|'yearly'.
+    quota_price: Optional[float] = None
+    quota_cycle: Optional[str] = None
 
 
 class CreateAgentResponse(BaseModel):
@@ -197,6 +201,9 @@ class CreateAgentResponse(BaseModel):
 
 class AddSlotsRequest(BaseModel):
     slots: int  # number of client slots to add (positive)
+    # Optional new per-cycle quota price for the expanded quota (Rail 1). When
+    # omitted the agent's existing quota_price is unchanged.
+    quota_price: Optional[float] = None
 
 
 class SlotsResponse(BaseModel):
@@ -358,6 +365,7 @@ async def create_agent(
     # Resolve the agent's client-slot allowance and (MA-07) feature tier.
     slots = data.slots or 0
     feature_tier = None  # the package's enabled-feature set, when provisioned from one
+    package_wholesale = None  # the package's per-cycle wholesale price, if any
     if data.package_id is not None:
         pkg_result = await db.execute(select(Packages).where(Packages.id == data.package_id))
         package = pkg_result.scalar_one_or_none()
@@ -365,8 +373,19 @@ async def create_agent(
             raise HTTPException(status_code=404, detail="Package not found")
         slots = package.client_slots
         feature_tier = parse_feature_tier(package.features)
+        package_wholesale = float(package.wholesale_price or 0)
     if slots <= 0:
         slots = 1  # never provision an agent with zero capacity
+
+    # Rail 1: the per-cycle wholesale quota fee the agent owes the platform. From
+    # the explicit request, else the package wholesale price. The obligation is
+    # set up now (status active, first cycle's billing date); the agent connects a
+    # card and the recurring charge runs via the quota dunning sweep / pay endpoint.
+    quota_cycle = (data.quota_cycle or "monthly").strip().lower()
+    if quota_cycle not in ("monthly", "yearly"):
+        quota_cycle = "monthly"
+    quota_price = data.quota_price if data.quota_price is not None else package_wholesale
+    next_quota_billing = _advance_billing_date(datetime.now(timezone.utc), quota_cycle)
 
     # Create the login account for the agent.
     temp_password = secrets.token_urlsafe(9)
@@ -389,6 +408,11 @@ async def create_agent(
         package_id=data.package_id,  # MA-07: retain the package link for tier derivation
         used_slots=0,
         is_active=True,
+        quota_price=quota_price,
+        quota_cycle=quota_cycle,
+        quota_status="active",
+        quota_dunning_attempts=0,
+        next_quota_billing_date=next_quota_billing,
     )
     db.add(new_agent)
     await db.commit()
@@ -443,8 +467,12 @@ async def add_agent_slots(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     new_total = (agent.package_type or 0) + data.slots
+    values = {"package_type": new_total}
+    # Rail 1: optionally re-price the expanded quota the agent pays the platform.
+    if data.quota_price is not None:
+        values["quota_price"] = float(data.quota_price)
     await db.execute(
-        update(Agents).where(Agents.id == agent_id).values(package_type=new_total)
+        update(Agents).where(Agents.id == agent_id).values(**values)
     )
     await db.commit()
 
@@ -541,25 +569,21 @@ async def list_agent_clients(
     return AgentClientsResponse(items=items, total=total, remaining_slots=remaining_slots)
 
 
-# ---------- Agent revenue / commission (RSL-01/02, F-029) ----------
+# ---------- Agent revenue (the agent's own subscription collections) ----------
 class RevenueByClient(BaseModel):
     client_id: int
     business_name: str
     collected: float
-    master_owed: float
-    net: float
     payments: int
 
 
 class AgentRevenueResponse(BaseModel):
-    """The agent's settled-subscription economics, summed from the commission
-    ledger. ``collected`` is gross fees taken, ``master_owed`` the platform's cut
-    (per-client wholesale), ``net`` the agent's margin; ``collected ==
-    master_owed + net`` by construction."""
+    """The agent's settled-subscription revenue, summed from his merchants'
+    subscription payments. This is entirely the agent's money — the platform takes
+    no cut here (the platform's revenue is the wholesale quota the agent buys, Rail
+    1). ``collected`` is the total fees the agent collected from his merchants."""
 
     collected: float
-    master_owed: float
-    net: float
     payments: int
     by_client: List[RevenueByClient] = []
 
@@ -569,11 +593,11 @@ async def get_agent_revenue(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Agent: revenue / commission summary from the split ledger (RSL-01/02).
+    """Agent: subscription-revenue summary from his merchants' payments.
 
     Aggregated in SQL (no load-everything, OPS-05) and scoped to the caller's own
-    agent rows — one agent can never see another agent's revenue (SEC-02). A
-    client/master gets 403. The master economics rollup (MA-08/RSL-08) is F-023.
+    clients — one agent can never see another agent's revenue (SEC-02). A
+    client/master gets 403.
     """
     role_info = await get_user_role(db, str(current_user.id))
     if role_info["role"] != "agent":
@@ -581,28 +605,28 @@ async def get_agent_revenue(
 
     agent_id = role_info["entity_id"]
 
+    # Subscription payments are owned by the merchant (client); scope to this
+    # agent's clients via a subquery of their ids.
+    client_id_subq = select(Clients.id).where(Clients.agent_id == agent_id).scalar_subquery()
+
     totals = (
         await db.execute(
             select(
-                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
-                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
-                func.coalesce(func.sum(Commission_ledger.agent_net), 0.0),
-                func.count(Commission_ledger.id),
-            ).where(Commission_ledger.agent_id == agent_id)
+                func.coalesce(func.sum(Subscription_payments.amount), 0.0),
+                func.count(Subscription_payments.id),
+            ).where(Subscription_payments.client_id.in_(client_id_subq))
         )
     ).one()
 
     per_client_rows = (
         await db.execute(
             select(
-                Commission_ledger.client_id,
-                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
-                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
-                func.coalesce(func.sum(Commission_ledger.agent_net), 0.0),
-                func.count(Commission_ledger.id),
+                Subscription_payments.client_id,
+                func.coalesce(func.sum(Subscription_payments.amount), 0.0),
+                func.count(Subscription_payments.id),
             )
-            .where(Commission_ledger.agent_id == agent_id)
-            .group_by(Commission_ledger.client_id)
+            .where(Subscription_payments.client_id.in_(client_id_subq))
+            .group_by(Subscription_payments.client_id)
         )
     ).all()
 
@@ -622,49 +646,40 @@ async def get_agent_revenue(
             client_id=cid,
             business_name=names.get(cid, ""),
             collected=round(float(collected or 0), 2),
-            master_owed=round(float(master_owed or 0), 2),
-            net=round(float(net or 0), 2),
             payments=int(cnt or 0),
         )
-        for cid, collected, master_owed, net, cnt in per_client_rows
+        for cid, collected, cnt in per_client_rows
     ]
 
     return AgentRevenueResponse(
         collected=round(float(totals[0] or 0), 2),
-        master_owed=round(float(totals[1] or 0), 2),
-        net=round(float(totals[2] or 0), 2),
-        payments=int(totals[3] or 0),
+        payments=int(totals[1] or 0),
         by_client=by_client,
     )
 
 
-# ---------- Periodic commission statements (RSL-02, ISSUE-055) ----------
+# ---------- Periodic subscription statements (the agent's own collections) ------
 class CommissionStatementLine(BaseModel):
-    """One client's contribution to a period statement. ``collected ==
-    master_owed + net`` by construction (the split reconciles)."""
+    """One client's contribution to a period statement (the agent's collections)."""
 
     client_id: int
     business_name: str
     collected: float
-    master_owed: float
-    net: float
     payments: int
 
 
 class CommissionStatement(BaseModel):
-    """An agent's commission for one billing period, broken down by client.
+    """An agent's subscription collections for one billing period, by client.
 
     ``period_start``/``period_end`` identify the billing window the underlying
-    payments covered; ``billing_cycle`` is monthly/yearly. The period totals are
-    the sum of ``by_client`` (which is the sum of the period's ledger rows), so a
-    statement always reconciles: ``collected == master_owed + net``."""
+    payments covered; ``billing_cycle`` is monthly/yearly. The period total is the
+    sum of ``by_client`` (the sum of the period's payment rows). This is entirely
+    the agent's revenue — the platform takes no cut (Rail 1 is separate)."""
 
     period_start: str
     period_end: str
     billing_cycle: str
     collected: float
-    master_owed: float
-    net: float
     payments: int
     by_client: List[CommissionStatementLine] = []
 
@@ -678,19 +693,21 @@ async def get_agent_commission_statements(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Agent: per-period commission statements from the split ledger (RSL-02).
+    """Agent: per-period subscription-collection statements from his merchants'
+    payments.
 
     One statement per (period_start, period_end) billing window, each with line
-    items by client, summing back to the underlying ``commission_ledger`` rows so
-    it reconciles. Aggregated in SQL (no load-everything, OPS-05) and scoped to
-    the caller's own agent rows — one agent can never see another agent's
-    statements (SEC-02). A client/master gets 403. Newest period first.
+    items by client, summing back to the underlying ``subscription_payments`` rows.
+    Aggregated in SQL (no load-everything, OPS-05) and scoped to the caller's own
+    clients — one agent can never see another agent's statements (SEC-02). A
+    client/master gets 403. Newest period first.
     """
     role_info = await get_user_role(db, str(current_user.id))
     if role_info["role"] != "agent":
         raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
 
     agent_id = role_info["entity_id"]
+    client_id_subq = select(Clients.id).where(Clients.agent_id == agent_id).scalar_subquery()
 
     # Aggregate to (period, client) in SQL; the period statement is the sum of its
     # client lines (built below). A null period_start degrades to "" so unstamped
@@ -698,21 +715,19 @@ async def get_agent_commission_statements(
     rows = (
         await db.execute(
             select(
-                func.coalesce(Commission_ledger.period_start, ""),
-                func.coalesce(Commission_ledger.period_end, ""),
-                func.coalesce(Commission_ledger.billing_cycle, ""),
-                Commission_ledger.client_id,
-                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
-                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
-                func.coalesce(func.sum(Commission_ledger.agent_net), 0.0),
-                func.count(Commission_ledger.id),
+                func.coalesce(Subscription_payments.period_start, ""),
+                func.coalesce(Subscription_payments.period_end, ""),
+                func.coalesce(Subscription_payments.billing_cycle, ""),
+                Subscription_payments.client_id,
+                func.coalesce(func.sum(Subscription_payments.amount), 0.0),
+                func.count(Subscription_payments.id),
             )
-            .where(Commission_ledger.agent_id == agent_id)
+            .where(Subscription_payments.client_id.in_(client_id_subq))
             .group_by(
-                Commission_ledger.period_start,
-                Commission_ledger.period_end,
-                Commission_ledger.billing_cycle,
-                Commission_ledger.client_id,
+                Subscription_payments.period_start,
+                Subscription_payments.period_end,
+                Subscription_payments.billing_cycle,
+                Subscription_payments.client_id,
             )
         )
     ).all()
@@ -729,9 +744,9 @@ async def get_agent_commission_statements(
             names[cid] = bname
 
     # Fold the (period, client) rows into one statement per period, accumulating
-    # the period totals as we attach each client line.
+    # the period total as we attach each client line.
     statements: dict = {}
-    for ps, pe, cycle, cid, collected, master_owed, net, cnt in rows:
+    for ps, pe, cycle, cid, collected, cnt in rows:
         key = (ps, pe, cycle)
         stmt = statements.get(key)
         if stmt is None:
@@ -740,28 +755,20 @@ async def get_agent_commission_statements(
                 period_end=pe,
                 billing_cycle=cycle,
                 collected=0.0,
-                master_owed=0.0,
-                net=0.0,
                 payments=0,
                 by_client=[],
             )
         line_collected = round(float(collected or 0), 2)
-        line_master = round(float(master_owed or 0), 2)
-        line_net = round(float(net or 0), 2)
         line_payments = int(cnt or 0)
         stmt.by_client.append(
             CommissionStatementLine(
                 client_id=cid,
                 business_name=names.get(cid, ""),
                 collected=line_collected,
-                master_owed=line_master,
-                net=line_net,
                 payments=line_payments,
             )
         )
         stmt.collected = round(stmt.collected + line_collected, 2)
-        stmt.master_owed = round(stmt.master_owed + line_master, 2)
-        stmt.net = round(stmt.net + line_net, 2)
         stmt.payments += line_payments
 
     # Newest period first (by period_start, then period_end).
@@ -773,11 +780,11 @@ async def get_agent_commission_statements(
 
 # ---------- Master platform economics (MA-08 / RSL-08 / RPT-09, F-023) ----------
 class AgentEconomics(BaseModel):
-    """One agent's contribution to the platform economics rollup (the master's
-    revenue-by-agent leaderboard). ``collected`` is gross subscription fees the
-    agent took from its merchants, ``master_owed`` the platform's share (the sum
-    of the commission ledger's ``master_cut``), ``net`` the agent's margin; ``mrr``
-    is the agent's normalized monthly recurring revenue across its active clients."""
+    """One agent's row in the master's leaderboard. ``collected`` is the GMV the
+    agent took from his own merchants (the agent's money, not ours); ``quota_paid``
+    is what the agent has paid the platform for his quota (Rail 1 — our revenue from
+    this agent); ``mrr`` is the agent's normalized monthly recurring revenue across
+    his active clients."""
 
     agent_id: int
     company_name: str
@@ -786,8 +793,7 @@ class AgentEconomics(BaseModel):
     active_clients: int
     mrr: float
     collected: float
-    master_owed: float
-    net: float
+    quota_paid: float
     payments: int
 
 
@@ -798,10 +804,11 @@ class MasterEconomicsResponse(BaseModel):
     active client subscriptions (a yearly plan contributes ``fee/12``); ``arr`` is
     ``mrr * 12``. ``churn_rate`` is the share of client subscriptions currently
     suspended (``churned_clients / total_clients``) — the only churn signal
-    derivable without a cancellation-timestamp history. ``collected`` is gross fees
-    settled platform-wide and ``platform_revenue`` the master's owed cut (sum of the
-    commission ledger's ``master_cut``). ``by_agent`` is the revenue-by-agent
-    leaderboard (RSL-08)."""
+    derivable without a cancellation-timestamp history. ``collected`` is the
+    platform-wide GMV the agents collected from their merchants (informational — it
+    is the agents' money, not ours); ``platform_revenue`` is the platform's OWN
+    revenue: the wholesale quota fees the agents paid us (sum of
+    ``agent_quota_payments``, Rail 1). ``by_agent`` is the leaderboard."""
 
     total_agents: int
     active_agents: int
@@ -860,20 +867,35 @@ async def get_master_economics(
     churned_clients = int(plat[2] or 0)
     mrr = round(float(plat[3] or 0.0), 2)
 
-    plat_ledger = (
-        await db.execute(
-            select(
-                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
-                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
-            )
-        )
-    ).one()
-    collected = round(float(plat_ledger[0] or 0.0), 2)
-    platform_revenue = round(float(plat_ledger[1] or 0.0), 2)
+    # GMV (agents' collections from their merchants — informational, the agents'
+    # money) and the platform's OWN revenue (the quota fees agents paid us, Rail 1).
+    collected = round(
+        float(
+            (
+                await db.execute(
+                    select(func.coalesce(func.sum(Subscription_payments.amount), 0.0))
+                )
+            ).scalar_one()
+            or 0.0
+        ),
+        2,
+    )
+    platform_revenue = round(
+        float(
+            (
+                await db.execute(
+                    select(func.coalesce(func.sum(Agent_quota_payments.amount), 0.0))
+                )
+            ).scalar_one()
+            or 0.0
+        ),
+        2,
+    )
 
     churn_rate = round(churned_clients / total_clients, 4) if total_clients else 0.0
 
-    # Per-agent breakdown (leaderboard): client counts/MRR by agent + ledger by agent.
+    # Per-agent breakdown (leaderboard): client counts/MRR by agent, the agent's
+    # merchant GMV (by joining payments to his clients), and his quota paid to us.
     client_rows = (
         await db.execute(
             select(
@@ -886,18 +908,29 @@ async def get_master_economics(
     ).all()
     clients_by_agent = {r[0]: r for r in client_rows}
 
-    ledger_rows = (
+    gmv_rows = (
         await db.execute(
             select(
-                Commission_ledger.agent_id,
-                func.coalesce(func.sum(Commission_ledger.gross), 0.0),
-                func.coalesce(func.sum(Commission_ledger.master_cut), 0.0),
-                func.coalesce(func.sum(Commission_ledger.agent_net), 0.0),
-                func.count(Commission_ledger.id),
-            ).group_by(Commission_ledger.agent_id)
+                Clients.agent_id,
+                func.coalesce(func.sum(Subscription_payments.amount), 0.0),
+                func.count(Subscription_payments.id),
+            )
+            .select_from(Subscription_payments)
+            .join(Clients, Clients.id == Subscription_payments.client_id)
+            .group_by(Clients.agent_id)
         )
     ).all()
-    ledger_by_agent = {r[0]: r for r in ledger_rows}
+    gmv_by_agent = {r[0]: r for r in gmv_rows}
+
+    quota_rows = (
+        await db.execute(
+            select(
+                Agent_quota_payments.agent_id,
+                func.coalesce(func.sum(Agent_quota_payments.amount), 0.0),
+            ).group_by(Agent_quota_payments.agent_id)
+        )
+    ).all()
+    quota_by_agent = {r[0]: float(r[1] or 0.0) for r in quota_rows}
 
     agents = (await db.execute(select(Agents).order_by(Agents.created_at.desc()))).scalars().all()
     active_agents = sum(1 for a in agents if a.is_active is not False)
@@ -905,7 +938,7 @@ async def get_master_economics(
     by_agent: List[AgentEconomics] = []
     for ag in agents:
         c = clients_by_agent.get(ag.id)
-        l = ledger_by_agent.get(ag.id)
+        g = gmv_by_agent.get(ag.id)
         by_agent.append(
             AgentEconomics(
                 agent_id=ag.id,
@@ -914,10 +947,9 @@ async def get_master_economics(
                 total_clients=int(c[1]) if c else 0,
                 active_clients=int(c[2]) if c else 0,
                 mrr=round(float(c[3]) if c else 0.0, 2),
-                collected=round(float(l[1]) if l else 0.0, 2),
-                master_owed=round(float(l[2]) if l else 0.0, 2),
-                net=round(float(l[3]) if l else 0.0, 2),
-                payments=int(l[4]) if l else 0,
+                collected=round(float(g[1]) if g else 0.0, 2),
+                quota_paid=round(quota_by_agent.get(ag.id, 0.0), 2),
+                payments=int(g[2]) if g else 0,
             )
         )
 
@@ -1616,9 +1648,9 @@ async def pay_client_subscription(
 ):
     """Client: pay the current subscription period (CL-04).
 
-    Records a payment in the ledger, advances ``next_billing_date`` by one
-    billing cycle, and marks the subscription active. (Stripe Connect via the
-    agent's gateway is the production path; this records the settled payment.)
+    Charges the merchant's card-on-file through the owning agent's Moyasar account
+    (Rail 2), records the payment, advances ``next_billing_date`` by one billing
+    cycle, and marks the subscription active.
     """
     merchant = await _client_for_current_user(db, str(current_user.id))
 
@@ -1627,9 +1659,9 @@ async def pay_client_subscription(
     period_start = now.date().isoformat()
     period_end = _advance_billing_date(now, cycle)
 
-    # CL-04: charge through the agent's Stripe Connect gateway when Stripe is
-    # configured; otherwise fall open to a manually-settled record. A real card
-    # decline aborts the payment (402) and does NOT advance the billing period.
+    # CL-04: charge the merchant's card on file through the owning agent's Moyasar
+    # account. A decline (or no agent key / no card) raises and aborts the payment
+    # (402) — the billing period is NOT advanced.
     from services.subscription_billing import (
         SubscriptionChargeError,
         apply_coupon,
@@ -1639,8 +1671,8 @@ async def pay_client_subscription(
     )
 
     # Trial (ISSUE-054): while the trial is still running the first charge is
-    # deferred — no payment, no commission row. The subscription sits in
-    # 'trialing' with its next billing date pinned to the trial end.
+    # deferred — no payment recorded. The subscription sits in 'trialing' with its
+    # next billing date pinned to the trial end.
     if is_in_trial(merchant.trial_end, now.date()):
         await db.execute(
             update(Clients)
@@ -1664,28 +1696,46 @@ async def pay_client_subscription(
         else round(float(fee), 2)
     )
 
-    agent_stripe_account = None
     agent_row = (
         await db.execute(select(Agents).where(Agents.id == merchant.agent_id))
     ).scalar_one_or_none()
-    if agent_row is not None:
-        agent_stripe_account = getattr(agent_row, "stripe_account_id", None)
+
+    # Resolve the owning agent's own Moyasar key + the merchant's stored card so the
+    # charge routes through the agent's account (Rail 2). Either missing fails the
+    # charge with a 402 (no silent free pass).
+    agent_moyasar_key = None
+    if agent_row is not None and getattr(agent_row, "moyasar_secret_key_enc", None):
+        from core.crypto import decrypt_secret
+
+        try:
+            agent_moyasar_key = decrypt_secret(agent_row.moyasar_secret_key_enc)
+        except Exception:
+            agent_moyasar_key = None
+    card_token = None
+    if getattr(merchant, "moyasar_card_token_enc", None):
+        from core.crypto import decrypt_secret
+
+        try:
+            card_token = decrypt_secret(merchant.moyasar_card_token_enc)
+        except Exception:
+            card_token = None
 
     from core.config import settings as _settings
 
     try:
         charge = await charge_subscription(
             amount=net_fee,
-            currency=str(getattr(_settings, "subscription_currency", "sar") or "sar"),
-            agent_stripe_account=agent_stripe_account,
+            currency=str(getattr(_settings, "subscription_currency", "SAR") or "SAR"),
+            agent_moyasar_key=agent_moyasar_key,
+            card_token=card_token,
             client_id=merchant.id,
             idempotency_key=f"sub-{merchant.id}-{period_start}",
         )
     except SubscriptionChargeError as exc:
         raise HTTPException(status_code=402, detail=f"Subscription payment failed: {exc}")
 
-    # Records the payment + a balanced commission row, advances billing, and
-    # clears any dunning state (status -> active). Shared with the dunning sweep.
+    # Records the payment, advances billing, and clears any dunning state
+    # (status -> active). Shared with the dunning sweep.
     await record_settled_payment(
         db,
         merchant=merchant,
@@ -2010,59 +2060,341 @@ async def run_dunning_sweep(
     return DunningRunResponse(**summary)
 
 
-# ---------- Stripe billing webhook (CL-05 auto-suspend on non-payment) ----------
-_FAILURE_EVENTS = {
-    "invoice.payment_failed",
-    "charge.failed",
-    "payment_intent.payment_failed",
-}
-_RECOVERY_EVENTS = {
-    "invoice.payment_succeeded",
-    "payment_intent.succeeded",
-}
+# ---------- Card-on-file + Moyasar account management ----------
+class SaveCardRequest(BaseModel):
+    """A reusable card token from moyasar.js (PAN never reaches us — PAY-09)."""
+
+    token: str
+    last4: Optional[str] = None
+    brand: Optional[str] = None
 
 
-@router.post("/billing/webhook")
-async def stripe_billing_webhook(request: Request, db: AsyncSession = Depends(get_db)):
-    """Stripe webhook: auto-suspend a client on a failed subscription charge.
+class SaveCardResponse(BaseModel):
+    saved: bool
+    card_last4: Optional[str] = None
+    card_brand: Optional[str] = None
 
-    Verifies the signature when ``STRIPE_WEBHOOK_SECRET`` is set (production); in
-    dev/test (no secret) the JSON body is parsed directly. A failed payment event
-    carrying ``metadata.client_id`` suspends that client (``is_active=False`` +
-    ``subscription_status='suspended'``), which blocks them at authentication
-    until they pay; a recovery event re-activates them.
+
+class SaveAgentMoyasarRequest(BaseModel):
+    """The agent's OWN Moyasar account credentials (Rail 2 — collects from his
+    merchants). The secret/webhook keys are stored encrypted; the publishable key
+    is browser-safe."""
+
+    secret_key: str
+    publishable_key: Optional[str] = None
+    webhook_secret: Optional[str] = None
+
+
+class SaveAgentMoyasarResponse(BaseModel):
+    saved: bool
+    valid: bool
+    detail: str
+    publishable_key: Optional[str] = None
+
+
+class QuotaPaymentLine(BaseModel):
+    amount: float
+    billing_cycle: Optional[str] = None
+    period_start: Optional[str] = None
+    period_end: Optional[str] = None
+    method: Optional[str] = None
+    reference: Optional[str] = None
+
+
+class QuotaStatusResponse(BaseModel):
+    quota_price: Optional[float] = None
+    quota_cycle: Optional[str] = None
+    quota_status: Optional[str] = None
+    next_quota_billing_date: Optional[str] = None
+    has_card: bool = False
+    card_last4: Optional[str] = None
+    card_brand: Optional[str] = None
+    has_moyasar_account: bool = False
+    moyasar_publishable_key: Optional[str] = None
+    payments: List[QuotaPaymentLine] = []
+
+
+async def _agent_for_current_user(db: AsyncSession, user_id: str) -> Agents:
+    agent = (
+        await db.execute(select(Agents).where(Agents.user_id == user_id))
+    ).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+    return agent
+
+
+@router.post("/agent/quota/card", response_model=SaveCardResponse)
+async def save_agent_quota_card(
+    data: SaveCardRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: store the card used to pay the platform for the quota (Rail 1).
+
+    The reusable token (from moyasar.js) is encrypted at rest; only the last4/brand
+    are kept in clear for display.
+    """
+    from core.crypto import encrypt_secret
+
+    agent = await _agent_for_current_user(db, str(current_user.id))
+    await db.execute(
+        update(Agents)
+        .where(Agents.id == agent.id)
+        .values(
+            quota_card_token_enc=encrypt_secret(data.token),
+            quota_card_last4=data.last4,
+            quota_card_brand=data.brand,
+        )
+    )
+    await db.commit()
+    return SaveCardResponse(saved=True, card_last4=data.last4, card_brand=data.brand)
+
+
+@router.post("/agent/quota/pay", response_model=QuotaStatusResponse)
+async def pay_agent_quota(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: pay / renew the current quota period through the platform's Moyasar
+    account (Rail 1). A decline returns 402 and does NOT advance the quota period.
+    """
+    from services.quota_billing import (
+        QuotaChargeError,
+        charge_quota,
+        record_quota_payment,
+    )
+
+    agent = await _agent_for_current_user(db, str(current_user.id))
+    fee = float(agent.quota_price or 0)
+    if fee <= 0:
+        raise HTTPException(status_code=400, detail="No quota fee is configured")
+
+    now = datetime.now(timezone.utc)
+    cycle = agent.quota_cycle or "monthly"
+    period_start = now.date().isoformat()
+    period_end = _advance_billing_date(now, cycle)
+    try:
+        charge = await charge_quota(agent, idempotency_key=f"quota-{agent.id}-{period_start}")
+    except QuotaChargeError as exc:
+        raise HTTPException(status_code=402, detail=f"Quota payment failed: {exc}")
+
+    await record_quota_payment(
+        db, agent, charge=charge, cycle=cycle, period_start=period_start, period_end=period_end
+    )
+    await db.commit()
+    await db.refresh(agent)
+    return await _quota_status_payload(db, agent)
+
+
+async def _quota_status_payload(db: AsyncSession, agent: Agents) -> QuotaStatusResponse:
+    rows = (
+        await db.execute(
+            select(Agent_quota_payments)
+            .where(Agent_quota_payments.agent_id == agent.id)
+            .order_by(Agent_quota_payments.id.desc())
+            .limit(50)
+        )
+    ).scalars().all()
+    return QuotaStatusResponse(
+        quota_price=agent.quota_price,
+        quota_cycle=agent.quota_cycle,
+        quota_status=agent.quota_status,
+        next_quota_billing_date=agent.next_quota_billing_date,
+        has_card=bool(agent.quota_card_token_enc),
+        card_last4=agent.quota_card_last4,
+        card_brand=agent.quota_card_brand,
+        has_moyasar_account=bool(agent.moyasar_secret_key_enc),
+        moyasar_publishable_key=agent.moyasar_publishable_key,
+        payments=[
+            QuotaPaymentLine(
+                amount=float(p.amount or 0),
+                billing_cycle=p.billing_cycle,
+                period_start=p.period_start,
+                period_end=p.period_end,
+                method=p.method,
+                reference=p.reference,
+            )
+            for p in rows
+        ],
+    )
+
+
+@router.get("/agent/quota", response_model=QuotaStatusResponse)
+async def get_agent_quota(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: quota status (price, cycle, next bill, card-on-file) + payment history."""
+    agent = await _agent_for_current_user(db, str(current_user.id))
+    return await _quota_status_payload(db, agent)
+
+
+@router.put("/agent/moyasar", response_model=SaveAgentMoyasarResponse)
+async def save_agent_moyasar(
+    data: SaveAgentMoyasarRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: connect / update his OWN Moyasar account used to collect subscriptions
+    from his merchants (Rail 2). The secret key is validated against Moyasar, then
+    stored encrypted. An invalid key is rejected (not saved).
+    """
+    from core.crypto import encrypt_secret
+    from services.payment_gateway import validate_moyasar_credentials
+
+    agent = await _agent_for_current_user(db, str(current_user.id))
+    valid, detail = await validate_moyasar_credentials(data.secret_key)
+    if not valid:
+        return SaveAgentMoyasarResponse(saved=False, valid=False, detail=detail)
+
+    values = {
+        "moyasar_secret_key_enc": encrypt_secret(data.secret_key),
+        "moyasar_publishable_key": data.publishable_key,
+    }
+    if data.webhook_secret:
+        values["moyasar_webhook_secret_enc"] = encrypt_secret(data.webhook_secret)
+    await db.execute(update(Agents).where(Agents.id == agent.id).values(**values))
+    await db.commit()
+    return SaveAgentMoyasarResponse(
+        saved=True, valid=True, detail="ok", publishable_key=data.publishable_key
+    )
+
+
+@router.post("/client/subscription/card", response_model=SaveCardResponse)
+async def save_client_subscription_card(
+    data: SaveCardRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: store the card used to pay their subscription (Rail 2 — charged via
+    the owning agent's Moyasar account). The reusable token is encrypted at rest.
+    """
+    from core.crypto import encrypt_secret
+
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    await db.execute(
+        update(Clients)
+        .where(Clients.id == merchant.id)
+        .values(
+            moyasar_card_token_enc=encrypt_secret(data.token),
+            card_last4=data.last4,
+            card_brand=data.brand,
+        )
+    )
+    await db.commit()
+    return SaveCardResponse(saved=True, card_last4=data.last4, card_brand=data.brand)
+
+
+# ---------- Moyasar billing webhooks (auto-suspend on non-payment) ----------
+# Moyasar fires an event with a top-level ``type`` and a ``data`` object carrying
+# the payment id/status/metadata; the configured ``secret_token`` is echoed in the
+# body for verification (set when the webhook is registered in Moyasar).
+_FAILURE_EVENTS = {"payment_failed", "payment_voided", "payment_abandoned"}
+_RECOVERY_EVENTS = {"payment_paid", "payment_captured"}
+
+
+def _parse_moyasar_event(payload: bytes) -> tuple[str, dict, Optional[str]]:
+    """Parse a Moyasar webhook body into ``(event_type, data, secret_token)``."""
+    try:
+        event = json.loads(payload or b"{}")
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
+    event_type = event.get("type") or ""
+    data = event.get("data") or {}
+    secret_token = event.get("secret_token")
+    return event_type, data, secret_token
+
+
+@router.post("/quota/webhook")
+async def quota_billing_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    """Platform Moyasar webhook (Rail 1): suspend/recover an AGENT on his quota
+    charge result.
+
+    Verifies the echoed ``secret_token`` against ``MOYASAR_WEBHOOK_SECRET`` when set
+    (production); with no secret configured (dev/test) the body is trusted. A failed
+    event carrying ``metadata.agent_id`` suspends that agent (``is_active=False`` +
+    ``quota_status='suspended'``) — which cascades to block his merchants at auth;
+    a recovery event re-activates him.
     """
     from core.config import settings as _settings
 
-    payload = await request.body()
-    secret = getattr(_settings, "stripe_webhook_secret", None)
-    if secret:
-        import stripe
+    event_type, data, secret_token = _parse_moyasar_event(await request.body())
+    expected = getattr(_settings, "moyasar_webhook_secret", None)
+    if expected and secret_token != expected:
+        raise HTTPException(status_code=400, detail="Invalid webhook secret")
 
-        sig = request.headers.get("stripe-signature", "")
+    agent_id = (data.get("metadata") or {}).get("agent_id")
+    try:
+        agent_id_int = int(agent_id)
+    except (TypeError, ValueError):
+        return {"received": True, "action": "ignored", "reason": "no agent_id"}
+
+    if event_type in _FAILURE_EVENTS:
+        await db.execute(
+            update(Agents)
+            .where(Agents.id == agent_id_int)
+            .values(is_active=False, quota_status="suspended")
+        )
+        await db.commit()
+        return {"received": True, "action": "suspended", "agent_id": agent_id_int}
+
+    if event_type in _RECOVERY_EVENTS:
+        await db.execute(
+            update(Agents)
+            .where(Agents.id == agent_id_int)
+            .values(is_active=True, quota_status="active", quota_dunning_attempts=0)
+        )
+        await db.commit()
+        return {"received": True, "action": "reactivated", "agent_id": agent_id_int}
+
+    return {"received": True, "action": "ignored", "event": event_type}
+
+
+@router.post("/billing/webhook/agent/{agent_id}")
+async def merchant_billing_webhook(
+    agent_id: int, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Per-agent Moyasar webhook (Rail 2): suspend/recover a MERCHANT on his
+    subscription charge result.
+
+    Each agent registers this URL (carrying his own agent id) in his Moyasar
+    dashboard. The echoed ``secret_token`` is verified against THAT agent's stored
+    webhook secret when set. A failed event carrying ``metadata.client_id`` suspends
+    that client; a recovery re-activates them. The client must belong to the agent
+    in the path (SEC-02) — a mismatched client_id is ignored.
+    """
+    event_type, data, secret_token = _parse_moyasar_event(await request.body())
+
+    agent = (
+        await db.execute(select(Agents).where(Agents.id == agent_id))
+    ).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    expected_enc = getattr(agent, "moyasar_webhook_secret_enc", None)
+    if expected_enc:
+        from core.crypto import decrypt_secret
+
         try:
-            event = stripe.Webhook.construct_event(payload, sig, secret)
+            expected = decrypt_secret(expected_enc)
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid webhook signature")
-        event_type = event.get("type")
-        data_object = event.get("data", {}).get("object", {})
-    else:
-        try:
-            event = json.loads(payload or b"{}")
-        except (ValueError, TypeError):
-            raise HTTPException(status_code=400, detail="Invalid webhook payload")
-        event_type = event.get("type")
-        data_object = (event.get("data") or {}).get("object", {})
+            expected = None
+        if expected and secret_token != expected:
+            raise HTTPException(status_code=400, detail="Invalid webhook secret")
 
-    metadata = data_object.get("metadata") or {}
-    client_id = metadata.get("client_id")
-    if not client_id:
-        return {"received": True, "action": "ignored", "reason": "no client_id"}
-
+    client_id = (data.get("metadata") or {}).get("client_id")
     try:
         client_id_int = int(client_id)
     except (TypeError, ValueError):
-        return {"received": True, "action": "ignored", "reason": "bad client_id"}
+        return {"received": True, "action": "ignored", "reason": "no client_id"}
+
+    # The client must be owned by the agent in the path (SEC-02).
+    client = (
+        await db.execute(
+            select(Clients).where(Clients.id == client_id_int, Clients.agent_id == agent_id)
+        )
+    ).scalar_one_or_none()
+    if client is None:
+        return {"received": True, "action": "ignored", "reason": "client not owned by agent"}
 
     if event_type in _FAILURE_EVENTS:
         await db.execute(

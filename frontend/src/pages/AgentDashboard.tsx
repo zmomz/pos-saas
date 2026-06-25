@@ -1,20 +1,23 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, type AgentRevenue, type CommissionStatement } from '@/lib/api';
+import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, getQuotaStatus, payQuota, saveQuotaCard, saveAgentMoyasarKeys, type AgentRevenue, type CommissionStatement, type QuotaStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/dashboard/Avatar';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
-import { Users, CreditCard, UserPlus, Palette, ShoppingBag, BarChart3, Box, Percent, Star, QrCode, Mail, Sliders, KeyRound, Store, BadgeCheck } from 'lucide-react';
+import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
+import { Users, CreditCard, UserPlus, Palette, ShoppingBag, BarChart3, Box, Percent, Star, QrCode, Mail, Sliders, KeyRound, Store, BadgeCheck, Wallet, Link2 } from 'lucide-react';
 
 interface ClientItem {
   id: number;
@@ -60,6 +63,15 @@ export default function AgentDashboard() {
   const [statementsError, setStatementsError] = useState(false);
   const [dunningBusy, setDunningBusy] = useState(false);
   const [dunningResult, setDunningResult] = useState<string | null>(null);
+  // Rail 1: the agent's quota (what the agent pays the platform).
+  const [quota, setQuota] = useState<QuotaStatus | null>(null);
+  const [quotaLoading, setQuotaLoading] = useState(true);
+  const [quotaError, setQuotaError] = useState(false);
+  const [payingQuota, setPayingQuota] = useState(false);
+  const [quotaCardOpen, setQuotaCardOpen] = useState(false);
+  // Rail 2: connect the agent's own Moyasar account.
+  const [moyasarForm, setMoyasarForm] = useState({ secret_key: '', publishable_key: '', webhook_secret: '' });
+  const [savingMoyasar, setSavingMoyasar] = useState(false);
   const navigate = useNavigate();
   const { t, language } = useLanguage();
 
@@ -67,7 +79,63 @@ export default function AgentDashboard() {
     loadData();
     loadRevenue();
     loadStatements();
+    loadQuota();
   }, []);
+
+  async function loadQuota() {
+    setQuotaLoading(true);
+    setQuotaError(false);
+    try {
+      setQuota(await getQuotaStatus());
+    } catch (err) {
+      console.error('Failed to load quota:', err);
+      setQuotaError(true);
+    } finally {
+      setQuotaLoading(false);
+    }
+  }
+
+  async function handleSaveQuotaCard(token: CardOnFileToken) {
+    await saveQuotaCard({ token: token.token, last4: token.last4, brand: token.brand });
+    await loadQuota();
+  }
+
+  async function handlePayQuota() {
+    setPayingQuota(true);
+    try {
+      setQuota(await payQuota());
+      toast.success(t('pay_renew_quota') || 'Quota paid');
+    } catch (err) {
+      console.error('Pay quota failed:', err);
+      toast.error(err instanceof Error ? err.message : (t('error') || 'Payment failed'));
+    } finally {
+      setPayingQuota(false);
+    }
+  }
+
+  async function handleSaveMoyasar(e: React.FormEvent) {
+    e.preventDefault();
+    setSavingMoyasar(true);
+    try {
+      const result = await saveAgentMoyasarKeys({
+        secret_key: moyasarForm.secret_key,
+        publishable_key: moyasarForm.publishable_key || undefined,
+        webhook_secret: moyasarForm.webhook_secret || undefined,
+      });
+      if (result.valid) {
+        toast.success(t('moyasar_saved_valid') || 'Moyasar account connected.');
+      } else {
+        toast.warning(result.detail || t('moyasar_saved_invalid') || 'Keys saved, but could not be verified.');
+      }
+      setMoyasarForm({ secret_key: '', publishable_key: '', webhook_secret: '' });
+      await loadQuota();
+    } catch (err) {
+      console.error('Save Moyasar keys failed:', err);
+      toast.error(err instanceof Error ? err.message : (t('moyasar_save_failed') || 'Could not save Moyasar keys.'));
+    } finally {
+      setSavingMoyasar(false);
+    }
+  }
 
   async function loadData() {
     try {
@@ -231,12 +299,12 @@ export default function AgentDashboard() {
   const panelClient = clients.find((c) => c.id === panelClientId) || clients[0] || null;
   const brandColor = branding?.primary_color || '#1488a6';
 
+  // The agent keeps 100% of his merchants' subscription revenue (no platform cut
+  // here — the platform's cut is the agent's quota, Rail 1). So there is no
+  // owed/net split anymore; the collected total is the agent's money.
   const collected = revenue?.collected ?? 0;
-  const owed = revenue?.master_owed ?? 0;
-  const net = revenue?.net ?? 0;
-  const netPct = collected > 0 ? Math.round((net / collected) * 100) : 0;
-  const owedPct = collected > 0 ? Math.round((owed / collected) * 100) : 0;
   const subsPct = clients.length > 0 ? Math.round((activeClients.length / clients.length) * 100) : 0;
+  const quotaFee = quota?.quota_price ?? 0;
   const hasRevenue = !!revenue && revenue.payments > 0;
 
   usePageChrome(
@@ -298,8 +366,8 @@ export default function AgentDashboard() {
               <div className="mt-1.5 text-[13px] text-white/65">{t('revenue_collected') || 'Collected'} · {activeClients.length} {t('active_subscriptions') || 'subscriptions'}</div>
             </div>
             <div className="text-end">
-              <div className="dxr-eyebrow">{t('revenue_net_margin') || 'Net margin'}</div>
-              <div className="mt-1 text-[28px] font-extrabold tabular-nums text-white">{netPct}%</div>
+              <div className="dxr-eyebrow">{t('subscription_payments') || 'Payments'}</div>
+              <div className="mt-1 text-[28px] font-extrabold tabular-nums text-white">{revenue?.payments ?? 0}</div>
             </div>
           </div>
 
@@ -316,16 +384,12 @@ export default function AgentDashboard() {
             ) : (
               <>
                 <div className="flex h-8 overflow-hidden rounded-[10px]">
-                  <div className="flex items-center bg-gradient-to-r from-brand-500 to-brand-600 px-3 text-[12px] font-extrabold text-white" style={{ width: `${netPct}%` }}>
-                    {t('revenue_net_margin') || 'Net'} · {formatMoney(net, language)}
-                  </div>
-                  <div className="flex items-center bg-gradient-to-r from-warning to-gold-600 px-3 text-[12px] font-extrabold text-warning-foreground" style={{ width: `${owedPct}%` }}>
-                    {t('revenue_platform_owed') || 'Owed'} · {formatMoney(owed, language)}
+                  <div className="flex items-center bg-gradient-to-r from-brand-500 to-brand-600 px-3 text-[12px] font-extrabold text-white" style={{ width: '100%' }}>
+                    {t('revenue_collected') || 'Collected'} · {formatMoney(collected, language)}
                   </div>
                 </div>
                 <div className="mt-2.5 flex gap-4 text-[12px] text-white/65">
-                  <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-brand-500" />{t('revenue_net_margin') || 'Net margin'}</span>
-                  <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-warning" />{t('revenue_platform_owed') || 'Owed to platform'}</span>
+                  <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-brand-500" />{t('revenue_collected') || 'Collected (your revenue)'}</span>
                 </div>
               </>
             )}
@@ -348,14 +412,14 @@ export default function AgentDashboard() {
           <div className="mt-auto text-[11.5px] text-muted-foreground">{activeClients.length} {t('active') || 'active'}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
-          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('revenue_net_margin') || 'Net Margin'}</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums text-success">{formatMoney(net, language)}</div>
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('revenue_collected') || 'Collected'}</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums text-success">{formatMoney(collected, language)}</div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('this_cycle') || 'this billing cycle'}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
-          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('revenue_platform_owed') || 'Owed to Platform'}</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums text-warning">{formatMoney(owed, language)}</div>
-          <div className="mt-auto text-[11.5px] text-muted-foreground">{t('due_to_master') || 'due to platform'}</div>
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('quota_fee') || 'Quota fee'}</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums text-warning">{formatMoney(quotaFee, language)}</div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">{quota?.quota_cycle ? (t(quota.quota_cycle) || quota.quota_cycle) : (t('due_to_master') || 'due to platform')}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
           <div className="text-[12.5px] font-semibold text-muted-foreground">{t('remaining_slots')}</div>
@@ -515,8 +579,7 @@ export default function AgentDashboard() {
                   <div className="text-sm font-semibold text-foreground">{stmt.period_start} <span className="text-muted-foreground">→</span> {stmt.period_end}</div>
                   <div className="flex items-center gap-4 text-[12.5px] tabular-nums">
                     <span className="text-muted-foreground">{t('revenue_collected') || 'Collected'}: <span className="font-semibold text-foreground">{formatMoney(stmt.collected, language)}</span></span>
-                    <span className="text-muted-foreground">{t('revenue_platform_owed') || 'Owed'}: <span className="font-semibold text-warning">{formatMoney(stmt.master_owed, language)}</span></span>
-                    <span className="text-muted-foreground">{t('revenue_net_margin') || 'Net'}: <span className="font-semibold text-success">{formatMoney(stmt.net, language)}</span></span>
+                    <span className="text-muted-foreground">{t('subscription_payments') || 'Payments'}: <span className="font-semibold text-foreground">{stmt.payments}</span></span>
                   </div>
                 </div>
                 <table className="w-full text-sm">
@@ -524,8 +587,7 @@ export default function AgentDashboard() {
                     <tr className="border-b border-border text-[12px] text-muted-foreground">
                       <th className="px-4 py-2 text-start font-medium">{t('client') || 'Client'}</th>
                       <th className="px-4 py-2 text-end font-medium">{t('revenue_collected') || 'Collected'}</th>
-                      <th className="px-4 py-2 text-end font-medium">{t('revenue_platform_owed') || 'Owed'}</th>
-                      <th className="px-4 py-2 text-end font-medium">{t('revenue_net_margin') || 'Net'}</th>
+                      <th className="px-4 py-2 text-end font-medium">{t('subscription_payments') || 'Payments'}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -533,8 +595,7 @@ export default function AgentDashboard() {
                       <tr key={line.client_id} className="border-b border-border last:border-0">
                         <td className="px-4 py-2 text-foreground">{line.business_name || `#${line.client_id}`}</td>
                         <td className="px-4 py-2 text-end tabular-nums text-foreground">{formatMoney(line.collected, language)}</td>
-                        <td className="px-4 py-2 text-end tabular-nums text-warning">{formatMoney(line.master_owed, language)}</td>
-                        <td className="px-4 py-2 text-end tabular-nums text-success">{formatMoney(line.net, language)}</td>
+                        <td className="px-4 py-2 text-end tabular-nums text-muted-foreground">{line.payments}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -545,7 +606,115 @@ export default function AgentDashboard() {
         )}
       </section>
 
+      {/* Billing: agent quota (Rail 1) + connect own Moyasar (Rail 2) */}
+      <div className="grid items-start gap-[18px] lg:grid-cols-2">
+        {/* Your quota (Rail 1 — what the agent pays the platform) */}
+        <section className="dxr-tile" data-testid="agent-quota">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-[16px] font-extrabold tracking-tight"><span className="dxr-sw dxr-sw-gold h-7 w-7"><Wallet className="h-4 w-4" /></span>{t('your_quota') || 'Your quota'}</h2>
+            {quota?.quota_status && (
+              <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold', quota.quota_status === 'active' ? 'bg-success/10 text-success' : quota.quota_status === 'suspended' ? 'bg-danger/10 text-danger' : 'bg-warning/15 text-warning')}>
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />{t(quota.quota_status) || quota.quota_status}
+              </span>
+            )}
+          </div>
+          {quotaLoading ? (
+            <div className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</div>
+          ) : quotaError ? (
+            <div role="alert" className="flex flex-col items-start gap-2">
+              <p className="text-sm text-danger">{t('quota_load_error') || 'Could not load quota status.'}</p>
+              <Button variant="outline" size="sm" onClick={loadQuota}>{t('retry') || 'Retry'}</Button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-end justify-between">
+                <div>
+                  <div className="text-xs text-muted-foreground">{t('quota_fee') || 'Quota fee'}</div>
+                  <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{formatMoney(quota?.quota_price ?? 0, language)}</div>
+                  <div className="text-[11.5px] text-muted-foreground">/ {quota?.quota_cycle ? (t(quota.quota_cycle) || quota.quota_cycle) : '—'}</div>
+                </div>
+                <div className="text-end">
+                  <div className="text-xs text-muted-foreground">{t('next_quota_payment') || 'Next quota payment'}</div>
+                  <div className="mt-1 font-semibold tabular-nums">{quota?.next_quota_billing_date ? formatDate(quota.next_quota_billing_date, language) : '—'}</div>
+                </div>
+              </div>
+
+              {/* Quota card-on-file (paid through the platform account) */}
+              <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+                <div className="flex items-center gap-2.5">
+                  <span className="dxr-sw dxr-sw-brand h-8 w-8"><CreditCard className="h-4 w-4" /></span>
+                  <div>
+                    <div className="text-[12.5px] font-semibold text-foreground">{t('card_on_file') || 'Card on file'}</div>
+                    {quota?.has_card ? (
+                      <div className="text-[11.5px] text-muted-foreground">•••• {quota.card_last4}{quota.card_brand ? ` · ${quota.card_brand}` : ''}</div>
+                    ) : (
+                      <div className="text-[11.5px] text-muted-foreground">{t('no_card_on_file') || 'No card on file'}</div>
+                    )}
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setQuotaCardOpen(true)}>
+                  {quota?.has_card ? (t('update') || 'Update') : (t('add_card') || 'Add card')}
+                </Button>
+              </div>
+
+              <Button onClick={handlePayQuota} disabled={payingQuota || !quota?.has_card || (quota?.quota_price ?? 0) <= 0} className="mt-3 w-full shadow-brand">
+                {payingQuota ? t('loading') : (t('pay_renew_quota') || 'Pay / renew quota')}
+              </Button>
+
+              {quota && quota.payments.length > 0 && (
+                <div className="mt-4 border-t border-border pt-3">
+                  <p className="mb-2 text-sm text-muted-foreground">{t('quota_payments') || 'Recent quota payments'}</p>
+                  <div className="space-y-1">
+                    {quota.payments.slice(0, 6).map((p, i) => (
+                      <div key={p.reference || i} className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">{p.period_start ? formatDate(p.period_start, language) : (p.billing_cycle ? (t(p.billing_cycle) || p.billing_cycle) : '—')}</span>
+                        <span className="font-semibold tabular-nums">{formatMoney(p.amount, language)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </section>
+
+        {/* Connect your Moyasar account (Rail 2 — collects from his merchants) */}
+        <section className="dxr-tile" data-testid="agent-moyasar">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="flex items-center gap-2 text-[16px] font-extrabold tracking-tight"><span className="dxr-sw dxr-sw-violet h-7 w-7"><Link2 className="h-4 w-4" /></span>{t('connect_moyasar') || 'Connect your Moyasar account'}</h2>
+            <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold', quota?.has_moyasar_account ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground')}>
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />{quota?.has_moyasar_account ? (t('account_connected') || 'Connected') : (t('not_connected') || 'Not connected')}
+            </span>
+          </div>
+          <p className="mb-3 text-sm text-muted-foreground">{t('moyasar_connect_hint') || 'Connect your own Moyasar account to collect subscription payments from your merchants.'}</p>
+          <form onSubmit={handleSaveMoyasar} className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="moyasar-secret">{t('moyasar_secret_key') || 'Secret key'}</Label>
+              <Input id="moyasar-secret" type="password" autoComplete="off" placeholder="sk_…" value={moyasarForm.secret_key} onChange={(e) => setMoyasarForm({ ...moyasarForm, secret_key: e.target.value })} required />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="moyasar-pub">{t('moyasar_publishable_key') || 'Publishable key'}</Label>
+              <Input id="moyasar-pub" autoComplete="off" placeholder="pk_…" value={moyasarForm.publishable_key} onChange={(e) => setMoyasarForm({ ...moyasarForm, publishable_key: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="moyasar-webhook">{t('moyasar_webhook_secret') || 'Webhook secret'}</Label>
+              <Input id="moyasar-webhook" type="password" autoComplete="off" value={moyasarForm.webhook_secret} onChange={(e) => setMoyasarForm({ ...moyasarForm, webhook_secret: e.target.value })} />
+            </div>
+            <Button type="submit" disabled={savingMoyasar || !moyasarForm.secret_key} className="w-full shadow-brand">
+              {savingMoyasar ? t('loading') : (t('connect_moyasar') || 'Connect account')}
+            </Button>
+          </form>
+        </section>
+      </div>
+
       {/* ===== Dialogs ===== */}
+      <CardOnFileDialog
+        open={quotaCardOpen}
+        onOpenChange={setQuotaCardOpen}
+        onSave={handleSaveQuotaCard}
+        titleKey="card_on_file"
+      />
+
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogTrigger asChild><span className="hidden" /></DialogTrigger>
         <DialogContent>

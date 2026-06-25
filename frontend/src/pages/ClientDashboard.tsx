@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
+import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, saveSubscriptionCard, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDate, currencyLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
+import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
 import {
   DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag,
-  BarChart3, Users, Download, AlertTriangle, ArrowRight, Receipt,
+  BarChart3, Users, Download, AlertTriangle, ArrowRight, Receipt, CreditCard,
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -34,6 +35,10 @@ export default function ClientDashboard() {
   const [brandName, setBrandName] = useState('');
   const [subscription, setSubscription] = useState<SubscriptionStatus | null>(null);
   const [paying, setPaying] = useState(false);
+  const [cardDialogOpen, setCardDialogOpen] = useState(false);
+  // SubscriptionStatus does not expose the saved card, so we reflect a just-saved
+  // card locally (Rail 2 — merchant card-on-file).
+  const [savedCard, setSavedCard] = useState<{ last4: string; brand: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const { t, language } = useLanguage();
@@ -59,6 +64,11 @@ export default function ClientDashboard() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSaveCard(token: CardOnFileToken) {
+    const result = await saveSubscriptionCard({ token: token.token, last4: token.last4, brand: token.brand });
+    setSavedCard({ last4: result.card_last4 || token.last4, brand: result.card_brand || token.brand });
   }
 
   async function handlePaySubscription() {
@@ -241,7 +251,24 @@ export default function ClientDashboard() {
                 <div className="mt-1 font-semibold tabular-nums">{subscription.next_billing_date ? formatDate(subscription.next_billing_date, language) : '—'}</div>
               </div>
             </div>
-            <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="mt-4 w-full shadow-brand">
+            {/* Payment method (Rail 2 — merchant card-on-file) */}
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+              <div className="flex items-center gap-2.5">
+                <span className="dxr-sw dxr-sw-brand h-8 w-8"><CreditCard className="h-4 w-4" /></span>
+                <div>
+                  <div className="text-[12.5px] font-semibold text-foreground">{t('payment_method') || 'Payment method'}</div>
+                  {savedCard ? (
+                    <div className="text-[11.5px] text-muted-foreground">•••• {savedCard.last4}{savedCard.brand ? ` · ${savedCard.brand}` : ''}</div>
+                  ) : (
+                    <div className="text-[11.5px] text-muted-foreground">{t('no_card_on_file') || 'No card on file'}</div>
+                  )}
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => setCardDialogOpen(true)}>
+                {savedCard ? (t('update') || 'Update') : (t('add_card') || 'Add card')}
+              </Button>
+            </div>
+            <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="mt-3 w-full shadow-brand">
               {paying ? t('loading') : (t('pay_now') || 'Pay now')}
             </Button>
             {subscription.payments.length > 0 && (
@@ -305,6 +332,13 @@ export default function ClientDashboard() {
           </div>
         </div>
       </div>
+
+      <CardOnFileDialog
+        open={cardDialogOpen}
+        onOpenChange={setCardDialogOpen}
+        onSave={handleSaveCard}
+        titleKey="payment_method"
+      />
     </div>
   );
 }

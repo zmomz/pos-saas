@@ -16,8 +16,10 @@ os.environ["JWT_SECRET_KEY"] = "test-secret-key-for-pytest-only"
 os.environ["ENVIRONMENT"] = "dev"
 os.environ["SKIP_INIT_ADMIN"] = "1"
 os.environ["ALLOW_REGISTRATION"] = "true"
-# Ensure no Stripe key leaks in from the developer environment.
-os.environ.pop("STRIPE_SECRET_KEY", None)
+# Ensure no payment-gateway keys leak in from the developer environment, so the
+# billing rails settle through the deterministic sandbox gateway under test.
+for _k in ("MOYASAR_API_KEY", "MOYASAR_WEBHOOK_SECRET", "GEIDEA_API_KEY"):
+    os.environ.pop(_k, None)
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402

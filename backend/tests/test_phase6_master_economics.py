@@ -101,7 +101,7 @@ async def test_master_economics_rollup_per_agent_and_mrr(client):
         client, agent_id=agent_id, fee=99.0, cycle="monthly", status="suspended"
     )
 
-    # The monthly client pays once -> one balanced commission row (master 8 / net 7).
+    # The monthly client pays once -> one subscription payment (the agent's GMV).
     assert (
         await client.post(
             "/api/v1/tenant/client/subscription/pay", headers=auth_headers(c_token)
@@ -126,12 +126,13 @@ async def test_master_economics_rollup_per_agent_and_mrr(client):
     assert row["total_clients"] == 3
     assert row["active_clients"] == 2
     assert row["mrr"] == 25.0
-    # The single settled payment produced one commission split (8 master / 7 net).
+    # The single settled payment is the agent's GMV; he has paid no quota fee yet.
     assert row["collected"] == 15.0
-    assert row["master_owed"] == 8.0
-    assert row["net"] == 7.0
+    assert row["quota_paid"] == 0.0
     assert row["payments"] == 1
 
+    # Platform's own revenue is the quota fees agents paid us (none here).
+    assert body["platform_revenue"] == 0.0
     # Platform MRR includes this agent's 25, and churn is in [0, 1].
     assert body["mrr"] >= 25.0
     assert 0.0 <= body["churn_rate"] <= 1.0
