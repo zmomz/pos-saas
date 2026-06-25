@@ -1054,7 +1054,10 @@ async def process_offline_sale(
 @router.get("/transactions", response_model=TransactionListResponse)
 async def list_transactions(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    # Cap aligned with the other list endpoints (e.g. discounts, le=2000) so
+    # dashboards that aggregate the full ledger client-side (ExpenseTracking
+    # revenue total) can pull a wide page in one request instead of 422-ing.
+    page_size: int = Query(20, ge=1, le=2000),
     branch_id: Optional[int] = Query(None, description="Filter to one branch (multi-branch)"),
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
