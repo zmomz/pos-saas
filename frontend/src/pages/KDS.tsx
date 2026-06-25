@@ -22,6 +22,7 @@ import {
   type KdsCard,
 } from '@/lib/api';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
+import { toast } from 'sonner';
 import { useLanguage } from '@/lib/i18n';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import {
@@ -187,6 +188,7 @@ export default function KDS() {
       await load();
     } catch (err) {
       console.error('Failed to create prep station:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -199,6 +201,7 @@ export default function KDS() {
       await bumpKdsTicket(card.id);
     } catch (err) {
       console.error(t('kds_bump_error'), err);
+      toast.error(t('kds_bump_error'));
       await load();
     }
   }
@@ -209,6 +212,7 @@ export default function KDS() {
       await load();
     } catch (err) {
       console.error(t('kds_recall_error'), err);
+      toast.error(t('kds_recall_error'));
     }
   }
 
@@ -218,6 +222,7 @@ export default function KDS() {
       await printEscPos(kot.kot_base64);
     } catch (err) {
       console.error('Failed to print KOT:', err);
+      toast.error(t('action_failed'));
     }
   }
 

@@ -2449,6 +2449,8 @@ export interface SubscriptionStatus {
   // Dunning state (CL-06): drive the client-facing overdue notice.
   dunning_attempts?: number;
   grace_deadline?: string;
+  // Rail 2: the owning agent's Moyasar publishable key for live card tokenization.
+  moyasar_publishable_key?: string | null;
   payments: SubscriptionPayment[];
 }
 
@@ -2751,16 +2753,6 @@ export async function getEscposReceipt(
 export async function getLoyaltyBalance(customerId: number) {
   const response = await client.apiCall.invoke({
     url: `/api/v1/production/loyalty/balance?customer_id=${customerId}`,
-    method: 'GET',
-    data: {},
-  });
-  return response.data;
-}
-
-// AI sales forecast (moving-average projection).
-export async function getSalesForecast(days = 30) {
-  const response = await client.apiCall.invoke({
-    url: `/api/v1/production/analytics/forecast?days=${days}`,
     method: 'GET',
     data: {},
   });

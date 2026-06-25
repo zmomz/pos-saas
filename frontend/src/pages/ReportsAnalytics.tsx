@@ -18,7 +18,7 @@ import StatTile from '@/components/dashboard/StatTile';
 import Bar from '@/components/dashboard/rx/Bar';
 
 interface SalesDataPoint {
-  date: string;
+  period: string;
   total_sales: number;
   transaction_count: number;
 }
@@ -26,7 +26,7 @@ interface SalesDataPoint {
 interface TopProduct {
   product_id: number;
   name: string;
-  total_quantity: number;
+  total_quantity_sold: number;
   total_revenue: number;
 }
 
@@ -558,7 +558,7 @@ export default function ReportsAnalytics() {
     setSalesError(false);
     try {
       const result = await getSalesSummary(period);
-      setSalesData(result?.data || []);
+      setSalesData(result?.items || []);
     } catch {
       // A failed fetch must not look like an empty period (UX-02).
       setSalesError(true);
@@ -573,7 +573,7 @@ export default function ReportsAnalytics() {
     setProductsError(false);
     try {
       const result = await getTopProducts(10);
-      setTopProducts(result?.products || []);
+      setTopProducts(result?.items || []);
     } catch {
       // A failed fetch must not look like "no products sold" (UX-02).
       setProductsError(true);
@@ -964,9 +964,9 @@ export default function ReportsAnalytics() {
               {salesData.map((point) => {
                 const barWidth = (point.total_sales / maxSales) * 100;
                 return (
-                  <div key={point.date} className="flex items-center gap-3">
+                  <div key={point.period} className="flex items-center gap-3">
                     <span className="text-xs text-muted-foreground w-24 shrink-0 truncate">
-                      {point.date}
+                      {point.period}
                     </span>
                     <Bar pct={barWidth} className="flex-1" />
                     <span className="text-xs text-foreground font-medium whitespace-nowrap tabular-nums w-28 text-end shrink-0">
@@ -1824,7 +1824,7 @@ export default function ReportsAnalytics() {
                     <TableCell>{rankBadge(idx + 1)}</TableCell>
                     <TableCell className="text-foreground font-medium">{product.name}</TableCell>
                     <TableCell className="text-foreground/90 text-end tabular-nums">
-                      {product.total_quantity}
+                      {product.total_quantity_sold}
                     </TableCell>
                     <TableCell className="text-foreground/90 text-end tabular-nums">
                       {formatMoney(product.total_revenue, language)}

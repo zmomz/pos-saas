@@ -27,6 +27,7 @@ import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import OfflineBanner from '@/components/states/OfflineBanner';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import { toast } from 'sonner';
 import { useLanguage } from '@/lib/i18n';
 import { CalendarClock, ListOrdered, Plus, Users, Armchair, X } from 'lucide-react';
 
@@ -139,6 +140,7 @@ export default function Reservations() {
       await load();
     } catch (err) {
       console.error('Failed to create reservation:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -150,6 +152,7 @@ export default function Reservations() {
       await load();
     } catch (err) {
       console.error('Failed to cancel reservation:', err);
+      toast.error(t('action_failed'));
     }
   }
 
@@ -165,6 +168,7 @@ export default function Reservations() {
       await load();
     } catch (err) {
       console.error('Failed to add to waitlist:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -176,6 +180,7 @@ export default function Reservations() {
       await load();
     } catch (err) {
       console.error('Failed to seat party:', err);
+      toast.error(t('action_failed'));
     }
   }
 
@@ -185,6 +190,7 @@ export default function Reservations() {
       await load();
     } catch (err) {
       console.error('Failed to cancel waitlist entry:', err);
+      toast.error(t('action_failed'));
     }
   }
 

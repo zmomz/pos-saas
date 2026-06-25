@@ -53,7 +53,7 @@ async def _set_mid_cycle(client_id: int, next_billing_date: str):
 
 @pytest.mark.asyncio
 async def test_upgrade_mid_cycle_charges_proration_then_bills_new_fee(client: AsyncClient):
-    from datetime import date, timedelta
+    from datetime import datetime, timedelta, timezone
 
     _agent, agent_token, agent_id = await make_agent_account(client)
     _cl, client_token, client_id = await make_client_under_agent(client, agent_id)
@@ -66,7 +66,12 @@ async def test_upgrade_mid_cycle_charges_proration_then_bills_new_fee(client: As
         json={"subscription_fee": 200.0, "billing_cycle": "monthly"},
     )
     assert resp.status_code == 200, resp.text
-    fifteen_days_out = (date(2026, 6, 14) + timedelta(days=15)).isoformat()
+    # Anchor to the actual current date so exactly 15 days of the 30-day cycle
+    # remain regardless of when the suite runs — the handler measures the unused
+    # remainder against today (UTC), not a fixed calendar date.
+    fifteen_days_out = (
+        datetime.now(timezone.utc).date() + timedelta(days=15)
+    ).isoformat()
     await _set_mid_cycle(client_id, fifteen_days_out)
 
     # Mid-cycle upgrade to 300 -> prorated charge of (300-200)*15/30 = +50.
@@ -92,7 +97,7 @@ async def test_upgrade_mid_cycle_charges_proration_then_bills_new_fee(client: As
 
 @pytest.mark.asyncio
 async def test_downgrade_mid_cycle_records_a_proration_credit(client: AsyncClient):
-    from datetime import date, timedelta
+    from datetime import datetime, timedelta, timezone
 
     _agent, agent_token, agent_id = await make_agent_account(client)
     _cl, _client_token, client_id = await make_client_under_agent(client, agent_id)
@@ -104,7 +109,12 @@ async def test_downgrade_mid_cycle_records_a_proration_credit(client: AsyncClien
         json={"subscription_fee": 300.0, "billing_cycle": "monthly"},
     )
     assert resp.status_code == 200, resp.text
-    fifteen_days_out = (date(2026, 6, 14) + timedelta(days=15)).isoformat()
+    # Anchor to the actual current date so exactly 15 days of the 30-day cycle
+    # remain regardless of when the suite runs — the handler measures the unused
+    # remainder against today (UTC), not a fixed calendar date.
+    fifteen_days_out = (
+        datetime.now(timezone.utc).date() + timedelta(days=15)
+    ).isoformat()
     await _set_mid_cycle(client_id, fifteen_days_out)
 
     # Mid-cycle downgrade 300 -> 100 -> prorated credit of (100-300)*15/30 = -100.

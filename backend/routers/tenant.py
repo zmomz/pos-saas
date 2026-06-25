@@ -1551,6 +1551,10 @@ class SubscriptionResponse(BaseModel):
     # deadline drive the client-facing PRN-09 overdue notice.
     dunning_attempts: int = 0
     grace_deadline: Optional[str] = None
+    # Rail 2 (merchant→agent): the owning agent's Moyasar publishable key, so the
+    # client can tokenize a card against the agent's Moyasar account. None when the
+    # agent has not configured Moyasar — the card dialog then stays in sandbox mode.
+    moyasar_publishable_key: Optional[str] = None
     payments: List[SubscriptionPaymentItem] = []
 
 
@@ -1606,6 +1610,14 @@ async def _subscription_payload(db: AsyncSession, merchant: Clients) -> Subscrip
             .limit(24)
         )
     ).scalars().all()
+    # Rail 2: surface the owning agent's Moyasar publishable key so the merchant's
+    # card-on-file dialog tokenizes against the agent's Moyasar account (live) rather
+    # than falling back to a sandbox token. Only the publishable key is exposed.
+    agent_publishable_key = (
+        await db.execute(
+            select(Agents.moyasar_publishable_key).where(Agents.id == merchant.agent_id)
+        )
+    ).scalar_one_or_none()
     return SubscriptionResponse(
         client_id=merchant.id,
         business_name=merchant.business_name,
@@ -1616,6 +1628,7 @@ async def _subscription_payload(db: AsyncSession, merchant: Clients) -> Subscrip
         is_active=merchant.is_active if merchant.is_active is not None else True,
         dunning_attempts=int(merchant.dunning_attempts or 0),
         grace_deadline=merchant.grace_deadline,
+        moyasar_publishable_key=agent_publishable_key,
         payments=[
             SubscriptionPaymentItem(
                 id=p.id,

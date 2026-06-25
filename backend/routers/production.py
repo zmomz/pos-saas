@@ -42,7 +42,6 @@ from models.loyalty_transactions import Loyalty_transactions  # noqa: F401
 from models.webhook_deliveries import Webhook_deliveries  # noqa: F401
 from models.customers import Customers  # noqa: F401
 from services.production import (
-    AnalyticsService,
     BulkImportService,
     EmailService,
     LowStockChecker,
@@ -1773,23 +1772,6 @@ async def sync_offline_transactions(
         queued_transactions=data.transactions,
     )
     return result
-
-
-# =============================================================================
-# Analytics Endpoint
-# =============================================================================
-@router.get("/analytics/forecast")
-async def get_sales_forecast(
-    days: int = Query(default=30, ge=1, le=90, description="Days to forecast"),
-    current_user: UserResponse = Depends(get_current_user),
-    owner_id: str = Depends(get_owner_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """AI-powered sales forecast."""
-    forecast = await AnalyticsService.get_sales_forecast(
-        db=db, user_id=owner_id, days_ahead=days
-    )
-    return forecast
 
 
 # =============================================================================

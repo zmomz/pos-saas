@@ -22,6 +22,7 @@ import {
   type FloorZone,
   type RestaurantTable,
 } from '@/lib/api';
+import { toast } from 'sonner';
 import { useLanguage } from '@/lib/i18n';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { UtensilsCrossed, Plus, Users, AlertTriangle, Lock, ShoppingBag } from 'lucide-react';
@@ -116,6 +117,7 @@ export default function FloorMap() {
       await load();
     } catch (err) {
       console.error('Failed to create table:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -130,6 +132,7 @@ export default function FloorMap() {
       await load();
     } catch (err) {
       console.error('Failed to create zone:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -149,6 +152,7 @@ export default function FloorMap() {
       await load();
     } catch (err) {
       console.error('Failed to open order:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -168,6 +172,7 @@ export default function FloorMap() {
       navigate(`/floor/ticket/${ticket.id}`);
     } catch (err) {
       console.error('Failed to start order:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }

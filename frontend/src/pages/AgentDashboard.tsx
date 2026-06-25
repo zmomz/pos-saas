@@ -712,6 +712,7 @@ export default function AgentDashboard() {
         open={quotaCardOpen}
         onOpenChange={setQuotaCardOpen}
         onSave={handleSaveQuotaCard}
+        publishableKey={quota?.moyasar_publishable_key}
         titleKey="card_on_file"
       />
 

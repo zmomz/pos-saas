@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { getNotifications } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage, languageOptions, Language } from '@/lib/i18n';
@@ -37,6 +38,12 @@ import {
   Printer,
   CreditCard,
   Store,
+  Clock,
+  Truck,
+  FileText,
+  Star,
+  GitBranch,
+  Webhook,
 } from 'lucide-react';
 
 type UserRole = 'master' | 'agent' | 'client';
@@ -76,16 +83,22 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: FolderTree, label: 'categories', path: '/categories' },
     { icon: Package, label: 'catalog_modifiers', path: '/catalog-modifiers' },
     { icon: UserCheck, label: 'customers', path: '/customers' },
+    { icon: Star, label: 'loyalty', path: '/loyalty' },
     { icon: Users, label: 'staff', path: '/staff' },
+    { icon: Clock, label: 'shifts', path: '/shifts' },
+    { icon: Truck, label: 'suppliers', path: '/suppliers' },
+    { icon: FileText, label: 'quotations', path: '/quotations' },
     { icon: Receipt, label: 'expenses', path: '/expenses' },
     { icon: Tag, label: 'discounts', path: '/discounts' },
     { icon: Gift, label: 'gift_cards', path: '/gift-cards' },
+    { icon: GitBranch, label: 'branches', path: '/branches' },
     { icon: Printer, label: 'printers', path: '/printers' },
     { icon: CreditCard, label: 'devices', path: '/devices' },
     { icon: Receipt, label: 'receipt_template', path: '/receipt-template' },
     { icon: Store, label: 'store_settings', path: '/store-settings' },
     { icon: BarChart3, label: 'reports', path: '/reports' },
     { icon: Globe, label: 'online_orders', path: '/channels' },
+    { icon: Webhook, label: 'webhooks', path: '/webhooks' },
     { icon: ShieldCheck, label: 'zatca_status', path: '/zatca' },
     { icon: Shield, label: 'audit_log', path: '/audit' },
     { icon: Bell, label: 'notifications', path: '/notifications' },
@@ -123,6 +136,24 @@ const Shell: React.FC = () => {
   const chrome = useShellChrome();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
+  // Real unread-notification count drives the bell's indicator dot. Fetched once
+  // on mount; a failed fetch leaves it at 0 (no dot) rather than showing a fake
+  // unread state. The backend /notifications/list response carries unread_count.
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    getNotifications()
+      .then((data) => {
+        if (active) setUnreadCount(Number(data?.unread_count) || 0);
+      })
+      .catch(() => {
+        /* leave at 0 — never surface a fake unread indicator */
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const userRole = (user?.role as UserRole) || 'client';
   const navItems = navConfig[userRole] || navConfig.client;
@@ -308,7 +339,9 @@ const Shell: React.FC = () => {
             className="relative flex h-11 w-11 items-center justify-center rounded-[14px] border border-input bg-card text-muted-foreground shadow-sm transition-colors hover:border-brand hover:text-brand-700"
           >
             <Bell className="h-[18px] w-[18px]" />
-            <span className="absolute end-2.5 top-2.5 h-2 w-2 rounded-full bg-danger ring-2 ring-card" />
+            {unreadCount > 0 && (
+              <span className="absolute end-2.5 top-2.5 h-2 w-2 rounded-full bg-danger ring-2 ring-card" />
+            )}
           </button>
 
           {chrome.primaryAction}

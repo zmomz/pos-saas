@@ -443,8 +443,6 @@ export default function MasterDashboard() {
             center={`${activeAgents}/${totalAgents}`}
             caption={tt('agents_online', 'agents online')}
           />
-          <div className="mt-3.5 flex items-center justify-between text-[12px]"><span className="text-muted-foreground">{tt('uptime_30d', 'Uptime 30d')}</span><b className="tabular-nums">99.98%</b></div>
-          <Bar pct={99.98} className="mt-1.5" />
         </section>
       </div>
 

@@ -12,6 +12,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { client } from '@/lib/api';
+import { toast } from 'sonner';
 import { useLanguage } from '@/lib/i18n';
 import { formatDateTime } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
@@ -170,6 +171,7 @@ export default function WebhookManagement() {
       await loadData();
     } catch (err) {
       console.error('Failed to create webhook:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -194,6 +196,7 @@ export default function WebhookManagement() {
       await loadData();
     } catch (err) {
       console.error('Failed to update webhook:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -209,6 +212,7 @@ export default function WebhookManagement() {
       await loadData();
     } catch (err) {
       console.error('Failed to delete webhook:', err);
+      toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -224,6 +228,7 @@ export default function WebhookManagement() {
       });
     } catch (err) {
       console.error('Test failed:', err);
+      toast.error(t('action_failed'));
     } finally {
       setTimeout(() => setTesting(null), 2000);
     }

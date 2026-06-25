@@ -337,6 +337,7 @@ export default function ClientDashboard() {
         open={cardDialogOpen}
         onOpenChange={setCardDialogOpen}
         onSave={handleSaveCard}
+        publishableKey={subscription?.moyasar_publishable_key}
         titleKey="payment_method"
       />
     </div>
