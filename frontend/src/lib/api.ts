@@ -1,4 +1,4 @@
-import { createClient, uploadMultipart, getBlob, getToken } from './apiClient';
+import { createClient, uploadMultipart, getBlob, getText, getToken } from './apiClient';
 import { getAPIBaseURL } from './config';
 
 export const client = createClient();
@@ -2695,6 +2695,14 @@ export async function deleteQuotation(id: string) {
 // Always-Arabic quotation document (print-to-PDF ready).
 export function quotationDocumentPath(quotationId: number): string {
   return `/api/v1/entities/quotations/${quotationId}/document`;
+}
+
+// FE-11: fetch the always-Arabic quotation document through the shared client
+// (getBlob → the auth-refresh interceptor) and return its HTML. getBlob rejects
+// on a non-2xx status, so the caller surfaces the error instead of writing the
+// backend's error page into a new tab (the old bare-fetch path did neither).
+export async function getQuotationDocument(quotationId: number): Promise<string> {
+  return getText(quotationDocumentPath(quotationId));
 }
 
 // ISSUE-056: move a quotation along its lifecycle (draft → sent → accepted →

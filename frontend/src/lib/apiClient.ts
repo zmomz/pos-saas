@@ -218,6 +218,17 @@ export async function getBlob(url: string): Promise<Blob> {
   return res.data as Blob;
 }
 
+/**
+ * GET a text response (e.g. a server-rendered HTML document) as a string, with
+ * auth attached and routed through the shared response interceptor (so a 401
+ * triggers a silent refresh + replay, and a non-2xx status rejects). Used for
+ * the always-Arabic printable documents that are written into a print window.
+ */
+export async function getText(url: string): Promise<string> {
+  const res = await http.get(url, { responseType: 'text' });
+  return res.data as string;
+}
+
 /** POST a multipart/form-data upload (e.g. AG-01 agent logo). Returns the body. */
 export async function uploadMultipart<T = unknown>(url: string, file: File, field = 'file'): Promise<T> {
   const form = new FormData();

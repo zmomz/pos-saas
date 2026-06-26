@@ -14,9 +14,8 @@ import {
   createQuotation,
   deleteQuotation,
   convertQuotation,
-  quotationDocumentPath,
+  getQuotationDocument,
 } from '@/lib/api';
-import { getAPIBaseURL } from '@/lib/config';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
@@ -144,15 +143,13 @@ export default function QuotationManagement() {
     }
   }
 
-  // The quotation document is always-Arabic and requires auth, so fetch it with
-  // the bearer token and open the HTML in a new tab (rather than a bare link).
+  // FE-11: the quotation document is always-Arabic and requires auth. Fetch it
+  // through the shared API client (auth + the 401 refresh/replay interceptor),
+  // which rejects on a non-2xx status — so a failure surfaces a toast instead of
+  // writing the backend's error HTML into a new tab.
   async function openDocument(id: number) {
     try {
-      const token = localStorage.getItem('pos_auth_token');
-      const resp = await fetch(`${getAPIBaseURL()}${quotationDocumentPath(id)}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      const html = await resp.text();
+      const html = await getQuotationDocument(id);
       const win = window.open('', '_blank');
       if (win) {
         win.document.open();
@@ -161,6 +158,7 @@ export default function QuotationManagement() {
       }
     } catch (err) {
       console.error('Failed to open quotation document:', err);
+      toast.error(t('open_document_failed'));
     }
   }
 
@@ -272,7 +270,7 @@ export default function QuotationManagement() {
                       {t('convert_to_sale')}
                     </Button>
                   )}
-                  <Button size="sm" variant="outline" onClick={() => openDocument(q.id)}>
+                  <Button size="sm" variant="outline" aria-label={t('view_document')} onClick={() => openDocument(q.id)}>
                     <Eye className="w-4 h-4" />
                   </Button>
                   <Button size="sm" variant="destructive" onClick={() => handleDelete(q.id)}>
