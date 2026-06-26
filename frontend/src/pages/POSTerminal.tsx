@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -212,6 +212,18 @@ export default function POSTerminal() {
 
   // POS-06: live camera barcode scanning via the BarcodeDetector API.
   const [cameraScanning, setCameraScanning] = useState(false);
+  // FE-07: the scanner spins up a requestAnimationFrame loop, a 20s auto-stop
+  // timeout and a getUserMedia MediaStream. Track each in a ref so we can tear
+  // them all down on unmount (and on scan end) — otherwise the device camera
+  // keeps running and a stale setState fires on an unmounted component.
+  const cameraRafRef = useRef<number | null>(null);
+  const cameraTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  // Mirrors the live scan intent so the async getUserMedia continuation can tell
+  // it was toggled off mid-await (the captured `cameraScanning` state is stale).
+  const cameraScanningRef = useRef(false);
+  const isMountedRef = useRef(true);
 
   // POS-02: split-tender payment. When enabled the cashier allocates the total
   // across multiple methods; the per-method amounts are sent as payments[].
@@ -532,10 +544,46 @@ export default function POSTerminal() {
     setPriceCheckResult({ found: false });
   }
 
+  // FE-07: tear down every live camera-scan resource — the RAF loop, the 20s
+  // auto-stop timer and the MediaStream tracks — and null the refs so the loop
+  // exits on its next guard check. Idempotent: safe to call on scan end, on
+  // toggle-off, and again on unmount.
+  function stopCameraScan() {
+    cameraScanningRef.current = false;
+    if (cameraRafRef.current != null) {
+      cancelAnimationFrame(cameraRafRef.current);
+      cameraRafRef.current = null;
+    }
+    if (cameraTimeoutRef.current != null) {
+      clearTimeout(cameraTimeoutRef.current);
+      cameraTimeoutRef.current = null;
+    }
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((tr) => tr.stop());
+      cameraStreamRef.current = null;
+    }
+    if (cameraVideoRef.current) {
+      cameraVideoRef.current.srcObject = null;
+      cameraVideoRef.current = null;
+    }
+  }
+
+  // FE-07: stop the camera and cancel all timers when the page unmounts so the
+  // device camera never stays on after navigating away and no setState fires on
+  // an unmounted component.
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      stopCameraScan();
+    };
+  }, []);
+
   // Camera barcode scanning via the native BarcodeDetector API (POS-06). Falls
   // back gracefully with a message when the browser/device doesn't support it.
   async function toggleCameraScan() {
     if (cameraScanning) {
+      stopCameraScan();
       setCameraScanning(false);
       return;
     }
@@ -544,37 +592,59 @@ export default function POSTerminal() {
       setBarcodeMessage({ text: `✕ ${tt('camera_scan_unsupported', 'Camera scanning not supported on this device')}`, type: 'error' });
       return;
     }
+    cameraScanningRef.current = true;
     setCameraScanning(true);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      // The user may have toggled off or the page unmounted while we awaited the
+      // camera permission — bail and release the stream we just acquired.
+      if (!isMountedRef.current || !cameraScanningRef.current) {
+        stream.getTracks().forEach((tr) => tr.stop());
+        return;
+      }
       const video = document.createElement('video');
       video.srcObject = stream;
       await video.play();
+      if (!isMountedRef.current || !cameraScanningRef.current) {
+        stream.getTracks().forEach((tr) => tr.stop());
+        video.srcObject = null;
+        return;
+      }
+      cameraStreamRef.current = stream;
+      cameraVideoRef.current = video;
       const detector = new DetectorCtor({ formats: ['ean_13', 'code_128', 'qr_code', 'upc_a'] });
-      const stop = () => stream.getTracks().forEach((tr) => tr.stop());
+      // End the scan: free all resources, then reflect the off state (only if we
+      // are still mounted, so we never setState after unmount).
+      const finish = () => {
+        stopCameraScan();
+        if (isMountedRef.current) setCameraScanning(false);
+      };
       const tick = async () => {
-        if (!video.srcObject) return;
+        if (!cameraStreamRef.current) return;
         try {
           const codes = await detector.detect(video);
           if (codes.length > 0) {
             if (priceCheckMode) {
               // ISSUE-076: a scan in price-check mode looks up price/stock only.
               await lookupPriceStock(codes[0].rawValue);
-              stop(); setCameraScanning(false); return;
+              finish(); return;
             }
             const found = await lookupAndAdd(codes[0].rawValue);
-            if (found) { stop(); setCameraScanning(false); return; }
+            if (found) { finish(); return; }
           }
         } catch { /* transient frame error */ }
-        if (video.srcObject) requestAnimationFrame(tick);
+        // Reschedule only while the stream is still live (cleared by stopCameraScan).
+        if (cameraStreamRef.current) cameraRafRef.current = requestAnimationFrame(tick);
       };
-      // Stop when the user toggles off: clearing srcObject ends the loop.
-      requestAnimationFrame(tick);
+      cameraRafRef.current = requestAnimationFrame(tick);
       // Auto-stop after 20s so the camera never stays on indefinitely.
-      setTimeout(() => { stop(); video.srcObject = null; setCameraScanning(false); }, 20000);
+      cameraTimeoutRef.current = setTimeout(finish, 20000);
     } catch {
-      setBarcodeMessage({ text: `✕ ${tt('camera_access_failed', 'Could not access the camera')}`, type: 'error' });
-      setCameraScanning(false);
+      stopCameraScan();
+      if (isMountedRef.current) {
+        setBarcodeMessage({ text: `✕ ${tt('camera_access_failed', 'Could not access the camera')}`, type: 'error' });
+        setCameraScanning(false);
+      }
     }
   }
 
