@@ -8,6 +8,7 @@ read/write is scoped to the caller's owner ``user_id`` (SEC-02).
 """
 import logging
 from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,25 +26,49 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
 
+class PaperSize(str, Enum):
+    """Thermal roll widths the ESC/POS renderer can lay out (ARC-11).
+
+    These mirror ``services.escpos._PAPER_WIDTH_PX``; an unknown size used to be
+    accepted here and then silently fall back to 80mm at print time, so the
+    merchant never learned their choice was unsupported. Rejected at the edge now."""
+    mm80 = "80mm"
+    mm58 = "58mm"
+
+
+class PrinterStatus(str, Enum):
+    """Whether the resolver treats a registered printer as routable (ARC-11).
+
+    Only ``active`` printers are picked by ``resolve_printer``; ``inactive`` is a
+    soft-disable. Any other status used to be stored verbatim and then never
+    matched the ``status == "active"`` filter — silently unroutable."""
+    active = "active"
+    inactive = "inactive"
+
+
 class PrinterData(BaseModel):
+    model_config = {"use_enum_values": True}
+
     name: str
     role: str = "receipt"
     station_id: Optional[int] = None
     device_id: Optional[str] = None
-    paper_size: Optional[str] = None
+    paper_size: Optional[PaperSize] = None
     is_default: Optional[bool] = None
     client_id: Optional[int] = None
-    status: Optional[str] = "active"
+    status: Optional[PrinterStatus] = PrinterStatus.active
 
 
 class PrinterUpdateData(BaseModel):
+    model_config = {"use_enum_values": True}
+
     name: Optional[str] = None
     role: Optional[str] = None
     station_id: Optional[int] = None
     device_id: Optional[str] = None
-    paper_size: Optional[str] = None
+    paper_size: Optional[PaperSize] = None
     is_default: Optional[bool] = None
-    status: Optional[str] = None
+    status: Optional[PrinterStatus] = None
 
 
 class PrinterResponse(BaseModel):

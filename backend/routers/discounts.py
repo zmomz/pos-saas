@@ -1,5 +1,6 @@
 import json
 import logging
+from enum import Enum
 from typing import List, Optional
 
 from datetime import datetime, date
@@ -26,10 +27,22 @@ router = APIRouter(prefix="/api/v1/entities/discounts", tags=["discounts"])
 
 
 # ---------- Pydantic Schemas ----------
+class DiscountType(str, Enum):
+    """The discount kinds the pricing engine understands (ARC-11).
+
+    ``percentage`` applies ``value`` % of the subtotal; ``fixed`` applies a flat
+    ``value``. Any other string used to be silently treated as ``fixed`` and so
+    failed quietly — Pydantic now rejects an unknown type at the edge (422)."""
+    percentage = "percentage"
+    fixed = "fixed"
+
+
 class DiscountsData(BaseModel):
     """Entity data schema (for create/update)"""
+    model_config = {"use_enum_values": True}
+
     code: str
-    type: str
+    type: DiscountType
     value: float
     min_purchase: float = None
     is_active: bool = None
@@ -42,8 +55,10 @@ class DiscountsData(BaseModel):
 
 class DiscountsUpdateData(BaseModel):
     """Update entity data (partial updates allowed)"""
+    model_config = {"use_enum_values": True}
+
     code: Optional[str] = None
-    type: Optional[str] = None
+    type: Optional[DiscountType] = None
     value: Optional[float] = None
     min_purchase: Optional[float] = None
     is_active: Optional[bool] = None
