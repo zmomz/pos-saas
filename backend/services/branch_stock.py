@@ -8,7 +8,7 @@ import logging
 from typing import Dict, List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.product_branch_stock import Product_branch_stock
@@ -63,11 +63,12 @@ async def deduct_branch_inventory(
     Raises HTTPException(400) on insufficient branch stock unless overselling is
     allowed. Unknown/ad-hoc product lines are skipped.
     """
-    requested: Dict[int, int] = {}
+    requested: Dict[int, float] = {}
     for item in items:
         requested[item.product_id] = requested.get(item.product_id, 0) + item.quantity
 
     for product_id, qty in requested.items():
+        qty = float(qty)
         product = (
             await db.execute(
                 select(Products).where(
@@ -78,20 +79,36 @@ async def deduct_branch_inventory(
         if not product:
             continue
 
+        # Ensure the branch-stock row exists (seeded from the product's client-level
+        # quantity the first time this branch transacts the product).
         row = await get_or_init_row(db, user_id, client_id, branch_id, product)
-        available = row.quantity or 0
-        if not allow_negative_stock and available < qty:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Insufficient stock for '{product.name}' at this branch: "
-                    f"requested {qty}, available {available}"
-                ),
-            )
-        new_qty = available - qty
+
+        # DAT-02: decrement with one conditional UPDATE on the branch-stock row
+        # (mirrors DAT-01 on Products). The ``quantity >= qty`` guard (dropped when
+        # overselling is allowed) makes the check-and-decrement a single atomic
+        # statement, so N concurrent branch sales on stock=K let exactly K succeed —
+        # no read-check-write oversell race. COALESCE treats a NULL on-hand as 0.
+        stmt = (
+            update(Product_branch_stock)
+            .where(Product_branch_stock.id == row.id)
+            .values(quantity=func.coalesce(Product_branch_stock.quantity, 0) - qty)
+        )
         if not allow_negative_stock:
-            new_qty = max(0, new_qty)
-        row.quantity = new_qty
+            stmt = stmt.where(func.coalesce(Product_branch_stock.quantity, 0) >= qty)
+
+        result = await db.execute(stmt)
+        if result.rowcount:
+            continue
+
+        # No row updated (and the row exists): not enough branch stock.
+        available = row.quantity or 0
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient stock for '{product.name}' at this branch: "
+                f"requested {qty}, available {available}"
+            ),
+        )
 
 
 async def restore_branch_inventory(
