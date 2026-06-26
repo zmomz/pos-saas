@@ -1,4 +1,5 @@
 from core.database import Base
+from core.money import Money
 from datetime import datetime
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
 
@@ -49,7 +50,7 @@ class Agents(Base):
     # suspended on failed renewals; a suspended agent is blocked at auth and his
     # merchants go dark with him (cascade). ``next_quota_billing_date`` is the ISO
     # date the next quota charge is due.
-    quota_price = Column(Float, nullable=True)
+    quota_price = Column(Money, nullable=True)
     quota_cycle = Column(String, nullable=True, default='monthly', server_default='monthly')
     quota_status = Column(String, nullable=True, default='active', server_default='active')
     quota_dunning_attempts = Column(Integer, nullable=True, default=0, server_default='0')

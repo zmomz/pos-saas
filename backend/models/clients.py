@@ -1,4 +1,5 @@
 from core.database import Base
+from core.money import Money
 from datetime import datetime
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
 
@@ -13,7 +14,7 @@ class Clients(Base):
     business_name = Column(String, nullable=False)
     email = Column(String, nullable=False)
     phone = Column(String, nullable=True)
-    subscription_fee = Column(Float, nullable=True)
+    subscription_fee = Column(Money, nullable=True)
     # Subscription lifecycle (CL-03/CL-04). billing_cycle is 'monthly'|'yearly';
     # subscription_status is 'active'|'past_due'|'suspended'. next_billing_date is
     # an ISO date string advanced each time the client pays.
@@ -43,7 +44,7 @@ class Clients(Base):
     # discounted charge and cleared to 0 when spent (after which the full fee is
     # charged). All null/zero ⇒ no coupon.
     coupon_type = Column(String, nullable=True)
-    coupon_value = Column(Float, nullable=True)
+    coupon_value = Column(Money, nullable=True)
     coupon_duration_remaining = Column(Integer, nullable=True, default=0, server_default='0')
     # Subscription trial (ISSUE-054). ``trial_end`` is an ISO date; while it is in
     # the future the first charge is deferred (the subscription bills only once the

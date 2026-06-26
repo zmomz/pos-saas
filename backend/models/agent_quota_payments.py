@@ -10,6 +10,7 @@ Backs the master console's platform-revenue figure and the agent's own
 quota-payment history. Mirror of ``subscription_payments`` but at agent grain.
 """
 from core.database import Base
+from core.money import Money
 from datetime import datetime
 from sqlalchemy import Column, DateTime, Float, Integer, String
 
@@ -22,7 +23,7 @@ class Agent_quota_payments(Base):
     # The agent's login account (scoping key, like every other entity).
     user_id = Column(String, nullable=False, index=True)
     agent_id = Column(Integer, nullable=False, index=True)
-    amount = Column(Float, nullable=False)
+    amount = Column(Money, nullable=False)
     billing_cycle = Column(String, nullable=True)
     period_start = Column(String, nullable=True)
     period_end = Column(String, nullable=True)

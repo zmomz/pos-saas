@@ -1,4 +1,5 @@
 from core.database import Base
+from core.money import Money
 from datetime import datetime
 from sqlalchemy import Column, DateTime, Float, Integer, String
 
@@ -16,7 +17,7 @@ class Subscription_payments(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     user_id = Column(String, nullable=False)
     client_id = Column(Integer, nullable=False)
-    amount = Column(Float, nullable=False)
+    amount = Column(Money, nullable=False)
     billing_cycle = Column(String, nullable=True)
     period_start = Column(String, nullable=True)
     period_end = Column(String, nullable=True)
