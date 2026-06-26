@@ -137,10 +137,24 @@ class LoyaltyEarnRequest(BaseModel):
     points_rate: float = Field(default=1.0, description="Points per SAR spent")
 
 
+# FIN-05: platform fallback per-point redemption value (SAR) used by the
+# standalone redeem endpoint when the merchant has no active program configured.
+# Matches the historical request-field default so existing callers are unchanged.
+DEFAULT_REDEMPTION_RATE = 0.1
+
+
 class LoyaltyRedeemRequest(BaseModel):
     customer_id: int
     points_to_redeem: int
-    redemption_value: float = Field(default=0.1, description="SAR value per point")
+    # FIN-05: the per-point value is derived server-side from the merchant's
+    # active loyalty program (or DEFAULT_REDEMPTION_RATE when none is
+    # configured) — never from the client, which previously let a caller value a
+    # point arbitrarily high. ``order_subtotal`` is an optional cap so the
+    # discount can never exceed what is actually being paid, mirroring the atomic
+    # POS redemption path (services/loyalty.redeem_points).
+    order_subtotal: Optional[float] = Field(
+        default=None, ge=0, description="Order subtotal to cap the discount at"
+    )
 
 
 class LoyaltyConfigRequest(BaseModel):
@@ -1226,9 +1240,29 @@ async def redeem_loyalty_points(
             detail=f"Insufficient points. Available: {loyalty.points_balance}, Requested: {data.points_to_redeem}",
         )
 
+    # FIN-05: value the redeemed points from the merchant's server-side program
+    # rate, never a client-supplied figure. Fall back to the platform default
+    # when no active program is configured.
+    from services.loyalty import get_active_program
+
+    program = await get_active_program(db, owner_id)
+    rate = (program.redemption_rate if program else None) or DEFAULT_REDEMPTION_RATE
+    discount_value = round(data.points_to_redeem * rate, 2)
+
+    # Cap the discount at the order subtotal when one is supplied, mirroring the
+    # atomic POS path: a redemption can never discount more than the order is
+    # worth. Reject (before any balance mutation) rather than silently clamp.
+    if data.order_subtotal is not None and discount_value > data.order_subtotal + 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Redemption value {discount_value:.2f} exceeds order subtotal "
+                f"{data.order_subtotal:.2f}"
+            ),
+        )
+
     new_balance = (loyalty.points_balance or 0) - data.points_to_redeem
     new_total_redeemed = (loyalty.total_redeemed or 0) + data.points_to_redeem
-    discount_value = data.points_to_redeem * data.redemption_value
 
     await db.execute(
         update(Loyalty_points)
