@@ -41,6 +41,17 @@ class QuotaChargeError(Exception):
     """A Moyasar quota charge was attempted and declined/failed."""
 
 
+class QuotaCardUnreadable(QuotaChargeError):
+    """The agent HAS a quota card-on-file token but it could not be decrypted —
+    a crypto/key fault, not a missing card. The dunning sweep must treat this as
+    an ops alert and SKIP (not advance) dunning, never as a decline (FIN-06).
+
+    Subclasses :class:`QuotaChargeError` so existing ``except QuotaChargeError``
+    callers (e.g. the manual quota-pay endpoint) keep surfacing it as a failure;
+    only the dunning loop catches it first to skip instead of suspend.
+    """
+
+
 @dataclass
 class QuotaChargeResult:
     charged: bool
@@ -88,8 +99,10 @@ async def charge_quota(
 
         try:
             card_token = decrypt_secret(agent.quota_card_token_enc)
-        except Exception:  # unreadable token — treat as no card
-            card_token = None
+        except Exception as exc:  # present but unreadable — a key/crypto fault, NOT "no card"
+            raise QuotaCardUnreadable(
+                "Quota card-on-file token is present but could not be decrypted"
+            ) from exc
 
     if not isinstance(gateway, SandboxGateway) and not card_token:
         raise QuotaChargeError("No card on file for the agent's quota")
@@ -217,6 +230,32 @@ async def run_agent_quota_dunning(
         charge = await charge_quota(
             agent, idempotency_key=f"quota-{agent.id}-{period_start}"
         )
+    except QuotaCardUnreadable:
+        # FIN-06: the agent's quota card token is present but undecryptable — a
+        # crypto/key fault, not a decline. Skip dunning (leave the agent's state
+        # untouched, so suspension never cascades his merchants dark over a key
+        # problem) and raise an operational alert for ops to fix the key.
+        logger.error(
+            "Quota dunning skipped for agent %s: card token present but "
+            "undecryptable; not advancing dunning (FIN-06)",
+            agent.id,
+        )
+        db.add(
+            Audit_logs(
+                user_id=str(actor_user_id),
+                action="QUOTA_DUNNING_DECRYPT_ERROR",
+                entity_type="agents",
+                entity_id=str(agent.id),
+                details=f"unreadable=quota card token status={agent.quota_status}",
+            )
+        )
+        return {
+            "agent_id": agent.id,
+            "action": "skipped",
+            "status": agent.quota_status,
+            "attempts": agent.quota_dunning_attempts,
+            "grace_deadline": None,
+        }
     except QuotaChargeError:
         charge_ok = False
 

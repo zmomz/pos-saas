@@ -112,6 +112,26 @@ def _advance(start: datetime, cycle: str) -> str:
     return (start + timedelta(days=days)).date().isoformat()
 
 
+def _decrypt_or_flag(enc: Optional[str]) -> tuple[Optional[str], bool]:
+    """Decrypt a stored secret, separating *absent* from *unreadable* (FIN-06).
+
+    Returns ``(value, decrypt_failed)``:
+    - ``enc`` falsy (no column) -> ``(None, False)``: there genuinely is no secret;
+    - ``enc`` present but ``decrypt_secret`` raises -> ``(None, True)``: a crypto/key
+      error (the secret IS on file, we just can't read it) — the caller must treat
+      this as an ops fault, NOT a missing card / decline;
+    - ``enc`` present and readable -> ``(value, False)``.
+    """
+    if not enc:
+        return None, False
+    from core.crypto import decrypt_secret
+
+    try:
+        return decrypt_secret(enc), False
+    except Exception:  # unreadable — a key/crypto fault, not an absent secret
+        return None, True
+
+
 async def _send_dunning_notice(merchant: Clients, transition: DunningTransition, grace_deadline: Optional[str]) -> None:
     """Best-effort Arabic reminder / suspension notice (PRN-09). Never raises —
     graceful degradation (OPS-08): with no SMTP configured it just logs."""
@@ -165,22 +185,37 @@ async def run_client_dunning(
     # Charge through the owning agent's own Moyasar account against the merchant's
     # stored card-on-file (Rail 2). No agent key / no card on file fails the charge,
     # which advances dunning exactly like a decline.
-    agent_moyasar_key = None
-    if agent_row is not None and getattr(agent_row, "moyasar_secret_key_enc", None):
-        from core.crypto import decrypt_secret
+    agent_enc = getattr(agent_row, "moyasar_secret_key_enc", None) if agent_row is not None else None
+    agent_moyasar_key, agent_key_unreadable = _decrypt_or_flag(agent_enc)
+    card_token, card_unreadable = _decrypt_or_flag(getattr(merchant, "moyasar_card_token_enc", None))
 
-        try:
-            agent_moyasar_key = decrypt_secret(agent_row.moyasar_secret_key_enc)
-        except Exception:  # unreadable key — treat as not configured
-            agent_moyasar_key = None
-    card_token = None
-    if getattr(merchant, "moyasar_card_token_enc", None):
-        from core.crypto import decrypt_secret
-
-        try:
-            card_token = decrypt_secret(merchant.moyasar_card_token_enc)
-        except Exception:
-            card_token = None
+    # FIN-06: a present-but-unreadable secret is a crypto/key fault, not a missing
+    # card. Skip dunning (leave the account untouched) and raise an operational
+    # alert so ops can fix the key — never suspend a paying customer over it.
+    if agent_key_unreadable or card_unreadable:
+        which = "agent Moyasar key" if agent_key_unreadable else "merchant card token"
+        logger.error(
+            "Dunning skipped for merchant %s: %s is present but undecryptable; "
+            "not advancing dunning (FIN-06)",
+            merchant.id,
+            which,
+        )
+        db.add(
+            Audit_logs(
+                user_id=str(actor_user_id),
+                action="DUNNING_DECRYPT_ERROR",
+                entity_type="clients",
+                entity_id=str(merchant.id),
+                details=f"unreadable={which} status={merchant.subscription_status}",
+            )
+        )
+        return {
+            "client_id": merchant.id,
+            "action": "skipped",
+            "status": merchant.subscription_status,
+            "attempts": merchant.dunning_attempts,
+            "grace_deadline": None,
+        }
 
     charge_ok = True
     charge = None
