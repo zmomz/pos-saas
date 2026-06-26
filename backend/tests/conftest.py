@@ -25,7 +25,7 @@ import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 
-from core.database import db_manager  # noqa: E402
+from core.database import Base, db_manager  # noqa: E402
 from main import app  # noqa: E402
 from models.agents import Agents  # noqa: E402
 from models.clients import Clients  # noqa: E402
@@ -48,6 +48,22 @@ async def _init_db():
     await db_manager.ensure_initialized()
     yield
     await db_manager.close_db()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_db(_init_db):
+    """Wipe every table after each test so the session-scoped SQLite file never
+    leaks rows across tests (TST-04).
+
+    Without this, the shared DB accumulates every row each test inserts, so any
+    test asserting a *global* count (or relying on a clean table) is silently
+    order-dependent. Deleting in reverse foreign-key dependency order keeps the
+    wipe valid even when FK enforcement is on (e.g. under Postgres).
+    """
+    yield
+    async with db_manager.engine.begin() as conn:
+        for table in reversed(Base.metadata.sorted_tables):
+            await conn.execute(table.delete())
 
 
 @pytest_asyncio.fixture
