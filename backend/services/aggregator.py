@@ -30,6 +30,7 @@ import logging
 from typing import Any, List, Optional, Tuple
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.channel_orders import Channel_orders
@@ -223,22 +224,69 @@ async def ingest_aggregator_order(
     if not external_id:
         return {"status": "ignored", "reason": "missing_order_id"}
 
-    # Idempotency — re-delivery of the same webhook must never double-book.
-    existing = (
-        await db.execute(
-            select(Channel_orders).where(
-                Channel_orders.client_id == client.id,
-                Channel_orders.provider == provider,
-                Channel_orders.external_order_id == external_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
+    # The owning client/user — captured up front so we never lazy-load the ORM row
+    # after a rollback expires it (that would fault outside the async greenlet).
+    client_id = client.id
+    owner_user_id = client.user_id
+
+    def _duplicate(row: Channel_orders) -> dict:
         return {
             "status": "duplicate",
-            "channel_order_id": existing.id,
-            "transaction_id": existing.transaction_id,
+            "channel_order_id": row.id,
+            "transaction_id": row.transaction_id,
         }
+
+    async def _find_existing() -> Optional[Channel_orders]:
+        return (
+            await db.execute(
+                select(Channel_orders).where(
+                    Channel_orders.client_id == client_id,
+                    Channel_orders.provider == provider,
+                    Channel_orders.external_order_id == external_id,
+                )
+            )
+        ).scalar_one_or_none()
+
+    # Idempotency — re-delivery of the same webhook must never double-book. Fast
+    # SELECT pre-check first; the unique (client_id, provider, external_order_id)
+    # constraint is the real arbiter on the claim insert below.
+    existing = await _find_existing()
+    if existing is not None:
+        return _duplicate(existing)
+
+    # DAT-07 idempotency-first: CLAIM the order (status="received") and commit BEFORE
+    # any fiscal work. Minting the ZATCA invoice happens AFTER this row is durable, so
+    # a crash between the signed invoice and recording the sale leaves the claim
+    # behind — re-delivery sees it and refuses to mint a second invoice. On a
+    # concurrent re-delivery that raced past the SELECT, the second insert conflicts
+    # on the unique constraint and is treated as the duplicate.
+    channel_order = Channel_orders(
+        user_id=owner_user_id,
+        client_id=client_id,
+        provider=provider,
+        external_order_id=external_id,
+        external_reference=order["external_reference"],
+        transaction_id=None,
+        status="received",
+        customer_name=order["customer_name"],
+        customer_phone=order["customer_phone"],
+        total_amount=order["total_amount"],
+        currency=order["currency"],
+        raw_payload=json.dumps(payload, ensure_ascii=False)[:20000],
+    )
+    db.add(channel_order)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        existing = await _find_existing()
+        if existing is not None:
+            return _duplicate(existing)
+        raise
+    channel_order_id = channel_order.id
+    # The claim commit expired the client row; refresh it so the downstream ticket +
+    # fiscal settle can read client.* without faulting on a lazy-load.
+    await db.refresh(client)
 
     service = RestaurantService(db)
     label = f"{provider}:{order['channel'] or 'aggregator'} #{order['external_reference'] or external_id}"
@@ -300,32 +348,23 @@ async def ingest_aggregator_order(
     )
     transaction_id = settled["result"].transaction.id if settled else None
 
-    # 5) Durable channel record linking the aggregator order to the materialized sale.
-    channel_order = Channel_orders(
-        user_id=client.user_id,
-        client_id=client.id,
-        provider=provider,
-        external_order_id=external_id,
-        external_reference=order["external_reference"],
-        transaction_id=transaction_id,
-        status="imported" if transaction_id is not None else "received",
-        customer_name=order["customer_name"],
-        customer_phone=order["customer_phone"],
-        total_amount=order["total_amount"],
-        currency=order["currency"],
-        raw_payload=json.dumps(payload, ensure_ascii=False)[:20000],
-    )
-    db.add(channel_order)
+    # 5) Promote the claim to ``imported`` and link it to the materialized sale. The
+    #    claim row was committed before the settle (DAT-07), so re-fetch it by id —
+    #    execute_sale's intervening commit expired the original instance.
+    claimed = (
+        await db.execute(select(Channel_orders).where(Channel_orders.id == channel_order_id))
+    ).scalar_one()
+    claimed.transaction_id = transaction_id
+    claimed.status = "imported" if transaction_id is not None else "received"
     await db.commit()
-    await db.refresh(channel_order)
 
     logger.info(
         "Ingested %s order %s for client %s -> ticket %s, txn %s (%s line(s) matched)",
-        provider, external_id, client.id, ticket.id, transaction_id, matched,
+        provider, external_id, client_id, ticket.id, transaction_id, matched,
     )
     return {
         "status": "imported",
-        "channel_order_id": channel_order.id,
+        "channel_order_id": channel_order_id,
         "ticket_id": ticket.id,
         "transaction_id": transaction_id,
         "matched_lines": matched,

@@ -19,14 +19,25 @@ vision). The one-step ingest the webhook performs lands directly in ``imported``
 """
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, UniqueConstraint
 
 from core.database import Base
 
 
 class Channel_orders(Base):
     __tablename__ = "channel_orders"
-    __table_args__ = {"extend_existing": True}
+    # Idempotency arbiter (OMN/DAT-07): one channel order per
+    # (client_id, provider, external_order_id). The ingest path claims the order
+    # (inserts status="received") BEFORE minting the ZATCA invoice, so a crash mid-
+    # settle — or a concurrent re-delivery racing past the SELECT pre-check — can
+    # never double-book a signed invoice; the loser's insert conflicts here.
+    __table_args__ = (
+        UniqueConstraint(
+            "client_id", "provider", "external_order_id",
+            name="uq_channel_order_client_provider_ext",
+        ),
+        {"extend_existing": True},
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     user_id = Column(String, nullable=False, index=True)
