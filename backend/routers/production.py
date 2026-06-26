@@ -1913,7 +1913,7 @@ async def transfer_branch_stock(
     from models.clients import Clients
     from models.products import Products
     from models.stock_transfers import Stock_transfers as StockTransfers
-    from services.branch_stock import get_or_init_row
+    from services.branch_stock import transfer_branch_inventory
 
     logger.debug("[TRANSFER] user=%s from=%s to=%s qty=%s", current_user.id, data.from_branch_id, data.to_branch_id, data.quantity)
 
@@ -1955,25 +1955,13 @@ async def transfer_branch_stock(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Move stock on the per-branch ledger (source−, dest+), seeding ledger rows the
-    # same way the sale path does. The helpers do not commit — we commit once below
+    # Move stock on the per-branch ledger (source−, dest+) with one conditional
+    # decrement + one atomic increment (DAT-04), so concurrent transfers cannot
+    # double-move or lose stock. The helper does not commit — we commit once below
     # so the two legs + the audit row land atomically (roll back wholly on any raise).
-    src = await get_or_init_row(
-        db, owner_id, client.id, int(data.from_branch_id), product
+    src_qty, dst_qty = await transfer_branch_inventory(
+        db, owner_id, client.id, int(data.from_branch_id), int(data.to_branch_id), product, qty
     )
-    if (src.quantity or 0) < qty:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Insufficient stock for '{product.name}' at the source branch: "
-                f"requested {qty}, available {src.quantity or 0}"
-            ),
-        )
-    dst = await get_or_init_row(
-        db, owner_id, client.id, int(data.to_branch_id), product
-    )
-    src.quantity = (src.quantity or 0) - qty
-    dst.quantity = (dst.quantity or 0) + qty
 
     record = StockTransfers(
         user_id=owner_id,
@@ -1997,8 +1985,8 @@ async def transfer_branch_stock(
         "product_name": record.product_name,
         "quantity": record.quantity,
         "status": record.status,
-        "from_branch_quantity": src.quantity,
-        "to_branch_quantity": dst.quantity,
+        "from_branch_quantity": src_qty,
+        "to_branch_quantity": dst_qty,
     }
 
 
@@ -2026,7 +2014,7 @@ async def dispatch_branch_stock(
     from models.clients import Clients
     from models.products import Products
     from models.stock_transfers import Stock_transfers as StockTransfers
-    from services.branch_stock import get_or_init_row
+    from services.branch_stock import dispatch_branch_inventory
 
     client = (
         await db.execute(select(Clients).where(Clients.user_id == owner_id))
@@ -2063,19 +2051,11 @@ async def dispatch_branch_stock(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    # Ship: decrement the source only. The destination is credited on receive.
-    src = await get_or_init_row(
-        db, owner_id, client.id, int(data.from_branch_id), product
+    # Ship: atomically decrement the source only (DAT-04). The destination is
+    # credited on receive. Conditional decrement → no read-check-write oversell race.
+    src_qty = await dispatch_branch_inventory(
+        db, owner_id, client.id, int(data.from_branch_id), product, qty
     )
-    if (src.quantity or 0) < qty:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Insufficient stock for '{product.name}' at the source branch: "
-                f"requested {qty}, available {src.quantity or 0}"
-            ),
-        )
-    src.quantity = (src.quantity or 0) - qty
 
     record = StockTransfers(
         user_id=owner_id,
@@ -2099,7 +2079,7 @@ async def dispatch_branch_stock(
         "product_name": record.product_name,
         "quantity": record.quantity,
         "status": record.status,
-        "from_branch_quantity": src.quantity,
+        "from_branch_quantity": src_qty,
     }
 
 

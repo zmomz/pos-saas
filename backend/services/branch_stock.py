@@ -111,6 +111,100 @@ async def deduct_branch_inventory(
         )
 
 
+async def _conditional_decrement(
+    db: AsyncSession,
+    row: Product_branch_stock,
+    qty: float,
+    allow_negative_stock: bool,
+) -> bool:
+    """Atomically decrement one branch-stock row by ``qty`` with a single
+    conditional UPDATE (``... WHERE quantity >= qty`` unless overselling is
+    allowed). Returns True if the row was decremented, False if the guard
+    rejected it (insufficient stock) — never a read-check-write."""
+    stmt = (
+        update(Product_branch_stock)
+        .where(Product_branch_stock.id == row.id)
+        .values(quantity=func.coalesce(Product_branch_stock.quantity, 0) - qty)
+    )
+    if not allow_negative_stock:
+        stmt = stmt.where(func.coalesce(Product_branch_stock.quantity, 0) >= qty)
+    return bool((await db.execute(stmt)).rowcount)
+
+
+async def dispatch_branch_inventory(
+    db: AsyncSession,
+    user_id: str,
+    client_id: int,
+    from_branch_id: int,
+    product: Products,
+    qty: float,
+    allow_negative_stock: bool = False,
+) -> float:
+    """Ship ``qty`` out of the source branch ledger (no commit) — phase 1 of a
+    two-phase transfer. Conditional decrement on the source only (DAT-04); the
+    destination is credited on receive. Raises HTTPException(400) when the source
+    has insufficient stock. Returns the new source on-hand."""
+    src = await get_or_init_row(db, user_id, client_id, from_branch_id, product)
+    if not await _conditional_decrement(db, src, qty, allow_negative_stock):
+        available = src.quantity or 0
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient stock for '{product.name}' at the source branch: "
+                f"requested {qty}, available {available}"
+            ),
+        )
+    await db.refresh(src)
+    return src.quantity
+
+
+async def transfer_branch_inventory(
+    db: AsyncSession,
+    user_id: str,
+    client_id: int,
+    from_branch_id: int,
+    to_branch_id: int,
+    product: Products,
+    qty: float,
+    allow_negative_stock: bool = False,
+) -> tuple:
+    """Move ``qty`` of ``product`` from one branch ledger to another (no commit).
+
+    DAT-04: the source leg is a single conditional UPDATE
+    (``... SET quantity = quantity - qty WHERE quantity >= qty``) and the
+    destination leg a single atomic increment UPDATE — never a read-check-write.
+    Both run in the caller's transaction, so the two legs land (or roll back)
+    together and N concurrent transfers out of a branch holding K let *exactly* K
+    succeed, with stock conserved (no double-move, no loss). The source guard is
+    dropped when overselling is allowed. Raises HTTPException(400) when the source
+    has insufficient stock. Returns ``(new_source_qty, new_dest_qty)``.
+    """
+    src = await get_or_init_row(db, user_id, client_id, from_branch_id, product)
+    dst = await get_or_init_row(db, user_id, client_id, to_branch_id, product)
+
+    if not await _conditional_decrement(db, src, qty, allow_negative_stock):
+        # Source row exists (seeded above) but the guard rejected it: not enough stock.
+        available = src.quantity or 0
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient stock for '{product.name}' at the source branch: "
+                f"requested {qty}, available {available}"
+            ),
+        )
+
+    await db.execute(
+        update(Product_branch_stock)
+        .where(Product_branch_stock.id == dst.id)
+        .values(quantity=func.coalesce(Product_branch_stock.quantity, 0) + qty)
+    )
+
+    # Reflect the atomic writes on the ORM objects for the caller's response.
+    await db.refresh(src)
+    await db.refresh(dst)
+    return src.quantity, dst.quantity
+
+
 async def restore_branch_inventory(
     db: AsyncSession,
     user_id: str,
