@@ -12,7 +12,6 @@ import ErrorState from '@/components/states/ErrorState';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
-import SpotChart from '@/components/dashboard/rx/SpotChart';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import {
   Users, DollarSign, Package as PackageIcon, Activity, UserPlus, BarChart3, Shield,
@@ -198,26 +197,9 @@ export default function MasterDashboard() {
   const suspended = agents.filter((a) => !a.is_active);
   const nearCap = agents.filter((a) => a.package_type > 0 && a.used_slots / a.package_type >= 0.9);
 
-  // MRR trend (12-mo synthetic ramp ending at the live MRR — backend has no
-  // historical series yet, so we taper from the current value for the visual).
+  // Live MRR scalar from the backend. There is no historical series yet, so the
+  // hero shows an explicit "no history" state rather than a synthesized trend.
   const mrr = economics?.mrr ?? 0;
-  const ramp = (months: number) =>
-    Array.from({ length: months }, (_, i) => Math.round(mrr * (0.62 + (0.38 * i) / (months - 1))));
-  const mrrSeries = {
-    '6M': ramp(6),
-    '12M': ramp(12),
-    ALL: Array.from({ length: 12 }, (_, i) => Math.round(mrr * (0.15 + (0.85 * i) / 11))),
-  };
-  const mrrLabels = {
-    '6M': ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
-    '12M': ['Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
-    ALL: ['Q1', 'Q2', 'Q3', 'Q4', 'Q1', 'Q2', 'Q3', 'Q4', 'Q1', 'Q2', 'Q3', 'Q4'],
-  };
-  const mrrTicks = {
-    '6M': ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN'],
-    '12M': ['JUL', 'SEP', 'NOV', 'JAN', 'MAR', 'MAY'],
-    ALL: ['Y1', 'Y2', 'Y3', 'NOW'],
-  };
 
   const paletteGroups = [
     {
@@ -267,21 +249,12 @@ export default function MasterDashboard() {
                 <CountUp value={mrr} prefix="⃁ " />
               </div>
               <div className="mt-3 flex items-center gap-2.5 text-[13px] text-white/70">
-                <span className="dxr-delta dxr-delta-up"><TrendingUp className="h-3 w-3" />+11.4%</span>
                 <span>{t('arr')} <b className="text-white">{formatMoney(economics?.arr ?? 0, language)}</b></span>
               </div>
             </div>
           </div>
-          <div className="mt-auto">
-            <SpotChart
-              series={mrrSeries}
-              labels={mrrLabels}
-              xticks={mrrTicks}
-              ranges={['6M', '12M', 'ALL']}
-              initial="12M"
-              height={150}
-              format={(n) => formatMoney(n, language)}
-            />
+          <div className="mt-auto flex h-[150px] items-end">
+            <p className="text-[12.5px] text-white/55">{tt('mrr_trend_history_unavailable', 'Trend history not available yet.')}</p>
           </div>
         </section>
 
@@ -308,7 +281,7 @@ export default function MasterDashboard() {
         {/* KPI chips */}
         <KpiChip label={tt('total_agents', 'Total Agents')} value={<CountUp value={totalAgents} />} delta={{ dir: 'up', text: `${activeAgents} ${tt('active', 'active')}` }} foot={`${totalSlots} ${tt('slots', 'slots')} total`} />
         <KpiChip label={t('arr')} value={<CountUp value={economics?.arr ?? 0} prefix="⃁ " />} foot={tt('annual_run_rate', 'annual run-rate')} />
-        <KpiChip label={tt('churn_rate', 'Churn Rate')} value={<CountUp value={(economics?.churn_rate ?? 0) * 100} decimals={1} suffix="%" />} delta={{ dir: 'down', text: tt('below_target', 'on target') }} foot={tt('below_3_target', 'below 3% target')} />
+        <KpiChip label={tt('churn_rate', 'Churn Rate')} value={<CountUp value={(economics?.churn_rate ?? 0) * 100} decimals={1} suffix="%" />} foot={`${economics?.churned_clients ?? 0} ${tt('churned', 'churned')}`} />
         <KpiChip label={tt('collected', 'Collected')} value={<CountUp value={economics?.collected ?? 0} prefix="⃁ " />} foot={`${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
 
         {/* Leaderboard */}

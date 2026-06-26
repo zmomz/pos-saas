@@ -8,7 +8,7 @@ import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import {
   Store, ShieldCheck, ArrowRight, Eye, CheckCircle2, Coffee, Croissant, Drumstick,
   Sparkles, Shirt, QrCode, Zap, Box, Globe, TrendingUp, Repeat, MapPin, Headphones,
-  Lock, CreditCard, Star, Check, X, Phone, Mail, Package,
+  Lock, CreditCard, Check, X, Phone, Mail, Package,
 } from 'lucide-react';
 
 interface AgentProfile {
@@ -25,7 +25,6 @@ interface AgentProfile {
 }
 
 type Plan = { name: string; desc: string; price: string; features: { label: string; off?: boolean }[]; cta: string; feat?: boolean };
-type Story = { quote: string; name: string; org: string; initials: string };
 
 const content = {
   en: {
@@ -55,17 +54,6 @@ const content = {
       { t: 'Cloud sync', d: 'All your branches in sync — pricing, stock and reports, everywhere.' },
     ],
     chips: ['ZATCA Certified', 'Saudi-made software', '24/7 Arabic support', 'GDPR & local compliance', 'mada · Visa · Apple Pay'],
-    stats: [
-      { v: '98%', k: 'Customer satisfaction' },
-      { v: '5,000+', k: 'Merchants served' },
-      { v: '2.3s', k: 'Average checkout' },
-      { v: '4.9', star: true, k: 'App store rating' },
-    ],
-    storyItems: [
-      { quote: '"My cashiers learned it in one shift. Checkout is genuinely faster than our old register."', name: 'Abu Faisal', org: 'Al-Baik Express · Restaurant', initials: 'AB' },
-      { quote: '"The ZATCA QR is automatic — I stopped worrying about invoices completely. Huge relief."', name: 'Maha Al-Mutairi', org: 'Manqal Market · Grocery', initials: 'MM' },
-      { quote: '"Two branches, one dashboard. I check today\'s sales from my phone over morning qahwa."', name: 'Qais B.', org: 'Qahwa & Beans · Café', initials: 'QB' },
-    ] as Story[],
     price_eyebrow: 'Simple pricing', price_title: 'Plans that grow with you.',
     price_sub: 'Start with a 14-day free trial. Switch or cancel anytime.',
     most_popular: 'Most popular', per_mo: '/mo', cur: '⃁', trial_cta: 'Start 14-day trial',
@@ -113,17 +101,6 @@ const content = {
       { t: 'مزامنة سحابية', d: 'كل فروعك متزامنة — الأسعار والمخزون والتقارير، في كل مكان.' },
     ],
     chips: ['معتمد من زاتكا', 'برمجيات سعودية', 'دعم عربي 24/7', 'امتثال GDPR والمحلي', 'مدى · فيزا · Apple Pay'],
-    stats: [
-      { v: '98%', k: 'رضا العملاء' },
-      { v: '+5,000', k: 'تاجر تم خدمته' },
-      { v: '2.3 ث', k: 'متوسط الدفع' },
-      { v: '4.9', star: true, k: 'تقييم المتجر' },
-    ],
-    storyItems: [
-      { quote: '"تعلّمها أمناء الصندوق في وردية واحدة. الدفع أسرع فعلاً من جهازنا القديم."', name: 'أبو فيصل', org: 'البيك إكسبرس · مطعم', initials: 'AB' },
-      { quote: '"رمز زاتكا تلقائي — توقفت عن القلق بشأن الفواتير تماماً. راحة كبيرة."', name: 'مها المطيري', org: 'سوق منقل · بقالة', initials: 'MM' },
-      { quote: '"فرعان، لوحة واحدة. أتابع مبيعات اليوم من جوالي على قهوة الصباح."', name: 'قيس ب.', org: 'قهوة وحبوب · مقهى', initials: 'QB' },
-    ] as Story[],
     price_eyebrow: 'أسعار بسيطة', price_title: 'باقات تنمو معك.',
     price_sub: 'ابدأ بتجربة مجانية 14 يوماً. غيّر أو ألغِ في أي وقت.',
     most_popular: 'الأكثر شعبية', per_mo: '/شهرياً', cur: '⃁', trial_cta: 'ابدأ تجربة 14 يوماً',
@@ -171,17 +148,6 @@ const content = {
       { t: 'क्लाउड सिंक', d: 'आपकी सभी शाखाएं सिंक में — मूल्य, स्टॉक और रिपोर्ट, हर जगह।' },
     ],
     chips: ['ZATCA प्रमाणित', 'सऊदी-निर्मित सॉफ्टवेयर', '24/7 अरबी सहायता', 'GDPR व स्थानीय अनुपालन', 'mada · Visa · Apple Pay'],
-    stats: [
-      { v: '98%', k: 'ग्राहक संतुष्टि' },
-      { v: '5,000+', k: 'व्यापारियों की सेवा' },
-      { v: '2.3s', k: 'औसत चेकआउट' },
-      { v: '4.9', star: true, k: 'ऐप स्टोर रेटिंग' },
-    ],
-    storyItems: [
-      { quote: '"मेरे कैशियर ने इसे एक शिफ्ट में सीख लिया। चेकआउट हमारे पुराने रजिस्टर से सच में तेज़ है।"', name: 'अबू फैसल', org: 'अल-बैक एक्सप्रेस · रेस्तरां', initials: 'AB' },
-      { quote: '"ZATCA QR स्वचालित है — मैंने इनवॉइस की चिंता पूरी तरह छोड़ दी। बड़ी राहत।"', name: 'महा अल-मुतैरी', org: 'मनक़ल मार्केट · किराना', initials: 'MM' },
-      { quote: '"दो शाखाएं, एक डैशबोर्ड। सुबह की क़हवा पर फोन से आज की बिक्री देखता हूं।"', name: 'क़ैस बी.', org: 'क़हवा एंड बीन्स · कैफे', initials: 'QB' },
-    ] as Story[],
     price_eyebrow: 'सरल मूल्य', price_title: 'योजनाएं जो आपके साथ बढ़ें।',
     price_sub: '14-दिन मुफ्त ट्रायल से शुरू करें। कभी भी बदलें या रद्द करें।',
     most_popular: 'सबसे लोकप्रिय', per_mo: '/माह', cur: '⃁', trial_cta: '14-दिन ट्रायल शुरू करें',
@@ -229,17 +195,6 @@ const content = {
       { t: 'کلاؤڈ سنک', d: 'آپ کی تمام برانچز سنک میں — قیمتیں، اسٹاک اور رپورٹس، ہر جگہ۔' },
     ],
     chips: ['ZATCA تصدیق شدہ', 'سعودی ساختہ سافٹ ویئر', '24/7 عربی سپورٹ', 'GDPR و مقامی تعمیل', 'mada · Visa · Apple Pay'],
-    stats: [
-      { v: '98%', k: 'گاہک کی اطمینان' },
-      { v: '5,000+', k: 'تاجروں کی خدمت' },
-      { v: '2.3s', k: 'اوسط چیک آؤٹ' },
-      { v: '4.9', star: true, k: 'ایپ اسٹور ریٹنگ' },
-    ],
-    storyItems: [
-      { quote: '"میرے کیشئرز نے ایک شفٹ میں سیکھ لیا۔ چیک آؤٹ ہمارے پرانے رجسٹر سے واقعی تیز ہے۔"', name: 'ابو فیصل', org: 'البیک ایکسپریس · ریسٹورنٹ', initials: 'AB' },
-      { quote: '"ZATCA QR خودکار ہے — میں نے انوائسز کی فکر مکمل چھوڑ دی۔ بڑی راحت۔"', name: 'مہا المطیری', org: 'منقل مارکیٹ · گروسری', initials: 'MM' },
-      { quote: '"دو برانچز، ایک ڈیش بورڈ۔ صبح کی قہوہ پر فون سے آج کی سیل دیکھتا ہوں۔"', name: 'قیس ب۔', org: 'قہوہ اینڈ بینز · کیفے', initials: 'QB' },
-    ] as Story[],
     price_eyebrow: 'سادہ قیمتیں', price_title: 'پلانز جو آپ کے ساتھ بڑھیں۔',
     price_sub: '14 دن مفت ٹرائل سے شروع کریں۔ کسی بھی وقت بدلیں یا منسوخ کریں۔',
     most_popular: 'سب سے مقبول', per_mo: '/ماہ', cur: '⃁', trial_cta: '14 دن ٹرائل شروع کریں',
@@ -513,37 +468,6 @@ export default function AgentLandingPage() {
               );
             })}
           </div>
-        </div>
-      </section>
-
-      {/* Social proof */}
-      <section className="max-w-[1180px] mx-auto px-6 lg:px-8 py-20 lg:py-[88px]">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-7 mb-16">
-          {c.stats.map((s) => (
-            <div key={s.k} className="text-center">
-              <div className="text-[44px] font-extrabold tracking-tight tabular-nums">
-                {s.v}{(s as { star?: boolean }).star ? <span className="text-[22px] text-gold">★</span> : null}
-              </div>
-              <div className="text-sm text-slate-500 mt-1">{s.k}</div>
-            </div>
-          ))}
-        </div>
-        <div className="grid md:grid-cols-3 gap-[22px]">
-          {c.storyItems.map((s) => (
-            <div key={s.name} className="bg-white border border-slate-200 rounded-2xl p-7 shadow-sm flex flex-col gap-[18px]">
-              <div className="flex gap-0.5">
-                {[...Array(5)].map((_, i) => <Star key={i} className="w-4 h-4 fill-gold text-gold" />)}
-              </div>
-              <p className="text-base leading-relaxed text-slate-800 font-medium">{s.quote}</p>
-              <div className="flex items-center gap-3">
-                <span className="w-[42px] h-[42px] rounded-full grid place-items-center font-bold text-[13px] text-white flex-none" style={{ background: `linear-gradient(135deg, ${brand}, ${brand700})` }}>{s.initials}</span>
-                <div>
-                  <b className="text-sm block">{s.name}</b>
-                  <span className="text-[12.5px] text-slate-500">{s.org}</span>
-                </div>
-              </div>
-            </div>
-          ))}
         </div>
       </section>
 
