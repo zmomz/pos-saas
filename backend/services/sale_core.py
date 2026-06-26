@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.clients import Clients
@@ -78,35 +78,48 @@ async def deduct_inventory(
         requested[item.product_id] = requested.get(item.product_id, 0) + item.quantity
 
     for product_id, qty in requested.items():
-        result = await db.execute(
-            select(Products).where(
+        qty = float(qty)
+        # DAT-01: one conditional UPDATE instead of read-check-write. The
+        # ``quantity >= qty`` guard (skipped when overselling is allowed) makes the
+        # check-and-decrement a single atomic statement, so N concurrent sales on
+        # stock=K let exactly K succeed — no oversell race. COALESCE treats a NULL
+        # on-hand as 0 for both the guard and the arithmetic.
+        stmt = (
+            update(Products)
+            .where(
                 Products.id == product_id,
                 Products.client_id == client_id,
             )
+            .values(quantity=func.coalesce(Products.quantity, 0) - qty)
         )
-        product = result.scalar_one_or_none()
-        if not product:
-            # Unknown/ad-hoc line — nothing to deduct.
+        if not allow_negative_stock:
+            stmt = stmt.where(func.coalesce(Products.quantity, 0) >= qty)
+
+        result = await db.execute(stmt)
+        if result.rowcount:
+            # Decrement applied (or, when overselling, the product was found).
             continue
 
-        available = product.quantity or 0
-        if not allow_negative_stock and available < qty:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Insufficient stock for '{product.name}': "
-                    f"requested {qty}, available {available}"
-                ),
+        # No row updated: either the line maps to no product of this client (an
+        # ad-hoc/custom line — skip, as before) or there wasn't enough stock.
+        product = (
+            await db.execute(
+                select(Products).where(
+                    Products.id == product_id,
+                    Products.client_id == client_id,
+                )
             )
-
-        new_qty = available - qty
-        if not allow_negative_stock:
-            new_qty = max(0, new_qty)
-
-        await db.execute(
-            update(Products)
-            .where(Products.id == product_id)
-            .values(quantity=new_qty)
+        ).scalar_one_or_none()
+        if product is None:
+            # Unknown/ad-hoc line — nothing to deduct.
+            continue
+        available = product.quantity or 0
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient stock for '{product.name}': "
+                f"requested {qty}, available {available}"
+            ),
         )
 
 
