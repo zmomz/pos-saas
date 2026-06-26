@@ -174,7 +174,7 @@ class Receipt_templatesService:
 
 # H26 (ISSUE-045): the render knobs the ESC/POS builders honor. Mirrors the
 # template fields `escpos.build_receipt`/`build_kot` read out of the dict.
-_TEMPLATE_KNOBS = ("header_text", "footer_text", "show_logo", "show_qr_code", "paper_size", "font_size")
+_TEMPLATE_KNOBS = ("header_text", "footer_text", "show_logo", "show_qr_code", "show_vat_details", "paper_size", "font_size")
 
 
 async def load_default_template(db: AsyncSession, user_id: Optional[str]) -> Optional[Dict[str, Any]]:

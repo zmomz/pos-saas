@@ -186,6 +186,10 @@ def _template_settings(template: object) -> dict:
         "footer_text": (t.get("footer_text") or "").strip(),
         "show_logo": _flag("show_logo"),
         "show_qr_code": _flag("show_qr_code"),
+        # ARC-07: gates the itemized VAT line in the totals block. Defaults on so
+        # the historical fiscal receipt is unchanged; the ZATCA QR (which carries
+        # the tax amount) is never affected by this knob.
+        "show_vat_details": _flag("show_vat_details"),
         "font_scale": _FONT_SCALE.get(fs, 1.0),
         # ISSUE-046: the printable raster width in dots, and the matching ASCII
         # column count for the degraded text fallback. Unknown sizes (e.g. "A4",
@@ -531,7 +535,9 @@ def _render_receipt_image(
     lr(_L["subtotal"], format_money_ar(subtotal), f_norm)
     if discount:
         lr(_L["discount"], "-" + format_money_ar(discount), f_norm)
-    lr(_L["vat"], format_money_ar(vat_amount), f_norm)
+    # ARC-07: the merchant template can hide the itemized VAT line (show_vat_details).
+    if settings["show_vat_details"]:
+        lr(_L["vat"], format_money_ar(vat_amount), f_norm)
     lr(_L["grand_total"], format_money_ar(total_amount), f_big)
     # F-061/POS-13 (F-012): the service charge and the tip both sit OUTSIDE the
     # tax-invoice total above; show each, plus the amount the customer actually paid
@@ -629,7 +635,8 @@ def _append_text_fallback(
     b.line("Subtotal:".ljust(width - 12) + _money(subtotal).rjust(12))
     if discount:
         b.line("Discount:".ljust(width - 12) + ("-" + _money(discount)).rjust(12))
-    b.line("VAT:".ljust(width - 12) + _money(vat_amount).rjust(12))
+    if settings["show_vat_details"]:
+        b.line("VAT:".ljust(width - 12) + _money(vat_amount).rjust(12))
     b.bold(True)
     b.line("TOTAL (SAR):".ljust(width - 12) + _money(total_amount).rjust(12))
     b.bold(False)
