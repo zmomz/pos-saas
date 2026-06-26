@@ -352,6 +352,56 @@ def _item_display_name(item: dict) -> str:
     return str(item.get("name", "") if isinstance(item, dict) else "")
 
 
+# Best-effort Arabic -> Latin romanization for the degraded CP437 text fallback
+# (FIS-03). CP437 has no Arabic letters, so an un-transliterated name encodes to
+# a run of '?' placeholders; romanizing keeps the line human-readable instead.
+# Tashkeel (the U+064B-U+0652 diacritics) are dropped; unknown codepoints pass
+# through unchanged.
+_AR_TRANSLIT = {
+    "ا": "a", "أ": "a", "إ": "i", "آ": "aa", "ء": "'", "ئ": "'", "ؤ": "w",
+    "ب": "b", "ت": "t", "ث": "th", "ج": "j", "ح": "h", "خ": "kh",
+    "د": "d", "ذ": "dh", "ر": "r", "ز": "z", "س": "s", "ش": "sh",
+    "ص": "s", "ض": "d", "ط": "t", "ظ": "z", "ع": "'", "غ": "gh",
+    "ف": "f", "ق": "q", "ك": "k", "ل": "l", "م": "m", "ن": "n",
+    "ه": "h", "و": "w", "ي": "y", "ى": "a", "ة": "a", "ٱ": "a",
+    "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+    "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+    "،": ",", "؛": ";", "؟": "?",
+}
+_AR_TASHKEEL = frozenset(chr(c) for c in range(0x064B, 0x0653)) | {"ـ"}
+
+
+def transliterate_arabic(text: object) -> str:
+    """Romanize Arabic text to printable ASCII for the CP437 fallback (FIS-03).
+
+    Diacritics (tashkeel) and the tatweel are stripped; mapped letters become
+    their Latin approximation; anything already-Latin is preserved as-is.
+    """
+    out = []
+    for ch in str(text or ""):
+        if ch in _AR_TASHKEEL:
+            continue
+        out.append(_AR_TRANSLIT.get(ch, ch))
+    return "".join(out)
+
+
+def _latin_display_name(item: dict) -> str:
+    """ASCII-safe product name for the degraded CP437 text fallback (FIS-03).
+
+    The always-Arabic raster path prefers ``name_ar``, but CP437 cannot encode
+    Arabic. On the text fallback we therefore prefer the Latin ``name`` and, when
+    only an Arabic name exists, transliterate it rather than letting CP437 mangle
+    it into '?????'.
+    """
+    name = (item.get("name") or "").strip() if isinstance(item, dict) else ""
+    if name:
+        return name
+    name_ar = (item.get("name_ar") or "").strip() if isinstance(item, dict) else ""
+    if name_ar:
+        return transliterate_arabic(name_ar)
+    return ""
+
+
 def _render_receipt_image(
     *,
     seller_name: str,
@@ -567,7 +617,8 @@ def _append_text_fallback(
     b.line(f"Date: {issue_date}")
     b.line("-" * width)
     for item in line_items or []:
-        name = _item_display_name(item)[: width - 12]
+        # CP437 can't render Arabic; romanize / fall back to the Latin name (FIS-03).
+        name = _latin_display_name(item)[: width - 12]
         qty = item.get("quantity", 1)
         price = float(item.get("price", 0) or 0)
         item_disc = float(item.get("discount", 0) or 0)
@@ -692,7 +743,8 @@ def build_receipt(
     if rendered:
         try:
             b.align("center").raster_image(_render_footer_image(settings))
-        except Exception:  # pragma: no cover - degraded environment
+        except Exception:
+            logger.warning("Footer render failed; using text fallback", exc_info=True)
             b.align("center").line("Thank you")
     else:  # pragma: no cover - degraded environment
         b.align("center").line("Thank you")

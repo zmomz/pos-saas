@@ -12,7 +12,13 @@ import base64
 import pytest
 
 from conftest import add_product, auth_headers, make_client_account
-from services.escpos import _item_display_name, build_receipt
+from services import escpos
+from services.escpos import (
+    _item_display_name,
+    _latin_display_name,
+    build_receipt,
+    transliterate_arabic,
+)
 
 # GS v 0 — raster bit-image command (the Arabic receipt body is drawn as a bitmap).
 RASTER_CMD = bytes([0x1D, 0x76, 0x30])
@@ -61,6 +67,69 @@ def test_thermal_receipt_prefers_name_ar():
     assert _item_display_name({"name": "Widget", "name_ar": "أداة"}) == "أداة"
     assert _item_display_name({"name": "Widget", "name_ar": "  "}) == "Widget"
     assert _item_display_name({"name": "Widget"}) == "Widget"
+
+
+# --- FIS-03: degraded CP437 text fallback must not mangle Arabic, footer logged ---
+
+
+def test_transliterate_arabic_is_ascii_and_readable():
+    """Arabic romanizes to printable ASCII (CP437 would otherwise give '?????')."""
+    out = transliterate_arabic("أداة")
+    assert out, "transliteration must not be empty"
+    assert out.isascii(), f"transliteration must be ASCII, got {out!r}"
+    assert "?" not in out
+
+
+def test_latin_display_name_prefers_latin_then_transliterates():
+    # Latin name present -> use it verbatim.
+    assert _latin_display_name({"name": "Widget", "name_ar": "أداة"}) == "Widget"
+    # Only an Arabic name -> transliterate it (never leave raw Arabic for CP437).
+    only_ar = _latin_display_name({"name": "", "name_ar": "أداة"})
+    assert only_ar and only_ar.isascii()
+
+
+def test_text_fallback_transliterates_arabic_name(monkeypatch):
+    """In the degraded ASCII path the Arabic line name is romanized, not '?????'."""
+    monkeypatch.setattr(escpos, "_arabic_render_available", lambda: False)
+    data = _sample_receipt(
+        line_items=[{"name": "", "name_ar": "أداة", "price": 10.0, "quantity": 2, "discount": 0}]
+    )
+    # No CP437 replacement char leaks where the product name was printed.
+    assert b"?" not in data
+    # The romanized name is present and human-readable.
+    assert transliterate_arabic("أداة").encode("cp437") in data
+
+
+def test_text_fallback_prefers_latin_name(monkeypatch):
+    monkeypatch.setattr(escpos, "_arabic_render_available", lambda: False)
+    data = _sample_receipt(
+        line_items=[{"name": "Widget", "name_ar": "أداة", "price": 10.0, "quantity": 1, "discount": 0}]
+    )
+    assert b"Widget" in data
+
+
+def test_footer_render_error_is_logged(monkeypatch):
+    """A footer raster failure is logged (not silently swallowed) and degrades to text."""
+    monkeypatch.setattr(escpos, "_arabic_render_available", lambda: True)
+
+    def _boom(settings):
+        raise RuntimeError("font missing")
+
+    monkeypatch.setattr(escpos, "_render_footer_image", _boom)
+
+    warnings = []
+    monkeypatch.setattr(
+        escpos.logger,
+        "warning",
+        lambda msg, *a, **k: warnings.append((msg, k)),
+    )
+    data = _sample_receipt()
+    assert b"Thank you" in data  # degraded footer still printed
+    assert any("footer" in msg.lower() for msg, _ in warnings), (
+        "the footer render exception must be logged"
+    )
+    # Logged with the traceback so the degraded cause is diagnosable.
+    assert any(k.get("exc_info") for _, k in warnings)
 
 
 @pytest.mark.asyncio
