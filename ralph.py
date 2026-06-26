@@ -126,6 +126,15 @@ PROMPT_ISSUES_ONCE = (
     "(`gh issue close <n> --comment \"...\"`). If you could NOT finish it this "
     "iteration, do NOT close it — comment what was done, what remains, and any "
     "blockers, and leave it OPEN so the next iteration resumes it. "
+    # (7) HEADLESS contract: -p print-mode has no next turn and no background-task
+    #     notification will ever reach you, so any 'I'll wait for the monitor' yield
+    #     silently abandons the iteration (edits uncommitted, issue left open).
+    "9. HEADLESS EXECUTION: you are running non-interactively with NO next turn and NO "
+    "background-task notifications. Do EVERYTHING synchronously within THIS single "
+    "response: run tests in the FOREGROUND and wait for them inline (you MAY scope to "
+    "the relevant test subset for speed, but never start a background job or say you "
+    "will wait for a notification). Finish implementation, get tests to green, COMMIT, "
+    "and comment/close the issue all before you stop responding. "
     "ONLY WORK ON A SINGLE ISSUE THIS ITERATION."
 )
 
