@@ -43,13 +43,31 @@ interface AuthProviderProps {
 }
 
 // Resolve the multi-tenant role (master/agent/client) for the signed-in user.
-async function resolveTenancyRole(): Promise<string> {
-  try {
-    const roleData = await getRole();
-    return roleData?.role || 'client';
-  } catch {
-    return 'client';
+//
+// FE-06: a transient /tenant/role failure must NOT silently reassign a master or
+// agent to the least-privileged 'client' role. The backend always returns 200
+// with an explicit role for an authenticated user (defaulting to 'client'
+// itself), so a thrown error here is purely a transport/auth blip — we retry a
+// few times and, if it still fails, propagate the error to the caller instead of
+// fabricating a role. Authorization downgrade is never the right answer to a
+// network error.
+export async function resolveTenancyRole(
+  retries = 2,
+  delayMs = 300,
+): Promise<string> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const roleData = await getRole();
+      return roleData?.role || 'client';
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
   }
+  throw lastErr;
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
