@@ -2415,28 +2415,43 @@ async def merchant_billing_webhook(
     subscription charge result.
 
     Each agent registers this URL (carrying his own agent id) in his Moyasar
-    dashboard. The echoed ``secret_token`` is verified against THAT agent's stored
-    webhook secret when set. A failed event carrying ``metadata.client_id`` suspends
+    dashboard. Verifies an HMAC-SHA256 of the raw body (carried in the Moyasar
+    signature header) against THAT agent's stored webhook secret (SEC-03). Fails
+    closed: an unsigned request, a wrong signature, or an agent with no configured
+    secret are all rejected (401) with no state change — the old code fell open
+    with no secret and compared an echoed body token, letting anyone reach the URL
+    and suspend merchants. A failed event carrying ``metadata.client_id`` suspends
     that client; a recovery re-activates them. The client must belong to the agent
-    in the path (SEC-02) — a mismatched client_id is ignored.
+    in the path (SEC-02) — a mismatched client_id is ignored. Redelivery of an
+    already-processed event id is a no-op.
     """
-    event_type, data, secret_token, _event_id = _parse_moyasar_event(await request.body())
+    from core.webhooks import MOYASAR_SIGNATURE_HEADER, verify_moyasar_signature
+
+    raw_body = await request.body()
 
     agent = (
         await db.execute(select(Agents).where(Agents.id == agent_id))
     ).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Fail closed (SEC-03): the agent must have a configured webhook secret, and the
+    # request must carry a valid HMAC of the raw body. A missing/undecryptable secret
+    # leaves ``secret`` None, so verification rejects.
     expected_enc = getattr(agent, "moyasar_webhook_secret_enc", None)
+    secret = None
     if expected_enc:
         from core.crypto import decrypt_secret
 
         try:
-            expected = decrypt_secret(expected_enc)
+            secret = decrypt_secret(expected_enc)
         except Exception:
-            expected = None
-        if expected and secret_token != expected:
-            raise HTTPException(status_code=400, detail="Invalid webhook secret")
+            secret = None
+    header_sig = request.headers.get(MOYASAR_SIGNATURE_HEADER)
+    if not verify_moyasar_signature(raw_body, header_sig, secret):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    event_type, data, _secret_token, event_id = _parse_moyasar_event(raw_body)
 
     client_id = (data.get("metadata") or {}).get("client_id")
     try:
@@ -2452,6 +2467,14 @@ async def merchant_billing_webhook(
     ).scalar_one_or_none()
     if client is None:
         return {"received": True, "action": "ignored", "reason": "client not owned by agent"}
+
+    if event_type not in _FAILURE_EVENTS and event_type not in _RECOVERY_EVENTS:
+        return {"received": True, "action": "ignored", "event": event_type}
+
+    # Replay guard: claim the event id (scoped per agent) before mutating so a
+    # redelivery is a no-op.
+    if event_id and await _already_processed(db, f"moyasar_merchant:{agent_id}", str(event_id)):
+        return {"received": True, "action": "ignored", "reason": "duplicate event"}
 
     if event_type in _FAILURE_EVENTS:
         await db.execute(
@@ -2470,8 +2493,6 @@ async def merchant_billing_webhook(
         )
         await db.commit()
         return {"received": True, "action": "reactivated", "client_id": client_id_int}
-
-    return {"received": True, "action": "ignored", "event": event_type}
 
 
 # ---------- Public Endpoints (no auth required) ----------

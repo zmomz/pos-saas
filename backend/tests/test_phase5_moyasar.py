@@ -7,15 +7,42 @@ flow is demonstrable without onboarding (OPS-08). A real agent key with no card 
 file fails closed (no silent free pass). The per-agent webhook drives the
 non-payment auto-suspend and recovery re-activation.
 """
+import hashlib
+import hmac
+import json
+
 import pytest
 from sqlalchemy import select, update
 
 from conftest import auth_headers, make_agent_account, make_client_under_agent
+from core.crypto import encrypt_secret
 from core.database import db_manager
+from core.webhooks import MOYASAR_SIGNATURE_HEADER
 from models.agents import Agents
 from models.clients import Clients
 from models.subscription_payments import Subscription_payments
 from services.subscription_billing import ChargeResult, SubscriptionChargeError, charge_subscription
+
+_MERCHANT_WEBHOOK_SECRET = "whsec_phase5_merchant"
+
+
+def _merchant_event(client_id, event_type, event_id):
+    """Serialize a Moyasar merchant event and its HMAC signature (SEC-03)."""
+    body = json.dumps(
+        {"id": event_id, "type": event_type, "data": {"metadata": {"client_id": str(client_id)}}}
+    ).encode()
+    sig = hmac.new(_MERCHANT_WEBHOOK_SECRET.encode(), body, hashlib.sha256).hexdigest()
+    return body, {MOYASAR_SIGNATURE_HEADER: sig}
+
+
+async def _configure_agent_webhook_secret(agent_id):
+    async with db_manager.async_session_maker() as db:
+        await db.execute(
+            update(Agents)
+            .where(Agents.id == agent_id)
+            .values(moyasar_webhook_secret_enc=encrypt_secret(_MERCHANT_WEBHOOK_SECRET))
+        )
+        await db.commit()
 
 
 @pytest.mark.asyncio
@@ -75,14 +102,11 @@ async def test_merchant_webhook_payment_failed_suspends_client(client):
     # Client can authenticate before suspension.
     assert (await client.get("/api/v1/tenant/role", headers=auth_headers(client_token))).status_code == 200
 
-    # The agent's Moyasar posts a failed-payment webhook (no secret configured on
-    # the agent → body trusted in dev/test).
+    # The agent's Moyasar posts an HMAC-signed failed-payment webhook (SEC-03).
+    await _configure_agent_webhook_secret(agent_id)
+    body, headers = _merchant_event(client_id, "payment_failed", "evt_p5_suspend")
     resp = await client.post(
-        f"/api/v1/tenant/billing/webhook/agent/{agent_id}",
-        json={
-            "type": "payment_failed",
-            "data": {"metadata": {"client_id": str(client_id)}},
-        },
+        f"/api/v1/tenant/billing/webhook/agent/{agent_id}", content=body, headers=headers
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["action"] == "suspended"
@@ -110,10 +134,11 @@ async def test_merchant_webhook_recovery_reactivates_client(client):
             .values(is_active=False, subscription_status="suspended")
         )
         await db.commit()
+    await _configure_agent_webhook_secret(agent_id)
 
+    body, headers = _merchant_event(client_id, "payment_paid", "evt_p5_recover")
     resp = await client.post(
-        f"/api/v1/tenant/billing/webhook/agent/{agent_id}",
-        json={"type": "payment_paid", "data": {"metadata": {"client_id": str(client_id)}}},
+        f"/api/v1/tenant/billing/webhook/agent/{agent_id}", content=body, headers=headers
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["action"] == "reactivated"
@@ -124,11 +149,12 @@ async def test_merchant_webhook_ignores_client_of_other_agent(client):
     _a1u, _a1t, agent1 = await make_agent_account(client)
     _a2u, _a2t, agent2 = await make_agent_account(client)
     _cu, _ct, client_of_a1 = await make_client_under_agent(client, agent1)
+    await _configure_agent_webhook_secret(agent2)
 
-    # Agent2's webhook must not be able to suspend agent1's client.
+    # Agent2's (validly signed) webhook must not be able to suspend agent1's client.
+    body, headers = _merchant_event(client_of_a1, "payment_failed", "evt_p5_cross")
     resp = await client.post(
-        f"/api/v1/tenant/billing/webhook/agent/{agent2}",
-        json={"type": "payment_failed", "data": {"metadata": {"client_id": str(client_of_a1)}}},
+        f"/api/v1/tenant/billing/webhook/agent/{agent2}", content=body, headers=headers
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["action"] == "ignored"
