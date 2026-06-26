@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, saveSubscriptionCard, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { notifyError } from '@/lib/notify';
 import { formatMoney, formatDate, currencyLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { usePageChrome } from '@/contexts/PageChromeContext';
@@ -77,7 +78,7 @@ export default function ClientDashboard() {
       const updated = await payClientSubscription();
       setSubscription(updated);
     } catch (err) {
-      console.error('Subscription payment failed:', err);
+      notifyError(err, t('subscription_payment_failed') || 'Subscription payment failed. Please try again.');
     } finally {
       setPaying(false);
     }

@@ -48,6 +48,7 @@ import {
   type SettleResult,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { notifyError } from '@/lib/notify';
 import { formatMoney } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import {
@@ -257,7 +258,7 @@ export default function OrderTicket() {
       setSelectedMods(new Set());
       await load();
     } catch (err) {
-      console.error('Failed to add line:', err);
+      notifyError(err, t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -268,7 +269,7 @@ export default function OrderTicket() {
       await voidTicketItem(ticketId, item.id);
       await load();
     } catch (err) {
-      console.error('Failed to void line:', err);
+      notifyError(err, t('action_failed'));
     }
   }
 
@@ -277,7 +278,7 @@ export default function OrderTicket() {
       await fireCourse(ticketId, course);
       await load();
     } catch (err) {
-      console.error('Failed to fire course:', err);
+      notifyError(err, t('action_failed'));
     }
   }
 
@@ -288,7 +289,7 @@ export default function OrderTicket() {
       setTransferOpen(false);
       await load();
     } catch (err) {
-      console.error('Failed to transfer ticket:', err);
+      notifyError(err, t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -301,7 +302,7 @@ export default function OrderTicket() {
       setMergeOpen(false);
       await load();
     } catch (err) {
-      console.error('Failed to merge tickets:', err);
+      notifyError(err, t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -312,7 +313,7 @@ export default function OrderTicket() {
       const res = await splitTicket(ticketId, strategy, strategy === 'amount' ? 2 : undefined);
       setSplit(res);
     } catch (err) {
-      console.error('Failed to split bill:', err);
+      notifyError(err, t('action_failed'));
     }
   }
 
@@ -323,7 +324,7 @@ export default function OrderTicket() {
       setScOpen(false);
       await load();
     } catch (err) {
-      console.error('Failed to set service charge:', err);
+      notifyError(err, t('action_failed'));
     } finally {
       setSubmitting(false);
     }
@@ -338,7 +339,7 @@ export default function OrderTicket() {
       console.info('Proforma printed', proforma.ticket_id);
       window.alert(t('check_printed'));
     } catch (err) {
-      console.error('Failed to print check:', err);
+      notifyError(err, t('action_failed'));
     }
   }
 

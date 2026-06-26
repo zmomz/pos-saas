@@ -10,6 +10,7 @@ import { formatMoney, formatMoneyAr, formatDateTime } from '@/lib/format';
 import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQueue';
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
+import { notifyError } from '@/lib/notify';
 import ErrorState from '@/components/states/ErrorState';
 import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon } from 'lucide-react';
 
@@ -877,10 +878,10 @@ export default function POSTerminal() {
           setAppliedDiscount(null);
           setDiscountCode('');
         } catch (queueErr) {
-          console.error('Offline queue failed:', queueErr);
+          notifyError(queueErr, tt('offline_queue_failed', 'Could not save the sale offline. Please retry.'));
         }
       } else {
-        console.error('Checkout failed:', err);
+        notifyError(err, tt('checkout_failed', 'Checkout failed. The sale was not completed.'));
       }
     } finally {
       setProcessing(false);
