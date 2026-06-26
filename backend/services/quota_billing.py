@@ -25,6 +25,7 @@ from typing import Optional
 
 from sqlalchemy import or_, select, update
 
+from core.billing_period import advance_billing_period
 from core.config import settings
 from models.agent_quota_payments import Agent_quota_payments
 from models.agents import Agents
@@ -62,11 +63,6 @@ class QuotaChargeResult:
 
 def _platform_moyasar_key() -> str:
     return (getattr(settings, "moyasar_api_key", "") or "").strip()
-
-
-def _advance(start: datetime, cycle: str) -> str:
-    days = 365 if (cycle or "monthly") == "yearly" else 30
-    return (start + timedelta(days=days)).date().isoformat()
 
 
 async def charge_quota(
@@ -252,7 +248,9 @@ async def run_agent_quota_dunning(
     grace_days = grace_days if grace_days is not None else _grace_days()
     cycle = agent.quota_cycle or "monthly"
     period_start = now.date().isoformat()
-    period_end = _advance(now, cycle)
+    # FIN-07: anchor to the current quota period end when still ahead (an agent may
+    # have renewed early before the sweep); overdue falls back to now.
+    period_end = advance_billing_period(now, agent.next_quota_billing_date, cycle)
 
     # FIN-04: this period may already be settled (the agent paid manually before the
     # sweep, or a prior sweep this day). Don't charge again — report it as skipped.

@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, update, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.billing_period import advance_billing_period
 from core.config import settings
 from core.database import get_db
 from core.email import send_provisioning_email
@@ -1671,7 +1672,10 @@ async def pay_client_subscription(
     now = datetime.now(timezone.utc)
     cycle = merchant.billing_cycle or "monthly"
     period_start = now.date().isoformat()
-    period_end = _advance_billing_date(now, cycle)
+    # FIN-07: anchor the new period to the current period end when it is still in
+    # the future, so an early renewal keeps the unused paid days instead of
+    # forfeiting them (and the billing day stays fixed); overdue/on-time go from now.
+    period_end = advance_billing_period(now, merchant.next_billing_date, cycle)
 
     # CL-04: charge the merchant's card on file through the owning agent's Moyasar
     # account. A decline (or no agent key / no card) raises and aborts the payment
@@ -2195,7 +2199,9 @@ async def pay_agent_quota(
     now = datetime.now(timezone.utc)
     cycle = agent.quota_cycle or "monthly"
     period_start = now.date().isoformat()
-    period_end = _advance_billing_date(now, cycle)
+    # FIN-07: anchor to the current quota period end when still in the future so an
+    # early renewal keeps the unused paid days; overdue/on-time advance from now.
+    period_end = advance_billing_period(now, agent.next_quota_billing_date, cycle)
 
     # FIN-04: idempotency — if this quota period is already settled (double-click or
     # the sweep beat the manual pay), don't charge again; return current state.

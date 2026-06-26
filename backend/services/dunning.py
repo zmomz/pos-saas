@@ -34,6 +34,7 @@ from typing import Optional
 
 from sqlalchemy import or_, select, update
 
+from core.billing_period import advance_billing_period
 from core.config import settings
 from models.agents import Agents
 from models.audit_logs import Audit_logs
@@ -107,11 +108,6 @@ def next_dunning_state(
     )
 
 
-def _advance(start: datetime, cycle: str) -> str:
-    days = 365 if (cycle or "monthly") == "yearly" else 30
-    return (start + timedelta(days=days)).date().isoformat()
-
-
 def _decrypt_or_flag(enc: Optional[str]) -> tuple[Optional[str], bool]:
     """Decrypt a stored secret, separating *absent* from *unreadable* (FIN-06).
 
@@ -180,7 +176,9 @@ async def run_client_dunning(
     grace_days = grace_days if grace_days is not None else _grace_days()
     cycle = merchant.billing_cycle or "monthly"
     period_start = now.date().isoformat()
-    period_end = _advance(now, cycle)
+    # FIN-07: anchor to the current period end when still ahead (a merchant in
+    # past_due may have renewed early before the sweep); overdue falls back to now.
+    period_end = advance_billing_period(now, merchant.next_billing_date, cycle)
 
     # FIN-04: if this billing period is already settled (the merchant paid manually
     # before the sweep, or a prior sweep this day), don't charge again. The DB
