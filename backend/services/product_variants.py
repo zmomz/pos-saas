@@ -198,22 +198,38 @@ async def deduct_variant_inventory(
         if not variant:
             continue
 
-        available = variant.quantity or 0
-        if not allow_negative_stock and available < qty:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Insufficient stock for variant '{variant.name}': "
-                    f"requested {int(qty)}, available {available}"
-                ),
-            )
-        new_qty = int(available - qty)
-        if not allow_negative_stock:
-            new_qty = max(0, new_qty)
-        await db.execute(
+        # variant stock is an integer SKU count — deduct whole units.
+        units = int(qty)
+
+        # DAT-03: decrement with one conditional UPDATE on the variant row (mirrors
+        # DAT-01 on Products and DAT-02 on the branch ledger). The ``quantity >= units``
+        # guard (dropped when overselling is allowed) makes the check-and-decrement a
+        # single atomic statement, so N concurrent variant sales on stock=K let exactly
+        # K succeed — no read-check-write oversell race. COALESCE treats a NULL on-hand
+        # as 0, and the ``client_id`` predicate keeps cross-tenant isolation (SEC-02).
+        stmt = (
             update(Product_variants)
-            .where(Product_variants.id == variant_id)
-            .values(quantity=new_qty)
+            .where(
+                Product_variants.id == variant_id,
+                Product_variants.client_id == client_id,
+            )
+            .values(quantity=func.coalesce(Product_variants.quantity, 0) - units)
+        )
+        if not allow_negative_stock:
+            stmt = stmt.where(func.coalesce(Product_variants.quantity, 0) >= units)
+
+        result = await db.execute(stmt)
+        if result.rowcount:
+            continue
+
+        # No row updated (and the variant exists): not enough variant stock.
+        available = variant.quantity or 0
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Insufficient stock for variant '{variant.name}': "
+                f"requested {units}, available {available}"
+            ),
         )
 
 
