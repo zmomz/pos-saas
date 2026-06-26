@@ -39,13 +39,15 @@ class Loyalty_programsService:
             raise
 
     async def check_ownership(self, obj_id: int, user_id: str) -> bool:
-        """Check if user owns this record"""
-        try:
-            obj = await self.get_by_id(obj_id, user_id=user_id)
-            return obj is not None
-        except Exception as e:
-            logger.error(f"Error checking ownership for loyalty_programs {obj_id}: {str(e)}")
-            return False
+        """Check if user owns this record.
+
+        A missing record — or one owned by another tenant — is a legitimate
+        authorization answer of ``False``. A DB/infrastructure error is *not*:
+        ``get_by_id`` logs and re-raises it so the caller fails closed rather
+        than mistaking an infra fault for "not the owner" (ARC-10).
+        """
+        obj = await self.get_by_id(obj_id, user_id=user_id)
+        return obj is not None
 
     async def get_by_id(self, obj_id: int, user_id: Optional[str] = None) -> Optional[Loyalty_programs]:
         """Get loyalty_programs by ID (user can only see their own records)"""
