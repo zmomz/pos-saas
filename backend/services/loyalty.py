@@ -24,8 +24,41 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.loyalty_points import Loyalty_points
 from models.loyalty_programs import Loyalty_programs
+from models.loyalty_transactions import Loyalty_transactions
 
 logger = logging.getLogger(__name__)
+
+
+def record_ledger_movement(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    client_id: Optional[int],
+    customer_id: int,
+    type: str,
+    points: int,
+    description: Optional[str] = None,
+) -> None:
+    """Append one row to the ``loyalty_transactions`` ledger (no commit).
+
+    This is the single place the POS sale path records a point movement, so the
+    ledger the admin "Points History" tab and the expiry engine read
+    (``compute_usable_balance``) stays in lock-step with the ``loyalty_points``
+    balance. ``points`` is the positive magnitude; the sign is implied by
+    ``type`` ("earned"/"add" credit, "redeemed"/"deduct" debit). The caller owns
+    the transaction and commits the ledger row atomically with the balance change
+    and the sale, so a rolled-back sale leaves no orphan ledger row.
+    """
+    db.add(
+        Loyalty_transactions(
+            user_id=user_id,
+            client_id=client_id,
+            customer_id=customer_id,
+            type=type,
+            points=points,
+            description=description,
+        )
+    )
 
 
 @dataclass
@@ -151,6 +184,15 @@ async def redeem_points(
             total_redeemed=(row.total_redeemed or 0) + points,
         )
     )
+    record_ledger_movement(
+        db,
+        user_id=user_id,
+        client_id=client_id,
+        customer_id=customer_id,
+        type="redeemed",
+        points=points,
+        description="Redeemed on sale",
+    )
     return RedemptionResult(
         points_redeemed=points,
         discount_value=discount_value,
@@ -203,4 +245,13 @@ async def accrue_points(
                 total_redeemed=0,
             )
         )
+    record_ledger_movement(
+        db,
+        user_id=user_id,
+        client_id=client_id,
+        customer_id=customer_id,
+        type="earned",
+        points=points_earned,
+        description="Earned on sale",
+    )
     return AccrualResult(points_earned=points_earned, new_balance=new_balance)

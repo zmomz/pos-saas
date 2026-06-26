@@ -151,14 +151,26 @@ class Loyalty_pointsService:
             logger.error(f"Error fetching loyalty_points list: {str(e)}")
             raise
 
+    # The point balance is owned by the loyalty ledger (loyalty_transactions):
+    # every movement flows through services.loyalty.record_ledger_movement so the
+    # balance and the ledger stay in lock-step (FIN-08). The generic CRUD PUT must
+    # not move a balance behind the ledger's back, so these fields are read-only here.
+    _LEDGER_OWNED_FIELDS = frozenset({"points_balance", "total_earned", "total_redeemed"})
+
     async def update(self, obj_id: int, update_data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Loyalty_points]:
-        """Update loyalty_points (requires ownership)"""
+        """Update loyalty_points (requires ownership).
+
+        Balance-bearing fields are ignored: a points change must go through the
+        loyalty service so it leaves exactly one ledger row (FIN-08).
+        """
         try:
             obj = await self.get_by_id(obj_id, user_id=user_id)
             if not obj:
                 logger.warning(f"Loyalty_points {obj_id} not found for update")
                 return None
             for key, value in update_data.items():
+                if key in self._LEDGER_OWNED_FIELDS:
+                    continue
                 if hasattr(obj, key) and key != 'user_id':
                     setattr(obj, key, value)
 
