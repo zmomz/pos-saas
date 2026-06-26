@@ -44,7 +44,14 @@ class AccrualResult:
 async def get_active_program(
     db: AsyncSession, user_id: str
 ) -> Optional[Loyalty_programs]:
-    """Return the most recent active loyalty program for the merchant, if any."""
+    """Return THE active loyalty program for the merchant, if any.
+
+    The single-active invariant is enforced on every write (see
+    ``enforce_single_active_program``), so at most one row is active per tenant.
+    The ``id`` ordering is a deterministic tiebreaker that keeps the POS stable
+    even if a legacy tenant still carries more than one active row: it always
+    resolves to the most recently created program.
+    """
     result = await db.execute(
         select(Loyalty_programs)
         .where(
@@ -54,6 +61,28 @@ async def get_active_program(
         .order_by(Loyalty_programs.id.desc())
     )
     return result.scalars().first()
+
+
+async def enforce_single_active_program(
+    db: AsyncSession, user_id: str, keep_id: Optional[int]
+) -> None:
+    """Deactivate every active program for ``user_id`` except ``keep_id`` (no commit).
+
+    The single authoritative active program is the one being written
+    (``keep_id``); any other previously-active program for the tenant is flipped
+    to ``is_active = False`` so exactly one program is active at a time. The
+    caller owns the transaction and commits. ``keep_id`` may be ``None`` (e.g.
+    before a row has an id), in which case every active row is deactivated.
+    """
+    conditions = [
+        Loyalty_programs.user_id == user_id,
+        Loyalty_programs.is_active == True,  # noqa: E712
+    ]
+    if keep_id is not None:
+        conditions.append(Loyalty_programs.id != keep_id)
+    await db.execute(
+        update(Loyalty_programs).where(*conditions).values(is_active=False)
+    )
 
 
 async def _get_balance_row(

@@ -1305,21 +1305,36 @@ def _config_payload(program) -> dict:
     }
 
 
+async def _resolve_config_program(db: AsyncSession, owner_id: str):
+    """The authoritative loyalty program for the merchant's config screen (FIN-11).
+
+    Prefer the single active program — the exact one the POS uses via
+    ``get_active_program`` — so the config page and the POS never diverge; fall
+    back to the most recent program when none is active, so an all-inactive
+    config still round-trips.
+    """
+    from models.loyalty_programs import Loyalty_programs
+    from services.loyalty import get_active_program
+
+    active = await get_active_program(db, owner_id)
+    if active is not None:
+        return active
+    result = await db.execute(
+        select(Loyalty_programs)
+        .where(Loyalty_programs.user_id == owner_id)
+        .order_by(Loyalty_programs.id.desc())
+    )
+    return result.scalars().first()
+
+
 @router.get("/loyalty/config", dependencies=[Depends(require_feature("loyalty"))])
 async def get_loyalty_config(
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return the merchant's loyalty-program config (most recent), or nulls if none."""
-    from models.loyalty_programs import Loyalty_programs
-
-    result = await db.execute(
-        select(Loyalty_programs)
-        .where(Loyalty_programs.user_id == owner_id)
-        .order_by(Loyalty_programs.id.desc())
-    )
-    program = result.scalars().first()
+    """Return the merchant's loyalty-program config (the active one), or nulls if none."""
+    program = await _resolve_config_program(db, owner_id)
     if not program:
         # No program yet — the page keeps its defaults (it checks points_per_sar != null).
         return {
@@ -1340,16 +1355,12 @@ async def save_loyalty_config(
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Upsert the merchant's loyalty-program config (single program per merchant)."""
+    """Upsert the merchant's loyalty-program config (single active program, FIN-11)."""
     from models.loyalty_programs import Loyalty_programs
     from routers.pos import get_client_for_user
+    from services.loyalty import enforce_single_active_program
 
-    result = await db.execute(
-        select(Loyalty_programs)
-        .where(Loyalty_programs.user_id == owner_id)
-        .order_by(Loyalty_programs.id.desc())
-    )
-    program = result.scalars().first()
+    program = await _resolve_config_program(db, owner_id)
 
     if program:
         await db.execute(
@@ -1363,8 +1374,6 @@ async def save_loyalty_config(
                 is_active=data.is_active,
             )
         )
-        await db.commit()
-        await db.refresh(program)
     else:
         client = await get_client_for_user(db, owner_id)
         program = Loyalty_programs(
@@ -1378,8 +1387,15 @@ async def save_loyalty_config(
             is_active=data.is_active,
         )
         db.add(program)
-        await db.commit()
-        await db.refresh(program)
+        await db.flush()
+
+    # Single authoritative active program per tenant: when this config is active,
+    # demote any other program that is still active for the merchant.
+    if data.is_active:
+        await enforce_single_active_program(db, owner_id, program.id)
+
+    await db.commit()
+    await db.refresh(program)
 
     return _config_payload(program)
 

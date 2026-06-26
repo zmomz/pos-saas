@@ -5,6 +5,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.loyalty_programs import Loyalty_programs
+from services.loyalty import enforce_single_active_program
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,11 @@ class Loyalty_programsService:
                 data['user_id'] = user_id
             obj = Loyalty_programs(**data)
             self.db.add(obj)
+            await self.db.flush()
+            # Single authoritative active program per tenant (FIN-11): a new
+            # active program deactivates any other active one for this tenant.
+            if obj.is_active:
+                await enforce_single_active_program(self.db, obj.user_id, obj.id)
             await self.db.commit()
             await self.db.refresh(obj)
             logger.info(f"Created loyalty_programs with id: {obj.id}")
@@ -114,6 +120,11 @@ class Loyalty_programsService:
                 if hasattr(obj, key) and key != 'user_id':
                     setattr(obj, key, value)
 
+            await self.db.flush()
+            # Single authoritative active program per tenant (FIN-11): flipping a
+            # program active deactivates any other active one for this tenant.
+            if obj.is_active:
+                await enforce_single_active_program(self.db, obj.user_id, obj.id)
             await self.db.commit()
             await self.db.refresh(obj)
             logger.info(f"Updated loyalty_programs {obj_id}")
