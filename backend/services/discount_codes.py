@@ -90,21 +90,21 @@ class DiscountCodesService:
         )
         return result.scalars().first()
 
-    async def redeem(
+    async def validate(
         self,
         code: str,
         subtotal: float,
         user_id: str,
         now: Optional[datetime] = None,
-    ) -> Dict[str, Any]:
-        """Redeem a unique code exactly once, returning the server-priced amount.
+    ) -> DiscountCodes:
+        """Validate a single-use code for an order subtotal (FIN-09). Read-only.
 
-        Validates (exists in scope, within validity window, meets ``min_purchase``)
-        and then consumes the single use with a conditional UPDATE that flips
-        ``redeemed`` only while it is still False — so two concurrent redemptions of
-        the same code cannot both succeed (the one-shot is enforced in SQL, not by a
-        read-then-write race). Raises ``DiscountCodeError`` (→ HTTP 400) on any
-        failure, including an already-redeemed code. Commits the consumption.
+        Enforces, server-side: the code exists in the caller's scope, has not been
+        redeemed (one-shot), falls inside its validity window, and the order meets
+        ``min_purchase``. Raises ``DiscountCodeError`` (→ HTTP 400) otherwise.
+        Does **not** consume the use — call ``consume`` for that, atomically with
+        the sale, so a rolled-back sale never spends the code (mirrors
+        ``DiscountsService.validate``/``consume``).
 
         ``now`` is injectable so the window check is deterministic in tests.
         """
@@ -124,18 +124,53 @@ class DiscountCodesService:
             raise DiscountCodeError(
                 f"Minimum purchase of {float(dc.min_purchase):.2f} required"
             )
+        return dc
 
-        # One-shot consume: flip redeemed only if still unredeemed.
+    async def consume(
+        self, code_id: int, user_id: str, now: Optional[datetime] = None
+    ) -> bool:
+        """Atomically consume the single use with a conditional UPDATE. No commit.
+
+        Flips ``redeemed`` False→True only while it is still False, so two
+        concurrent redemptions of the same code cannot both succeed (the one-shot
+        is enforced in SQL, not by a read-then-write race). Runs inside the
+        caller's transaction (the sale), so the consumption commits with the sale
+        and rolls back if the sale fails. Returns ``True`` when the use was
+        consumed, ``False`` when the code was already redeemed.
+        """
+        reference = _as_naive(now) if now is not None else datetime.now()
         result = await self.db.execute(
             update(DiscountCodes)
             .where(
-                DiscountCodes.id == dc.id,
+                DiscountCodes.id == code_id,
                 DiscountCodes.user_id == str(user_id),
                 DiscountCodes.redeemed.is_(False),
             )
             .values(redeemed=True, redeemed_at=reference)
         )
-        if (result.rowcount or 0) == 0:
+        return (result.rowcount or 0) > 0
+
+    async def redeem(
+        self,
+        code: str,
+        subtotal: float,
+        user_id: str,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Validate + consume a unique code in one committed step (standalone path).
+
+        For direct redemption that is not folded into a sale. Validates read-only,
+        consumes the single use with the conditional UPDATE, and commits. Raises
+        ``DiscountCodeError`` (→ HTTP 400) on any failure, including an
+        already-redeemed code. When consumption belongs to a sale, use
+        ``validate`` + ``consume`` so the code is spent iff the sale commits
+        (FIN-09).
+
+        ``now`` is injectable so the window check is deterministic in tests.
+        """
+        reference = _as_naive(now) if now is not None else datetime.now()
+        dc = await self.validate(code, subtotal, user_id, now=reference)
+        if not await self.consume(dc.id, user_id, now=reference):
             await self.db.rollback()
             raise DiscountCodeError("This code has already been redeemed")
         await self.db.commit()

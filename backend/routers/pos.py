@@ -31,6 +31,7 @@ from models.product_branch_stock import Product_branch_stock  # noqa: F401
 from models.product_variants import Product_variants  # noqa: F401
 from models.variant_branch_stock import Variant_branch_stock  # noqa: F401
 from services import loyalty as loyalty_service
+from services.discount_codes import DiscountCodeError, DiscountCodesService
 from services.discounts import (
     DiscountsService,
     DiscountValidationError,
@@ -580,20 +581,43 @@ async def create_transaction(
     discounts_service = DiscountsService(db)
     discount_code = (data.discount_code or "").strip()
     if discount_code:
-        try:
-            discount_rule = await discounts_service.validate(
-                discount_code, subtotal, user_id=owner_id
-            )
-        except DiscountValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        discount_amount = compute_discount_amount(discount_rule, subtotal)
-        if not await discounts_service.consume(
-            discount_rule.id, user_id=owner_id
-        ):
-            # Lost the cap race between validate and consume — treat as exhausted.
-            raise HTTPException(
-                status_code=400, detail="This discount has reached its usage limit"
-            )
+        # The code can name either a reusable ``Discounts`` rule (shared code, a
+        # usage cap counted up across sales) or a single-use unique ``DiscountCodes``
+        # code (minted in a batch, redeemable exactly once). A configured rule takes
+        # precedence; otherwise fall back to the single-use code system. In BOTH
+        # cases the use is consumed in THIS session — committed atomically by
+        # ``execute_sale`` below — so a rolled-back sale never spends it (FIN-09).
+        configured_rule = await discounts_service.get_by_code(discount_code, owner_id)
+        if configured_rule is not None:
+            try:
+                discount_rule = await discounts_service.validate(
+                    discount_code, subtotal, user_id=owner_id
+                )
+            except DiscountValidationError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            discount_amount = compute_discount_amount(discount_rule, subtotal)
+            if not await discounts_service.consume(
+                discount_rule.id, user_id=owner_id
+            ):
+                # Lost the cap race between validate and consume — treat as exhausted.
+                raise HTTPException(
+                    status_code=400, detail="This discount has reached its usage limit"
+                )
+        else:
+            codes_service = DiscountCodesService(db)
+            try:
+                code_rule = await codes_service.validate(
+                    discount_code, subtotal, user_id=owner_id
+                )
+            except DiscountCodeError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+            discount_amount = compute_discount_amount(code_rule, subtotal)
+            # One-shot consume inside the sale txn: if a concurrent sale beat us to
+            # it the conditional UPDATE matches no row -> already redeemed.
+            if not await codes_service.consume(code_rule.id, user_id=owner_id):
+                raise HTTPException(
+                    status_code=400, detail="This code has already been redeemed"
+                )
     else:
         discount_amount = round(float(data.discount_amount or 0), 2)
         if discount_amount > 0 and not await has_permission(
