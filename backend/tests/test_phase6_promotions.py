@@ -44,9 +44,9 @@ def test_line_level_percentage_discount_composes_with_vat():
     assert [(a.name, a.amount) for a in result.applied] == [("25% off cola", 5.00)]
 
     # Composes with VAT: taxable base is subtotal (50) minus the promo (5) = 45,
-    # VAT on the net, not the gross.
+    # VAT on the net, not the gross. The engine returns a Decimal discount (FIN-03).
     subtotal = 50.0
-    taxable = subtotal - result.total_discount
+    taxable = subtotal - float(result.total_discount)
     assert taxable == 45.0
     assert _vat(taxable) == 6.75
 

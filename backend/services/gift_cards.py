@@ -16,6 +16,7 @@ from typing import Optional
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.money import quantize_money
 from models.gift_card_ledger import GiftCardLedger
 from models.gift_cards import Gift_cards
 
@@ -26,9 +27,6 @@ ACTIVE = "active"
 REDEEMED = "redeemed"
 EXPIRED = "expired"
 VOID = "void"
-
-# Below this the balance is treated as fully exhausted (float-noise tolerance).
-_ZERO_EPSILON = 0.0001
 
 
 class GiftCardError(ValueError):
@@ -70,7 +68,7 @@ class GiftCardsService:
         code: Optional[str] = None,
     ) -> Gift_cards:
         """Issue (and persist) a new active gift card with ``amount`` balance."""
-        face_value = round(float(amount or 0), 2)
+        face_value = quantize_money(amount or 0)
         card = Gift_cards(
             user_id=str(user_id),
             client_id=client_id,
@@ -152,11 +150,12 @@ class GiftCardsService:
             raise GiftCardError("This gift card has been cancelled")
         if is_expired(card, now):
             raise GiftCardError("This gift card has expired")
-        if (card.status or ACTIVE) != ACTIVE or (card.balance or 0) <= _ZERO_EPSILON:
+        balance = quantize_money(card.balance or 0)
+        if (card.status or ACTIVE) != ACTIVE or balance <= 0:
             raise GiftCardError("This gift card has no remaining balance")
-        if round(float(amount or 0), 2) > round(float(card.balance or 0), 2) + _ZERO_EPSILON:
+        if quantize_money(amount or 0) > balance:
             raise GiftCardError(
-                f"Gift card balance {float(card.balance or 0):.2f} is less than {float(amount):.2f}"
+                f"Gift card balance {balance:.2f} is less than {quantize_money(amount or 0):.2f}"
             )
         return card
 
@@ -176,7 +175,7 @@ class GiftCardsService:
         ``redeemed`` in the same transaction.
         """
         now = now or datetime.now()
-        amount = round(float(amount or 0), 2)
+        amount = quantize_money(amount or 0)
         result = await self.db.execute(
             update(Gift_cards)
             .where(
@@ -186,7 +185,10 @@ class GiftCardsService:
                 func.coalesce(Gift_cards.balance, 0) >= amount,
                 or_(Gift_cards.expiry_date.is_(None), Gift_cards.expiry_date >= now),
             )
-            .values(balance=func.coalesce(Gift_cards.balance, 0) - amount)
+            # FIN-03: round the SQL decrement to 2dp so the stored balance never
+            # carries float subtraction drift (0.30 - 0.10 -> 0.20, not 0.19999…)
+            # that the next redemption's ``>= amount`` guard would wrongly reject.
+            .values(balance=func.round(func.coalesce(Gift_cards.balance, 0) - amount, 2))
         )
         if (result.rowcount or 0) <= 0:
             return False
@@ -196,7 +198,7 @@ class GiftCardsService:
             .where(
                 Gift_cards.id == card_id,
                 Gift_cards.user_id == str(user_id),
-                func.coalesce(Gift_cards.balance, 0) <= _ZERO_EPSILON,
+                func.coalesce(Gift_cards.balance, 0) <= 0,
             )
             .values(status=REDEEMED)
         )
@@ -223,8 +225,8 @@ class GiftCardsService:
                 client_id=card.client_id,
                 gift_card_id=card.id,
                 entry_type=entry_type,
-                amount=round(float(amount or 0), 2),
-                balance_after=round(float(balance_after or 0), 2),
+                amount=quantize_money(amount or 0),
+                balance_after=quantize_money(balance_after or 0),
                 transaction_id=transaction_id,
                 note=note,
             )
@@ -289,10 +291,10 @@ class GiftCardsService:
             return None
         if (card.status or ACTIVE) == VOID:
             raise GiftCardError("This gift card has been cancelled")
-        amount = round(float(amount or 0), 2)
+        amount = quantize_money(amount or 0)
         if amount <= 0:
             raise GiftCardError("amount must be greater than 0")
-        new_balance = round(float(card.balance or 0) + amount, 2)
+        new_balance = quantize_money(quantize_money(card.balance or 0) + amount)
         card.balance = new_balance
         card.status = ACTIVE
         self._record(card, entry_type, amount, new_balance, transaction_id=transaction_id)

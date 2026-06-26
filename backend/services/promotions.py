@@ -18,10 +18,13 @@ the taxable base *before* VAT — composing with VAT exactly like the order disc
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.money import quantize_money, to_decimal
 
 
 @dataclass
@@ -66,46 +69,51 @@ class AppliedPromotion:
     promotion_id: Optional[int]
     name: str
     kind: str
-    amount: float
+    amount: Decimal
 
 
 @dataclass
 class PromotionResult:
     """The outcome of pricing a cart against a set of rules."""
 
-    total_discount: float
+    total_discount: Decimal
     applied: List[AppliedPromotion] = field(default_factory=list)
 
 
-def _discount_on_base(disc_type: str, value: float, base: float) -> float:
-    """A %/fixed discount on ``base``, clamped to ``[0, base]``."""
+def _line_base(lines: List[CartLine], predicate) -> Decimal:
+    """Exact Decimal sum of ``price * quantity`` over the lines matching ``predicate``."""
+    return sum(
+        (to_decimal(l.price) * to_decimal(l.quantity) for l in lines if predicate(l)),
+        Decimal(0),
+    )
+
+
+def _discount_on_base(disc_type: str, value: Any, base: Decimal) -> Decimal:
+    """A %/fixed discount on ``base``, clamped to ``[0, base]`` (single round)."""
+    base = to_decimal(base)
     if (disc_type or "").lower() in ("percentage", "percent", "%"):
-        amount = base * (float(value or 0) / 100.0)
+        amount = base * (to_decimal(value or 0) / Decimal(100))
     else:  # fixed / flat
-        amount = float(value or 0)
-    return round(max(0.0, min(amount, base)), 2)
+        amount = to_decimal(value or 0)
+    return quantize_money(max(Decimal(0), min(amount, base)))
 
 
-def _amount_for_rule(rule: Any, lines: List[CartLine]) -> float:
+def _amount_for_rule(rule: Any, lines: List[CartLine]) -> Decimal:
     """The discount one rule contributes to the cart (0 when nothing matches)."""
     kind = (getattr(rule, "kind", "") or "").lower()
     if kind == "line":
-        base = sum(l.price * l.quantity for l in lines if l.product_id == rule.product_id)
+        base = _line_base(lines, lambda l: l.product_id == rule.product_id)
         return _discount_on_base(rule.disc_type, rule.value, base)
     if kind == "category":
         target = (rule.category or "").strip().lower()
-        base = sum(
-            l.price * l.quantity
-            for l in lines
-            if (l.category or "").strip().lower() == target
-        )
+        base = _line_base(lines, lambda l: (l.category or "").strip().lower() == target)
         return _discount_on_base(rule.disc_type, rule.value, base)
     if kind == "bogo":
         return _bogo_amount(rule, lines)
-    return 0.0
+    return Decimal("0.00")
 
 
-def _bogo_amount(rule: Any, lines: List[CartLine]) -> float:
+def _bogo_amount(rule: Any, lines: List[CartLine]) -> Decimal:
     """Buy-N-get-M discount on the target product (cheapest-unit semantics).
 
     For every ``buy + get`` units of the target product in the cart, ``get`` units
@@ -116,12 +124,13 @@ def _bogo_amount(rule: Any, lines: List[CartLine]) -> float:
     get = max(0, int(rule.bogo_get_qty or 0))
     group = buy + get
     if group <= 0 or get <= 0:
-        return 0.0
+        return Decimal("0.00")
     target = [l for l in lines if l.product_id == rule.product_id]
-    qty = sum(l.quantity for l in target)
-    unit_price = target[0].price if target else 0.0
+    qty = sum((to_decimal(l.quantity) for l in target), Decimal(0))
+    unit_price = to_decimal(target[0].price) if target else Decimal(0)
     free_units = int(qty // group) * get
-    return round(free_units * unit_price * (float(rule.bogo_get_percent or 0) / 100.0), 2)
+    pct = to_decimal(rule.bogo_get_percent or 0) / Decimal(100)
+    return quantize_money(Decimal(free_units) * unit_price * pct)
 
 
 def compute_promotions(lines: List[CartLine], rules: List[Any]) -> PromotionResult:
@@ -132,13 +141,13 @@ def compute_promotions(lines: List[CartLine], rules: List[Any]) -> PromotionResu
     sum is clamped to the subtotal so promotions can never push the order negative.
     The returned ``applied`` list is what surfaces to the cashier.
     """
-    subtotal = round(sum(l.price * l.quantity for l in lines), 2)
+    subtotal = quantize_money(_line_base(lines, lambda l: True))
     applied: List[AppliedPromotion] = []
     for rule in rules:
         if getattr(rule, "is_active", True) is False:
             continue
         floor = getattr(rule, "min_subtotal", None)
-        if floor is not None and subtotal < float(floor):
+        if floor is not None and subtotal < to_decimal(floor):
             continue
         amount = _amount_for_rule(rule, lines)
         if amount > 0:
@@ -150,7 +159,10 @@ def compute_promotions(lines: List[CartLine], rules: List[Any]) -> PromotionResu
                     amount=amount,
                 )
             )
-    total = round(min(sum(a.amount for a in applied), subtotal), 2)
+    # Each applied amount is already a 2dp penny figure; the total is their exact
+    # sum, clamped to the subtotal so promotions never push the order negative.
+    summed = sum((a.amount for a in applied), Decimal(0))
+    total = quantize_money(min(summed, subtotal))
     return PromotionResult(total_discount=total, applied=applied)
 
 
@@ -215,6 +227,6 @@ async def price_cart_promotions(
     """Load the owner's active rules, project the cart, and price the promotions."""
     rules = await load_active_promotions(db, user_id)
     if not rules:
-        return PromotionResult(total_discount=0.0, applied=[])
+        return PromotionResult(total_discount=quantize_money(0), applied=[])
     lines = await build_cart_lines(db, client_id, items)
     return compute_promotions(lines, rules)

@@ -19,9 +19,10 @@ neither see nor redeem another client's cards.
 """
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Integer, String
 
 from core.database import Base
+from core.money import Money
 
 
 class Gift_cards(Base):
@@ -35,8 +36,10 @@ class Gift_cards(Base):
     code = Column(String, nullable=False, index=True)
     currency = Column(String, nullable=False, default="SAR", server_default="SAR")
     # The face value the card was issued with (never mutated) and the live balance.
-    initial_balance = Column(Float, nullable=False)
-    balance = Column(Float, nullable=False)
+    # ``Money`` (Numeric(12,2), Decimal half-up) so balances stay penny-exact and
+    # never inherit float subtraction drift (FIN-03).
+    initial_balance = Column(Money, nullable=False)
+    balance = Column(Money, nullable=False)
     # active / redeemed / expired / void
     status = Column(String, nullable=False, default="active", server_default="active")
     # Optional expiry; NULL means the card never expires.

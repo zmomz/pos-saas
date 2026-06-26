@@ -1243,21 +1243,23 @@ async def redeem_loyalty_points(
     # FIN-05: value the redeemed points from the merchant's server-side program
     # rate, never a client-supplied figure. Fall back to the platform default
     # when no active program is configured.
+    from core.money import quantize_money, to_decimal
     from services.loyalty import get_active_program
 
     program = await get_active_program(db, owner_id)
     rate = (program.redemption_rate if program else None) or DEFAULT_REDEMPTION_RATE
-    discount_value = round(data.points_to_redeem * rate, 2)
+    discount_value = quantize_money(to_decimal(data.points_to_redeem) * to_decimal(rate))
 
     # Cap the discount at the order subtotal when one is supplied, mirroring the
     # atomic POS path: a redemption can never discount more than the order is
     # worth. Reject (before any balance mutation) rather than silently clamp.
-    if data.order_subtotal is not None and discount_value > data.order_subtotal + 0.01:
+    # FIN-03: an exact Decimal cap — no float +0.01 slop letting a penny through.
+    if data.order_subtotal is not None and discount_value > quantize_money(data.order_subtotal):
         raise HTTPException(
             status_code=400,
             detail=(
                 f"Redemption value {discount_value:.2f} exceeds order subtotal "
-                f"{data.order_subtotal:.2f}"
+                f"{quantize_money(data.order_subtotal):.2f}"
             ),
         )
 
@@ -1285,7 +1287,7 @@ async def redeem_loyalty_points(
     return {
         "customer_id": data.customer_id,
         "points_redeemed": data.points_to_redeem,
-        "discount_value": round(discount_value, 2),
+        "discount_value": quantize_money(discount_value),
         "remaining_balance": new_balance,
     }
 

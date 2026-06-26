@@ -17,10 +17,13 @@ points reduce the taxable amount before VAT. Accrual earns
 """
 import logging
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.money import quantize_money, to_decimal
 
 from models.loyalty_points import Loyalty_points
 from models.loyalty_programs import Loyalty_programs
@@ -64,7 +67,7 @@ def record_ledger_movement(
 @dataclass
 class RedemptionResult:
     points_redeemed: int
-    discount_value: float
+    discount_value: Decimal
     remaining_balance: int
 
 
@@ -168,11 +171,11 @@ async def redeem_points(
             f"Insufficient points. Available: {available}, requested: {points}"
         )
 
-    discount_value = round(points * rate, 2)
-    if discount_value > max_discount + 0.01:
+    discount_value = quantize_money(to_decimal(points) * to_decimal(rate))
+    if discount_value > quantize_money(max_discount):
         raise ValueError(
             f"Redemption value {discount_value:.2f} exceeds order subtotal "
-            f"{max_discount:.2f}"
+            f"{quantize_money(max_discount):.2f}"
         )
 
     new_balance = available - points
