@@ -77,6 +77,13 @@ async def lifespan(app: FastAPI):
     logger.info("=== Application startup initiated ===")
 
     # MODULE_STARTUP_START
+    # Fail fast on an insecure JWT signing key before anything touches the DB or
+    # serves traffic (SEC-01): a default/short HS256 key lets anyone forge admin
+    # tokens. Aborts prod boot; swaps in an ephemeral key in dev.
+    from core.config import validate_secrets
+
+    validate_secrets()
+
     # Run Alembic migrations first when enabled (prod default); when they own the
     # schema, skip create_all so the schema comes purely from the versioned chain
     # (OPS-01). In dev/CI (or if migrations fail) create_all bootstraps it instead.

@@ -1,10 +1,17 @@
 import logging
 import os
+import secrets as _secrets
 from typing import Any
 
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
+
+# Source-visible default JWT secret. Booting prod with this (or anything weak)
+# lets anyone forge HS256 tokens and impersonate the master admin (SEC-01).
+DEFAULT_JWT_SECRET = "change-me-in-production"
+# Minimum entropy we accept for a signing key in production.
+MIN_JWT_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -140,3 +147,44 @@ class Settings(BaseSettings):
 
 # Global settings instance
 settings = Settings()
+
+
+def _is_dev() -> bool:
+    """Match the project-wide dev detection (see core/cors.py)."""
+    return os.getenv("ENVIRONMENT", "prod").lower() == "dev"
+
+
+def validate_secrets() -> None:
+    """Fail fast on an insecure JWT signing key before serving traffic.
+
+    HS256 with a known/weak key enables token forgery and full admin
+    impersonation, so in production we abort boot when the JWT secret is unset,
+    equals the source-visible default, or carries too little entropy. In dev we
+    keep local runs frictionless by swapping in a generated ephemeral key
+    instead of refusing to start.
+
+    Called from the application lifespan before ``initialize_database``.
+    """
+    secret = (getattr(settings, "jwt_secret_key", "") or "").strip()
+    if not secret:
+        reason = "is unset"
+    elif secret == DEFAULT_JWT_SECRET:
+        reason = "equals the source-visible default"
+    elif len(secret) < MIN_JWT_SECRET_LENGTH:
+        reason = f"is shorter than {MIN_JWT_SECRET_LENGTH} characters"
+    else:
+        return  # Strong, explicitly configured key — nothing to do.
+
+    if _is_dev():
+        settings.jwt_secret_key = _secrets.token_urlsafe(48)
+        logger.warning(
+            "JWT secret %s; generated an ephemeral dev key. Set JWT_SECRET_KEY "
+            "to keep sessions valid across restarts.",
+            reason,
+        )
+        return
+
+    raise RuntimeError(
+        f"Refusing to start: the JWT secret {reason}. Set a strong, unique "
+        f"JWT_SECRET_KEY (>= {MIN_JWT_SECRET_LENGTH} characters) in the environment."
+    )
