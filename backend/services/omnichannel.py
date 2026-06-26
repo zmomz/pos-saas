@@ -144,7 +144,11 @@ async def _match_line_items(db: AsyncSession, client: Clients, raw_items: list) 
     for item in raw_items:
         if not isinstance(item, dict):
             continue
-        qty = int(_as_float(item.get("quantity")) or 0)
+        # Keep the line quantity as a float (INV-01): a weighted / fractional line
+        # (e.g. 1.5 kg) must not be int()-truncated to 1. Matches the aggregator
+        # connector, which also carries float qty. A zero (or unparseable) line is
+        # still skipped.
+        qty = _as_float(item.get("quantity")) or 0.0
         if qty <= 0:
             continue
         sku = (item.get("sku") or item.get("barcode") or "").strip()

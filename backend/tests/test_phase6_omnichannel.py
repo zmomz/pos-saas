@@ -24,6 +24,7 @@ from core.database import db_manager
 from models.channel_orders import Channel_orders
 from models.client_features import Client_features
 from models.products import Products
+from models.transactions import Transactions
 
 
 async def _add_product_with_barcode(client_id, user_id, *, barcode, name="T-Shirt", quantity=10, price=100.0):
@@ -241,3 +242,62 @@ async def test_channel_orders_listing_is_owner_scoped(client):
     listing_b = await client.get("/api/v1/omnichannel/channel-orders", headers=headers_b)
     assert listing_b.status_code == 200
     assert listing_b.json()["total"] == 0
+
+
+async def _txn_items(transaction_id):
+    async with db_manager.async_session_maker() as db:
+        items_json = (
+            await db.execute(
+                select(Transactions.items_json).where(Transactions.id == transaction_id)
+            )
+        ).scalar_one()
+    return json.loads(items_json) if items_json else []
+
+
+@pytest.mark.asyncio
+async def test_salla_fractional_line_quantity_preserved(client):
+    """A weighted/fractional Salla line keeps its float qty (INV-01) — no int() truncation.
+
+    Previously the Salla connector ``int()``-ed the line quantity, so a 1.5 kg line
+    rang up as 1 unit and only decremented one unit of stock — diverging from the
+    aggregator connector (which keeps float). Pin the float all the way through.
+    """
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    store_id = f"store_{uuid.uuid4().hex[:8]}"
+    sku = f"SKU-{uuid.uuid4().hex[:6]}"
+    pid = await _add_product_with_barcode(client_id, user["id"], barcode=sku, quantity=10)
+    await _connect(client, headers, store_id)
+
+    payload = _salla_payload(merchant=store_id, order_id=90006, sku=sku, qty=1.5)
+    resp = await client.post("/api/v1/omnichannel/salla/webhook", json=payload)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "imported"
+
+    # The materialized sale line carries the fractional quantity verbatim.
+    items = await _txn_items(body["transaction_id"])
+    assert len(items) == 1
+    assert items[0]["quantity"] == 1.5
+
+    # Shared stock decremented by the fractional amount (10 - 1.5).
+    assert await _product_qty(pid) == 8.5
+
+
+@pytest.mark.asyncio
+async def test_salla_zero_quantity_line_skipped(client):
+    """A zero-quantity Salla line is dropped (no sale line, no decrement)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+    store_id = f"store_{uuid.uuid4().hex[:8]}"
+    sku = f"SKU-{uuid.uuid4().hex[:6]}"
+    pid = await _add_product_with_barcode(client_id, user["id"], barcode=sku, quantity=10)
+    await _connect(client, headers, store_id)
+
+    payload = _salla_payload(merchant=store_id, order_id=90007, sku=sku, qty=0)
+    resp = await client.post("/api/v1/omnichannel/salla/webhook", json=payload)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "no_lines"
+
+    # No line rang up → stock untouched.
+    assert await _product_qty(pid) == 10
