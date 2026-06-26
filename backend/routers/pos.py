@@ -2,6 +2,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -12,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from core.money import quantize_money, to_decimal
 from dependencies.auth import get_current_user
 from dependencies.tenancy import get_owner_id
 from dependencies.features import require_feature
@@ -528,11 +530,15 @@ async def create_transaction(
     """Create a new POS transaction, ECDSA-signed and ZATCA-reported (C-3/C-4)."""
     client = await get_client_for_user(db, owner_id)
 
-    # Calculate totals
-    subtotal = 0.0
+    # Calculate totals (FIN-02: Decimal money math — penny-exact, no float drift).
+    subtotal = Decimal("0")
     for item in data.items:
-        item_total = item.price * item.quantity - (item.discount or 0)
+        item_total = (
+            to_decimal(item.price) * to_decimal(item.quantity)
+            - to_decimal(item.discount or 0)
+        )
         subtotal += item_total
+    subtotal = quantize_money(subtotal)
 
     # ---- Price override (POS-08): gate manual unit-price changes (SEC-07) ----
     # A cart line whose unit price differs from the product's catalog price is a
@@ -593,11 +599,13 @@ async def create_transaction(
         if configured_rule is not None:
             try:
                 discount_rule = await discounts_service.validate(
-                    discount_code, subtotal, user_id=owner_id
+                    discount_code, float(subtotal), user_id=owner_id
                 )
             except DiscountValidationError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
-            discount_amount = compute_discount_amount(discount_rule, subtotal)
+            discount_amount = to_decimal(
+                compute_discount_amount(discount_rule, float(subtotal))
+            )
             if not await discounts_service.consume(
                 discount_rule.id, user_id=owner_id
             ):
@@ -609,11 +617,13 @@ async def create_transaction(
             codes_service = DiscountCodesService(db)
             try:
                 code_rule = await codes_service.validate(
-                    discount_code, subtotal, user_id=owner_id
+                    discount_code, float(subtotal), user_id=owner_id
                 )
             except DiscountCodeError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
-            discount_amount = compute_discount_amount(code_rule, subtotal)
+            discount_amount = to_decimal(
+                compute_discount_amount(code_rule, float(subtotal))
+            )
             # One-shot consume inside the sale txn: if a concurrent sale beat us to
             # it the conditional UPDATE matches no row -> already redeemed.
             if not await codes_service.consume(code_rule.id, user_id=owner_id):
@@ -621,7 +631,7 @@ async def create_transaction(
                     status_code=400, detail="This code has already been redeemed"
                 )
     else:
-        discount_amount = round(float(data.discount_amount or 0), 2)
+        discount_amount = quantize_money(data.discount_amount or 0)
         if discount_amount > 0 and not await has_permission(
             db, str(current_user.id), "pos.discount"
         ):
@@ -636,7 +646,7 @@ async def create_transaction(
     # the sale below, so a rolled-back sale never spends points.
     program = await loyalty_service.get_active_program(db, owner_id)
     loyalty_points_redeemed = 0
-    loyalty_discount = 0.0
+    loyalty_discount = Decimal("0")
     loyalty_balance: Optional[int] = None
     if data.redeem_points and data.redeem_points > 0:
         if not data.customer_id:
@@ -656,14 +666,14 @@ async def create_transaction(
                 customer_id=data.customer_id,
                 points=int(data.redeem_points),
                 program=program,
-                max_discount=round(subtotal - discount_amount, 2),
+                max_discount=float(quantize_money(subtotal - discount_amount)),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         loyalty_points_redeemed = redemption.points_redeemed
-        loyalty_discount = redemption.discount_value
+        loyalty_discount = to_decimal(redemption.discount_value)
         loyalty_balance = redemption.remaining_balance
-        discount_amount = round(discount_amount + redemption.discount_value, 2)
+        discount_amount = quantize_money(discount_amount + loyalty_discount)
 
     # ---- Auto-applied promotions (ISSUE-058, P2 pricing) ----
     # Line/category/BOGO promotions the merchant configured fire on their own when
@@ -674,16 +684,18 @@ async def create_transaction(
     promo_result = await price_cart_promotions(db, owner_id, client.id, data.items)
     applied_promotions = promo_result.applied
     if promo_result.total_discount > 0:
-        discount_amount = round(discount_amount + promo_result.total_discount, 2)
+        discount_amount = quantize_money(
+            discount_amount + to_decimal(promo_result.total_discount)
+        )
     # Never let stacked discounts push the taxable base below zero.
-    discount_amount = round(min(discount_amount, subtotal), 2)
+    discount_amount = quantize_money(min(discount_amount, subtotal))
 
-    taxable_amount = subtotal - discount_amount
+    taxable_amount = quantize_money(subtotal - discount_amount)
     # MA-05: the master's global VAT rate is authoritative; the request rate is
     # only a fallback for installs with no global rate configured.
     vat_rate = await get_effective_tax_rate(db, data.vat_rate)
-    vat_amount = round(taxable_amount * (vat_rate / 100), 2)
-    total_amount = round(taxable_amount + vat_amount, 2)
+    vat_amount = quantize_money(taxable_amount * (to_decimal(vat_rate) / Decimal(100)))
+    total_amount = quantize_money(taxable_amount + vat_amount)
 
     # ---- Tip / gratuity (POS-13, F-012) ----
     # A tip is collected on TOP of the invoice total and is OUTSIDE the VAT base —
@@ -691,17 +703,21 @@ async def create_transaction(
     # ZATCA document's subtotal/VAT/total are unaffected. ``charge_total`` is what
     # the customer actually pays (and what the tenders must cover); the tip is
     # recorded separately and surfaced in the Z-report and on the receipt.
-    tip_amount = round(float(data.tip_amount or 0), 2)
+    tip_amount = quantize_money(data.tip_amount or 0)
     if tip_amount < 0:
         raise HTTPException(status_code=400, detail="tip_amount cannot be negative")
-    charge_total = round(total_amount + tip_amount, 2)
+    charge_total = quantize_money(total_amount + tip_amount)
 
     # ---- Payment breakdown (POS-02): validate + summarise split tenders ----
     payment_breakdown_json: Optional[str] = None
     payment_method = data.payment_method
     if data.payments:
-        paid_total = round(sum(p.amount for p in data.payments), 2)
-        if abs(paid_total - charge_total) > 0.01:
+        # FIN-02: with Decimal money the tenders must reconcile to the penny —
+        # no epsilon slop that let a penny-short (or penny-over) split slip by.
+        paid_total = quantize_money(
+            sum((to_decimal(p.amount) for p in data.payments), Decimal("0"))
+        )
+        if paid_total != charge_total:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -730,19 +746,23 @@ async def create_transaction(
     # Tendering less than that cash due is rejected — you can't under-pay cash. The
     # change is recorded for the drawer only; it never changes the captured tenders
     # (which still cover the amount due), the invoice total, or the VAT base.
-    cash_tendered: Optional[float] = None
-    change_due: Optional[float] = None
+    cash_tendered: Optional[Decimal] = None
+    change_due: Optional[Decimal] = None
     if data.cash_tendered is not None:
-        cash_tendered = round(float(data.cash_tendered), 2)
+        cash_tendered = quantize_money(data.cash_tendered)
         if cash_tendered < 0:
             raise HTTPException(status_code=400, detail="cash_tendered cannot be negative")
         if data.payments:
-            cash_due = round(
-                sum(p.amount for p in data.payments if (p.method or "") == "cash"), 2
+            cash_due = quantize_money(
+                sum(
+                    (to_decimal(p.amount) for p in data.payments if (p.method or "") == "cash"),
+                    Decimal("0"),
+                )
             )
         else:
-            cash_due = charge_total if payment_method == "cash" else 0.0
-        if cash_tendered + 0.01 < cash_due:
+            cash_due = charge_total if payment_method == "cash" else Decimal("0")
+        # FIN-02: exact — you cannot under-pay the cash leg by even a penny.
+        if cash_tendered < cash_due:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -750,7 +770,7 @@ async def create_transaction(
                     f"{cash_due:.2f}"
                 ),
             )
-        change_due = round(cash_tendered - cash_due, 2)
+        change_due = quantize_money(cash_tendered - cash_due)
 
     # ---- Buyer VAT capture (F-018 / ZA-06) ----
     # A VAT-registered buyer makes this a B2B supply. Prefer the explicit request
@@ -796,18 +816,20 @@ async def create_transaction(
             user_id=owner_id,
             client=client,
             lines=sale_lines,
-            subtotal=subtotal,
-            discount_amount=discount_amount,
+            # The Float money columns take plain floats; the values are already
+            # quantized to 2dp in Decimal, so float() is penny-exact here.
+            subtotal=float(subtotal),
+            discount_amount=float(discount_amount),
             discount_code=(discount_code or None),
             vat_rate=vat_rate,
-            vat_amount=vat_amount,
-            total_amount=total_amount,
-            tender_specs=_build_tender_specs(data, charge_total),
+            vat_amount=float(vat_amount),
+            total_amount=float(total_amount),
+            tender_specs=_build_tender_specs(data, float(charge_total)),
             payment_method=payment_method,
             payment_breakdown_json=payment_breakdown_json,
-            tip_amount=tip_amount,
-            cash_tendered=cash_tendered,
-            change_due=change_due,
+            tip_amount=float(tip_amount),
+            cash_tendered=(None if cash_tendered is None else float(cash_tendered)),
+            change_due=(None if change_due is None else float(change_due)),
             customer_name=data.customer_name,
             customer_phone=data.customer_phone,
             buyer_vat=buyer_vat,
