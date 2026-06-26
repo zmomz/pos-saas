@@ -8,6 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
@@ -968,14 +969,24 @@ async def process_offline_sale(
     """
     offline_id = txn.get("offline_id")
     if offline_id:
-        existing = await db.execute(
-            select(Transactions).where(
-                Transactions.user_id == user_id,
-                Transactions.offline_id == offline_id,
+        prior = (
+            await db.execute(
+                select(Transactions).where(
+                    Transactions.client_id == client_id,
+                    Transactions.offline_id == offline_id,
+                )
             )
-        )
-        if existing.scalar_one_or_none():
-            return {"status": "skipped", "transaction_id": None, "invoice_number": None}
+        ).scalar_one_or_none()
+        if prior is not None:
+            # DAT-06: already booked. A skip is idempotent, not a black hole — echo
+            # the original sale so the caller can reconcile, and carry the
+            # offline_id so the batch can mark it accepted (FE-03).
+            return {
+                "status": "skipped",
+                "offline_id": offline_id,
+                "transaction_id": prior.id,
+                "invoice_number": prior.invoice_number,
+            }
 
     # Re-fetch the client each call so invoice_counter/chain state is current
     # after the previous queued sale committed.
@@ -1029,46 +1040,79 @@ async def process_offline_sale(
     )
     db.add(transaction)
 
-    await _deduct_inventory(db, client.id, items, bool(txn.get("allow_negative_stock")))
-    transaction.shift_id = await _apply_sale_to_open_shift(db, user_id, total_amount)
-
-    await db.flush()
-    # Record the tender for the queued sale. Offline sales are cash or were
-    # captured on-device, so we do not re-charge a gateway here — we persist the
-    # recorded method so the tender ledger stays consistent with online sales.
-    _persist_tenders(
-        db,
-        user_id,
-        client.id,
-        transaction.id,
-        [
-            {
-                "tender_type": normalize_tender_type(transaction.payment_method),
-                "amount": total_amount,
-                "gateway": None,
-                "status": "captured",
-                "network": None,
-                "approval_code": None,
-                "rrn": None,
-                "gateway_ref": None,
-                "last4": None,
-                "token": None,
-                "decline_reason": None,
-            }
-        ],
-    )
-    # ZA-09: a replayed offline sale follows the same per-client policy — sign and
-    # archive only when the client has ZATCA enabled, otherwise persist the sale
-    # without a fiscal document.
-    if zatca_sale.is_zatca_enabled(client):
-        await zatca_sale.sign_transaction(
-            db, client, transaction,
-            buyer_vat=transaction.customer_vat_number,
+    try:
+        await _deduct_inventory(
+            db, client.id, items, bool(txn.get("allow_negative_stock"))
         )
-    await db.commit()
+        transaction.shift_id = await _apply_sale_to_open_shift(db, user_id, total_amount)
+
+        await db.flush()
+        # Record the tender for the queued sale. Offline sales are cash or were
+        # captured on-device, so we do not re-charge a gateway here — we persist the
+        # recorded method so the tender ledger stays consistent with online sales.
+        _persist_tenders(
+            db,
+            user_id,
+            client.id,
+            transaction.id,
+            [
+                {
+                    "tender_type": normalize_tender_type(transaction.payment_method),
+                    "amount": total_amount,
+                    "gateway": None,
+                    "status": "captured",
+                    "network": None,
+                    "approval_code": None,
+                    "rrn": None,
+                    "gateway_ref": None,
+                    "last4": None,
+                    "token": None,
+                    "decline_reason": None,
+                }
+            ],
+        )
+        # ZA-09: a replayed offline sale follows the same per-client policy — sign and
+        # archive only when the client has ZATCA enabled, otherwise persist the sale
+        # without a fiscal document.
+        if zatca_sale.is_zatca_enabled(client):
+            await zatca_sale.sign_transaction(
+                db, client, transaction,
+                buyer_vat=transaction.customer_vat_number,
+            )
+        await db.commit()
+    except IntegrityError:
+        # DAT-06: another sync of the same offline_id won the race and committed
+        # first, so the unique (client_id, offline_id) constraint rejected this
+        # insert. That conflict IS the idempotency signal — roll back this would-be
+        # duplicate and return the sale that actually landed. (A non-offline
+        # IntegrityError, e.g. a fiscal-number clash, has no prior offline row and
+        # re-raises as the real error it is.)
+        await db.rollback()
+        if offline_id:
+            # Use the plain client_id arg, not client.id — rollback expired the
+            # client ORM row, so touching client.id here would trigger a sync
+            # lazy-load outside the async greenlet.
+            prior = (
+                await db.execute(
+                    select(Transactions).where(
+                        Transactions.client_id == client_id,
+                        Transactions.offline_id == offline_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if prior is not None:
+                return {
+                    "status": "skipped",
+                    "offline_id": offline_id,
+                    "transaction_id": prior.id,
+                    "invoice_number": prior.invoice_number,
+                }
+        raise
+
     await db.refresh(transaction)
     return {
         "status": "processed",
+        "offline_id": offline_id,
         "transaction_id": transaction.id,
         "invoice_number": transaction.invoice_number,
     }

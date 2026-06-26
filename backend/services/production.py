@@ -1332,6 +1332,11 @@ class OfflineSyncService:
         skipped = 0
         errors = []
         results: List[Dict[str, Any]] = []
+        # DAT-06 / FE-03: the offline_ids the server has durably settled (booked
+        # now or already booked on a prior sync). The frontend deletes ONLY these
+        # from its queue and retries/surfaces the rest, so a partially-accepted
+        # batch never silently drops a rejected sale.
+        accepted_offline_ids: List[str] = []
 
         for idx, txn in enumerate(queued_transactions):
             try:
@@ -1340,16 +1345,21 @@ class OfflineSyncService:
                     skipped += 1
                 else:
                     processed += 1
-                    results.append(outcome)
+                results.append(outcome)
+                if outcome.get("offline_id") is not None:
+                    accepted_offline_ids.append(outcome["offline_id"])
             except Exception as e:
                 await db.rollback()
-                errors.append({"index": idx, "error": str(e)})
+                errors.append(
+                    {"index": idx, "offline_id": txn.get("offline_id"), "error": str(e)}
+                )
 
         return {
             "processed": processed,
             "skipped_duplicates": skipped,
             "errors": errors,
             "results": results,
+            "accepted_offline_ids": accepted_offline_ids,
             "total_submitted": len(queued_transactions),
         }
 

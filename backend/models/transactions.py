@@ -12,6 +12,13 @@ class Transactions(Base):
         UniqueConstraint(
             "client_id", "invoice_number", name="uq_transaction_client_invoice"
         ),
+        # DAT-06: an offline-queued sale's client-generated offline_id must be
+        # unique per client, so re-syncing the same queue can never double-book a
+        # sale. NULL offline_id (live sales, held tickets, credit notes) is exempt
+        # — NULLs are distinct, so non-offline rows never collide here.
+        UniqueConstraint(
+            "client_id", "offline_id", name="uq_transaction_client_offline"
+        ),
         {"extend_existing": True},
     )
 
