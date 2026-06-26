@@ -98,7 +98,12 @@ describe('flushQueue chunked sync (POS-12 / F-014)', () => {
     const batchSizes: number[] = [];
     const sync = vi.fn(async (txns: Array<Record<string, unknown>>) => {
       batchSizes.push(txns.length);
-      return { processed: txns.length, skipped_duplicates: 0 };
+      // Real backend (DAT-06): every submitted sale is accepted here.
+      return {
+        processed: txns.length,
+        skipped_duplicates: 0,
+        accepted_offline_ids: txns.map((t) => t.offline_id as string),
+      };
     });
 
     const result = await flushQueue(sync);
@@ -106,8 +111,55 @@ describe('flushQueue chunked sync (POS-12 / F-014)', () => {
     // Three bounded requests, never one payload of `total`.
     expect(batchSizes).toEqual([SYNC_CHUNK_SIZE, SYNC_CHUNK_SIZE, 50]);
     expect(Math.max(...batchSizes)).toBeLessThanOrEqual(SYNC_CHUNK_SIZE);
-    expect(result).toEqual({ flushed: total });
+    // Full success: everything flushed, nothing failed.
+    expect(result).toEqual({ flushed: total, failed: 0 });
     // Everything settled is cleared locally.
     expect((await getQueued()).length).toBe(0);
   }, 30000);
+});
+
+// FE-03 (audit): on a partially-accepted chunk the old code deleted the WHOLE
+// batch by offline_id whenever the server settled ANY sale, silently dropping
+// the rejected ones. The backend (DAT-06) now returns `accepted_offline_ids` —
+// the sales it durably settled — and the queue must delete ONLY those, leaving
+// rejected sales queued so the next flush retries them.
+describe('flushQueue partial-chunk acceptance (FE-03)', () => {
+  it('removes only the server-accepted offline_ids and keeps rejected sales queued', async () => {
+    for (let i = 0; i < 3; i++) await enqueueTransaction(sale(i));
+    const ids = (await getQueued()).map((q) => q.offline_id);
+    // The server settled the first two; the third was rejected (e.g. a signing
+    // failure) and is absent from accepted_offline_ids.
+    const accepted = [ids[0], ids[1]];
+
+    const sync = vi.fn(async () => ({
+      processed: 2,
+      skipped_duplicates: 0,
+      accepted_offline_ids: accepted,
+    }));
+
+    const result = await flushQueue(sync);
+
+    const remaining = (await getQueued()).map((q) => q.offline_id);
+    // Exactly the rejected sale survives — no silent loss.
+    expect(remaining).toEqual([ids[2]]);
+    // The failure is surfaced, not swallowed.
+    expect(result).toEqual({ flushed: 2, failed: 1 });
+  });
+
+  it('keeps the whole batch when the server accepts nothing (all retried next flush)', async () => {
+    for (let i = 0; i < 2; i++) await enqueueTransaction(sale(i));
+    const ids = (await getQueued()).map((q) => q.offline_id);
+
+    const sync = vi.fn(async () => ({
+      processed: 0,
+      skipped_duplicates: 0,
+      accepted_offline_ids: [] as string[],
+    }));
+
+    const result = await flushQueue(sync);
+
+    const remaining = (await getQueued()).map((q) => q.offline_id).sort();
+    expect(remaining).toEqual([...ids].sort());
+    expect(result).toEqual({ flushed: 0, failed: 2 });
+  });
 });

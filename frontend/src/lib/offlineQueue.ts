@@ -170,34 +170,49 @@ async function removeQueued(offlineIds: string[]): Promise<void> {
 }
 
 /**
- * Flush the queue via the sync endpoint. Returns the number of transactions
- * accepted (processed + skipped duplicates), which are then cleared locally.
- * The injected `sync` is normally `api.syncOfflineTransactions`.
+ * Flush the queue via the sync endpoint. Returns how many queued sales the
+ * server durably settled (`flushed`) and how many it rejected (`failed`), the
+ * latter left in the queue to retry on the next flush. The injected `sync` is
+ * normally `api.syncOfflineTransactions`.
  */
 export async function flushQueue(
   sync: (txns: Array<Record<string, unknown>>) => Promise<{
     processed: number;
     skipped_duplicates: number;
+    accepted_offline_ids?: string[];
   }>
-): Promise<{ flushed: number } | null> {
+): Promise<{ flushed: number; failed: number } | null> {
   if (!isOnline()) return null;
   const queued = await getQueued();
-  if (!queued.length) return { flushed: 0 };
+  if (!queued.length) return { flushed: 0, failed: 0 };
 
   // Replay the backlog in bounded chunks rather than one giant payload. Each
   // chunk is settled and cleared independently, so a reconnect that drops
   // mid-flush keeps whatever already synced (POS-12 deterministic sync).
   let flushed = 0;
+  let failed = 0;
   for (const batch of chunk(queued, SYNC_CHUNK_SIZE)) {
     const result = await sync(batch as unknown as Array<Record<string, unknown>>);
-    // Everything the server processed or recognised as a duplicate is settled.
-    const settled = (result.processed || 0) + (result.skipped_duplicates || 0);
-    if (settled > 0) {
-      await removeQueued(batch.map((q) => q.offline_id));
-      flushed += settled;
+    const batchIds = batch.map((q) => q.offline_id);
+    // FE-03: the server reports exactly which offline_ids it durably settled
+    // (booked now or already booked on a prior sync). Delete ONLY those —
+    // anything it rejected stays queued and is retried next flush — so a
+    // partially-accepted batch never silently drops a rejected sale.
+    let acceptedIds: string[];
+    if (Array.isArray(result.accepted_offline_ids)) {
+      const accepted = new Set(result.accepted_offline_ids);
+      acceptedIds = batchIds.filter((id) => accepted.has(id));
+    } else {
+      // Legacy backend without per-id accounting: fall back to the settled
+      // count and clear the whole batch only when something was settled.
+      const settled = (result.processed || 0) + (result.skipped_duplicates || 0);
+      acceptedIds = settled > 0 ? batchIds : [];
     }
+    await removeQueued(acceptedIds);
+    flushed += acceptedIds.length;
+    failed += batchIds.length - acceptedIds.length;
   }
-  return { flushed };
+  return { flushed, failed };
 }
 
 /**
