@@ -28,19 +28,31 @@ async def get_bearer_token(
 
 
 async def _assert_account_active(db: AsyncSession, user_id: str) -> None:
-    """Block suspended clients from authenticating.
+    """Block suspended tenants from authenticating.
 
     Tenancy-suspended clients (``clients.is_active = False``) must not be able to
-    use any authenticated endpoint. Master/agent accounts have no client row and
-    are unaffected. Imported lazily to avoid a circular import at module load.
+    use any authenticated endpoint. The suspension flag lives on the *owning*
+    merchant's ``Clients`` row, so we resolve the caller to their tenancy owner
+    first (exactly as ``resolve_tenant_scope`` does): a **staff** member has no
+    client row of their own, yet must inherit the owning merchant's suspension
+    (SEC-06). Master/agent accounts have no owner to suspend and stay unaffected.
+    Imported lazily to avoid a circular import at module load.
     """
+    from dependencies.tenancy import resolve_owner_user_id
     from models.clients import Clients
 
+    # ``None`` => platform master (unrestricted, no client row). For everyone else
+    # this is the owning merchant's id — the caller's own id for a client/agent,
+    # the owning merchant's for a staff member.
+    owner_user_id = await resolve_owner_user_id(db, str(user_id))
+    if owner_user_id is None:
+        return
+
     result = await db.execute(
-        select(Clients.is_active).where(Clients.user_id == str(user_id))
+        select(Clients.is_active).where(Clients.user_id == str(owner_user_id))
     )
     is_active = result.scalar_one_or_none()
-    # ``None`` => no client row (master/agent) => allowed. A row with is_active
+    # ``None`` => no client row (agent/master) => allowed. A row with is_active
     # explicitly False => suspended.
     if is_active is False:
         raise HTTPException(
