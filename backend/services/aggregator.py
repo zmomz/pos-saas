@@ -288,6 +288,31 @@ async def ingest_aggregator_order(
     # fiscal settle can read client.* without faulting on a lazy-load.
     await db.refresh(client)
 
+    # DAT-08 empty-order guard: a payload whose lines are all missing or non-billable
+    # (qty <= 0, or not a line object) has nothing to ring up. Opening a ticket and
+    # firing the KDS for it would leave an orphan ticket + KDS card and drive a
+    # zero-line settle that 500s on webhook re-delivery. The order is already claimed
+    # above (idempotency marker durable), so simply stop here and report ``no_lines``
+    # — mirroring Salla's graceful behaviour (services/omnichannel.py). The claim row
+    # stays at ``received`` with no transaction; a re-delivery dedupes against it.
+    billable = [
+        item
+        for item in order["items"]
+        if isinstance(item, dict) and (_as_float(item.get("quantity")) or 0.0) > 0
+    ]
+    if not billable:
+        logger.info(
+            "Aggregator %s order %s for client %s has no billable lines -> no_lines (claim %s)",
+            provider, external_id, client_id, channel_order_id,
+        )
+        return {
+            "status": "no_lines",
+            "channel_order_id": channel_order_id,
+            "ticket_id": None,
+            "transaction_id": None,
+            "matched_lines": 0,
+        }
+
     service = RestaurantService(db)
     label = f"{provider}:{order['channel'] or 'aggregator'} #{order['external_reference'] or external_id}"
 
