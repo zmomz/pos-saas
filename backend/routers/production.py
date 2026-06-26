@@ -1157,10 +1157,13 @@ async def earn_loyalty_points(
     db: AsyncSession = Depends(get_db),
 ):
     """Earn loyalty points from a transaction."""
+    from core.money import floor_units
     from models.loyalty_points import Loyalty_points
     from models.loyalty_transactions import Loyalty_transactions
 
-    points_earned = int(data.transaction_amount * data.points_rate)
+    # Floor in exact Decimal so float drift can't truncate a whole point off the
+    # accrual (``int(0.29 * 100) == 28``, but the customer earned 29) — FIN-10.
+    points_earned = floor_units(data.transaction_amount, data.points_rate)
 
     # Find or create loyalty record
     result = await db.execute(

@@ -23,7 +23,7 @@ from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.money import quantize_money, to_decimal
+from core.money import floor_units, quantize_money, to_decimal
 
 from models.loyalty_points import Loyalty_points
 from models.loyalty_programs import Loyalty_programs
@@ -221,7 +221,7 @@ async def accrue_points(
     if rate <= 0:
         return None
 
-    points_earned = int(total_amount * rate)
+    points_earned = floor_units(total_amount, rate)
     if points_earned <= 0:
         return None
 

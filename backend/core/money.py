@@ -14,7 +14,7 @@ The :class:`Money` SQLAlchemy column type stores amounts as ``Numeric(12, 2)``
 and re-quantizes on both bind and result, so a value round-trips penny-exact
 even on SQLite (which maps ``NUMERIC`` to a REAL/float affinity).
 """
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Optional, Union
 
 from sqlalchemy import Numeric
@@ -47,6 +47,20 @@ def to_decimal(value: Optional[Number]) -> Optional[Decimal]:
 def quantize_money(value: Number, rounding: str = ROUND_HALF_UP) -> Decimal:
     """Round ``value`` to two decimal places, half-up by default."""
     return to_decimal(value).quantize(TWO_PLACES, rounding=rounding)
+
+
+def floor_units(amount: Number, rate: Number) -> int:
+    """Multiply ``amount`` by ``rate`` in exact Decimal and floor to a whole unit.
+
+    Whole-unit accruals (loyalty points, ``amount * points_per_sar``) floor the
+    product to an integer. Doing the multiply in IEEE-754 float first lets drift
+    turn an exact ``29.00`` into ``28.999…`` so a plain ``int()`` truncates a
+    point away (``int(0.29 * 100) == 28``). Routing the product through
+    :class:`Decimal` keeps the boundary exact, while a genuine fraction still
+    floors toward zero (``floor_units(4.35, 10) == 43``).
+    """
+    product = to_decimal(amount) * to_decimal(rate)
+    return int(product.to_integral_value(rounding=ROUND_FLOOR))
 
 
 def to_halalas(value: Number) -> int:
