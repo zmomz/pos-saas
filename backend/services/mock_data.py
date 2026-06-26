@@ -15,11 +15,35 @@ logger = logging.getLogger(__name__)
 MOCK_DATA_DIR = Path(__file__).resolve().parent.parent / "mock_data"
 MAX_CONCURRENT_LOADS = 5
 
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _is_dev() -> bool:
+    """Match the project-wide dev detection (see core/config.py, core/cors.py)."""
+    return os.getenv("ENVIRONMENT", "prod").lower() == "dev"
+
+
+def _should_load_mock_data() -> bool:
+    """Seeding is opt-in (SEC-04): fail *closed* on a fresh production boot.
+
+    The old gate seeded the live DB on every boot and only skipped when
+    ``SKIP_INIT_DATA`` was set, so an unconfigured prod deploy silently filled
+    its tables with demo rows. Now seeding runs only when explicitly requested —
+    ``LOAD_MOCK_DATA`` is truthy — or when running in dev/CI
+    (``ENVIRONMENT=dev``), where the convenience seed is expected.
+    """
+    if os.getenv("LOAD_MOCK_DATA", "").strip().lower() in _TRUTHY:
+        return True
+    return _is_dev()
+
 
 async def initialize_mock_data():
     """Populate tables with mock JSON data when they are empty."""
-    if "SKIP_INIT_DATA" in os.environ:
-        logger.info("SKIP_INIT_DATA set; skipping mock data initialization")
+    if not _should_load_mock_data():
+        logger.info(
+            "Mock-data seeding disabled (set LOAD_MOCK_DATA=true or ENVIRONMENT=dev "
+            "to enable); skipping mock data initialization"
+        )
         return
     if not db_manager.engine:
         logger.warning("Database engine is not ready; skipping mock data initialization")
