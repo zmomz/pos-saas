@@ -1680,6 +1680,7 @@ async def pay_client_subscription(
         SubscriptionChargeError,
         apply_coupon,
         charge_subscription,
+        existing_settled_payment,
         is_in_trial,
         record_settled_payment,
     )
@@ -1695,6 +1696,13 @@ async def pay_client_subscription(
         )
         await db.commit()
         await db.refresh(merchant)
+        return await _subscription_payload(db, merchant)
+
+    # FIN-04: idempotency. If this billing period was already settled (a double-
+    # click, or the dunning scheduler beat the manual pay), do NOT charge the card
+    # again — return the current state. The DB unique period key is the backstop
+    # for a true concurrent race.
+    if await existing_settled_payment(db, client_id=merchant.id, period_key=period_start):
         return await _subscription_payload(db, merchant)
 
     fee = merchant.subscription_fee or 0
@@ -2175,6 +2183,7 @@ async def pay_agent_quota(
     from services.quota_billing import (
         QuotaChargeError,
         charge_quota,
+        existing_quota_payment,
         record_quota_payment,
     )
 
@@ -2187,6 +2196,12 @@ async def pay_agent_quota(
     cycle = agent.quota_cycle or "monthly"
     period_start = now.date().isoformat()
     period_end = _advance_billing_date(now, cycle)
+
+    # FIN-04: idempotency — if this quota period is already settled (double-click or
+    # the sweep beat the manual pay), don't charge again; return current state.
+    if await existing_quota_payment(db, agent_id=agent.id, period_key=period_start):
+        return await _quota_status_payload(db, agent)
+
     try:
         charge = await charge_quota(agent, idempotency_key=f"quota-{agent.id}-{period_start}")
     except QuotaChargeError as exc:

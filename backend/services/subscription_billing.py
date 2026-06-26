@@ -158,6 +158,29 @@ async def charge_subscription(
     )
 
 
+async def existing_settled_payment(db, *, client_id: int, period_key: str):
+    """Return the merchant subscription payment already settled for this billing
+    period (its ``period_key``), or None (FIN-04).
+
+    A settled recurring charge stamps ``period_key`` with the period start. The pay
+    endpoint and the dunning sweep consult this BEFORE charging so a double-click or
+    a scheduler-vs-manual race for the same period reconciles to the first payment
+    instead of charging the card again.
+    """
+    from sqlalchemy import select
+
+    from models.subscription_payments import Subscription_payments
+
+    return (
+        await db.execute(
+            select(Subscription_payments).where(
+                Subscription_payments.client_id == client_id,
+                Subscription_payments.period_key == period_key,
+            )
+        )
+    ).scalars().first()
+
+
 async def record_settled_payment(
     db,
     *,
@@ -188,6 +211,7 @@ async def record_settled_payment(
     # Local imports keep this module importable without the full model graph and
     # avoid a circular import with the tenant router.
     from sqlalchemy import update
+    from sqlalchemy.exc import IntegrityError
 
     from models.clients import Clients
     from models.subscription_payments import Subscription_payments
@@ -199,12 +223,28 @@ async def record_settled_payment(
         amount=collected,
         billing_cycle=cycle,
         period_start=period_start,
+        # FIN-04: stamp the settled-period idempotency key so a second settlement of
+        # the same period conflicts on uq_subscription_payment_client_period.
+        period_key=period_start,
         period_end=period_end,
         method=charge.method,
         reference=charge.reference,
     )
     db.add(payment)
-    await db.flush()  # assign the payment id
+    try:
+        # Savepoint so a period-conflict (a concurrent settlement that raced past
+        # the caller's pre-check) doesn't poison the caller's transaction (FIN-04).
+        async with db.begin_nested():
+            await db.flush()  # assign the payment id
+    except IntegrityError:
+        existing = await existing_settled_payment(
+            db, client_id=merchant.id, period_key=period_start
+        )
+        if existing is not None:
+            # The period was already settled — reconcile to it; the account is
+            # already recovered/advanced by the winning settlement.
+            return existing
+        raise
 
     # Recover the subscription: active again, billing advanced, dunning cleared.
     await db.execute(

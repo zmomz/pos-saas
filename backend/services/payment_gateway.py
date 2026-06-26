@@ -258,6 +258,14 @@ class MoyasarGateway(PaymentGateway):
             "source": token_source,
             "description": meta.get("description", "POS sale"),
         }
+        # Transport the per-period idempotency key to Moyasar (FIN-04). It was
+        # assembled into the charge metadata but previously dropped before this
+        # request, so a retried recurring charge created a SECOND payment. Moyasar
+        # echoes a payment's metadata back, so the key is recoverable for
+        # reconciliation; the DB period-unique constraint is the local backstop.
+        idem = meta.get("idempotency_key")
+        if idem:
+            payload["metadata"] = {"idempotency_key": str(idem)}
         try:
             async with httpx.AsyncClient(timeout=30.0) as http:
                 resp = await http.post(

@@ -133,6 +133,21 @@ async def charge_quota(
     )
 
 
+async def existing_quota_payment(db, *, agent_id: int, period_key: str):
+    """Return the quota payment already settled for this billing period (its
+    ``period_key``), or None (FIN-04). Consulted before charging so a double-click
+    or a scheduler-vs-manual race reconciles to the first payment instead of
+    charging the agent's card again."""
+    return (
+        await db.execute(
+            select(Agent_quota_payments).where(
+                Agent_quota_payments.agent_id == agent_id,
+                Agent_quota_payments.period_key == period_key,
+            )
+        )
+    ).scalars().first()
+
+
 async def record_quota_payment(
     db,
     agent: Agents,
@@ -147,6 +162,8 @@ async def record_quota_payment(
     any quota-dunning state (status -> active, agent re-activated). Runs in the
     caller's transaction (no commit). Returns the persisted payment row.
     """
+    from sqlalchemy.exc import IntegrityError
+
     collected = float(agent.quota_price or 0) if amount is None else float(amount)
     payment = Agent_quota_payments(
         user_id=str(agent.user_id),
@@ -154,12 +171,25 @@ async def record_quota_payment(
         amount=collected,
         billing_cycle=cycle,
         period_start=period_start,
+        # FIN-04: settled-period idempotency key (conflicts on uq_quota_payment_agent_period).
+        period_key=period_start,
         period_end=period_end,
         method=charge.method,
         reference=charge.reference,
     )
     db.add(payment)
-    await db.flush()  # assign the payment id
+    try:
+        # Savepoint so a period-conflict (a concurrent settlement) doesn't poison
+        # the caller's transaction (FIN-04).
+        async with db.begin_nested():
+            await db.flush()  # assign the payment id
+    except IntegrityError:
+        existing = await existing_quota_payment(
+            db, agent_id=agent.id, period_key=period_start
+        )
+        if existing is not None:
+            return existing
+        raise
 
     await db.execute(
         update(Agents)
@@ -223,6 +253,17 @@ async def run_agent_quota_dunning(
     cycle = agent.quota_cycle or "monthly"
     period_start = now.date().isoformat()
     period_end = _advance(now, cycle)
+
+    # FIN-04: this period may already be settled (the agent paid manually before the
+    # sweep, or a prior sweep this day). Don't charge again — report it as skipped.
+    if await existing_quota_payment(db, agent_id=agent.id, period_key=period_start):
+        return {
+            "agent_id": agent.id,
+            "action": "skipped",
+            "status": agent.quota_status,
+            "attempts": agent.quota_dunning_attempts,
+            "grace_deadline": None,
+        }
 
     charge_ok = True
     charge = None

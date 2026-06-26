@@ -12,12 +12,21 @@ quota-payment history. Mirror of ``subscription_payments`` but at agent grain.
 from core.database import Base
 from core.money import Money
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Float, Integer, String, UniqueConstraint
 
 
 class Agent_quota_payments(Base):
     __tablename__ = "agent_quota_payments"
-    __table_args__ = {"extend_existing": True}
+    __table_args__ = (
+        # FIN-04: one settled quota charge per billing period per agent (mirror of
+        # subscription_payments). The recurring settlement sets ``period_key`` to
+        # the period start; a re-charge race for the same period conflicts here.
+        # Manual records leave it NULL (NULLs distinct → no collision).
+        UniqueConstraint(
+            "agent_id", "period_key", name="uq_quota_payment_agent_period"
+        ),
+        {"extend_existing": True},
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     # The agent's login account (scoping key, like every other entity).
@@ -27,6 +36,9 @@ class Agent_quota_payments(Base):
     billing_cycle = Column(String, nullable=True)
     period_start = Column(String, nullable=True)
     period_end = Column(String, nullable=True)
+    # FIN-04: settled-period idempotency key (the period start) for an actual
+    # recurring quota charge; NULL for manual records (exempt).
+    period_key = Column(String, nullable=True)
     # 'moyasar' when charged through the platform gateway; 'manual' for an
     # off-card / bank-transfer quota deal the master records by hand.
     method = Column(String, nullable=True, default='moyasar')

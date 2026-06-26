@@ -60,6 +60,32 @@ def _latest_payment_amount(payload: dict) -> float:
     return payload["payments"][0]["amount"]
 
 
+async def _retire_current_period(client_id: int) -> None:
+    """Simulate the next billing period arriving.
+
+    FIN-04 enforces one settled charge per billing period (keyed on the period
+    start), so paying twice on the same day is now correctly deduplicated. To
+    exercise the coupon's multi-period duration in a single test run we retire the
+    just-settled period by clearing its idempotency key, freeing today's slot for
+    the next period's charge — what the ~30-day gap does in production.
+    """
+    from sqlalchemy import select
+
+    from core.database import db_manager
+    from models.subscription_payments import Subscription_payments
+
+    async with db_manager.async_session_maker() as db:
+        last = (
+            await db.execute(
+                select(Subscription_payments)
+                .where(Subscription_payments.client_id == client_id)
+                .order_by(Subscription_payments.id.desc())
+            )
+        ).scalars().first()
+        last.period_key = f"retired-{last.id}"
+        await db.commit()
+
+
 @pytest.mark.asyncio
 async def test_coupon_discounts_charges_for_its_duration_then_reverts(client: AsyncClient):
     _agent, agent_token, agent_id = await make_agent_account(client)
@@ -85,9 +111,11 @@ async def test_coupon_discounts_charges_for_its_duration_then_reverts(client: As
     assert first.status_code == 200, first.text
     assert _latest_payment_amount(first.json()) == 150.0
 
+    await _retire_current_period(client_id)
     second = await client.post(pay_url, headers=auth_headers(client_token))
     assert _latest_payment_amount(second.json()) == 150.0
 
+    await _retire_current_period(client_id)
     third = await client.post(pay_url, headers=auth_headers(client_token))
     assert _latest_payment_amount(third.json()) == 200.0
 

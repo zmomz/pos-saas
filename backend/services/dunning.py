@@ -182,6 +182,20 @@ async def run_client_dunning(
     period_start = now.date().isoformat()
     period_end = _advance(now, cycle)
 
+    # FIN-04: if this billing period is already settled (the merchant paid manually
+    # before the sweep, or a prior sweep this day), don't charge again. The DB
+    # period-unique key is the backstop for a true scheduler-vs-manual race.
+    from services.subscription_billing import existing_settled_payment
+
+    if await existing_settled_payment(db, client_id=merchant.id, period_key=period_start):
+        return {
+            "client_id": merchant.id,
+            "action": "skipped",
+            "status": merchant.subscription_status,
+            "attempts": merchant.dunning_attempts,
+            "grace_deadline": None,
+        }
+
     # Charge through the owning agent's own Moyasar account against the merchant's
     # stored card-on-file (Rail 2). No agent key / no card on file fails the charge,
     # which advances dunning exactly like a decline.
@@ -296,8 +310,12 @@ async def run_global_dunning(
     merchant's owning agent row is resolved (and cached) so the charge routes through
     that agent's Moyasar account. Idempotent: a recovered merchant's ``next_billing_date``
     moves into the future and a suspended one becomes terminal, so a re-run selects
-    nothing already settled this period; the per-period Moyasar idempotency key
-    (``dun-{id}-{period_start}``) blocks a double-charge within the same day.
+    nothing already settled this period. A double-charge within the same period is
+    blocked at the source (FIN-04): :func:`run_client_dunning` checks for an existing
+    settled payment before charging, and the ``subscription_payments`` period-unique
+    key (``uq_subscription_payment_client_period``) is the DB backstop for a true
+    scheduler-vs-manual race. The per-period Moyasar idempotency key is also
+    transported on the charge request for gateway-side reconciliation.
     Commits the whole batch once.
     """
     now = now or datetime.now(timezone.utc)
