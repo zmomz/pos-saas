@@ -72,11 +72,16 @@ class Settings(BaseSettings):
     #     Fatoora gateway + CSR template). Network calls are skipped (503)
     #     unless a base URL resolves.
     #   zatca_api_base_url: explicit gateway override (e.g. a local mock).
-    #   zatca_encryption_key: AES-256 key material for secrets at rest;
-    #     falls back to jwt_secret_key in dev. MUST be set in production.
+    #   secrets_encryption_key: the dedicated AES-256 key material for ALL
+    #     secrets at rest (SEC-05). Preferred over zatca_encryption_key; both
+    #     fall back to jwt_secret_key in dev. MUST be set in production —
+    #     validate_secrets() refuses prod boot on the JWT fallback.
+    #   zatca_encryption_key: legacy key, kept so already-encrypted ZATCA
+    #     material stays readable. Falls back to jwt_secret_key in dev.
     #   zatca_retention_years: statutory archival period for signed invoices.
     zatca_environment: str = "sandbox"
     zatca_api_base_url: str = ""
+    secrets_encryption_key: str = ""
     zatca_encryption_key: str = ""
     zatca_retention_years: int = 6
     # ISSUE-016 (C2 gating): live Fatoora submission is OFF by default. Every sale
@@ -154,7 +159,34 @@ def _is_dev() -> bool:
     return os.getenv("ENVIRONMENT", "prod").lower() == "dev"
 
 
+def dedicated_secrets_key() -> str:
+    """The dedicated at-rest encryption key, independent of the JWT secret.
+
+    Resolves ``SECRETS_ENCRYPTION_KEY`` first, then the legacy
+    ``ZATCA_ENCRYPTION_KEY`` (kept so already-encrypted ZATCA material stays
+    readable). Returns an empty string when neither is configured — i.e. when
+    :func:`core.crypto._aes_key` would fall back to the JWT secret.
+    """
+    return (
+        (getattr(settings, "secrets_encryption_key", "") or "")
+        or (getattr(settings, "zatca_encryption_key", "") or "")
+    ).strip()
+
+
 def validate_secrets() -> None:
+    """Fail fast on insecure secret material before serving traffic.
+
+    Validates, in order, the JWT signing key (SEC-01) and the at-rest
+    secrets-encryption key (SEC-05). Both abort prod boot when misconfigured
+    while keeping dev runs frictionless.
+
+    Called from the application lifespan before ``initialize_database``.
+    """
+    _validate_jwt_secret()
+    _validate_secrets_encryption_key()
+
+
+def _validate_jwt_secret() -> None:
     """Fail fast on an insecure JWT signing key before serving traffic.
 
     HS256 with a known/weak key enables token forgery and full admin
@@ -162,8 +194,6 @@ def validate_secrets() -> None:
     equals the source-visible default, or carries too little entropy. In dev we
     keep local runs frictionless by swapping in a generated ephemeral key
     instead of refusing to start.
-
-    Called from the application lifespan before ``initialize_database``.
     """
     secret = (getattr(settings, "jwt_secret_key", "") or "").strip()
     if not secret:
@@ -187,4 +217,31 @@ def validate_secrets() -> None:
     raise RuntimeError(
         f"Refusing to start: the JWT secret {reason}. Set a strong, unique "
         f"JWT_SECRET_KEY (>= {MIN_JWT_SECRET_LENGTH} characters) in the environment."
+    )
+
+
+def _validate_secrets_encryption_key() -> None:
+    """Require a dedicated at-rest encryption key in production (SEC-05).
+
+    Stored secrets (payment-gateway keys, saved-card tokens, ZATCA credentials)
+    are AES-256-GCM encrypted under a key that, absent a dedicated value, falls
+    back to the JWT signing secret. Sharing the signing key with the
+    data-encryption key means one leak compromises both, so prod must set
+    ``SECRETS_ENCRYPTION_KEY`` (or the legacy ``ZATCA_ENCRYPTION_KEY``). Dev
+    keeps the JWT fallback so local runs need no extra configuration.
+    """
+    if dedicated_secrets_key():
+        return  # A dedicated key is configured — nothing to do.
+
+    if _is_dev():
+        logger.warning(
+            "No dedicated secrets-encryption key; falling back to the JWT secret "
+            "for at-rest encryption. Set SECRETS_ENCRYPTION_KEY before production."
+        )
+        return
+
+    raise RuntimeError(
+        "Refusing to start: stored secrets would be encrypted under the JWT "
+        "signing key. Set a dedicated SECRETS_ENCRYPTION_KEY (or the legacy "
+        "ZATCA_ENCRYPTION_KEY) in the environment."
     )

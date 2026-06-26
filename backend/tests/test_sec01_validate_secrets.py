@@ -38,6 +38,9 @@ def test_prod_boot_rejects_short_secret(monkeypatch):
 def test_prod_boot_accepts_strong_secret(monkeypatch):
     monkeypatch.setenv("ENVIRONMENT", "prod")
     monkeypatch.setattr(settings, "jwt_secret_key", _strong_key(), raising=False)
+    # Prod also requires a dedicated at-rest secrets key (SEC-05); provide one so
+    # the full validator passes.
+    monkeypatch.setattr(settings, "secrets_encryption_key", "dedicated-at-rest-key", raising=False)
     # Must not raise, and must not mutate an already-strong secret.
     validate_secrets()
     assert settings.jwt_secret_key == _strong_key()
