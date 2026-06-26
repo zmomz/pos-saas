@@ -52,10 +52,14 @@ async def revoke_token(
 
 
 async def is_token_revoked(db: AsyncSession, jti: Optional[str]) -> bool:
-    """Return True if ``jti`` is on the blocklist (or missing — fail closed)."""
+    """Return True if ``jti`` is on the blocklist (or missing — fail closed).
+
+    Every token the app mints carries a ``jti`` (``core.auth._create_token``),
+    so a token with no ``jti`` is forged or tampered, not legacy. Fail closed:
+    treat a missing ``jti`` as revoked rather than waving it through.
+    """
     if not jti:
-        # A token minted before jti was introduced has no jti. Treat as allowed
-        # for backward compatibility (it will still expire on its own ``exp``).
-        return False
+        logger.warning("Token presented without a jti claim — treating as revoked (fail closed)")
+        return True
     result = await db.execute(select(RevokedTokens.id).where(RevokedTokens.jti == jti))
     return result.scalar_one_or_none() is not None
