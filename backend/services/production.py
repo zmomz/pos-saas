@@ -25,9 +25,55 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.formatting import format_money_ar, to_arabic_digits
+from core.money import quantize_money, to_decimal
 from services.zatca import INITIAL_PIH
 
 logger = logging.getLogger(__name__)
+
+# ZATCA tax category identifiers (UN/CEFACT 5305 subset ZATCA accepts).
+TAX_CATEGORY_STANDARD = "S"  # Standard rate (e.g. 15 %)
+TAX_CATEGORY_ZERO = "Z"  # Zero-rated supply (0 %)
+TAX_CATEGORY_EXEMPT = "E"  # Exempt from VAT (0 %)
+
+
+def derive_tax_category(
+    taxable_amount: float,
+    vat_amount: float,
+    *,
+    category_id: Optional[str] = None,
+) -> tuple[str, str]:
+    """Derive ``(category_id, percent)`` for the UBL ``cac:TaxCategory`` from the
+    invoice's actual money — never a hardcoded 'S' / '15.00'.
+
+    The effective percent is ``vat / taxable * 100`` computed in exact Decimal and
+    quantized to 2dp, so the rendered ``cbc:Percent`` always agrees with the
+    amounts. Category:
+
+    - explicit ``category_id`` (e.g. ``'E'`` exempt) wins, since exempt vs
+      zero-rated cannot be told apart from the amounts alone (both carry 0 VAT);
+    - otherwise ``'S'`` when VAT was charged on the base, else ``'Z'`` (zero-rated).
+
+    A zero-rate category ('Z'/'E') forces percent ``0.00`` regardless of any drift.
+    """
+    taxable = to_decimal(taxable_amount)
+    vat = to_decimal(vat_amount)
+    if taxable > 0 and vat > 0:
+        percent = quantize_money(vat / taxable * 100)
+    else:
+        percent = quantize_money(0)
+
+    if category_id:
+        cat = category_id
+    elif percent > 0:
+        cat = TAX_CATEGORY_STANDARD
+    else:
+        cat = TAX_CATEGORY_ZERO
+
+    # A zero-rated / exempt category never carries a non-zero percent.
+    if cat in (TAX_CATEGORY_ZERO, TAX_CATEGORY_EXEMPT):
+        percent = quantize_money(0)
+
+    return cat, f"{percent:.2f}"
 
 
 @functools.lru_cache(maxsize=1)
@@ -246,8 +292,14 @@ class ZATCAService:
         billing_reference_id: Optional[str] = None,  # original invoice no. for 381
         previous_hash: Optional[str] = None,
         invoice_uuid: Optional[str] = None,
+        tax_category_id: Optional[str] = None,
     ) -> str:
         """Generate ZATCA Phase 2 compliant UBL 2.1 XML invoice.
+
+        ``tax_category_id`` optionally forces the UBL tax category ('S'/'Z'/'E');
+        when omitted it is derived from the amounts (see ``derive_tax_category``) —
+        standard when VAT was charged, zero-rated otherwise. Pass ``'E'`` for an
+        exempt supply, which the amounts alone cannot distinguish from zero-rated.
 
         ``invoice_type_code`` 388 is a tax invoice; 381 is a credit note. For a
         credit note, pass ``billing_reference_id`` with the original invoice
@@ -361,10 +413,16 @@ class ZATCAService:
         sub_tax_amount.set("currencyID", "SAR")
         sub_tax_amount.text = f"{total_vat:.2f}"
         tax_category = SubElement(tax_subtotal, "cac:TaxCategory")
+        # Derive category + percent from the real amounts so the tax block can
+        # never contradict the money (FIS-01): a zero-rated/exempt sale renders
+        # 0.00 / 'Z' (or 'E'), a standard sale its actual effective rate.
+        cat_text, percent_text = derive_tax_category(
+            total_excluding_vat, total_vat, category_id=tax_category_id
+        )
         cat_id = SubElement(tax_category, "cbc:ID")
-        cat_id.text = "S"
+        cat_id.text = cat_text
         percent = SubElement(tax_category, "cbc:Percent")
-        percent.text = "15.00"
+        percent.text = percent_text
         cat_scheme = SubElement(tax_category, "cac:TaxScheme")
         cat_scheme_id = SubElement(cat_scheme, "cbc:ID")
         cat_scheme_id.text = "VAT"
