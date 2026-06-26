@@ -135,11 +135,26 @@ async def test_merchant_webhook_ignores_client_of_other_agent(client):
 
 
 @pytest.mark.asyncio
-async def test_quota_webhook_suspends_agent(client):
+async def test_quota_webhook_suspends_agent(client, monkeypatch):
+    import hashlib
+    import hmac
+    import json as _json
+
+    from core.config import settings
+    from core.webhooks import MOYASAR_SIGNATURE_HEADER
+
+    # The platform quota webhook now requires a valid HMAC signature (SEC-02).
+    secret = "whsec_quota"
+    monkeypatch.setitem(settings.__dict__, "moyasar_webhook_secret", secret)
     _agent_user, _agent_token, agent_id = await make_agent_account(client)
+    body = _json.dumps(
+        {"id": "evt_suspend", "type": "payment_failed", "data": {"metadata": {"agent_id": str(agent_id)}}}
+    ).encode()
+    sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     resp = await client.post(
         "/api/v1/tenant/quota/webhook",
-        json={"type": "payment_failed", "data": {"metadata": {"agent_id": str(agent_id)}}},
+        content=body,
+        headers={MOYASAR_SIGNATURE_HEADER: sig},
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["action"] == "suspended"

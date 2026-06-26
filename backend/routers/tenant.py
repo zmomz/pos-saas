@@ -33,6 +33,7 @@ from models.client_features import Client_features
 from models.subscription_payments import Subscription_payments
 from models.agent_quota_payments import Agent_quota_payments
 from models.audit_logs import Audit_logs
+from models.processed_webhook_events import Processed_webhook_events
 from services.system_settings import (
     GLOBAL_TAX_RATE_KEY,
     get_global_tax_rate,
@@ -2306,16 +2307,47 @@ _FAILURE_EVENTS = {"payment_failed", "payment_voided", "payment_abandoned"}
 _RECOVERY_EVENTS = {"payment_paid", "payment_captured"}
 
 
-def _parse_moyasar_event(payload: bytes) -> tuple[str, dict, Optional[str]]:
-    """Parse a Moyasar webhook body into ``(event_type, data, secret_token)``."""
+def _parse_moyasar_event(payload: bytes) -> tuple[str, dict, Optional[str], Optional[str]]:
+    """Parse a Moyasar webhook body into ``(event_type, data, secret_token, event_id)``."""
     try:
         event = json.loads(payload or b"{}")
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid webhook payload")
+    if not isinstance(event, dict):
+        raise HTTPException(status_code=400, detail="Invalid webhook payload")
     event_type = event.get("type") or ""
     data = event.get("data") or {}
     secret_token = event.get("secret_token")
-    return event_type, data, secret_token
+    event_id = event.get("id")
+    return event_type, data, secret_token, event_id
+
+
+async def _already_processed(db: AsyncSession, source: str, event_id: str) -> bool:
+    """Claim ``(source, event_id)`` for processing; return True if it was already seen.
+
+    Inserts a row (flushed within the caller's transaction so it commits atomically
+    with the state change). A concurrent duplicate that loses the unique-constraint
+    race is treated as already-processed.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    existing = (
+        await db.execute(
+            select(Processed_webhook_events).where(
+                Processed_webhook_events.source == source,
+                Processed_webhook_events.event_id == event_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return True
+    db.add(Processed_webhook_events(source=source, event_id=event_id))
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        return True
+    return False
 
 
 @router.post("/quota/webhook")
@@ -2323,24 +2355,38 @@ async def quota_billing_webhook(request: Request, db: AsyncSession = Depends(get
     """Platform Moyasar webhook (Rail 1): suspend/recover an AGENT on his quota
     charge result.
 
-    Verifies the echoed ``secret_token`` against ``MOYASAR_WEBHOOK_SECRET`` when set
-    (production); with no secret configured (dev/test) the body is trusted. A failed
-    event carrying ``metadata.agent_id`` suspends that agent (``is_active=False`` +
-    ``quota_status='suspended'``) — which cascades to block his merchants at auth;
-    a recovery event re-activates him.
+    Verifies an HMAC-SHA256 of the raw body (carried in the Moyasar signature
+    header) against ``MOYASAR_WEBHOOK_SECRET`` (SEC-02). Fails closed: an unsigned
+    request, a wrong signature, or an unset server secret are all rejected (401)
+    with no state change — the old code fell open with no secret, letting anyone
+    mass-suspend agents. A failed event carrying ``metadata.agent_id`` suspends that
+    agent (``is_active=False`` + ``quota_status='suspended'``) — which cascades to
+    block his merchants at auth; a recovery event re-activates him. Redelivery of an
+    already-processed event id is ignored.
     """
     from core.config import settings as _settings
+    from core.webhooks import MOYASAR_SIGNATURE_HEADER, verify_moyasar_signature
 
-    event_type, data, secret_token = _parse_moyasar_event(await request.body())
-    expected = getattr(_settings, "moyasar_webhook_secret", None)
-    if expected and secret_token != expected:
-        raise HTTPException(status_code=400, detail="Invalid webhook secret")
+    raw_body = await request.body()
+    secret = getattr(_settings, "moyasar_webhook_secret", None)
+    header_sig = request.headers.get(MOYASAR_SIGNATURE_HEADER)
+    if not verify_moyasar_signature(raw_body, header_sig, secret):
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    event_type, data, _secret_token, event_id = _parse_moyasar_event(raw_body)
 
     agent_id = (data.get("metadata") or {}).get("agent_id")
     try:
         agent_id_int = int(agent_id)
     except (TypeError, ValueError):
         return {"received": True, "action": "ignored", "reason": "no agent_id"}
+
+    if event_type not in _FAILURE_EVENTS and event_type not in _RECOVERY_EVENTS:
+        return {"received": True, "action": "ignored", "event": event_type}
+
+    # Replay guard: claim the event id before mutating so a redelivery is a no-op.
+    if event_id and await _already_processed(db, "moyasar_quota", str(event_id)):
+        return {"received": True, "action": "ignored", "reason": "duplicate event"}
 
     if event_type in _FAILURE_EVENTS:
         await db.execute(
@@ -2360,8 +2406,6 @@ async def quota_billing_webhook(request: Request, db: AsyncSession = Depends(get
         await db.commit()
         return {"received": True, "action": "reactivated", "agent_id": agent_id_int}
 
-    return {"received": True, "action": "ignored", "event": event_type}
-
 
 @router.post("/billing/webhook/agent/{agent_id}")
 async def merchant_billing_webhook(
@@ -2376,7 +2420,7 @@ async def merchant_billing_webhook(
     that client; a recovery re-activates them. The client must belong to the agent
     in the path (SEC-02) — a mismatched client_id is ignored.
     """
-    event_type, data, secret_token = _parse_moyasar_event(await request.body())
+    event_type, data, secret_token, _event_id = _parse_moyasar_event(await request.body())
 
     agent = (
         await db.execute(select(Agents).where(Agents.id == agent_id))
