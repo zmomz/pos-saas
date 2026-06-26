@@ -11,6 +11,7 @@ output VAT, and COGS vs inventory. These tests prove:
 * the export stays client-scoped (an agent is 403; one client never sees
   another's books).
 """
+import itertools
 import json
 from datetime import datetime, timezone, timedelta
 
@@ -38,13 +39,18 @@ async def _add_product_with_cost(client_id: int, user_id: str, name: str, cost: 
         return product.id
 
 
+_txn_seq = itertools.count(1)
+
+
 async def _add_txn(client_id, user_id, *, items, subtotal, vat, total, status, days_ago=1):
     created = datetime.now(timezone.utc) - timedelta(days=days_ago, hours=1)
     async with db_manager.async_session_maker() as db:
         txn = Transactions(
             user_id=user_id,
             client_id=client_id,
-            invoice_number=f"INV-{client_id:04d}-{int(total * 100) % 1000000:06d}",
+            # Unique per row: real sales mint distinct fiscal numbers (DAT-05), so
+            # the synthetic number must not collide when two sales share a total.
+            invoice_number=f"INV-{client_id:04d}-{next(_txn_seq):06d}",
             subtotal=subtotal,
             vat_amount=vat,
             discount_amount=0.0,

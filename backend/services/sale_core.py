@@ -39,6 +39,7 @@ from models.transactions import Transactions
 from services import loyalty as loyalty_service
 from services import zatca_sale
 from services.gift_cards import GiftCardError, GiftCardsService
+from services.invoice_counter import mint_invoice_number
 from services.payment_gateway import (
     GatewayNotConfigured,
     PaymentDeclined,
@@ -542,13 +543,10 @@ async def execute_sale(db: AsyncSession, cart: NormalizedCart) -> SaleResult:
     captured_tenders.extend(giftcard_tenders)
 
     # ---- Invoice counter + number ----
-    current_counter = (client.invoice_counter or 0) + 1
-    await db.execute(
-        update(Clients)
-        .where(Clients.id == client.id)
-        .values(invoice_counter=current_counter)
-    )
-    invoice_number = f"INV-{client.id:04d}-{current_counter:06d}"
+    # Mint the fiscal number with a single atomic increment (DAT-05) so two
+    # concurrent sales can never read the same counter and mint a duplicate
+    # invoice number; the unique (client_id, invoice_number) index backstops it.
+    invoice_number = await mint_invoice_number(db, client.id, "INV")
 
     # Snapshot each line's product cost onto items_json (F-068) so the profit/
     # margin report has a stable historical cost basis. Additive only — the rest

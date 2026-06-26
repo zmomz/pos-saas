@@ -32,6 +32,7 @@ from models.product_variants import Product_variants  # noqa: F401
 from models.variant_branch_stock import Variant_branch_stock  # noqa: F401
 from services import loyalty as loyalty_service
 from services.discount_codes import DiscountCodeError, DiscountCodesService
+from services.invoice_counter import mint_invoice_number
 from services.discounts import (
     DiscountsService,
     DiscountValidationError,
@@ -1006,11 +1007,9 @@ async def process_offline_sale(
     vat_amount = round(taxable_amount * (vat_rate / 100), 2)
     total_amount = round(taxable_amount + vat_amount, 2)
 
-    current_counter = (client.invoice_counter or 0) + 1
-    await db.execute(
-        update(Clients).where(Clients.id == client.id).values(invoice_counter=current_counter)
-    )
-    invoice_number = f"INV-{client.id:04d}-{current_counter:06d}"
+    # DAT-05: atomic increment so a re-synced offline batch never collides with a
+    # live sale on the same counter; the unique index is the final backstop.
+    invoice_number = await mint_invoice_number(db, client.id, "INV")
 
     transaction = Transactions(
         user_id=user_id,
@@ -1618,12 +1617,9 @@ async def refund_transaction(
         db, owner_id, client.id, original.branch_id, refund_items
     )
 
-    # Allocate the credit note its own sequential invoice number.
-    current_counter = (client.invoice_counter or 0) + 1
-    await db.execute(
-        update(Clients).where(Clients.id == client.id).values(invoice_counter=current_counter)
-    )
-    credit_number = f"CRN-{client.id:04d}-{current_counter:06d}"
+    # Allocate the credit note its own sequential number via the same atomic
+    # increment as a sale (DAT-05), so refunds and sales never collide.
+    credit_number = await mint_invoice_number(db, client.id, "CRN")
 
     credit = Transactions(
         user_id=owner_id,

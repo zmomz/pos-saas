@@ -1,11 +1,19 @@
 from core.database import Base
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Float, Integer, String, UniqueConstraint
 
 
 class Transactions(Base):
     __tablename__ = "transactions"
-    __table_args__ = {"extend_existing": True}
+    # DAT-05: a fiscal number must be unique per client. This index is the
+    # last-line backstop against a duplicate signed invoice/credit note even if a
+    # counter race ever slipped past the atomic mint (services.invoice_counter).
+    __table_args__ = (
+        UniqueConstraint(
+            "client_id", "invoice_number", name="uq_transaction_client_invoice"
+        ),
+        {"extend_existing": True},
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     user_id = Column(String, nullable=False)
