@@ -81,6 +81,13 @@ async def lifespan(app: FastAPI):
 
     validate_secrets()
 
+    # KDS real-time broker is in-process (services/kds_channel.py); under >1
+    # uvicorn worker it would silently drop kitchen-board events. Fail loud on a
+    # multi-worker config until a shared broker backs it (ARC-09, #166).
+    from services.kds_channel import assert_single_worker_safe
+
+    assert_single_worker_safe()
+
     # Run Alembic migrations first when enabled (prod default); when they own the
     # schema, skip create_all so the schema comes purely from the versioned chain
     # (OPS-01). In dev/CI (or if migrations fail) create_all bootstraps it instead.

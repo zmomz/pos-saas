@@ -14,13 +14,71 @@ the already-serialized event to every queue for that owner, so the board updates
 within the event-loop tick (well under the 1s target) without polling. This is a
 single-process broker — a multi-worker deployment would swap this for Redis
 pub/sub behind the same ``publish`` / ``subscribe`` surface; the KDS routes and
-the frontend never see the difference.
+the frontend never see the difference. Until that shared broker exists the
+single-worker invariant is *enforced*, not just assumed: ``assert_single_worker_safe``
+(called from ``main.lifespan`` at startup) aborts the boot under a multi-worker
+configuration so events can never be silently dropped (ARC-09).
 """
 import asyncio
 import logging
-from typing import Any, Dict, Set
+import os
+from typing import Any, Dict, Optional, Set
 
 logger = logging.getLogger(__name__)
+
+
+# --- Single-worker safety guard (ARC-09) -----------------------------------
+# The broker below fans events out only within its own process. Under more than
+# one uvicorn/gunicorn worker, an event published in one worker never reaches the
+# SSE subscribers attached to another, so kitchen-board updates are silently
+# dropped. Until a shared broker (e.g. Redis pub/sub) backs publish/subscribe,
+# KDS requires a single worker; the startup guard below enforces that loudly.
+#
+# uvicorn reads WEB_CONCURRENCY as its default worker count; UVICORN_WORKERS /
+# GUNICORN_WORKERS are the explicit forms. Any of them > 1 means multi-worker.
+_WORKER_COUNT_ENV_VARS = ("WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS")
+# Escape hatch for an operator who has put a shared broker (or owner-sticky load
+# balancing) in front of the in-process one and accepts the responsibility.
+_ALLOW_MULTI_WORKER_ENV = "KDS_ALLOW_MULTI_WORKER"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _configured_worker_count() -> int:
+    """Resolve the configured worker count from the environment (default 1)."""
+    count = 1
+    for name in _WORKER_COUNT_ENV_VARS:
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            continue
+        try:
+            count = max(count, int(raw))
+        except ValueError:
+            # A non-numeric value is not a multi-worker signal; ignore it.
+            continue
+    return count
+
+
+def assert_single_worker_safe(worker_count: Optional[int] = None) -> None:
+    """Fail loud when the in-process KDS broker would run under >1 worker.
+
+    Called at application startup (main.lifespan). ``worker_count`` is resolved
+    from the environment when not given. A single-worker configuration (the
+    default, and the only one run.ps1/CI use) is a no-op; a multi-worker one
+    raises ``RuntimeError`` with an actionable message unless the operator has
+    explicitly opted in via ``KDS_ALLOW_MULTI_WORKER``.
+    """
+    if os.environ.get(_ALLOW_MULTI_WORKER_ENV, "").strip().lower() in _TRUTHY:
+        return
+    count = worker_count if worker_count is not None else _configured_worker_count()
+    if count > 1:
+        raise RuntimeError(
+            f"KDS real-time broker is in-process (services/kds_channel.py) and "
+            f"cannot fan events across {count} workers — kitchen-board updates "
+            f"would be silently dropped. Run a single worker (unset/lower "
+            f"WEB_CONCURRENCY/UVICORN_WORKERS/GUNICORN_WORKERS), or set "
+            f"{_ALLOW_MULTI_WORKER_ENV}=1 once a shared broker (e.g. Redis "
+            f"pub/sub) backs publish/subscribe (ARC-09, #166)."
+        )
 
 
 class KdsBroker:
