@@ -11,9 +11,9 @@ restaurant tables) plus a login per role, then prints a credentials table.
 How the logins resolve to a tenant (dependencies/tenancy.py::resolve_tenant_scope):
   * the AGENT login owns an ``agents`` row     -> agent / reseller scope
   * the MERCHANT login owns a ``clients`` row  -> client scope; owns the catalog
-  * the MANAGER / CASHIER logins each own a ``staff_members`` row whose *email*
-    matches the login and whose ``user_id`` is the MERCHANT's id, so they share
-    the merchant's catalog/customers/sales (staff -> owner resolution)
+  * the MANAGER / CASHIER logins each own a ``staff_members`` row bound to the
+    login by ``login_user_id`` (SEC-11) and whose ``user_id`` is the MERCHANT's id,
+    so they share the merchant's catalog/customers/sales (staff -> owner resolution)
   * the existing master (users.role == "admin") stays unrestricted
 
 Usage (from the backend/ directory, with backend/.env configured):
@@ -298,9 +298,10 @@ async def seed() -> None:
             )
 
         # --- Staff logins (manager + cashier) -----------------------------
-        # Each needs (a) a User to log in with and (b) a staff_members row whose
-        # email matches that login and whose user_id is the MERCHANT's id, so
-        # tenancy resolves them into the merchant tenant (shared catalog).
+        # Each needs (a) a User to log in with and (b) a staff_members row bound to
+        # that login by ``login_user_id`` (SEC-11) and whose user_id is the
+        # MERCHANT's id, so tenancy resolves them into the merchant tenant (shared
+        # catalog).
         for email, name, role in [
             (MANAGER_EMAIL, "Demo Manager", "manager"),
             (CASHIER_EMAIL, "Demo Cashier", "cashier"),
@@ -309,7 +310,8 @@ async def seed() -> None:
             await get_or_create(
                 db, Staff_members,
                 lookup={"email": email},
-                defaults={"user_id": mid, "name": name, "role": role, "is_active": True},
+                defaults={"user_id": mid, "login_user_id": staff_user.id,
+                          "name": name, "role": role, "is_active": True},
                 label=f"staff_member ({role}: {email})",
             )
             # The cashier role already denies pos.refund/void/discount by default

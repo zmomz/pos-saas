@@ -78,6 +78,7 @@ async def test_owner_sees_staff_action_with_resolved_staff_email(client):
         db.add(
             Staff_members(
                 user_id=owner["id"],
+                login_user_id=staff_user["id"],
                 name="Cashier",
                 email=staff_user["email"],
                 role="cashier",

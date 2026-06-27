@@ -38,8 +38,9 @@ def _as_user(user: dict) -> UserResponse:
 async def _make_staff_login(client, owner_user_id: str, role: str = "cashier"):
     """Register a separate login and link it as a staff member of ``owner_user_id``.
 
-    Returns (staff_user_dict, token). The staff row is keyed on the cashier's email
-    so :func:`resolve_tenant_scope` maps the cashier back to the owning merchant.
+    Returns (staff_user_dict, token). The staff row is bound to the cashier's login
+    via ``login_user_id`` (SEC-11) so :func:`resolve_tenant_scope` maps the cashier
+    back to the owning merchant.
     """
     staff_email = unique_email()
     resp = await client.post(
@@ -52,6 +53,7 @@ async def _make_staff_login(client, owner_user_id: str, role: str = "cashier"):
         db.add(
             Staff_members(
                 user_id=owner_user_id,
+                login_user_id=body["user"]["id"],
                 name="Cashier",
                 email=staff_email,
                 role=role,
@@ -107,11 +109,12 @@ async def test_staff_member_resolves_to_owning_client(client):
     assert resp.status_code == 201
     staff_login = resp.json()["user"]
 
-    # Link a staff row (owned by the merchant's user_id) keyed on the cashier email.
+    # Link a staff row (owned by the merchant's user_id) by the cashier's login FK.
     async with db_manager.async_session_maker() as db:
         db.add(
             Staff_members(
                 user_id=owner["id"],
+                login_user_id=staff_login["id"],
                 name="Cashier",
                 email=staff_email,
                 role="cashier",

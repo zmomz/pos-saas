@@ -37,6 +37,7 @@ async def make_staff_login(client, owner_user_id: str):
         db.add(
             Staff_members(
                 user_id=owner_user_id,
+                login_user_id=staff_user["id"],
                 name="Cashier",
                 email=email,
                 role="cashier",

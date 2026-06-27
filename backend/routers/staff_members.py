@@ -105,32 +105,40 @@ def _assert_password_complexity(password: Optional[str]) -> None:
 
 async def _provision_staff_login(
     db: AsyncSession, email: Optional[str], password: Optional[str]
-) -> Optional[str]:
+) -> tuple[Optional[str], Optional[str]]:
     """Ensure an auth ``User`` exists for a staff member's email so they can log in.
 
-    Tenancy resolves a cashier back to the owning merchant by matching the staff
-    row's ``email`` to a ``User.email`` — but nothing created that user, so the
-    login never existed (ISSUE-033). On staff create we provision (or link) it:
+    Tenancy binds a cashier to the owning merchant by the staff row's
+    ``login_user_id`` FK (SEC-11) — but nothing created that login, so it never
+    existed (ISSUE-033). On staff create we provision it and report the id to bind:
 
-    * no email             → directory-only entry, no login (returns ``None``);
-    * email already a user → link to the existing account, no new password (``None``);
+    * no email             → directory-only entry, no login → ``(None, None)``;
+    * email already a user → a pre-existing account already owns this address. We
+      cannot verify the merchant controls it (it may be an attacker who
+      pre-registered the email to hijack the tenant), so we do NOT bind it as a
+      staff login → ``(None, None)``. A verified-link flow is a follow-up; the
+      directory row stays login-less rather than fail open.
     * otherwise            → create a least-privilege ``User`` with a temp password
-      (caller-supplied or generated) flagged ``must_change_password``; return the
-      generated password once so the merchant can relay it (``None`` if supplied).
+      (caller-supplied or generated) flagged ``must_change_password``. Return the
+      new login id to bind plus the generated password once so the merchant can
+      relay it (password ``None`` if the caller supplied one).
+
+    Returns ``(login_user_id, temp_password)``.
     """
     if not email:
-        return None
+        return None, None
 
     auth = AuthService(db)
     if await auth.get_user_by_email(email):
-        return None  # already a login; tenancy will map it to the owner by email
+        # SEC-11: ownership is unverified — do not bind a pre-existing account.
+        return None, None
 
     generated = password is None
     secret = password or secrets.token_urlsafe(9)
     user = await auth.create_user(email=email, password=secret, name=None, role="user")
     user.must_change_password = True
     await db.commit()
-    return secret if generated else None
+    return user.id, (secret if generated else None)
 
 
 # ---------- Routes ----------
@@ -260,8 +268,13 @@ async def create_staff_members(
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create staff_members")
 
-        # Provision the auth login so the staff member can actually sign in (#33).
-        temp_password = await _provision_staff_login(db, data.email, password)
+        # Provision the auth login so the staff member can actually sign in (#33)
+        # and bind it to this row by its immutable login id (SEC-11).
+        login_user_id, temp_password = await _provision_staff_login(db, data.email, password)
+        if login_user_id:
+            result.login_user_id = login_user_id
+            await db.commit()
+            await db.refresh(result)
 
         logger.info(f"Staff_members created successfully with id: {result.id}")
         response = Staff_membersResponse.model_validate(result)
@@ -299,8 +312,13 @@ async def create_staff_memberss_batch(
             password = payload.pop("password", None)  # not a Staff_members column
             result = await service.create(payload, user_id=(scope.owner_user_id or str(current_user.id)))
             if result:
-                # Provision the login so batch-imported staff can sign in too (#33).
-                await _provision_staff_login(db, item_data.email, password)
+                # Provision the login so batch-imported staff can sign in too (#33)
+                # and bind it by its immutable login id (SEC-11).
+                login_user_id, _temp = await _provision_staff_login(db, item_data.email, password)
+                if login_user_id:
+                    result.login_user_id = login_user_id
+                    await db.commit()
+                    await db.refresh(result)
                 results.append(result)
 
         logger.info(f"Batch created {len(results)} staff_memberss successfully")

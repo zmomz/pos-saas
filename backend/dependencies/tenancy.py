@@ -99,12 +99,18 @@ async def resolve_tenant_scope(db: AsyncSession, current_user: UserResponse) -> 
 
     # Staff member operating under a client merchant? Resolve to the owner so the
     # cashier shares the merchant's catalog/customers/sales rather than an empty
-    # private tenant. The staff row's ``user_id`` is the *owning* account.
+    # private tenant. The staff row's ``user_id`` is the *owning* account, while
+    # ``login_user_id`` is the cashier's own login. SEC-11: match on the immutable
+    # login FK, never the mutable email — an email match was a tenant boundary an
+    # attacker could hijack by pre-registering a soon-to-be-staff address.
     staff = (
         await db.execute(
-            select(Staff_members).where(Staff_members.email == (current_user.email or "__none__"))
+            select(Staff_members)
+            .where(Staff_members.login_user_id == uid)
+            .order_by(Staff_members.id.asc())
+            .limit(1)
         )
-    ).scalar_one_or_none()
+    ).scalars().first()
     if staff and staff.user_id and staff.user_id != uid:
         owner_client = (
             await db.execute(select(Clients).where(Clients.user_id == staff.user_id))

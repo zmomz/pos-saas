@@ -20,12 +20,13 @@ from core.database import db_manager
 from models.staff_members import Staff_members
 
 
-async def _attach_staff(owner_user_id: str, email: str) -> None:
-    """Insert a ``Staff_members`` row mapping ``email`` -> ``owner_user_id``."""
+async def _attach_staff(owner_user_id: str, login_user_id: str, email: str) -> None:
+    """Insert a ``Staff_members`` row binding ``login_user_id`` -> ``owner_user_id``."""
     async with db_manager.async_session_maker() as db:
         db.add(
             Staff_members(
                 user_id=owner_user_id,
+                login_user_id=login_user_id,
                 name="Cashier",
                 email=email,
                 role="cashier",
@@ -38,8 +39,8 @@ async def _attach_staff(owner_user_id: str, email: str) -> None:
 async def test_staff_under_suspended_owner_is_blocked(client):
     owner, _, _ = await make_client_account(client, is_active=False)
     staff_email = unique_email()
-    _, staff_token, _ = await register_user(client, email=staff_email)
-    await _attach_staff(owner["id"], staff_email)
+    staff_user, staff_token, _ = await register_user(client, email=staff_email)
+    await _attach_staff(owner["id"], staff_user["id"], staff_email)
 
     resp = await client.get("/api/v1/auth/me", headers=auth_headers(staff_token))
     assert resp.status_code == 403, resp.text
@@ -49,8 +50,8 @@ async def test_staff_under_suspended_owner_is_blocked(client):
 async def test_staff_under_active_owner_allowed(client):
     owner, _, _ = await make_client_account(client, is_active=True)
     staff_email = unique_email()
-    _, staff_token, _ = await register_user(client, email=staff_email)
-    await _attach_staff(owner["id"], staff_email)
+    staff_user, staff_token, _ = await register_user(client, email=staff_email)
+    await _attach_staff(owner["id"], staff_user["id"], staff_email)
 
     resp = await client.get("/api/v1/auth/me", headers=auth_headers(staff_token))
     assert resp.status_code == 200, resp.text

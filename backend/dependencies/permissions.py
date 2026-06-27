@@ -73,26 +73,22 @@ def role_allows(role: str, permission_key: str) -> bool:
 async def _staff_role_for_user(db: AsyncSession, user_id: str) -> Optional[str]:
     """Resolve a login to its staff role, or ``None`` if it is not a sub-account.
 
-    A staff member's login email matches a ``Staff_members`` row whose
-    ``user_id`` is the *owning* merchant (the same mapping tenancy uses). If the
-    matched row belongs to the caller themselves (``staff.user_id == user_id``)
-    the account is the owner, not a staff sub-account, and keeps grant-by-default.
+    A staff member's login is bound to a ``Staff_members`` row by the immutable
+    ``login_user_id`` FK (SEC-11), whose ``user_id`` is the *owning* merchant (the
+    same mapping tenancy uses). Matching the FK — not the mutable email — keeps a
+    pre-registered-email attacker from inheriting a staff role. If the matched row
+    belongs to the caller themselves (``staff.user_id == user_id``) the account is
+    the owner, not a staff sub-account, and keeps grant-by-default.
     """
-    from models.auth import User
     from models.staff_members import Staff_members
 
-    user = (
-        await db.execute(select(User).where(User.id == str(user_id)))
-    ).scalar_one_or_none()
-    if user is None or not user.email:
-        return None
-    # ``Staff_members.email`` is not unique, so resolve to the first match rather
-    # than ``scalar_one_or_none`` (which would raise if an email were ever
-    # duplicated) — permission resolution must never break the request.
+    # ``login_user_id`` is not unique, so resolve to the first match rather than
+    # ``scalar_one_or_none`` (which would raise on any duplicate) — permission
+    # resolution must never break the request.
     staff = (
         await db.execute(
             select(Staff_members)
-            .where(Staff_members.email == user.email)
+            .where(Staff_members.login_user_id == str(user_id))
             .order_by(Staff_members.id.asc())
             .limit(1)
         )
