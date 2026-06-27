@@ -6,6 +6,7 @@ import {
   generateDiscountCodes,
   redeemDiscountCode,
   getAgentCommissionStatements,
+  kdsStreamUrl,
 } from './api';
 
 // T-F: assert the POS checkout payload the app actually sends — the layer where
@@ -172,5 +173,36 @@ describe('getAgentCommissionStatements', () => {
     expect(out.statements).toHaveLength(1);
     expect(out.statements[0].period_start).toBe('2026-06-01');
     expect(out.statements[0].by_client[0].business_name).toBe('Corner Shop');
+  });
+});
+
+// FE-02: the live KDS board no longer puts the long-lived bearer JWT in the SSE
+// URL (it leaks to logs/history). kdsStreamUrl() mints a single-use stream ticket
+// via an authenticated POST and the URL carries only that opaque ticket.
+describe('kdsStreamUrl (SSE stream ticket)', () => {
+  const TOKEN_KEY = 'pos_auth_token';
+  afterEach(() => localStorage.removeItem(TOKEN_KEY));
+
+  it('mints a ticket via POST and carries it (not the JWT) on the URL', async () => {
+    localStorage.setItem(TOKEN_KEY, 'super-secret-jwt');
+    let hit = false;
+    server.use(
+      http.post('http://127.0.0.1:8000/api/v1/restaurant/kds/stream-ticket', () => {
+        hit = true;
+        return HttpResponse.json({ ticket: 'one-time-ticket', expires_in: 30 });
+      })
+    );
+
+    const url = await kdsStreamUrl();
+
+    expect(hit).toBe(true);
+    expect(url).toContain('/api/v1/restaurant/kds/stream?ticket=one-time-ticket');
+    expect(url).not.toContain('super-secret-jwt');
+    expect(url).not.toContain('token=');
+  });
+
+  it('returns null when there is no auth token (no mint attempted)', async () => {
+    const url = await kdsStreamUrl();
+    expect(url).toBeNull();
   });
 });

@@ -316,9 +316,9 @@ async def test_retail_client_blocked_from_kds(client):
     assert resp2.status_code == 403, resp2.text
 
 
-async def test_kds_stream_rejects_bad_token(client):
-    """The SSE stream gates on the query token (EventSource can't send headers)."""
-    bad = await client.get("/api/v1/restaurant/kds/stream?token=not-a-jwt")
+async def test_kds_stream_rejects_bad_ticket(client):
+    """The SSE stream gates on a single-use ticket, not a token-in-URL (FE-02)."""
+    bad = await client.get("/api/v1/restaurant/kds/stream?ticket=not-a-real-ticket")
     assert bad.status_code == 401, bad.text
 
 

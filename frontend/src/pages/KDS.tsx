@@ -119,49 +119,61 @@ export default function KDS() {
       setStreamLive(false);
       return;
     }
-    const url = kdsStreamUrl();
-    if (!url || typeof EventSource === 'undefined') return;
+    if (typeof EventSource === 'undefined') return;
 
-    const es = new EventSource(url);
+    // Minting the stream ticket is async (FE-02), so the EventSource may open
+    // after this effect is torn down (status flip / unmount). Track that and
+    // close eagerly so we never leak a connection or write to a stale board.
+    let es: EventSource | null = null;
+    let cancelled = false;
+
     const upsert = (card: KdsCard) =>
       setCards((prev) => [...prev.filter((c) => c.id !== card.id), card]);
     const remove = (card: KdsCard) =>
       setCards((prev) => prev.filter((c) => c.id !== card.id));
 
-    es.addEventListener('open', () => setStreamLive(true));
-    es.addEventListener('snapshot', (e) => {
-      setStreamLive(true);
-      try {
-        const data = JSON.parse((e as MessageEvent).data);
-        setCards(Array.isArray(data.items) ? data.items : []);
-      } catch {
-        /* ignore malformed frame */
-      }
-    });
-    es.addEventListener('fired', (e) => {
-      try {
-        upsert(JSON.parse((e as MessageEvent).data).card);
-      } catch {
-        /* ignore */
-      }
-    });
-    es.addEventListener('recalled', (e) => {
-      try {
-        upsert(JSON.parse((e as MessageEvent).data).card);
-      } catch {
-        /* ignore */
-      }
-    });
-    es.addEventListener('bumped', (e) => {
-      try {
-        remove(JSON.parse((e as MessageEvent).data).card);
-      } catch {
-        /* ignore */
-      }
-    });
-    es.onerror = () => setStreamLive(false);
+    kdsStreamUrl().then((url) => {
+      if (cancelled || !url) return;
+      es = new EventSource(url);
 
-    return () => es.close();
+      es.addEventListener('open', () => setStreamLive(true));
+      es.addEventListener('snapshot', (e) => {
+        setStreamLive(true);
+        try {
+          const data = JSON.parse((e as MessageEvent).data);
+          setCards(Array.isArray(data.items) ? data.items : []);
+        } catch {
+          /* ignore malformed frame */
+        }
+      });
+      es.addEventListener('fired', (e) => {
+        try {
+          upsert(JSON.parse((e as MessageEvent).data).card);
+        } catch {
+          /* ignore */
+        }
+      });
+      es.addEventListener('recalled', (e) => {
+        try {
+          upsert(JSON.parse((e as MessageEvent).data).card);
+        } catch {
+          /* ignore */
+        }
+      });
+      es.addEventListener('bumped', (e) => {
+        try {
+          remove(JSON.parse((e as MessageEvent).data).card);
+        } catch {
+          /* ignore */
+        }
+      });
+      es.onerror = () => setStreamLive(false);
+    });
+
+    return () => {
+      cancelled = true;
+      es?.close();
+    };
   }, [denied, boardStatus]);
 
   // Poll fallback: when the live stream isn't connected, refresh on a timer so

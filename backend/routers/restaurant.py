@@ -25,7 +25,6 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.auth import AccessTokenError, decode_access_token
 from core.database import db_manager, get_db
 from dependencies.auth import get_current_user
 from dependencies.features import is_feature_enabled
@@ -37,6 +36,11 @@ from services.escpos import build_kot_base64, build_receipt_base64
 from services.printers import printer_echo, resolve_printer
 from services.receipt_templates import load_default_template
 from services.kds_channel import kds_broker
+from services.stream_ticket import (
+    STREAM_TICKET_TTL_SECONDS,
+    consume_stream_ticket,
+    issue_stream_ticket,
+)
 from services.restaurant import (
     KDS_STATUSES,
     ORDER_TYPES,
@@ -2066,27 +2070,42 @@ async def print_kds_kot(
     }
 
 
+@router.post("/kds/stream-ticket")
+async def kds_stream_ticket(
+    current_user: UserResponse = Depends(get_current_user),
+    _client: Clients = Depends(get_restaurant_client),
+):
+    """Mint a single-use, short-lived ticket for the KDS SSE stream (FE-02).
+
+    The browser ``EventSource`` can't set an Authorization header, so rather than
+    putting the long-lived bearer JWT in the stream URL — where it leaks to access
+    logs and browser history — the SPA calls this authenticated, restaurant-gated
+    endpoint and passes the returned opaque ticket on the SSE URL. The stream
+    validates and burns the ticket on connect (see ``kds_stream``).
+    """
+    ticket = issue_stream_ticket(current_user.id)
+    return {"ticket": ticket, "expires_in": STREAM_TICKET_TTL_SECONDS}
+
+
 @router.get("/kds/stream")
 async def kds_stream(
-    token: str = Query(..., description="Bearer JWT (EventSource cannot set headers)"),
+    ticket: str = Query(..., description="Single-use ticket from POST /kds/stream-ticket"),
     db: AsyncSession = Depends(get_db),
 ):
     """Real-time Kitchen-Display feed over **Server-Sent Events** (F-057).
 
-    The browser ``EventSource`` can't set an Authorization header, so the JWT is
-    passed as a query param and run through the same double-gate as every other
-    restaurant route. The stream emits an initial ``snapshot`` of the active board,
-    then ``fired`` / ``bumped`` / ``recalled`` events as they happen (≤1s, fanned
-    out by the in-process broker) with periodic ``: keepalive`` comments so proxies
-    don't drop an idle connection.
+    The browser ``EventSource`` can't set an Authorization header, so the caller
+    first mints a single-use stream ticket (``POST /kds/stream-ticket``) and passes
+    it here; the ticket is validated and burned on connect (FE-02 — the bearer JWT
+    no longer travels in the URL). The resolved subject runs through the same
+    restaurant double-gate as every other route. The stream emits an initial
+    ``snapshot`` of the active board, then ``fired`` / ``bumped`` / ``recalled``
+    events as they happen (≤1s, fanned out by the in-process broker) with periodic
+    ``: keepalive`` comments so proxies don't drop an idle connection.
     """
-    try:
-        payload = decode_access_token(token)
-    except AccessTokenError:
-        raise HTTPException(status_code=401, detail="Invalid authentication token")
-    user_id = payload.get("sub")
+    user_id = consume_stream_ticket(ticket)
     if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid authentication token")
+        raise HTTPException(status_code=401, detail="Invalid or expired stream ticket")
     client = await _resolve_restaurant_client(db, user_id)
     owner_id = client.user_id
 

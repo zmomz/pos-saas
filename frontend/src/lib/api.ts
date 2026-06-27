@@ -3787,12 +3787,25 @@ export async function getKdsKot(kdsId: number): Promise<KotPayload> {
 }
 
 // The SSE stream URL for the live kitchen board. EventSource can't set an
-// Authorization header, so the JWT rides as a query param (gated server-side by
-// the same restaurant double-gate). Returns null when not authenticated.
-export function kdsStreamUrl(): string | null {
-  const token = getToken();
-  if (!token) return null;
-  return `${getAPIBaseURL()}/api/v1/restaurant/kds/stream?token=${encodeURIComponent(token)}`;
+// Authorization header, so rather than leaking the long-lived bearer JWT in the
+// URL (where it lands in access logs / browser history), we mint a single-use,
+// short-lived stream ticket via an authenticated POST and put *that* on the URL.
+// The backend validates and burns the ticket on connect (FE-02). Returns null
+// when not authenticated or if minting fails.
+export async function kdsStreamUrl(): Promise<string | null> {
+  if (!getToken()) return null;
+  try {
+    const res = await client.apiCall.invoke<{ ticket: string }>({
+      url: '/api/v1/restaurant/kds/stream-ticket',
+      method: 'POST',
+      data: {},
+    });
+    const ticket = res.data?.ticket;
+    if (!ticket) return null;
+    return `${getAPIBaseURL()}/api/v1/restaurant/kds/stream?ticket=${encodeURIComponent(ticket)}`;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- ZATCA document status (ZA-08, F-019) ----------
