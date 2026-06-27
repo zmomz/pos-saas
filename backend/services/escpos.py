@@ -348,6 +348,70 @@ def _shape(text: object) -> str:
     return get_display(arabic_reshaper.reshape(s))
 
 
+class _RtlLayout:
+    """Top-down RTL layout primitives over a shared y-cursor (ARC-06).
+
+    The always-Arabic receipt body and the kitchen ticket lay text out on a
+    1-bit canvas with the same handful of moves — a centered line, a
+    right-aligned (RTL) line, a right-label/left-value row, and a horizontal
+    rule — each advancing a single ``y`` cursor. The ONLY difference is the text
+    drawer: the receipt's labels can carry the Riyal glyph and so go through the
+    mixed-font drawer (``_draw_mixed``/``_mixed_width``), while the kitchen ticket
+    never prints money and uses the plain PIL drawer. ``mixed`` selects between
+    the two, so one helper serves both call-sites instead of two hand-copied
+    blocks.
+    """
+
+    def __init__(self, draw, width: int, margin: int, *, mixed: bool):
+        self.draw = draw
+        self.width = width
+        self.margin = margin
+        self._mixed = mixed
+        self.y = margin
+
+    def _measure(self, t: str, font) -> float:
+        if self._mixed:
+            return _mixed_width(self.draw, t, font)
+        return self.draw.textlength(t, font=font)
+
+    def _put(self, xy, t: str, font) -> None:
+        if self._mixed:
+            _draw_mixed(self.draw, xy, t, font, 0)
+        else:
+            self.draw.text(xy, t, font=font, fill=0)
+
+    def row_h(self, font, pad: int = 8) -> int:
+        ascent, descent = font.getmetrics()
+        return ascent + descent + pad
+
+    def center(self, text, font) -> None:
+        t = _shape(text)
+        w = self._measure(t, font)
+        self._put(((self.width - w) / 2, self.y), t, font)
+        self.y += self.row_h(font)
+
+    def right(self, text, font, indent: int = 0) -> None:
+        t = _shape(text)
+        w = self._measure(t, font)
+        self._put((self.width - self.margin - indent - w, self.y), t, font)
+        self.y += self.row_h(font)
+
+    def lr(self, right_text, left_text, font) -> None:
+        # Arabic label on the right (RTL), the code/amount on the left. On the
+        # receipt the label may carry the Riyal sign, so both ends go through the
+        # same (mixed-aware) drawer.
+        rt = _shape(right_text)
+        rw = self._measure(rt, font)
+        self._put((self.width - self.margin - rw, self.y), rt, font)
+        self._put((self.margin, self.y), str(left_text), font)
+        self.y += self.row_h(font)
+
+    def rule(self) -> None:
+        self.y += 2
+        self.draw.line([(self.margin, self.y), (self.width - self.margin, self.y)], fill=0, width=2)
+        self.y += 12
+
+
 def _item_display_name(item: dict) -> str:
     """Prefer the Arabic product name on the always-Arabic receipt (PRN-01)."""
     name_ar = (item.get("name_ar") or "").strip() if isinstance(item, dict) else ""
@@ -461,41 +525,10 @@ def _render_receipt_image(
     est_h = int((640 + len(line_items or []) * 150) * max(scale, 1.0)) + 120
     img = Image.new("1", (width, est_h), 1)  # 1 == white background
     draw = ImageDraw.Draw(img)
-    y = margin
-
-    def row_h(font, pad: int = 8) -> int:
-        ascent, descent = font.getmetrics()
-        return ascent + descent + pad
-
-    def center(text, font) -> None:
-        nonlocal y
-        t = _shape(text)
-        w = _mixed_width(draw, t, font)
-        _draw_mixed(draw, ((width - w) / 2, y), t, font, 0)
-        y += row_h(font)
-
-    def right(text, font) -> None:
-        nonlocal y
-        t = _shape(text)
-        w = _mixed_width(draw, t, font)
-        _draw_mixed(draw, (width - margin - w, y), t, font, 0)
-        y += row_h(font)
-
-    def lr(right_text, left_text, font) -> None:
-        # Arabic label on the right (RTL), the code/amount on the left. The label
-        # may carry the Riyal sign, so it goes through the mixed-font drawer.
-        nonlocal y
-        rt = _shape(right_text)
-        rw = _mixed_width(draw, rt, font)
-        _draw_mixed(draw, (width - margin - rw, y), rt, font, 0)
-        _draw_mixed(draw, (margin, y), str(left_text), font, 0)
-        y += row_h(font)
-
-    def rule() -> None:
-        nonlocal y
-        y += 2
-        draw.line([(margin, y), (width - margin, y)], fill=0, width=2)
-        y += 12
+    # The receipt labels can carry the Riyal glyph, so lay out via the mixed-font
+    # drawer (ARC-06: shared with the kitchen ticket, which renders plain).
+    L = _RtlLayout(draw, width, margin, mixed=True)
+    center, right, lr, rule, row_h = L.center, L.right, L.lr, L.rule, L.row_h
 
     # ---- header ----
     # show_logo selects the prominence of the (always-present, fiscally-required)
@@ -527,8 +560,8 @@ def _render_receipt_image(
             f"{to_arabic_digits(qty)} × {format_money_ar(price)}"
             f" = {format_money_ar(amount)}"
         )
-        draw.text((margin, y), amounts, font=f_small, fill=0)
-        y += row_h(f_small)
+        draw.text((margin, L.y), amounts, font=f_small, fill=0)
+        L.y += row_h(f_small)
     rule()
 
     # ---- totals ----
@@ -555,7 +588,7 @@ def _render_receipt_image(
         )
     rule()
 
-    return img.crop((0, 0, width, min(y + margin, est_h)))
+    return img.crop((0, 0, width, min(L.y + margin, est_h)))
 
 
 def _render_footer_image(settings: dict = None):
@@ -802,39 +835,10 @@ def _render_kot_image(
     est_h = int((360 + len(courses or []) * 60 + n_items * 130) * max(scale, 1.0)) + 120
     img = Image.new("1", (width, est_h), 1)
     draw = ImageDraw.Draw(img)
-    y = margin
-
-    def row_h(font, pad: int = 8) -> int:
-        ascent, descent = font.getmetrics()
-        return ascent + descent + pad
-
-    def center(text, font) -> None:
-        nonlocal y
-        t = _shape(text)
-        w = draw.textlength(t, font=font)
-        draw.text(((width - w) / 2, y), t, font=font, fill=0)
-        y += row_h(font)
-
-    def right(text, font, indent: int = 0) -> None:
-        nonlocal y
-        t = _shape(text)
-        w = draw.textlength(t, font=font)
-        draw.text((width - margin - indent - w, y), t, font=font, fill=0)
-        y += row_h(font)
-
-    def lr(right_text, left_text, font) -> None:
-        nonlocal y
-        rt = _shape(right_text)
-        rw = draw.textlength(rt, font=font)
-        draw.text((width - margin - rw, y), rt, font=font, fill=0)
-        draw.text((margin, y), str(left_text), font=font, fill=0)
-        y += row_h(font)
-
-    def rule() -> None:
-        nonlocal y
-        y += 2
-        draw.line([(margin, y), (width - margin, y)], fill=0, width=2)
-        y += 12
+    # A kitchen ticket never prints money, so it lays out via the plain drawer
+    # (ARC-06: same layout primitives as the receipt, without mixed-font glyphs).
+    L = _RtlLayout(draw, width, margin, mixed=False)
+    center, right, lr, rule = L.center, L.right, L.lr, L.rule
 
     # ---- header ----
     center(_L["kot"], f_title)
@@ -864,7 +868,7 @@ def _render_kot_image(
                 right(f"» {note}", f_small, indent=28)
         rule()
 
-    return img.crop((0, 0, width, min(y + margin, est_h)))
+    return img.crop((0, 0, width, min(L.y + margin, est_h)))
 
 
 def _append_kot_text_fallback(
