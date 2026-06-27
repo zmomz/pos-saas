@@ -127,24 +127,14 @@ REMOVED_FRONTEND = [
     _FRONTEND_SRC / "api" / "settings.ts",
 ]
 
-# F-004 / §4 dead code (#8): the ``data_models/*.json`` generator artifacts whose
-# entity routers were deleted as dead/unused (#1–#4 + H20). Nothing in the
-# codebase reads ``data_models/`` at runtime (it is pure scaffold metadata), so a
-# JSON whose router is gone only advertises surface that isn't real. These must
-# stay deleted; the live entity triads still on the ALLOWLIST keep their JSON.
+# ARC-08 (was F-004 / §4 dead code #8): the entire ``data_models/`` directory was
+# generator scaffold metadata that NOTHING in the codebase reads at runtime — a
+# repo-wide grep for ``data_models`` outside the directory itself matches only this
+# guard and plan.md prose, never a loader. Earlier iterations swept the JSON whose
+# entity routers had been deleted while keeping the JSON for still-live triads; with
+# no runtime reader the surviving files only advertised surface that isn't real, so
+# the whole directory is now removed. It must stay gone.
 _DATA_MODELS = _BACKEND / "data_models"
-REMOVED_DATA_MODELS = [
-    _DATA_MODELS / "packages.json",        # router removed in #1
-    _DATA_MODELS / "agents.json",          # router removed in #2
-    _DATA_MODELS / "agent_features.json",  # router removed in #2
-    _DATA_MODELS / "permissions.json",     # router + json removed in #3
-    _DATA_MODELS / "clients.json",         # router removed in #4
-    _DATA_MODELS / "client_features.json", # router removed in #4
-    _DATA_MODELS / "shifts.json",          # router removed (H20)
-]
-# Sanity anchor: a live entity triad whose JSON must NOT be swept up. products.py
-# is a referenced router, so its generator JSON stays.
-_LIVE_DATA_MODEL = _DATA_MODELS / "products.json"
 
 
 def _frontend_source() -> str:
@@ -223,18 +213,13 @@ def test_removed_orphans_stay_removed():
     )
 
 
-def test_orphaned_data_models_deleted():
-    """§4 (#8): generator JSON for deleted/unused entity routers is gone, but the
-    JSON for live entity triads on the allowlist is left untouched."""
-    present = [str(p.relative_to(_REPO)) for p in REMOVED_DATA_MODELS if p.exists()]
-    assert not present, (
-        "Orphaned data_models JSON reappeared — these advertise surface whose "
-        "router was deleted as dead code (#1–#4, H20):\n  " + "\n  ".join(present)
-    )
-    # Guard against over-deletion: a live triad keeps its scaffold JSON.
-    assert _LIVE_DATA_MODEL.exists(), (
-        "products.json (a live entity triad) must not be deleted — only the "
-        "JSON for deleted/unused routers is in scope for #8"
+def test_data_models_directory_deleted():
+    """ARC-08: the orphan ``data_models/`` directory is gone in its entirety —
+    nothing reads it at runtime, so no JSON in it advertises real surface."""
+    assert not _DATA_MODELS.exists(), (
+        "data_models/ reappeared — it is generator scaffold metadata that "
+        "nothing reads at runtime and must stay deleted (ARC-08):\n  "
+        + str(_DATA_MODELS.relative_to(_REPO))
     )
 
 
