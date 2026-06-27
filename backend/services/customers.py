@@ -8,7 +8,10 @@ from models.customers import Customers
 from services.query_filter import apply_query_filters
 
 # SEC-17: columns a client may filter on via the list endpoint's ?query=.
-FILTERABLE_FIELDS = frozenset({"email", "id", "marketing_consent", "phone"})
+# ARC-05: ``client_id`` is filterable so list queries can be routed by the tenant
+# scope; the service's own ``user_id`` filter still bounds the result, so the
+# filter can only narrow within the caller's tenant, never cross it.
+FILTERABLE_FIELDS = frozenset({"client_id", "email", "id", "marketing_consent", "phone"})
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +23,21 @@ class CustomersService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Customers]:
+    async def create(
+        self,
+        data: Dict[str, Any],
+        user_id: Optional[str] = None,
+        client_id: Optional[int] = None,
+    ) -> Optional[Customers]:
         """Create a new customers"""
         try:
             if user_id:
                 data['user_id'] = user_id
+            # ARC-05: stamp the owning merchant's client_id so the row scopes
+            # consistently with the core tables. The caller passes the resolved
+            # tenant scope's client_id; a payload value is never trusted.
+            if client_id is not None:
+                data['client_id'] = client_id
             obj = Customers(**data)
             self.db.add(obj)
             await self.db.commit()

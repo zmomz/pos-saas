@@ -55,6 +55,8 @@ class CustomersResponse(BaseModel):
     """Entity response schema"""
     id: int
     user_id: str
+    # ARC-05: the owning merchant's client id (null for legacy rows pre-backfill).
+    client_id: Optional[int] = None
     name: str
     phone: Optional[str] = None
     email: Optional[str] = None
@@ -547,7 +549,7 @@ async def create_customers(
             create_dict["consent_updated_at"] = datetime.now()
         # CRM-04 (F-039): encode the tags list to the JSON string the column holds.
         _serialize_tags(create_dict)
-        result = await service.create(create_dict, user_id=owner_id)
+        result = await service.create(create_dict, user_id=owner_id, client_id=scope.client_id)
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create customers")
 
@@ -583,7 +585,7 @@ async def create_customerss_batch(
     
     try:
         for item_data in request.items:
-            result = await service.create(_serialize_tags(item_data.model_dump()), user_id=(scope.owner_user_id or str(current_user.id)))
+            result = await service.create(_serialize_tags(item_data.model_dump()), user_id=(scope.owner_user_id or str(current_user.id)), client_id=scope.client_id)
             if result:
                 results.append(result)
         
