@@ -53,6 +53,13 @@ class Channel_orders(Base):
     # The materialized POS sale (Transactions.id). Null only if no order line could
     # be matched to a product (nothing rung up) — the channel record is still kept.
     transaction_id = Column(Integer, nullable=True, index=True)
+    # The order ticket this claim materialized (REV-02). Written before the fiscal
+    # settle so a crash mid-settle is recoverable: a re-delivery of a claim still at
+    # "received" / transaction_id NULL re-uses this ticket — re-settling it when it
+    # never settled, or detecting it already "settled" (DAT-07 crash-AFTER-settle) so
+    # it never mints a second invoice. Null when no ticket was opened yet (a fresh
+    # claim before ticket creation, or a no-lines order — DAT-08).
+    ticket_id = Column(Integer, nullable=True, index=True)
     # received / imported / fulfilled.
     status = Column(String, nullable=False, default="imported", server_default="imported")
     customer_name = Column(String, nullable=True)

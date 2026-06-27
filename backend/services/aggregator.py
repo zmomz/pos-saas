@@ -29,13 +29,14 @@ import json
 import logging
 from typing import Any, List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.channel_orders import Channel_orders
 from models.clients import Clients
 from models.products import Products
+from models.restaurant import OrderTickets
 
 logger = logging.getLogger(__name__)
 
@@ -249,46 +250,91 @@ async def ingest_aggregator_order(
             )
         ).scalar_one_or_none()
 
+    async def _resume_existing(row: Channel_orders) -> Optional[dict]:
+        """Decide what a re-delivery that found an existing claim should do (REV-02).
+
+        Returns a terminal status dict to return immediately, or ``None`` to signal
+        "resume settlement on this claim". A claim already carrying a transaction is
+        fully settled (true duplicate). A claim still at ``received`` with no
+        transaction is recoverable: if its ticket was already ``settled`` an invoice
+        exists (the DAT-07 crash-AFTER-settle case) so we must NOT mint a second and
+        report ``duplicate``; otherwise the settle never produced an invoice and we
+        resume it. A claim with no ticket yet (or a no-lines DAT-08 order) simply
+        re-runs from scratch.
+        """
+        if row.transaction_id is not None:
+            return _duplicate(row)
+        if row.ticket_id is not None:
+            ticket = (
+                await db.execute(select(OrderTickets).where(OrderTickets.id == row.ticket_id))
+            ).scalar_one_or_none()
+            if ticket is not None and (ticket.status or "open") in ("settled", "void"):
+                # Invoice already minted on the first attempt — never double-invoice.
+                return _duplicate(row)
+        return None
+
     # Idempotency — re-delivery of the same webhook must never double-book. Fast
     # SELECT pre-check first; the unique (client_id, provider, external_order_id)
     # constraint is the real arbiter on the claim insert below.
     existing = await _find_existing()
+    resume_ticket: Optional[OrderTickets] = None
     if existing is not None:
-        return _duplicate(existing)
-
-    # DAT-07 idempotency-first: CLAIM the order (status="received") and commit BEFORE
-    # any fiscal work. Minting the ZATCA invoice happens AFTER this row is durable, so
-    # a crash between the signed invoice and recording the sale leaves the claim
-    # behind — re-delivery sees it and refuses to mint a second invoice. On a
-    # concurrent re-delivery that raced past the SELECT, the second insert conflicts
-    # on the unique constraint and is treated as the duplicate.
-    channel_order = Channel_orders(
-        user_id=owner_user_id,
-        client_id=client_id,
-        provider=provider,
-        external_order_id=external_id,
-        external_reference=order["external_reference"],
-        transaction_id=None,
-        status="received",
-        customer_name=order["customer_name"],
-        customer_phone=order["customer_phone"],
-        total_amount=order["total_amount"],
-        currency=order["currency"],
-        raw_payload=json.dumps(payload, ensure_ascii=False)[:20000],
-    )
-    db.add(channel_order)
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        existing = await _find_existing()
-        if existing is not None:
-            return _duplicate(existing)
-        raise
-    channel_order_id = channel_order.id
-    # The claim commit expired the client row; refresh it so the downstream ticket +
-    # fiscal settle can read client.* without faulting on a lazy-load.
-    await db.refresh(client)
+        terminal = await _resume_existing(existing)
+        if terminal is not None:
+            return terminal
+        # REV-02: a stuck claim (committed "received" but the settle never produced an
+        # invoice — the process died or execute_sale raised after the DAT-07 claim
+        # commit). Resume settlement on the durable claim row instead of refusing; no
+        # second invoice is possible because the first attempt minted none. Re-use the
+        # already-materialized ticket (its lines + fired courses were committed before
+        # the failed settle) so the kitchen order isn't duplicated.
+        channel_order_id = existing.id
+        if existing.ticket_id is not None:
+            resume_ticket = (
+                await db.execute(select(OrderTickets).where(OrderTickets.id == existing.ticket_id))
+            ).scalar_one_or_none()
+        logger.info(
+            "Aggregator %s order %s for client %s: resuming stuck claim %s "
+            "(received, no transaction; ticket %s) -> re-attempting settlement",
+            provider, external_id, client_id, channel_order_id, existing.ticket_id,
+        )
+        await db.refresh(client)
+    else:
+        # DAT-07 idempotency-first: CLAIM the order (status="received") and commit
+        # BEFORE any fiscal work. Minting the ZATCA invoice happens AFTER this row is
+        # durable, so a crash between the signed invoice and recording the sale leaves
+        # the claim behind — re-delivery sees it and (REV-02) recovers it. On a
+        # concurrent re-delivery that raced past the SELECT, the second insert
+        # conflicts on the unique constraint and is treated as the duplicate (the
+        # insert-winner is the single settler — preserving DAT-07's concurrency
+        # guarantee that exactly one delivery ever settles).
+        channel_order = Channel_orders(
+            user_id=owner_user_id,
+            client_id=client_id,
+            provider=provider,
+            external_order_id=external_id,
+            external_reference=order["external_reference"],
+            transaction_id=None,
+            status="received",
+            customer_name=order["customer_name"],
+            customer_phone=order["customer_phone"],
+            total_amount=order["total_amount"],
+            currency=order["currency"],
+            raw_payload=json.dumps(payload, ensure_ascii=False)[:20000],
+        )
+        db.add(channel_order)
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            existing = await _find_existing()
+            if existing is not None:
+                return _duplicate(existing)
+            raise
+        channel_order_id = channel_order.id
+        # The claim commit expired the client row; refresh it so the downstream ticket
+        # + fiscal settle can read client.* without faulting on a lazy-load.
+        await db.refresh(client)
 
     # DAT-08 empty-order guard: a payload whose lines are all missing or non-billable
     # (qty <= 0, or not a line object) has nothing to ring up. Opening a ticket and
@@ -318,43 +364,61 @@ async def ingest_aggregator_order(
     service = RestaurantService(db)
     label = f"{provider}:{order['channel'] or 'aggregator'} #{order['external_reference'] or external_id}"
 
-    # 1) Open a tableless ticket driven by the order type (F-058).
-    ticket = await service.create_ticket(
-        {
-            "order_type": order["order_type"],
-            "customer_name": order["customer_name"],
-            "notes": label,
-        },
-        client.user_id,
-        client.id,
-    )
+    if resume_ticket is not None:
+        # REV-02 resume: the ticket, its lines, and fired courses were all committed
+        # before the failed settle — re-use them as-is so the kitchen order is never
+        # duplicated. Jump straight to the (previously failed) settle.
+        ticket = resume_ticket
+        items = await service.list_items(ticket.id, client.user_id)
+        matched = sum(1 for i in items if getattr(i, "product_id", None) is not None)
+    else:
+        # 1) Open a tableless ticket driven by the order type (F-058).
+        ticket = await service.create_ticket(
+            {
+                "order_type": order["order_type"],
+                "customer_name": order["customer_name"],
+                "notes": label,
+            },
+            client.user_id,
+            client.id,
+        )
+        # REV-02: link the ticket to the claim and commit BEFORE the fiscal settle so
+        # a crash mid-settle is recoverable — a re-delivery re-uses this exact ticket
+        # (re-settling it, or detecting it already settled).
+        await db.execute(
+            update(Channel_orders)
+            .where(Channel_orders.id == channel_order_id)
+            .values(ticket_id=ticket.id)
+        )
+        await db.commit()
 
-    # 2) Ring up the lines. Matched lines carry a product_id (so stock decrements);
-    #    an unmatched line still rings up (ad-hoc, no deduction) so the invoice total
-    #    reflects what the customer paid.
-    matched = 0
-    for item in order["items"]:
-        if not isinstance(item, dict):
-            continue
-        qty = _as_float(item.get("quantity")) or 0.0
-        if qty <= 0:
-            continue
-        product = await _resolve_product(db, client, item)
-        line: dict = {
-            "qty": qty,
-            "unit_price": _as_float(item.get("price")) or 0.0,
-            "name": (item.get("name") or "").strip() or None,
-        }
-        if product is not None:
-            matched += 1
-            line["product_id"] = product.id
-            line.setdefault("name", product.name)
-        await service.add_item(ticket.id, line, client.user_id, client.id)
+        # 2) Ring up the lines. Matched lines carry a product_id (so stock decrements);
+        #    an unmatched line still rings up (ad-hoc, no deduction) so the invoice
+        #    total reflects what the customer paid.
+        matched = 0
+        for item in order["items"]:
+            if not isinstance(item, dict):
+                continue
+            qty = _as_float(item.get("quantity")) or 0.0
+            if qty <= 0:
+                continue
+            product = await _resolve_product(db, client, item)
+            line: dict = {
+                "qty": qty,
+                "unit_price": _as_float(item.get("price")) or 0.0,
+                "name": (item.get("name") or "").strip() or None,
+            }
+            if product is not None:
+                matched += 1
+                line["product_id"] = product.id
+                line.setdefault("name", product.name)
+            await service.add_item(ticket.id, line, client.user_id, client.id)
 
-    # 3) Fire every present course to the KDS so the kitchen starts the order (F-057).
-    items = await service.list_items(ticket.id, client.user_id)
-    for course in sorted({(i.course or "mains") for i in items}):
-        await service.fire_course(ticket.id, course, client.user_id)
+        # 3) Fire every present course to the KDS so the kitchen starts the order
+        #    (F-057).
+        items = await service.list_items(ticket.id, client.user_id)
+        for course in sorted({(i.course or "mains") for i in items}):
+            await service.fire_course(ticket.id, course, client.user_id)
 
     # 4) Settle into a real ZATCA invoice via the shared sale core (F-059/slice 06).
     #    Pre-paid in the aggregator app -> an out-of-band ``online`` tender; oversell
