@@ -15,6 +15,7 @@ import { client } from '@/lib/api';
 import { toast } from 'sonner';
 import { useLanguage } from '@/lib/i18n';
 import { formatDateTime } from '@/lib/format';
+import { generateWebhookSecret } from '@/lib/webhookSecret';
 import ErrorState from '@/components/states/ErrorState';
 import EmptyState from '@/components/states/EmptyState';
 import PermissionDenied from '@/components/states/PermissionDenied';
@@ -71,15 +72,6 @@ const emptyForm: WebhookFormData = {
   events: [],
   secret_key: '',
 };
-
-function generateSecret(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = 'whsec_';
-  for (let i = 0; i < 32; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
 
 export default function WebhookManagement() {
   const [webhooks, setWebhooks] = useState<WebhookItem[]>([]);
@@ -162,7 +154,7 @@ export default function WebhookManagement() {
           name: formData.name,
           url: formData.url,
           events: JSON.stringify(formData.events),
-          secret_key: formData.secret_key || generateSecret(),
+          secret_key: formData.secret_key || generateWebhookSecret(),
           is_active: true,
         },
       });
@@ -272,7 +264,7 @@ export default function WebhookManagement() {
           <Label className="text-muted-foreground">{t('webhook_secret_label')}</Label>
           <div className="flex gap-2">
             <Input value={formData.secret_key} dir="ltr" onChange={(e) => setFormData((f) => ({ ...f, secret_key: e.target.value }))} placeholder={t('webhook_secret_placeholder')} className="flex-1" />
-            <Button type="button" variant="outline" onClick={() => setFormData((f) => ({ ...f, secret_key: generateSecret() }))}>{t('webhook_generate')}</Button>
+            <Button type="button" variant="outline" onClick={() => setFormData((f) => ({ ...f, secret_key: generateWebhookSecret() }))}>{t('webhook_generate')}</Button>
           </div>
         </div>
         <div className="space-y-2">
@@ -360,7 +352,7 @@ export default function WebhookManagement() {
       >
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>
-            <Button onClick={() => setFormData({ ...emptyForm, secret_key: generateSecret() })} className="h-11 rounded-[10px] shadow-brand">
+            <Button onClick={() => setFormData({ ...emptyForm, secret_key: generateWebhookSecret() })} className="h-11 rounded-[10px] shadow-brand">
               <Plus className="h-4 w-4 me-2" /> {t('webhook_add')}
             </Button>
           </DialogTrigger>
