@@ -1,6 +1,8 @@
 from core.database import Base
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Float, Integer, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint
+
+from core.money import Money
 
 
 class Transactions(Base):
@@ -26,27 +28,27 @@ class Transactions(Base):
     user_id = Column(String, nullable=False)
     client_id = Column(Integer, nullable=False)
     invoice_number = Column(String, nullable=False)
-    subtotal = Column(Float, nullable=True)
-    vat_amount = Column(Float, nullable=True)
-    discount_amount = Column(Float, nullable=True, default=0, server_default='0')
+    subtotal = Column(Money, nullable=True)
+    vat_amount = Column(Money, nullable=True)
+    discount_amount = Column(Money, nullable=True, default=0, server_default='0')
     # The discount *code* applied to this sale (PRC-01), persisted so the discount
     # report (RPT-08/F-071) can show who applied which promo. Null for a manual
     # (codeless) ``pos.discount`` override and for sales with no discount.
     discount_code = Column(String, nullable=True)
-    total_amount = Column(Float, nullable=False)
+    total_amount = Column(Money, nullable=False)
     # Gratuity collected on top of the invoice total (POS-13 tips, F-012). A tip is
     # OUTSIDE the VAT base — it never changes subtotal/vat_amount/total_amount (the
     # ZATCA tax-invoice total stays goods+VAT). It is added to the amount actually
     # charged across the tenders, shown as the amount paid on the receipt, and
     # reported per shift in the Z/X-report. Null/0 on a sale with no tip.
-    tip_amount = Column(Float, nullable=True, default=0, server_default='0')
+    tip_amount = Column(Money, nullable=True, default=0, server_default='0')
     # Cash-drawer change helper (POS-13/ISSUE-074). On a cash payment the cashier
     # records the amount the customer handed over (cash_tendered) and the change
     # owed back (change_due = cash_tendered − amount due). Purely drawer-facing:
     # the captured tender still covers the amount DUE, so these never change the
     # invoice total, the VAT base, or gross sales. Null on a non-cash / unentered sale.
-    cash_tendered = Column(Float, nullable=True)
-    change_due = Column(Float, nullable=True)
+    cash_tendered = Column(Money, nullable=True)
+    change_due = Column(Money, nullable=True)
     payment_method = Column(String, nullable=False)
     # JSON array of {"method": str, "amount": float} for split/mixed tenders
     # (cash+card, etc.). Null/empty for single-tender sales where payment_method

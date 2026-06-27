@@ -39,7 +39,9 @@ async def _stored(txn_id: int):
                 )
             )
         ).one()
-        return row[0], row[1]
+        # Money columns are stored as Decimal (REV-03); the assertions compare
+        # against float literals, so coerce here.
+        return float(row[0]), float(row[1])
 
 
 # ---------------------------------------------------------------------------

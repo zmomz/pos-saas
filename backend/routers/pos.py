@@ -1032,13 +1032,24 @@ async def process_offline_sale(
         if it.get("product_id") is not None
     ]
 
-    # Recompute totals from the line items (authoritative), mirroring the live path.
-    subtotal = sum(i.price * i.quantity - (i.discount or 0) for i in items)
-    discount_amount = float(txn.get("discount_amount") or 0)
-    taxable_amount = subtotal - discount_amount
+    # Recompute totals from the line items (authoritative), mirroring the live
+    # path — through ``core.money`` (Decimal, half-up) so a .xx5 VAT boundary
+    # rounds the same penny the online sale does, not the float ``round`` that
+    # turns 0.015 into 0.01.
+    subtotal = quantize_money(
+        sum(
+            (
+                to_decimal(i.price) * to_decimal(i.quantity) - to_decimal(i.discount or 0)
+                for i in items
+            ),
+            Decimal("0"),
+        )
+    )
+    discount_amount = quantize_money(txn.get("discount_amount") or 0)
+    taxable_amount = quantize_money(subtotal - discount_amount)
     vat_rate = await get_effective_tax_rate(db, 15.0)
-    vat_amount = round(taxable_amount * (vat_rate / 100), 2)
-    total_amount = round(taxable_amount + vat_amount, 2)
+    vat_amount = quantize_money(taxable_amount * (to_decimal(vat_rate) / Decimal(100)))
+    total_amount = quantize_money(taxable_amount + vat_amount)
 
     # DAT-05: atomic increment so a re-synced offline batch never collides with a
     # live sale on the same counter; the unique index is the final backstop.
@@ -1066,7 +1077,9 @@ async def process_offline_sale(
         await _deduct_inventory(
             db, client.id, items, bool(txn.get("allow_negative_stock"))
         )
-        transaction.shift_id = await _apply_sale_to_open_shift(db, user_id, total_amount)
+        transaction.shift_id = await _apply_sale_to_open_shift(
+            db, user_id, float(total_amount)
+        )
 
         await db.flush()
         # Record the tender for the queued sale. Offline sales are cash or were
@@ -1080,7 +1093,7 @@ async def process_offline_sale(
             [
                 {
                     "tender_type": normalize_tender_type(transaction.payment_method),
-                    "amount": total_amount,
+                    "amount": float(total_amount),
                     "gateway": None,
                     "status": "captured",
                     "network": None,
@@ -1671,10 +1684,13 @@ async def refund_transaction(
     )
     refund_line_subtotal = sum(it["price"] * it["quantity"] - it["discount"] for it in refund_items)
     ratio = (refund_line_subtotal / orig_line_subtotal) if orig_line_subtotal else 0.0
-    refund_subtotal = round(refund_line_subtotal, 2)
-    refund_discount = round((original.discount_amount or 0) * ratio, 2)
-    refund_vat = round((original.vat_amount or 0) * ratio, 2)
-    refund_total = round((original.total_amount or 0) * ratio, 2)
+    # The stored amounts are Decimal (Money columns); prorate in Decimal so the
+    # credit note nets penny-exact against the original sale (REV-03).
+    ratio_dec = to_decimal(ratio)
+    refund_subtotal = quantize_money(refund_line_subtotal)
+    refund_discount = quantize_money(to_decimal(original.discount_amount or 0) * ratio_dec)
+    refund_vat = quantize_money(to_decimal(original.vat_amount or 0) * ratio_dec)
+    refund_total = quantize_money(to_decimal(original.total_amount or 0) * ratio_dec)
 
     # Restore only the returned units to the same stock pool the sale deducted
     # from (branch ledger when branch-tagged, variant ledger for variant lines,
@@ -1715,7 +1731,7 @@ async def refund_transaction(
 
     # Net the refund into the open shift (negative amount) so cash reconciles.
     credit.shift_id = await _apply_sale_to_open_shift(
-        db, owner_id, credit.total_amount
+        db, owner_id, float(credit.total_amount)
     )
 
     await db.flush()
@@ -1725,7 +1741,7 @@ async def refund_transaction(
     # is recorded as a `refunded` tender on the credit note so the money movement
     # is auditable and the drawer reconciliation can tell the cash portion of a
     # refund from the card portion. A gateway failure rolls the credit note back.
-    refund_tender_rows = await _refund_tenders(db, original, refund_total)
+    refund_tender_rows = await _refund_tenders(db, original, float(refund_total))
     _persist_tenders(db, owner_id, client.id, credit.id, refund_tender_rows)
 
     # ZA-09: a credit note follows the original sale's per-client policy. With

@@ -76,7 +76,7 @@ async def test_convert_quote_mints_zatca_sale_and_links_it(client):
                 )
             )
         ).scalar_one()
-        assert abs(txn.total_amount - 115.0) < 0.01
+        assert abs(float(txn.total_amount) - 115.0) < 0.01
         assert txn.status == "completed"
 
 

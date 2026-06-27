@@ -12,9 +12,10 @@ Owner-scoped (SEC-02): every row carries the owner's ``user_id`` and the card's
 """
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Integer, String
 
 from core.database import Base
+from core.money import Money
 
 
 class GiftCardLedger(Base):
@@ -28,9 +29,11 @@ class GiftCardLedger(Base):
     # reload / refund / void
     entry_type = Column(String, nullable=False)
     # The signed-by-convention magnitude of the movement (0 for a void).
-    amount = Column(Float, nullable=False, default=0.0)
+    # ``Money`` (Numeric(12,2), Decimal half-up) so audit amounts stay penny-exact
+    # and never inherit float subtraction drift (REV-03).
+    amount = Column(Money, nullable=False, default=0)
     # The card's balance immediately after this movement was applied.
-    balance_after = Column(Float, nullable=False)
+    balance_after = Column(Money, nullable=False)
     # Optional link to the sale being refunded (for entry_type == "refund").
     transaction_id = Column(Integer, nullable=True, index=True)
     note = Column(String, nullable=True)

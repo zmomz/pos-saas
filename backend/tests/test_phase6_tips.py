@@ -48,9 +48,14 @@ async def _tender_amounts(txn_id: int):
 
 async def _stored_tip(txn_id: int) -> float:
     async with db_manager.async_session_maker() as db:
-        return (
-            await db.execute(select(Transactions.tip_amount).where(Transactions.id == txn_id))
-        ).scalar_one()
+        # tip_amount is stored as Decimal (REV-03); coerce for float assertions.
+        return float(
+            (
+                await db.execute(
+                    select(Transactions.tip_amount).where(Transactions.id == txn_id)
+                )
+            ).scalar_one()
+        )
 
 
 # ---------------------------------------------------------------------------
