@@ -5,6 +5,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.purchase_orders import Purchase_orders
+from services.query_filter import apply_query_filters
+
+# SEC-17: columns a client may filter on via the list endpoint's ?query=.
+FILTERABLE_FIELDS = frozenset({"client_id", "id", "order_number", "status", "supplier_id"})
 
 logger = logging.getLogger(__name__)
 
@@ -70,11 +74,9 @@ class Purchase_ordersService:
                 query = query.where(Purchase_orders.user_id == user_id)
                 count_query = count_query.where(Purchase_orders.user_id == user_id)
             
-            if query_dict:
-                for field, value in query_dict.items():
-                    if hasattr(Purchase_orders, field):
-                        query = query.where(getattr(Purchase_orders, field) == value)
-                        count_query = count_query.where(getattr(Purchase_orders, field) == value)
+            query, count_query = apply_query_filters(
+                Purchase_orders, query, count_query, query_dict, FILTERABLE_FIELDS
+            )
             
             count_result = await self.db.execute(count_query)
             total = count_result.scalar()

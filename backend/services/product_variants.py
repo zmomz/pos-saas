@@ -6,6 +6,10 @@ from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.product_variants import Product_variants
+from services.query_filter import apply_query_filters
+
+# SEC-17: columns a client may filter on via the list endpoint's ?query=.
+FILTERABLE_FIELDS = frozenset({"barcode", "client_id", "id", "is_active", "product_id", "sku"})
 from models.products import Products
 
 logger = logging.getLogger(__name__)
@@ -77,11 +81,9 @@ class Product_variantsService:
                 query = query.where(Product_variants.user_id == user_id)
                 count_query = count_query.where(Product_variants.user_id == user_id)
 
-            if query_dict:
-                for field, value in query_dict.items():
-                    if hasattr(Product_variants, field):
-                        query = query.where(getattr(Product_variants, field) == value)
-                        count_query = count_query.where(getattr(Product_variants, field) == value)
+            query, count_query = apply_query_filters(
+                Product_variants, query, count_query, query_dict, FILTERABLE_FIELDS
+            )
 
             count_result = await self.db.execute(count_query)
             total = count_result.scalar()
