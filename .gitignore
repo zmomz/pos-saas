@@ -11,6 +11,9 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+# SQLite backups, e.g. seed_demo.py --rebuild writes app.db.bak (ARC-01)
+*.bak
+*.db.bak
 backend/app.db
 backend/tests/_test_app.db
 backend/_alembic_baseline.db
