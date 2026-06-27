@@ -31,6 +31,16 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
       include: ['src/lib/**', 'src/pages/**', 'src/contexts/**'],
+      // TST-05: regression-ratchet floor. Set a few points below the current
+      // measured coverage of the included scope (stmts/lines ≈ 67%, branches
+      // ≈ 64%, funcs ≈ 39%). `pnpm run test:coverage` (CI) fails when coverage
+      // drops below these. Raise them as coverage climbs; never lower them.
+      thresholds: {
+        statements: 65,
+        branches: 60,
+        functions: 35,
+        lines: 65,
+      },
     },
   },
 });

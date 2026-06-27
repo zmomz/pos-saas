@@ -8,6 +8,7 @@
     "lint": "eslint --quiet ./src",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "vitest run --typecheck.only",
     "test:e2e": "playwright test",

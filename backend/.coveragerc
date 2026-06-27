@@ -1,0 +1,17 @@
+# TST-05 — coverage scope for the CI ratchet gate.
+# Measure the application source only; exclude tests, the local virtualenv,
+# generated/seed assets and migration scaffolding so the --cov-fail-under
+# floor reflects real product-code coverage and stays deterministic across
+# machines and CI.
+[run]
+source = .
+omit =
+    tests/*
+    venv/*
+    alembic/*
+    mock_data/*
+    seed_demo.py
+    */__pycache__/*
+
+[report]
+show_missing = false

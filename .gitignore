@@ -37,6 +37,9 @@ frontend/.vite/
 frontend/test-results/
 frontend/playwright-report/
 frontend/coverage/
+backend/.coverage
+backend/coverage.xml
+backend/htmlcov/
 
 # ---- Editor / OS ----
 .vscode/

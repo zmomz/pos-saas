@@ -21,8 +21,11 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Run tests
-        run: python -m pytest -q
+      - name: Run tests (with coverage ratchet)
+        # TST-05: --cov-fail-under is the regression floor (current app-source
+        # coverage ≈ 55%). A deliberate drop below it fails CI. Raise the floor
+        # as coverage climbs; never lower it. Scope/omit live in .coveragerc.
+        run: python -m pytest -q --cov=. --cov-report=term-missing --cov-fail-under=55
 
   frontend:
     name: Frontend (lint · test · build)
@@ -46,8 +49,10 @@ jobs:
         run: pnpm run lint
       - name: Type-check (API contract type-tests)
         run: pnpm run typecheck
-      - name: Unit tests (Vitest)
-        run: pnpm run test
+      - name: Unit tests (Vitest, with coverage ratchet)
+        # TST-05: coverage thresholds in vitest.config.ts are the regression
+        # floor; a deliberate drop fails CI. Raise them as coverage climbs.
+        run: pnpm run test:coverage
       - name: Build
         run: pnpm run build
 
