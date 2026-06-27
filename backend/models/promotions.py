@@ -24,6 +24,11 @@ class Promotions(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     user_id = Column(String, nullable=False, index=True)
+    # ARC-05: the owning merchant's client id, stamped on write so this entity
+    # isolates consistently with the core tables (products, transactions, …)
+    # instead of being user-scoped only. Nullable for legacy rows the backfill
+    # migration populates.
+    client_id = Column(Integer, nullable=True, index=True)
     name = Column(String, nullable=False)
     kind = Column(String, nullable=False)  # line | category | bogo
     disc_type = Column(String, nullable=True)  # percentage | fixed (line/category)

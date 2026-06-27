@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
-from dependencies.tenancy import get_owner_id
+from dependencies.tenancy import TenantScope, get_owner_id, get_tenant_scope
 from models.promotions import Promotions
 from services.promotions import PromotionResult, compute_promotions, build_cart_lines, load_active_promotions
 
@@ -44,6 +44,8 @@ class PromotionData(BaseModel):
 class PromotionResponse(BaseModel):
     id: int
     user_id: str
+    # ARC-05: the owning merchant's client id (null for legacy rows pre-backfill).
+    client_id: Optional[int] = None
     name: str
     kind: str
     disc_type: Optional[str] = None
@@ -91,11 +93,20 @@ class PreviewResponse(BaseModel):
 @router.post("/entities/promotions", response_model=PromotionResponse, status_code=201)
 async def create_promotion(
     data: PromotionData,
-    owner_id: str = Depends(get_owner_id),
+    scope: TenantScope = Depends(get_tenant_scope),
     db: AsyncSession = Depends(get_db),
 ):
-    """Define a promotion rule scoped to the calling merchant owner."""
-    obj = Promotions(user_id=str(owner_id), **data.model_dump())
+    """Define a promotion rule scoped to the calling merchant owner.
+
+    ARC-05: the rule is stamped with the resolved tenant scope's ``client_id`` so
+    it isolates consistently with the core tables; a payload value is never
+    trusted.
+    """
+    obj = Promotions(
+        user_id=str(scope.owner_user_id or scope.user_id),
+        client_id=scope.client_id,
+        **data.model_dump(),
+    )
     db.add(obj)
     await db.commit()
     await db.refresh(obj)
