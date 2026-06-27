@@ -21,9 +21,6 @@ from services.auth import initialize_admin_user
 
 def setup_logging():
     """Configure the logging system."""
-    if os.environ.get("IS_LAMBDA") == "true":
-        return
-
     # Structured JSON logging (Phase 3): when LOG_FORMAT=json, emit one JSON
     # object per line (with correlation IDs) instead of the human format — ideal
     # for log aggregators in production. Activated here so it is the process-wide

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import re
 import time
 from pathlib import Path
@@ -14,7 +13,6 @@ from sqlalchemy import DDL, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.pool import NullPool
 
 logger = logging.getLogger(__name__)
 
@@ -121,32 +119,16 @@ class DatabaseManager:
             database_url = self._normalize_async_database_url(settings.database_url)
 
             logger.info("Creating async database engine...")
-            # Configure engine based on environment (Lambda vs non-Lambda)
+            # QueuePool with connection pooling for the long-lived server process.
             engine_kwargs = {
                 "echo": settings.debug,
+                "pool_pre_ping": True,  # Verify connections before using them
+                "pool_size": 10,  # Connection pool size
+                "max_overflow": 20,  # Maximum overflow connections
+                "pool_recycle": 3600,  # Connection recycle time (1 hour)
+                "pool_timeout": 30,  # Connection acquisition timeout (30 seconds)
             }
-
-            # Check if we're in a Lambda environment
-            is_lambda = bool(
-                os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
-                or os.environ.get("IS_LAMBDA", "").lower() in ("true", "1", "yes")
-            )
-
-            if is_lambda:
-                # Lambda: Use NullPool to avoid connection state conflicts
-                # NullPool creates a fresh connection for each request, avoiding "cannot switch to state" errors
-                engine_kwargs["poolclass"] = NullPool
-                # NullPool doesn't support pool_timeout, pool_size, max_overflow, pool_recycle, or pool_pre_ping
-                # These parameters are only valid for QueuePool
-                logger.info("Using NullPool for Lambda environment to avoid connection state conflicts")
-            else:
-                # Non-Lambda: Use QueuePool with connection pooling
-                engine_kwargs["pool_pre_ping"] = True  # Verify connections before using them
-                engine_kwargs["pool_size"] = 10  # Connection pool size
-                engine_kwargs["max_overflow"] = 20  # Maximum overflow connections
-                engine_kwargs["pool_recycle"] = 3600  # Connection recycle time (1 hour)
-                engine_kwargs["pool_timeout"] = 30  # Connection acquisition timeout (30 seconds)
-                logger.info("Using QueuePool with connection pooling for non-Lambda environment")
+            logger.info("Using QueuePool with connection pooling")
 
             self.engine = create_async_engine(database_url, **engine_kwargs)
             logger.info("Database engine created successfully")
