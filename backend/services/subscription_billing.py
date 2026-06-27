@@ -84,6 +84,14 @@ def is_in_trial(trial_end: Optional[str], today: date) -> bool:
         return False
 
 
+# ISSUE-182: a settled charge is recorded by reserving the (client, period_key) row
+# FIRST, then charging, then finalising it. While the gateway charge is in flight the
+# row carries this sentinel method and a zero amount; finalise rewrites it to the real
+# charge, and a decline/crash releases it. It is never a real payment, so rollups and
+# payment history exclude it.
+RESERVING_METHOD = "reserving"
+
+
 class SubscriptionChargeError(Exception):
     """A Moyasar subscription charge was attempted and declined/failed."""
 
@@ -181,6 +189,110 @@ async def existing_settled_payment(db, *, client_id: int, period_key: str):
     ).scalars().first()
 
 
+async def reserve_subscription_period(
+    *,
+    client_id: int,
+    payer_user_id: str,
+    cycle: str,
+    period_start: str,
+    period_end: str,
+    period_key: str,
+) -> bool:
+    """Reserve this billing period BEFORE charging (ISSUE-182), the compare-and-set
+    that closes the double-charge window.
+
+    The old guard charged first and only then INSERTed under
+    ``uq_subscription_payment_client_period`` — two requests that both passed the
+    SELECT pre-check each fired a *real* gateway charge and only the second INSERT
+    was rejected, so the card was billed twice. Here the unique constraint gates the
+    charge instead: exactly one caller INSERTs+commits a ``reserving`` placeholder
+    for ``(client_id, period_key)`` and is cleared to charge; a concurrent caller
+    loses the INSERT and gets ``False`` — it must NOT charge. Mirrors the aggregator
+    settle lock (REV-05).
+
+    Runs in its OWN short-lived session and commits, so (a) the reservation is durable
+    and visible to a concurrent settler on another connection (a manual pay racing the
+    scheduler sweep) before the slow gateway charge, and (b) a lost CAS never poisons
+    the caller's session (an IntegrityError mid-flush would otherwise strand it). A
+    reservation orphaned by a crash before finalise/release is reclaimed by
+    :func:`release_stale_subscription_reservations`. Returns whether this caller won.
+    """
+    from datetime import datetime, timezone
+
+    from sqlalchemy.exc import IntegrityError
+
+    from core.database import db_manager
+    from models.subscription_payments import Subscription_payments
+
+    async with db_manager.async_session_maker() as db:
+        db.add(
+            Subscription_payments(
+                user_id=str(payer_user_id),
+                client_id=client_id,
+                amount=0,
+                billing_cycle=cycle,
+                period_start=period_start,
+                period_key=period_key,
+                period_end=period_end,
+                method=RESERVING_METHOD,
+                reference=None,
+                # Aware-UTC stamp so the stale-reservation sweep compares consistently.
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        try:
+            await db.commit()
+        except IntegrityError:
+            return False
+    return True
+
+
+async def release_subscription_reservation(*, client_id: int, period_key: str) -> None:
+    """Release a reservation whose charge never settled (decline/error), so the period
+    is open for a later retry (ISSUE-182). Runs in its own session; a no-op once
+    finalised (the row is no longer ``reserving``)."""
+    from sqlalchemy import delete
+
+    from core.database import db_manager
+    from models.subscription_payments import Subscription_payments
+
+    async with db_manager.async_session_maker() as db:
+        await db.execute(
+            delete(Subscription_payments).where(
+                Subscription_payments.client_id == client_id,
+                Subscription_payments.period_key == period_key,
+                Subscription_payments.method == RESERVING_METHOD,
+            )
+        )
+        await db.commit()
+
+
+async def release_stale_subscription_reservations(
+    db, *, threshold_seconds: int = 600, now=None
+) -> int:
+    """Reclaim reservations stranded in ``reserving`` past ``threshold_seconds`` —
+    a settling caller that crashed after the reserve commit but before finalise/release
+    (ISSUE-182). Without this the orphaned ``(client, period_key)`` row would block
+    that period's charge forever. Mirrors :func:`services.aggregator.recover_stuck_aggregator_claims`.
+    Returns the number reclaimed. Runs at the top of the dunning sweep."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import delete
+
+    from models.subscription_payments import Subscription_payments
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=threshold_seconds)
+    result = await db.execute(
+        delete(Subscription_payments).where(
+            Subscription_payments.method == RESERVING_METHOD,
+            Subscription_payments.created_at < cutoff,
+        )
+    )
+    await db.commit()
+    return result.rowcount or 0
+
+
 async def record_settled_payment(
     db,
     *,
@@ -193,6 +305,7 @@ async def record_settled_payment(
     agent_row=None,
     amount: Optional[float] = None,
     period_key: Optional[str] = None,
+    reservation: bool = False,
 ):
     """Persist a settled merchant subscription payment, advance the billing period,
     and clear any dunning state (status -> active).
@@ -225,32 +338,47 @@ async def record_settled_payment(
     # distinct per-day keys. Callers pass the boundary; fall back to period_start
     # only for legacy callers that omit it.
     settled_key = period_key if period_key is not None else period_start
-    payment = Subscription_payments(
-        user_id=str(payer_user_id),
-        client_id=merchant.id,
-        amount=collected,
-        billing_cycle=cycle,
-        period_start=period_start,
-        period_key=settled_key,
-        period_end=period_end,
-        method=charge.method,
-        reference=charge.reference,
-    )
-    db.add(payment)
-    try:
-        # Savepoint so a period-conflict (a concurrent settlement that raced past
-        # the caller's pre-check) doesn't poison the caller's transaction (FIN-04).
-        async with db.begin_nested():
-            await db.flush()  # assign the payment id
-    except IntegrityError:
-        existing = await existing_settled_payment(
+
+    reserved_row = None
+    if reservation:
+        # ISSUE-182 finalise: the period was reserved (committed by reserve_subscription_period
+        # on its own connection) before the charge. Load that ``reserving`` placeholder
+        # and rewrite it into the real payment rather than inserting (and racing) again.
+        reserved_row = await existing_settled_payment(
             db, client_id=merchant.id, period_key=settled_key
         )
-        if existing is not None:
-            # The period was already settled — reconcile to it; the account is
-            # already recovered/advanced by the winning settlement.
-            return existing
-        raise
+    if reserved_row is not None:
+        reserved_row.amount = collected
+        reserved_row.method = charge.method
+        reserved_row.reference = charge.reference
+        payment = reserved_row
+    else:
+        payment = Subscription_payments(
+            user_id=str(payer_user_id),
+            client_id=merchant.id,
+            amount=collected,
+            billing_cycle=cycle,
+            period_start=period_start,
+            period_key=settled_key,
+            period_end=period_end,
+            method=charge.method,
+            reference=charge.reference,
+        )
+        db.add(payment)
+        try:
+            # Savepoint so a period-conflict (a concurrent settlement that raced past
+            # the caller's pre-check) doesn't poison the caller's transaction (FIN-04).
+            async with db.begin_nested():
+                await db.flush()  # assign the payment id
+        except IntegrityError:
+            existing = await existing_settled_payment(
+                db, client_id=merchant.id, period_key=settled_key
+            )
+            if existing is not None:
+                # The period was already settled — reconcile to it; the account is
+                # already recovered/advanced by the winning settlement.
+                return existing
+            raise
 
     # Recover the subscription: active again, billing advanced, dunning cleared.
     await db.execute(

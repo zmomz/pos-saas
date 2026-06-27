@@ -43,6 +43,9 @@ from services.subscription_billing import (
     SubscriptionChargeError,
     charge_subscription,
     record_settled_payment,
+    release_stale_subscription_reservations,
+    release_subscription_reservation,
+    reserve_subscription_period,
 )
 
 logger = logging.getLogger(__name__)
@@ -232,6 +235,28 @@ async def run_client_dunning(
             "grace_deadline": None,
         }
 
+    # ISSUE-182: reserve-then-charge. Commit this session's prior sweep work first so
+    # the reservation's own connection isn't blocked by this session's write lock, then
+    # win the (client, period_key) reservation before charging — a manual pay racing
+    # this sweep loses one of the two reservations and never double-charges the card.
+    await db.commit()
+    won = await reserve_subscription_period(
+        client_id=merchant.id,
+        payer_user_id=str(merchant.user_id),
+        cycle=cycle,
+        period_start=period_start,
+        period_end=period_end,
+        period_key=period_key,
+    )
+    if not won:
+        return {
+            "client_id": merchant.id,
+            "action": "skipped",
+            "status": merchant.subscription_status,
+            "attempts": merchant.dunning_attempts,
+            "grace_deadline": None,
+        }
+
     charge_ok = True
     charge = None
     try:
@@ -263,9 +288,12 @@ async def run_client_dunning(
             period_end=period_end,
             agent_row=agent_row,
             period_key=period_key,
+            reservation=True,
         )
         grace_deadline = None
     else:
+        # Declined: release the reservation so the period reopens for the next retry.
+        await release_subscription_reservation(client_id=merchant.id, period_key=period_key)
         grace_deadline = (now + timedelta(days=grace_days)).date().isoformat()
         await db.execute(
             update(Clients)
@@ -312,16 +340,21 @@ async def run_global_dunning(
     merchant's owning agent row is resolved (and cached) so the charge routes through
     that agent's Moyasar account. Idempotent: a recovered merchant's ``next_billing_date``
     moves into the future and a suspended one becomes terminal, so a re-run selects
-    nothing already settled this period. A double-charge within the same period is
-    blocked at the source (FIN-04): :func:`run_client_dunning` checks for an existing
-    settled payment before charging, and the ``subscription_payments`` period-unique
-    key (``uq_subscription_payment_client_period``) is the DB backstop for a true
-    scheduler-vs-manual race. The per-period Moyasar idempotency key is also
-    transported on the charge request for gateway-side reconciliation.
-    Commits the whole batch once.
+    nothing already settled this period. A concurrent double-charge within the same
+    period is blocked by reserve-then-charge (ISSUE-182): :func:`run_client_dunning`
+    must win the ``(client, period_key)`` reservation (``uq_subscription_payment_client_period``)
+    BEFORE charging, so a scheduler-vs-manual race produces exactly one gateway charge
+    — not two charges collapsed to one ledger row. The per-period Moyasar idempotency
+    key is metadata only (Moyasar does not dedupe on it); it aids reconciliation, not
+    deduplication. Reclaims reservations stranded by a crashed settler before the
+    sweep, and commits each settlement plus the batch.
     """
     now = now or datetime.now(timezone.utc)
     today = now.date().isoformat()
+
+    # ISSUE-182: reclaim subscription reservations stranded by a crashed settler before
+    # processing, so an orphaned period is retried instead of blocked forever.
+    await release_stale_subscription_reservations(db, now=now)
 
     rows = (
         await db.execute(

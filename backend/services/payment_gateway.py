@@ -258,11 +258,13 @@ class MoyasarGateway(PaymentGateway):
             "source": token_source,
             "description": meta.get("description", "POS sale"),
         }
-        # Transport the per-period idempotency key to Moyasar (FIN-04). It was
-        # assembled into the charge metadata but previously dropped before this
-        # request, so a retried recurring charge created a SECOND payment. Moyasar
-        # echoes a payment's metadata back, so the key is recoverable for
-        # reconciliation; the DB period-unique constraint is the local backstop.
+        # Transport the per-period idempotency key to Moyasar as METADATA ONLY (FIN-04).
+        # Moyasar does NOT dedupe on it — two charges with the same key both go through
+        # — so this provides no gateway-side double-charge protection; it only lets us
+        # reconcile a payment back to its period (Moyasar echoes metadata). The real
+        # double-charge guard is the local reserve-then-charge (ISSUE-182): the
+        # ``(scope, period_key)`` unique constraint gates the charge so only the
+        # reservation winner ever calls this method for a given period.
         idem = meta.get("idempotency_key")
         if idem:
             payload["metadata"] = {"idempotency_key": str(idem)}

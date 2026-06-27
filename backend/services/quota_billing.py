@@ -37,6 +37,10 @@ logger = logging.getLogger(__name__)
 # The non-terminal quota states a dunning sweep retries.
 ACTIVE_STATES = ("active", "past_due", "dunning")
 
+# ISSUE-182: the sentinel method on an in-flight reservation placeholder (mirror of
+# subscription_billing.RESERVING_METHOD). Never a real payment.
+RESERVING_METHOD = "reserving"
+
 
 class QuotaChargeError(Exception):
     """A Moyasar quota charge was attempted and declined/failed."""
@@ -144,6 +148,91 @@ async def existing_quota_payment(db, *, agent_id: int, period_key: str):
     ).scalars().first()
 
 
+async def reserve_quota_period(
+    *,
+    agent_id: int,
+    user_id: str,
+    cycle: str,
+    period_start: str,
+    period_end: str,
+    period_key: str,
+) -> bool:
+    """Reserve this quota period BEFORE charging (ISSUE-182), the compare-and-set that
+    closes the double-charge window on Rail 1.
+
+    Mirror of :func:`services.subscription_billing.reserve_subscription_period`: exactly
+    one caller INSERTs+commits a ``reserving`` placeholder for ``(agent_id, period_key)``
+    under ``uq_quota_payment_agent_period`` and is cleared to charge the platform's
+    revenue rail; a concurrent caller loses and returns ``False`` (must NOT charge).
+    Runs in its own session so a lost CAS never poisons the caller's transaction.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from core.database import db_manager
+
+    async with db_manager.async_session_maker() as db:
+        db.add(
+            Agent_quota_payments(
+                user_id=str(user_id),
+                agent_id=agent_id,
+                amount=0,
+                billing_cycle=cycle,
+                period_start=period_start,
+                period_key=period_key,
+                period_end=period_end,
+                method=RESERVING_METHOD,
+                reference=None,
+                # Aware-UTC stamp so the stale-reservation sweep compares consistently.
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        try:
+            await db.commit()
+        except IntegrityError:
+            return False
+    return True
+
+
+async def release_quota_reservation(*, agent_id: int, period_key: str) -> None:
+    """Release a quota reservation whose charge never settled, reopening the period
+    for retry (ISSUE-182). No-op once finalised (no longer ``reserving``)."""
+    from sqlalchemy import delete
+
+    from core.database import db_manager
+
+    async with db_manager.async_session_maker() as db:
+        await db.execute(
+            delete(Agent_quota_payments).where(
+                Agent_quota_payments.agent_id == agent_id,
+                Agent_quota_payments.period_key == period_key,
+                Agent_quota_payments.method == RESERVING_METHOD,
+            )
+        )
+        await db.commit()
+
+
+async def release_stale_quota_reservations(
+    db, *, threshold_seconds: int = 600, now=None
+) -> int:
+    """Reclaim quota reservations stranded in ``reserving`` past ``threshold_seconds``
+    (a settler that crashed before finalise/release), so the orphaned period is not
+    blocked forever (ISSUE-182). Runs at the top of the quota dunning sweep."""
+    from datetime import timedelta
+
+    from sqlalchemy import delete
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=threshold_seconds)
+    result = await db.execute(
+        delete(Agent_quota_payments).where(
+            Agent_quota_payments.method == RESERVING_METHOD,
+            Agent_quota_payments.created_at < cutoff,
+        )
+    )
+    await db.commit()
+    return result.rowcount or 0
+
+
 async def record_quota_payment(
     db,
     agent: Agents,
@@ -154,6 +243,7 @@ async def record_quota_payment(
     period_end: str,
     amount: Optional[float] = None,
     period_key: Optional[str] = None,
+    reservation: bool = False,
 ):
     """Persist a settled quota payment, advance the agent's quota period, and clear
     any quota-dunning state (status -> active, agent re-activated). Runs in the
@@ -166,30 +256,44 @@ async def record_quota_payment(
     # cross-midnight race conflicts on uq_quota_payment_agent_period (see
     # record_settled_payment). Fall back to period_start for legacy callers.
     settled_key = period_key if period_key is not None else period_start
-    payment = Agent_quota_payments(
-        user_id=str(agent.user_id),
-        agent_id=agent.id,
-        amount=collected,
-        billing_cycle=cycle,
-        period_start=period_start,
-        period_key=settled_key,
-        period_end=period_end,
-        method=charge.method,
-        reference=charge.reference,
-    )
-    db.add(payment)
-    try:
-        # Savepoint so a period-conflict (a concurrent settlement) doesn't poison
-        # the caller's transaction (FIN-04).
-        async with db.begin_nested():
-            await db.flush()  # assign the payment id
-    except IntegrityError:
-        existing = await existing_quota_payment(
+
+    reserved_row = None
+    if reservation:
+        # ISSUE-182 finalise: rewrite the committed ``reserving`` placeholder into the
+        # real payment instead of inserting (and racing) again.
+        reserved_row = await existing_quota_payment(
             db, agent_id=agent.id, period_key=settled_key
         )
-        if existing is not None:
-            return existing
-        raise
+    if reserved_row is not None:
+        reserved_row.amount = collected
+        reserved_row.method = charge.method
+        reserved_row.reference = charge.reference
+        payment = reserved_row
+    else:
+        payment = Agent_quota_payments(
+            user_id=str(agent.user_id),
+            agent_id=agent.id,
+            amount=collected,
+            billing_cycle=cycle,
+            period_start=period_start,
+            period_key=settled_key,
+            period_end=period_end,
+            method=charge.method,
+            reference=charge.reference,
+        )
+        db.add(payment)
+        try:
+            # Savepoint so a period-conflict (a concurrent settlement) doesn't poison
+            # the caller's transaction (FIN-04).
+            async with db.begin_nested():
+                await db.flush()  # assign the payment id
+        except IntegrityError:
+            existing = await existing_quota_payment(
+                db, agent_id=agent.id, period_key=settled_key
+            )
+            if existing is not None:
+                return existing
+            raise
 
     await db.execute(
         update(Agents)
@@ -270,6 +374,28 @@ async def run_agent_quota_dunning(
             "grace_deadline": None,
         }
 
+    # ISSUE-182: reserve-then-charge. Commit this session's prior sweep work first so
+    # the reservation's own connection isn't blocked by this session's write lock,
+    # then win the (agent, period_key) reservation before charging. A manual quota pay
+    # racing this sweep loses one of the two reservations and never double-charges.
+    await db.commit()
+    won = await reserve_quota_period(
+        agent_id=agent.id,
+        user_id=str(agent.user_id),
+        cycle=cycle,
+        period_start=period_start,
+        period_end=period_end,
+        period_key=period_key,
+    )
+    if not won:
+        return {
+            "agent_id": agent.id,
+            "action": "skipped",
+            "status": agent.quota_status,
+            "attempts": agent.quota_dunning_attempts,
+            "grace_deadline": None,
+        }
+
     charge_ok = True
     charge = None
     try:
@@ -285,6 +411,7 @@ async def run_agent_quota_dunning(
         # crypto/key fault, not a decline. Skip dunning (leave the agent's state
         # untouched, so suspension never cascades his merchants dark over a key
         # problem) and raise an operational alert for ops to fix the key.
+        await release_quota_reservation(agent_id=agent.id, period_key=period_key)
         logger.error(
             "Quota dunning skipped for agent %s: card token present but "
             "undecryptable; not advancing dunning (FIN-06)",
@@ -316,10 +443,12 @@ async def run_agent_quota_dunning(
     if charge_ok and charge is not None:
         await record_quota_payment(
             db, agent, charge=charge, cycle=cycle, period_start=period_start,
-            period_end=period_end, period_key=period_key,
+            period_end=period_end, period_key=period_key, reservation=True,
         )
         grace_deadline = None
     else:
+        # Declined: release the reservation so the period reopens for the next retry.
+        await release_quota_reservation(agent_id=agent.id, period_key=period_key)
         grace_deadline = (now + timedelta(days=grace_days)).date().isoformat()
         await db.execute(
             update(Agents)
@@ -365,10 +494,19 @@ async def run_global_quota_dunning(
 
     Selects agents with a positive quota price whose quota is non-terminal and
     either already in the past_due/dunning window or whose billing date has passed.
-    Commits the whole batch once.
+
+    A concurrent double-charge for one period is blocked by reserve-then-charge
+    (ISSUE-182): :func:`run_agent_quota_dunning` must win the ``(agent, period_key)``
+    reservation before charging, so a manual-pay-vs-sweep race bills the agent's card
+    exactly once. The Moyasar idempotency key is metadata only (no gateway-side dedupe).
+    Reclaims reservations stranded by a crashed settler before processing.
     """
     now = now or datetime.now(timezone.utc)
     today = now.date().isoformat()
+
+    # ISSUE-182: reclaim quota reservations stranded by a crashed settler before
+    # processing, so an orphaned period is retried instead of blocked forever.
+    await release_stale_quota_reservations(db, now=now)
 
     rows = (
         await db.execute(

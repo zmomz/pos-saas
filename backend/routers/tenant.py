@@ -1609,7 +1609,11 @@ async def _subscription_payload(db: AsyncSession, merchant: Clients) -> Subscrip
     rows = (
         await db.execute(
             select(Subscription_payments)
-            .where(Subscription_payments.client_id == merchant.id)
+            .where(
+                Subscription_payments.client_id == merchant.id,
+                # ISSUE-182: hide in-flight reservation placeholders (not real payments).
+                Subscription_payments.method != "reserving",
+            )
             .order_by(Subscription_payments.id.desc())
             .limit(24)
         )
@@ -1692,6 +1696,8 @@ async def pay_client_subscription(
         existing_settled_payment,
         is_in_trial,
         record_settled_payment,
+        release_subscription_reservation,
+        reserve_subscription_period,
     )
 
     # Trial (ISSUE-054): while the trial is still running the first charge is
@@ -1709,8 +1715,8 @@ async def pay_client_subscription(
 
     # FIN-04: idempotency. If this billing period was already settled (a double-
     # click, or the dunning scheduler beat the manual pay), do NOT charge the card
-    # again — return the current state. The DB unique period key is the backstop
-    # for a true concurrent race.
+    # again — return the current state. The DB unique period key (via the reservation
+    # below) is the backstop for a true concurrent race.
     if await existing_settled_payment(db, client_id=merchant.id, period_key=period_key):
         return await _subscription_payload(db, merchant)
 
@@ -1753,6 +1759,21 @@ async def pay_client_subscription(
 
     from core.config import settings as _settings
 
+    # ISSUE-182: reserve-then-charge. Reserve the (client, period_key) row FIRST so
+    # the unique constraint — not the post-charge INSERT — gates the gateway charge.
+    # A concurrent double-pay loses the reservation and reconciles without billing the
+    # card a second time.
+    won = await reserve_subscription_period(
+        client_id=merchant.id,
+        payer_user_id=str(current_user.id),
+        cycle=cycle,
+        period_start=period_start,
+        period_end=period_end,
+        period_key=period_key,
+    )
+    if not won:
+        return await _subscription_payload(db, merchant)
+
     try:
         charge = await charge_subscription(
             amount=net_fee,
@@ -1763,10 +1784,12 @@ async def pay_client_subscription(
             idempotency_key=f"sub-{merchant.id}-{period_key}",
         )
     except SubscriptionChargeError as exc:
+        # Release the reservation so the period stays open for a retry, then 402.
+        await release_subscription_reservation(client_id=merchant.id, period_key=period_key)
         raise HTTPException(status_code=402, detail=f"Subscription payment failed: {exc}")
 
-    # Records the payment, advances billing, and clears any dunning state
-    # (status -> active). Shared with the dunning sweep.
+    # Finalises the reserved row into the real payment, advances billing, and clears
+    # any dunning state (status -> active). Shared with the dunning sweep.
     await record_settled_payment(
         db,
         merchant=merchant,
@@ -1778,6 +1801,7 @@ async def pay_client_subscription(
         agent_row=agent_row,
         amount=net_fee,
         period_key=period_key,
+        reservation=True,
     )
     # Spend one period of the coupon; clear it once exhausted.
     if coupon_active:
@@ -2195,6 +2219,8 @@ async def pay_agent_quota(
         charge_quota,
         existing_quota_payment,
         record_quota_payment,
+        release_quota_reservation,
+        reserve_quota_period,
     )
 
     agent = await _agent_for_current_user(db, str(current_user.id))
@@ -2217,14 +2243,28 @@ async def pay_agent_quota(
     if await existing_quota_payment(db, agent_id=agent.id, period_key=period_key):
         return await _quota_status_payload(db, agent)
 
+    # ISSUE-182: reserve-then-charge — the unique constraint gates the gateway charge,
+    # so a concurrent double-pay bills the agent's card only once.
+    won = await reserve_quota_period(
+        agent_id=agent.id,
+        user_id=str(agent.user_id),
+        cycle=cycle,
+        period_start=period_start,
+        period_end=period_end,
+        period_key=period_key,
+    )
+    if not won:
+        return await _quota_status_payload(db, agent)
+
     try:
         charge = await charge_quota(agent, idempotency_key=f"quota-{agent.id}-{period_key}")
     except QuotaChargeError as exc:
+        await release_quota_reservation(agent_id=agent.id, period_key=period_key)
         raise HTTPException(status_code=402, detail=f"Quota payment failed: {exc}")
 
     await record_quota_payment(
         db, agent, charge=charge, cycle=cycle, period_start=period_start,
-        period_end=period_end, period_key=period_key,
+        period_end=period_end, period_key=period_key, reservation=True,
     )
     await db.commit()
     await db.refresh(agent)
@@ -2235,7 +2275,11 @@ async def _quota_status_payload(db: AsyncSession, agent: Agents) -> QuotaStatusR
     rows = (
         await db.execute(
             select(Agent_quota_payments)
-            .where(Agent_quota_payments.agent_id == agent.id)
+            .where(
+                Agent_quota_payments.agent_id == agent.id,
+                # ISSUE-182: hide in-flight reservation placeholders (not real payments).
+                Agent_quota_payments.method != "reserving",
+            )
             .order_by(Agent_quota_payments.id.desc())
             .limit(50)
         )
