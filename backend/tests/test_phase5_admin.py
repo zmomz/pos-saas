@@ -189,3 +189,34 @@ async def test_logo_upload_rejects_oversized(client):
         headers=auth_headers(agent_token),
     )
     assert resp.status_code == 413
+
+
+# SEC-16: image/svg+xml logos are stored and served from /uploads, so a crafted
+# SVG carrying inline <script> is a stored-XSS vector. SVG must be rejected at
+# the edge; raster formats keep working.
+_SVG_XSS = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" onload="alert(document.cookie)">'
+    b"<script>alert(1)</script></svg>"
+)
+
+
+async def test_logo_upload_rejects_svg(client):
+    _agent, agent_token, _agent_id = await make_agent_account(client)
+    resp = await client.post(
+        "/api/v1/tenant/agent/logo",
+        files={"file": ("evil.svg", io.BytesIO(_SVG_XSS), "image/svg+xml")},
+        headers=auth_headers(agent_token),
+    )
+    assert resp.status_code == 400, resp.text
+
+
+async def test_logo_upload_accepts_raster_after_svg_ban(client):
+    """Banning SVG must not regress legitimate raster uploads."""
+    _agent, agent_token, _agent_id = await make_agent_account(client)
+    resp = await client.post(
+        "/api/v1/tenant/agent/logo",
+        files={"file": ("logo.png", io.BytesIO(_PNG_1x1), "image/png")},
+        headers=auth_headers(agent_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["logo_url"].endswith(".png")

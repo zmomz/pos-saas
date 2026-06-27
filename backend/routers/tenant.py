@@ -1043,12 +1043,14 @@ async def get_branding_by_domain(
 # bucket path (routers/storage.py) remains available for S3-backed deployments.
 _BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _LOGO_DIR = os.path.join(_BACKEND_ROOT, "uploads", "logos")
+# SEC-16: SVG is deliberately excluded. SVGs are XML documents that can carry
+# inline <script>/onload handlers; logos are served from /uploads and rendered
+# in the browser, so accepting them is a stored-XSS vector. Raster formats only.
 _ALLOWED_LOGO_TYPES = {
     "image/png": "png",
     "image/jpeg": "jpg",
     "image/jpg": "jpg",
     "image/webp": "webp",
-    "image/svg+xml": "svg",
 }
 _MAX_LOGO_BYTES = 2 * 1024 * 1024  # 2 MB
 
@@ -1065,7 +1067,7 @@ async def upload_agent_logo(
 ):
     """Agent: upload a white-label logo (AG-01).
 
-    Validates the MIME type (png/jpeg/webp/svg) and a 2 MB size cap, stores the
+    Validates the MIME type (png/jpeg/webp) and a 2 MB size cap, stores the
     file under ``uploads/logos/``, and persists the served URL on the agent so
     every client of that agent picks up the new logo via the branding endpoint.
     """
@@ -1077,7 +1079,7 @@ async def upload_agent_logo(
     if not ext:
         raise HTTPException(
             status_code=400,
-            detail="Unsupported image type. Use PNG, JPEG, WebP, or SVG.",
+            detail="Unsupported image type. Use PNG, JPEG, or WebP.",
         )
 
     contents = await file.read()
