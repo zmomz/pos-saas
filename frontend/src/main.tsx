@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import App from './App.tsx';
 import './index.css';
 import { loadRuntimeConfig } from './lib/config.ts';
+import { debugLog } from './lib/debug.ts';
 import { initSentry, Sentry } from './lib/observability.ts';
 
 // Error tracking (Phase 3): config-gated, no-op unless VITE_SENTRY_DSN is set.
@@ -12,7 +13,7 @@ initSentry();
 async function initializeApp() {
   try {
     await loadRuntimeConfig();
-    console.log('Runtime configuration loaded successfully');
+    debugLog('Runtime configuration loaded successfully');
   } catch (error) {
     console.warn(
       'Failed to load runtime configuration, using defaults:',
