@@ -59,6 +59,7 @@ async def run_billing_sweep_once() -> dict:
     platform collects from the agent). Returns the combined summary keyed by rail.
     """
     from core.database import db_manager
+    from services.aggregator import recover_stuck_aggregator_claims
     from services.dunning import run_global_dunning
     from services.quota_billing import run_global_quota_dunning
 
@@ -66,7 +67,16 @@ async def run_billing_sweep_once() -> dict:
         merchant = await run_global_dunning(db, actor_user_id=SYSTEM_ACTOR)
     async with db_manager.async_session_maker() as db:
         quota = await run_global_quota_dunning(db, actor_user_id=SYSTEM_ACTOR)
-    return {"merchant_subscriptions": merchant, "agent_quota": quota}
+    # REV-05: re-open aggregator claims whose settler crashed mid-flight (stranded at
+    # ``settling``) so the next webhook re-delivery resumes them. Bounded by an age
+    # threshold — a freshly locked claim is a settle in flight, not a crash.
+    async with db_manager.async_session_maker() as db:
+        reopened = await recover_stuck_aggregator_claims(db)
+    return {
+        "merchant_subscriptions": merchant,
+        "agent_quota": quota,
+        "aggregator_claims_reopened": reopened,
+    }
 
 
 async def _scheduler_loop(interval: int) -> None:

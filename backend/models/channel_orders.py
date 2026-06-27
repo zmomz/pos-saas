@@ -60,8 +60,21 @@ class Channel_orders(Base):
     # it never mints a second invoice. Null when no ticket was opened yet (a fresh
     # claim before ticket creation, or a no-lines order — DAT-08).
     ticket_id = Column(Integer, nullable=True, index=True)
-    # received / imported / fulfilled.
+    # received / settling / imported / fulfilled.
+    #
+    # REV-05: ``settling`` is a short-lived *settle lock* on the claim. The aggregator
+    # middleware re-delivers (sometimes concurrently); the resume path (REV-02) used to
+    # re-run settlement for ANY claim still at ``received`` with no transaction, with no
+    # mutual exclusion, so two concurrent re-deliveries both settled — minting two ZATCA
+    # invoices + two KDS tickets for one order. The settler now wins an atomic
+    # ``received -> settling`` compare-and-set before any fiscal work; a loser backs off
+    # as a duplicate. ``settling_at`` stamps when the lock was taken so a *bounded sweep*
+    # can re-open a claim whose settler crashed mid-flight (left it ``settling`` forever)
+    # without letting a concurrent caller resume on sight.
     status = Column(String, nullable=False, default="imported", server_default="imported")
+    # When the claim entered ``settling`` (the settle lock was acquired). Null unless the
+    # claim is currently held for settlement; read only by the bounded recovery sweep.
+    settling_at = Column(DateTime(timezone=True), nullable=True)
     customer_name = Column(String, nullable=True)
     customer_phone = Column(String, nullable=True)
     total_amount = Column(Float, nullable=True)

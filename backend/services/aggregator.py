@@ -27,6 +27,7 @@ import hashlib
 import hmac
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any, List, Optional, Tuple
 
 from sqlalchemy import select, update
@@ -273,32 +274,72 @@ async def ingest_aggregator_order(
                 return _duplicate(row)
         return None
 
+    async def _acquire_settle_lock(co_id: int) -> bool:
+        """Atomically transition the claim ``received -> settling`` (REV-05).
+
+        Returns ``True`` iff THIS caller won the settle lock. The aggregator
+        middleware re-delivers (sometimes concurrently); REV-02's resume path used to
+        re-run settlement for ANY claim still at ``received`` with no transaction, with
+        no mutual exclusion, so two concurrent re-deliveries both opened a ticket and
+        minted an invoice (#179). This conditional UPDATE is the sole settle arbiter:
+        exactly one caller flips ``received -> settling`` (the unique-insert winner of a
+        fresh claim, or one re-delivery of a stuck one); every other caller sees a
+        non-``received`` status, gets ``rowcount == 0``, and backs off as a duplicate.
+        ``settling_at`` stamps when the lock was taken so the bounded sweep can recover
+        a settler that crashed mid-flight without any concurrent caller resuming on
+        sight.
+        """
+        result = await db.execute(
+            update(Channel_orders)
+            .where(
+                Channel_orders.id == co_id,
+                Channel_orders.status == "received",
+                Channel_orders.transaction_id.is_(None),
+            )
+            .values(status="settling", settling_at=datetime.now(timezone.utc))
+        )
+        await db.commit()
+        return (result.rowcount or 0) == 1
+
+    async def _release_settle_lock(co_id: int) -> None:
+        """Hand the settle lock back to ``received`` after an IN-PROCESS settle failure.
+
+        A settle that raises in-process is observable, so we re-open the claim
+        immediately for the next re-delivery to resume. A HARD crash never reaches this
+        path — the claim stays ``settling`` and only the bounded sweep recovers it once
+        it is demonstrably stuck.
+        """
+        await db.rollback()  # discard the failed settle's pending (uncommitted) work
+        await db.execute(
+            update(Channel_orders)
+            .where(Channel_orders.id == co_id, Channel_orders.status == "settling")
+            .values(status="received", settling_at=None)
+        )
+        await db.commit()
+
     # Idempotency — re-delivery of the same webhook must never double-book. Fast
     # SELECT pre-check first; the unique (client_id, provider, external_order_id)
-    # constraint is the real arbiter on the claim insert below.
+    # constraint is the real arbiter on the claim insert below, and the
+    # ``received -> settling`` CAS (acquired before any fiscal work) is the sole
+    # settle arbiter against concurrent re-deliveries.
     existing = await _find_existing()
     resume_ticket: Optional[OrderTickets] = None
     if existing is not None:
         terminal = await _resume_existing(existing)
         if terminal is not None:
             return terminal
-        # REV-02: a stuck claim (committed "received" but the settle never produced an
-        # invoice — the process died or execute_sale raised after the DAT-07 claim
-        # commit). Resume settlement on the durable claim row instead of refusing; no
-        # second invoice is possible because the first attempt minted none. Re-use the
-        # already-materialized ticket (its lines + fired courses were committed before
-        # the failed settle) so the kitchen order isn't duplicated.
+        # REV-02/REV-05: a stuck claim (committed "received" but the settle never
+        # produced an invoice — the process died or execute_sale raised after the
+        # DAT-07 claim commit). It is *recoverable*, but a concurrent re-delivery must
+        # not resume it on sight; the ``received -> settling`` CAS below serializes
+        # them so exactly one re-delivery re-attempts settlement (re-using the durable
+        # ticket so the kitchen order isn't duplicated).
         channel_order_id = existing.id
-        if existing.ticket_id is not None:
-            resume_ticket = (
-                await db.execute(select(OrderTickets).where(OrderTickets.id == existing.ticket_id))
-            ).scalar_one_or_none()
         logger.info(
-            "Aggregator %s order %s for client %s: resuming stuck claim %s "
-            "(received, no transaction; ticket %s) -> re-attempting settlement",
+            "Aggregator %s order %s for client %s: found stuck claim %s "
+            "(received, no transaction; ticket %s) -> contending for the settle lock",
             provider, external_id, client_id, channel_order_id, existing.ticket_id,
         )
-        await db.refresh(client)
     else:
         # DAT-07 idempotency-first: CLAIM the order (status="received") and commit
         # BEFORE any fiscal work. Minting the ZATCA invoice happens AFTER this row is
@@ -332,9 +373,6 @@ async def ingest_aggregator_order(
                 return _duplicate(existing)
             raise
         channel_order_id = channel_order.id
-        # The claim commit expired the client row; refresh it so the downstream ticket
-        # + fiscal settle can read client.* without faulting on a lazy-load.
-        await db.refresh(client)
 
     # DAT-08 empty-order guard: a payload whose lines are all missing or non-billable
     # (qty <= 0, or not a line object) has nothing to ring up. Opening a ticket and
@@ -361,93 +399,131 @@ async def ingest_aggregator_order(
             "matched_lines": 0,
         }
 
-    service = RestaurantService(db)
-    label = f"{provider}:{order['channel'] or 'aggregator'} #{order['external_reference'] or external_id}"
-
-    if resume_ticket is not None:
-        # REV-02 resume: the ticket, its lines, and fired courses were all committed
-        # before the failed settle — re-use them as-is so the kitchen order is never
-        # duplicated. Jump straight to the (previously failed) settle.
-        ticket = resume_ticket
-        items = await service.list_items(ticket.id, client.user_id)
-        matched = sum(1 for i in items if getattr(i, "product_id", None) is not None)
-    else:
-        # 1) Open a tableless ticket driven by the order type (F-058).
-        ticket = await service.create_ticket(
-            {
-                "order_type": order["order_type"],
-                "customer_name": order["customer_name"],
-                "notes": label,
-            },
-            client.user_id,
-            client.id,
+    # REV-05: win the settle lock BEFORE any fiscal work. Exactly one caller flips
+    # ``received -> settling``; a concurrent re-delivery loses the CAS and backs off as
+    # a duplicate, so one order never mints two invoices / two KDS tickets (#179).
+    if not await _acquire_settle_lock(channel_order_id):
+        current = await _find_existing()
+        logger.info(
+            "Aggregator %s order %s for client %s: lost the settle lock on claim %s "
+            "-> another delivery is settling; reporting duplicate",
+            provider, external_id, client_id, channel_order_id,
         )
-        # REV-02: link the ticket to the claim and commit BEFORE the fiscal settle so
-        # a crash mid-settle is recoverable — a re-delivery re-uses this exact ticket
-        # (re-settling it, or detecting it already settled).
-        await db.execute(
-            update(Channel_orders)
-            .where(Channel_orders.id == channel_order_id)
-            .values(ticket_id=ticket.id)
-        )
-        await db.commit()
+        if current is not None:
+            return _duplicate(current)
+        return {"status": "duplicate", "channel_order_id": channel_order_id, "transaction_id": None}
 
-        # 2) Ring up the lines. Matched lines carry a product_id (so stock decrements);
-        #    an unmatched line still rings up (ad-hoc, no deduction) so the invoice
-        #    total reflects what the customer paid.
-        matched = 0
-        for item in order["items"]:
-            if not isinstance(item, dict):
-                continue
-            qty = _as_float(item.get("quantity")) or 0.0
-            if qty <= 0:
-                continue
-            product = await _resolve_product(db, client, item)
-            line: dict = {
-                "qty": qty,
-                "unit_price": _as_float(item.get("price")) or 0.0,
-                "name": (item.get("name") or "").strip() or None,
-            }
-            if product is not None:
-                matched += 1
-                line["product_id"] = product.id
-                line.setdefault("name", product.name)
-            await service.add_item(ticket.id, line, client.user_id, client.id)
-
-        # 3) Fire every present course to the KDS so the kitchen starts the order
-        #    (F-057).
-        items = await service.list_items(ticket.id, client.user_id)
-        for course in sorted({(i.course or "mains") for i in items}):
-            await service.fire_course(ticket.id, course, client.user_id)
-
-    # 4) Settle into a real ZATCA invoice via the shared sale core (F-059/slice 06).
-    #    Pre-paid in the aggregator app -> an out-of-band ``online`` tender; oversell
-    #    allowed since the order is already accepted.
-    check = await service.compute_check(ticket.id, client.user_id, vat_rate, 0.0)
-    amount_due = check["amount_due"] if check else 0.0
-    settled = await service.settle_ticket(
-        ticket.id,
-        client.user_id,
-        client,
-        vat_rate,
-        tender_specs=[
-            {"tender_type": "online", "amount": amount_due, "token": None, "simulate": None}
-        ],
-        payment_method="online",
-        customer_name=order["customer_name"],
-        allow_negative_stock=True,
-    )
-    transaction_id = settled["result"].transaction.id if settled else None
-
-    # 5) Promote the claim to ``imported`` and link it to the materialized sale. The
-    #    claim row was committed before the settle (DAT-07), so re-fetch it by id —
-    #    execute_sale's intervening commit expired the original instance.
-    claimed = (
+    # The CAS commit expired the client + claim rows; reload what the settle reads. The
+    # claim may already carry a ticket materialized before a crash (REV-02) — re-use it.
+    await db.refresh(client)
+    locked = (
         await db.execute(select(Channel_orders).where(Channel_orders.id == channel_order_id))
     ).scalar_one()
-    claimed.transaction_id = transaction_id
-    claimed.status = "imported" if transaction_id is not None else "received"
-    await db.commit()
+    if locked.ticket_id is not None:
+        resume_ticket = (
+            await db.execute(select(OrderTickets).where(OrderTickets.id == locked.ticket_id))
+        ).scalar_one_or_none()
+
+    # We hold the settle lock (status="settling"). Everything below is the single,
+    # serialized settle for this claim; an in-process failure releases the lock back to
+    # ``received`` so a re-delivery resumes, while a hard crash leaves it ``settling``
+    # for the bounded sweep.
+    try:
+        service = RestaurantService(db)
+        label = f"{provider}:{order['channel'] or 'aggregator'} #{order['external_reference'] or external_id}"
+
+        if resume_ticket is not None:
+            # REV-02 resume: the ticket, its lines, and fired courses were all committed
+            # before the failed settle — re-use them as-is so the kitchen order is never
+            # duplicated. Jump straight to the (previously failed) settle.
+            ticket = resume_ticket
+            items = await service.list_items(ticket.id, client.user_id)
+            matched = sum(1 for i in items if getattr(i, "product_id", None) is not None)
+        else:
+            # 1) Open a tableless ticket driven by the order type (F-058).
+            ticket = await service.create_ticket(
+                {
+                    "order_type": order["order_type"],
+                    "customer_name": order["customer_name"],
+                    "notes": label,
+                },
+                client.user_id,
+                client.id,
+            )
+            # REV-02: link the ticket to the claim and commit BEFORE the fiscal settle so
+            # a crash mid-settle is recoverable — a re-delivery re-uses this exact ticket
+            # (re-settling it, or detecting it already settled). The settle lock is held
+            # across this commit (the conditional UPDATE only touches status), so the
+            # claim stays ``settling`` and no concurrent caller can also create a ticket.
+            await db.execute(
+                update(Channel_orders)
+                .where(Channel_orders.id == channel_order_id)
+                .values(ticket_id=ticket.id)
+            )
+            await db.commit()
+
+            # 2) Ring up the lines. Matched lines carry a product_id (so stock decrements);
+            #    an unmatched line still rings up (ad-hoc, no deduction) so the invoice
+            #    total reflects what the customer paid.
+            matched = 0
+            for item in order["items"]:
+                if not isinstance(item, dict):
+                    continue
+                qty = _as_float(item.get("quantity")) or 0.0
+                if qty <= 0:
+                    continue
+                product = await _resolve_product(db, client, item)
+                line: dict = {
+                    "qty": qty,
+                    "unit_price": _as_float(item.get("price")) or 0.0,
+                    "name": (item.get("name") or "").strip() or None,
+                }
+                if product is not None:
+                    matched += 1
+                    line["product_id"] = product.id
+                    line.setdefault("name", product.name)
+                await service.add_item(ticket.id, line, client.user_id, client.id)
+
+            # 3) Fire every present course to the KDS so the kitchen starts the order
+            #    (F-057).
+            items = await service.list_items(ticket.id, client.user_id)
+            for course in sorted({(i.course or "mains") for i in items}):
+                await service.fire_course(ticket.id, course, client.user_id)
+
+        # 4) Settle into a real ZATCA invoice via the shared sale core (F-059/slice 06).
+        #    Pre-paid in the aggregator app -> an out-of-band ``online`` tender; oversell
+        #    allowed since the order is already accepted.
+        check = await service.compute_check(ticket.id, client.user_id, vat_rate, 0.0)
+        amount_due = check["amount_due"] if check else 0.0
+        settled = await service.settle_ticket(
+            ticket.id,
+            client.user_id,
+            client,
+            vat_rate,
+            tender_specs=[
+                {"tender_type": "online", "amount": amount_due, "token": None, "simulate": None}
+            ],
+            payment_method="online",
+            customer_name=order["customer_name"],
+            allow_negative_stock=True,
+        )
+        transaction_id = settled["result"].transaction.id if settled else None
+
+        # 5) Promote the claim to ``imported`` and link it to the materialized sale,
+        #    releasing the settle lock (``settling_at`` cleared). The claim row was
+        #    committed before the settle (DAT-07), so re-fetch it by id — execute_sale's
+        #    intervening commit expired the original instance.
+        claimed = (
+            await db.execute(select(Channel_orders).where(Channel_orders.id == channel_order_id))
+        ).scalar_one()
+        claimed.transaction_id = transaction_id
+        claimed.status = "imported" if transaction_id is not None else "received"
+        claimed.settling_at = None
+        await db.commit()
+    except Exception:
+        # In-process settle failure: release the lock so a re-delivery resumes.
+        await _release_settle_lock(channel_order_id)
+        raise
 
     logger.info(
         "Ingested %s order %s for client %s -> ticket %s, txn %s (%s line(s) matched)",
@@ -460,3 +536,54 @@ async def ingest_aggregator_order(
         "transaction_id": transaction_id,
         "matched_lines": matched,
     }
+
+
+# ---------- Bounded crash-recovery sweep (REV-05) ----------
+async def recover_stuck_aggregator_claims(
+    db: AsyncSession,
+    threshold_seconds: int = 600,
+    now: Optional[datetime] = None,
+) -> int:
+    """Re-open aggregator claims whose settler crashed mid-flight (#179).
+
+    The settle lock (``received -> settling`` CAS) makes the resume path mutually
+    exclusive, but a settler that dies HARD between acquiring the lock and finishing
+    leaves the claim stranded at ``settling`` forever — a concurrent re-delivery is
+    deliberately *not* allowed to resume it on sight (that was the double-settle bug).
+    This bounded sweep is the only recovery: it flips any claim that has been
+    ``settling`` longer than ``threshold_seconds`` back to ``received`` (clearing the
+    lock stamp) so the next webhook re-delivery resumes it, while leaving a freshly
+    locked claim — a settle genuinely in flight — alone. Returns the count re-opened.
+
+    The age check is done in Python so it is dialect-agnostic (SQLite returns naive
+    datetimes; Postgres aware) — naive stamps are read as UTC.
+    """
+    now = now or datetime.now(timezone.utc)
+    rows = (
+        await db.execute(
+            select(Channel_orders).where(Channel_orders.status == "settling")
+        )
+    ).scalars().all()
+
+    reopened = 0
+    for row in rows:
+        stamped = row.settling_at
+        if stamped is None:
+            # No stamp on a ``settling`` row should not happen, but treat it as stuck.
+            age = float(threshold_seconds) + 1.0
+        else:
+            if stamped.tzinfo is None:
+                stamped = stamped.replace(tzinfo=timezone.utc)
+            age = (now - stamped).total_seconds()
+        if age >= threshold_seconds:
+            row.status = "received"
+            row.settling_at = None
+            reopened += 1
+            logger.info(
+                "REV-05 sweep: re-opened stuck aggregator claim %s (settling for %.0fs)",
+                row.id, age,
+            )
+
+    if reopened:
+        await db.commit()
+    return reopened
