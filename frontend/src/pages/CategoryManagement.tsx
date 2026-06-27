@@ -54,8 +54,7 @@ export default function CategoryManagement() {
   const [formData, setFormData] = useState<CategoryFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
 
-  const { t } = useLanguage();
-  const tt = (key: string, fallback: string) => { const v = t(key); return v === key ? fallback : v; };
+  const { t, tt } = useLanguage();
 
   useEffect(() => {
     loadCategories();

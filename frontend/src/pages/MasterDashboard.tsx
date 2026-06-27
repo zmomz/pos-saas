@@ -76,8 +76,7 @@ export default function MasterDashboard() {
   const [savingTax, setSavingTax] = useState(false);
   const [createdCreds, setCreatedCreds] = useState<{ email: string; temp_password: string } | null>(null);
   const navigate = useNavigate();
-  const { t, language } = useLanguage();
-  const tt = (key: string, fallback: string) => { const v = t(key); return v === key ? fallback : v; };
+  const { t, tt, language } = useLanguage();
 
   useEffect(() => {
     loadData();

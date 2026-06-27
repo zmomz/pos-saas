@@ -33,11 +33,7 @@ export default function NotFoundState({
   action,
   className,
 }: NotFoundStateProps) {
-  const { t, isRTL } = useLanguage();
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { tt, isRTL } = useLanguage();
 
   return (
     <div

@@ -95,11 +95,7 @@ export default function CustomerManagement() {
   const [insightsError, setInsightsError] = useState(false);
   const [insights, setInsights] = useState<CustomerInsights | null>(null);
 
-  const { t, language } = useLanguage();
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { t, tt, language } = useLanguage();
 
   useEffect(() => {
     loadCustomers();

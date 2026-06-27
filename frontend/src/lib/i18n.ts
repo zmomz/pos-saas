@@ -3744,10 +3744,24 @@ export function translate(language: Language, key: string): string {
   return translations[language]?.[key] || translations.en[key] || key;
 }
 
+/**
+ * Build a `tt(key, fallback)` from a `t()`: like `t()` but, when the key is
+ * missing (so `t()` echoes the key back), returns the inline English fallback
+ * instead of the bare key. This was copy-pasted across a dozen pages; it now
+ * lives once here and is exposed on the language context.
+ */
+export function makeTt(t: (key: string) => string) {
+  return (key: string, fallback: string): string => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
+}
+
 export interface LanguageContextValue {
   language: Language;
   setLanguage: (lang: Language) => void;
   t: (key: string) => string;
+  tt: (key: string, fallback: string) => string;
   isRTL: boolean;
 }
 
@@ -3778,8 +3792,9 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   }, [language]);
 
   const t = useCallback((key: string): string => translate(language, key), [language]);
+  const tt = useCallback(makeTt(t), [t]);
 
-  const value: LanguageContextValue = { language, setLanguage, t, isRTL: isRTL(language) };
+  const value: LanguageContextValue = { language, setLanguage, t, tt, isRTL: isRTL(language) };
   return React.createElement(LanguageContext.Provider, { value }, children);
 }
 
@@ -3792,10 +3807,12 @@ export function useLanguage(): LanguageContextValue {
   const ctx = useContext(LanguageContext);
   if (ctx) return ctx;
   const language = (localStorage.getItem('pos-language') as Language) || 'en';
+  const t = (key: string) => translate(language, key);
   return {
     language,
     setLanguage: () => {},
-    t: (key: string) => translate(language, key),
+    t,
+    tt: makeTt(t),
     isRTL: isRTL(language),
   };
 }

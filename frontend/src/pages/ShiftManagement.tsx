@@ -88,11 +88,7 @@ export default function ShiftManagement() {
   const [movementReason, setMovementReason] = useState('');
   const [movementError, setMovementError] = useState<string | null>(null);
 
-  const { t, isRTL, language } = useLanguage();
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { t, tt, isRTL, language } = useLanguage();
 
   useEffect(() => {
     loadShiftData();

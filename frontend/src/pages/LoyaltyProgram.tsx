@@ -70,11 +70,7 @@ export default function LoyaltyProgram() {
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'balances' | 'history'>('balances');
 
-  const { t, language } = useLanguage();
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { t, tt, language } = useLanguage();
 
   useEffect(() => {
     loadData();

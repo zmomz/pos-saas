@@ -102,11 +102,7 @@ export default function BranchManagement() {
   const [transfersError, setTransfersError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState('');
 
-  const { t, isRTL, language } = useLanguage();
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { t, tt, isRTL, language } = useLanguage();
 
   useEffect(() => {
     loadBranches();

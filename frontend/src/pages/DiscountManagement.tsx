@@ -95,8 +95,7 @@ export default function DiscountManagement() {
   const [formData, setFormData] = useState<DiscountFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
 
-  const { t, isRTL, language } = useLanguage();
-  const tt = (key: string, fallback: string) => { const v = t(key); return v === key ? fallback : v; };
+  const { t, tt, isRTL, language } = useLanguage();
 
   useEffect(() => {
     loadDiscounts();

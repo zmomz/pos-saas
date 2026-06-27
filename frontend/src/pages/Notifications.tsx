@@ -17,11 +17,7 @@ interface Notification {
 }
 
 export default function Notifications() {
-  const { language, t, isRTL } = useLanguage();
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { language, t, tt, isRTL } = useLanguage();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);

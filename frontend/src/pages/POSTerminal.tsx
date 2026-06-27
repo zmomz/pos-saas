@@ -171,13 +171,7 @@ export default function POSTerminal() {
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [mode, setMode] = useState<POSMode>('sale');
   const navigate = useNavigate();
-  const { t, language } = useLanguage();
-  // i18n fallback helper: return the translated string, or the supplied English
-  // fallback when the key is missing (translate() returns the key on a miss).
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { t, tt, language } = useLanguage();
 
   // Barcode scanner state
   const [barcodeInput, setBarcodeInput] = useState('');

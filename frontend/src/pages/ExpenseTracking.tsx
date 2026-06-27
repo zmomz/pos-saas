@@ -59,11 +59,7 @@ export default function ExpenseTracking() {
   const [formData, setFormData] = useState<ExpenseFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
 
-  const { t, language } = useLanguage();
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { t, tt, language } = useLanguage();
 
   useEffect(() => {
     loadData();

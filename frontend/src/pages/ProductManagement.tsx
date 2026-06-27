@@ -177,8 +177,7 @@ export default function ProductManagement() {
   const [importResult, setImportResult] = useState<CsvImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { t, language } = useLanguage();
-  const tt = (key: string, fallback: string) => { const v = t(key); return v === key ? fallback : v; };
+  const { t, tt, language } = useLanguage();
 
   useEffect(() => {
     loadProducts();

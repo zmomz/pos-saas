@@ -49,4 +49,34 @@ describe('LanguageProvider (i18n instant toggle)', () => {
     render(<Solo />);
     expect(screen.getByTestId('solo').textContent).toContain('en:');
   });
+
+  it('exposes a shared tt(key, fallback) helper: real translation when present, fallback when missing', () => {
+    function TtProbe() {
+      const { tt } = useLanguage();
+      return (
+        <div>
+          <span data-testid="tt-present">{tt('cart', 'FALLBACK')}</span>
+          <span data-testid="tt-missing">{tt('__no_such_key__', 'FALLBACK')}</span>
+        </div>
+      );
+    }
+    render(
+      <LanguageProvider>
+        <TtProbe />
+      </LanguageProvider>
+    );
+    // Known key resolves to its translation, not the fallback.
+    expect(screen.getByTestId('tt-present').textContent).toBe('Cart');
+    // Unknown key (t() echoes the key) yields the inline fallback.
+    expect(screen.getByTestId('tt-missing').textContent).toBe('FALLBACK');
+  });
+
+  it('exposes tt even with no provider (non-reactive fallback)', () => {
+    function SoloTt() {
+      const { tt } = useLanguage();
+      return <span data-testid="solo-tt">{tt('__no_such_key__', 'FALLBACK')}</span>;
+    }
+    render(<SoloTt />);
+    expect(screen.getByTestId('solo-tt').textContent).toBe('FALLBACK');
+  });
 });

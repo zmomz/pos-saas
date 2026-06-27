@@ -10,11 +10,7 @@ import { changePassword, getUserPreferences, saveUserPreferences, type Notificat
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 
 export default function UserProfile() {
-  const { language, setLanguage, t } = useLanguage();
-  const tt = (key: string, fallback: string) => {
-    const v = t(key);
-    return v === key ? fallback : v;
-  };
+  const { language, setLanguage, t, tt } = useLanguage();
   const { theme, toggleTheme, isDark } = useTheme();
   const [displayName, setDisplayName] = useState('');
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>({
