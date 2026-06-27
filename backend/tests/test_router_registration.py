@@ -27,6 +27,35 @@ from routers import REGISTERED_MODULES
 _ROUTERS_DIR = Path(__file__).resolve().parents[1] / "routers"
 
 
+def _app_route_paths(app: FastAPI) -> set[str]:
+    """Every concrete route path mounted on `app`, version-robustly.
+
+    Older FastAPI/Starlette kept flat `Route` objects (each with `.path`) in
+    `app.routes`. Newer versions (≥0.13x) wrap included sub-routers in
+    `_IncludedRouter` objects that have no `.path` and expose their routes via
+    `.original_router.routes` instead. Walk both shapes so the meta-test does
+    not depend on the framework's internal route representation.
+    """
+    paths: set[str] = set()
+    stack = list(app.routes)
+    seen: set[int] = set()
+    while stack:
+        route = stack.pop()
+        if id(route) in seen:
+            continue
+        seen.add(id(route))
+        path = getattr(route, "path", None)
+        if path is not None:
+            paths.add(path)
+        nested = getattr(route, "routes", None)
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            nested = getattr(original, "routes", nested)
+        if nested:
+            stack.extend(nested)
+    return paths
+
+
 def _router_module_files() -> set[str]:
     """Every leaf module in `routers/` that exposes an APIRouter (`router`)."""
     names: set[str] = set()
@@ -59,9 +88,9 @@ def test_mounted_routers_match_explicit_list():
     assert set(REGISTERED_MODULES) == _router_module_files()
 
     app = FastAPI()
-    before = {r.path for r in app.routes}
+    before = _app_route_paths(app)
     include_routers_from_package(app, "routers")
-    mounted = {r.path for r in app.routes} - before
+    mounted = _app_route_paths(app) - before
 
     assert mounted == _paths_for_modules(REGISTERED_MODULES)
     assert mounted, "no routes were mounted from the explicit allowlist"
@@ -85,7 +114,7 @@ def test_unlisted_router_module_is_not_mounted():
 
         app = FastAPI()
         include_routers_from_package(app, "routers")
-        mounted = {r.path for r in app.routes}
+        mounted = _app_route_paths(app)
 
         assert probe_path not in mounted, (
             "an unlisted routers/*.py was auto-mounted — the explicit allowlist "
