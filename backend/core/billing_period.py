@@ -21,6 +21,36 @@ def _cycle_days(cycle: Optional[str]) -> int:
     return 365 if (cycle or "monthly") == "yearly" else 30
 
 
+def billing_period_key(
+    next_billing_date: Optional[str],
+    period_end: str,
+) -> str:
+    """Stable idempotency key for the billing period a recurring charge settles.
+
+    A charge settles the period whose due date is the subscriber's current
+    ``next_billing_date`` (the period boundary). Keying the settled payment on that
+    boundary — rather than ``now.date()`` (FIN-04) — makes two concurrent charges
+    for the same period collide on the ``(client_id, period_key)`` unique constraint
+    even when they straddle midnight: both racers read the *same* boundary
+    regardless of the wall-clock day, so the loser's insert is rejected and
+    reconciles instead of charging the card a second time (REV-04). The boundary is
+    used whether it is in the future (an early renewal) or the past (an overdue
+    period) — both identify the period unambiguously.
+
+    When no boundary is recorded yet — a brand-new subscription's first charge, or
+    an unparseable date — the key is the ``period_end`` being established. That is
+    the value ``next_billing_date`` advances *to*, so a same-day re-pay (which now
+    reads that boundary) maps back to the same key and still reconciles to the one
+    settled period instead of charging the freshly-advanced next period.
+    """
+    if next_billing_date:
+        try:
+            return date.fromisoformat(next_billing_date).isoformat()
+        except ValueError:
+            pass
+    return period_end
+
+
 def advance_billing_period(
     now: Union[datetime, date],
     current_period_end: Optional[str],

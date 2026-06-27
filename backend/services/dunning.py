@@ -34,7 +34,7 @@ from typing import Optional
 
 from sqlalchemy import or_, select, update
 
-from core.billing_period import advance_billing_period
+from core.billing_period import advance_billing_period, billing_period_key
 from core.config import settings
 from models.agents import Agents
 from models.audit_logs import Audit_logs
@@ -179,13 +179,16 @@ async def run_client_dunning(
     # FIN-07: anchor to the current period end when still ahead (a merchant in
     # past_due may have renewed early before the sweep); overdue falls back to now.
     period_end = advance_billing_period(now, merchant.next_billing_date, cycle)
+    # REV-04: dedup on the billing-period boundary (the current next_billing_date),
+    # not the calendar day, so a cross-midnight scheduler-vs-manual race collides.
+    period_key = billing_period_key(merchant.next_billing_date, period_end)
 
     # FIN-04: if this billing period is already settled (the merchant paid manually
     # before the sweep, or a prior sweep this day), don't charge again. The DB
     # period-unique key is the backstop for a true scheduler-vs-manual race.
     from services.subscription_billing import existing_settled_payment
 
-    if await existing_settled_payment(db, client_id=merchant.id, period_key=period_start):
+    if await existing_settled_payment(db, client_id=merchant.id, period_key=period_key):
         return {
             "client_id": merchant.id,
             "action": "skipped",
@@ -238,7 +241,7 @@ async def run_client_dunning(
             agent_moyasar_key=agent_moyasar_key,
             card_token=card_token,
             client_id=merchant.id,
-            idempotency_key=f"dun-{merchant.id}-{period_start}",
+            idempotency_key=f"dun-{merchant.id}-{period_key}",
         )
     except SubscriptionChargeError:
         charge_ok = False
@@ -259,6 +262,7 @@ async def run_client_dunning(
             period_start=period_start,
             period_end=period_end,
             agent_row=agent_row,
+            period_key=period_key,
         )
         grace_deadline = None
     else:

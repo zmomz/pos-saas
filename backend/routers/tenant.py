@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, update, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.billing_period import advance_billing_period
+from core.billing_period import advance_billing_period, billing_period_key
 from core.config import settings
 from core.database import get_db
 from core.email import send_provisioning_email
@@ -1678,6 +1678,9 @@ async def pay_client_subscription(
     # the future, so an early renewal keeps the unused paid days instead of
     # forfeiting them (and the billing day stays fixed); overdue/on-time go from now.
     period_end = advance_billing_period(now, merchant.next_billing_date, cycle)
+    # REV-04: dedup on the billing-period boundary (current next_billing_date), not
+    # the calendar day, so a cross-midnight double-click/race collides on the key.
+    period_key = billing_period_key(merchant.next_billing_date, period_end)
 
     # CL-04: charge the merchant's card on file through the owning agent's Moyasar
     # account. A decline (or no agent key / no card) raises and aborts the payment
@@ -1708,7 +1711,7 @@ async def pay_client_subscription(
     # click, or the dunning scheduler beat the manual pay), do NOT charge the card
     # again — return the current state. The DB unique period key is the backstop
     # for a true concurrent race.
-    if await existing_settled_payment(db, client_id=merchant.id, period_key=period_start):
+    if await existing_settled_payment(db, client_id=merchant.id, period_key=period_key):
         return await _subscription_payload(db, merchant)
 
     fee = merchant.subscription_fee or 0
@@ -1757,7 +1760,7 @@ async def pay_client_subscription(
             agent_moyasar_key=agent_moyasar_key,
             card_token=card_token,
             client_id=merchant.id,
-            idempotency_key=f"sub-{merchant.id}-{period_start}",
+            idempotency_key=f"sub-{merchant.id}-{period_key}",
         )
     except SubscriptionChargeError as exc:
         raise HTTPException(status_code=402, detail=f"Subscription payment failed: {exc}")
@@ -1774,6 +1777,7 @@ async def pay_client_subscription(
         period_end=period_end,
         agent_row=agent_row,
         amount=net_fee,
+        period_key=period_key,
     )
     # Spend one period of the coupon; clear it once exhausted.
     if coupon_active:
@@ -2204,19 +2208,23 @@ async def pay_agent_quota(
     # FIN-07: anchor to the current quota period end when still in the future so an
     # early renewal keeps the unused paid days; overdue/on-time advance from now.
     period_end = advance_billing_period(now, agent.next_quota_billing_date, cycle)
+    # REV-04: dedup on the quota-period boundary (next_quota_billing_date), not the
+    # calendar day, so a cross-midnight double-click/race collides on the key.
+    period_key = billing_period_key(agent.next_quota_billing_date, period_end)
 
     # FIN-04: idempotency — if this quota period is already settled (double-click or
     # the sweep beat the manual pay), don't charge again; return current state.
-    if await existing_quota_payment(db, agent_id=agent.id, period_key=period_start):
+    if await existing_quota_payment(db, agent_id=agent.id, period_key=period_key):
         return await _quota_status_payload(db, agent)
 
     try:
-        charge = await charge_quota(agent, idempotency_key=f"quota-{agent.id}-{period_start}")
+        charge = await charge_quota(agent, idempotency_key=f"quota-{agent.id}-{period_key}")
     except QuotaChargeError as exc:
         raise HTTPException(status_code=402, detail=f"Quota payment failed: {exc}")
 
     await record_quota_payment(
-        db, agent, charge=charge, cycle=cycle, period_start=period_start, period_end=period_end
+        db, agent, charge=charge, cycle=cycle, period_start=period_start,
+        period_end=period_end, period_key=period_key,
     )
     await db.commit()
     await db.refresh(agent)

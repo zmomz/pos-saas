@@ -25,7 +25,7 @@ from typing import Optional
 
 from sqlalchemy import or_, select, update
 
-from core.billing_period import advance_billing_period
+from core.billing_period import advance_billing_period, billing_period_key
 from core.config import settings
 from models.agent_quota_payments import Agent_quota_payments
 from models.agents import Agents
@@ -153,6 +153,7 @@ async def record_quota_payment(
     period_start: str,
     period_end: str,
     amount: Optional[float] = None,
+    period_key: Optional[str] = None,
 ):
     """Persist a settled quota payment, advance the agent's quota period, and clear
     any quota-dunning state (status -> active, agent re-activated). Runs in the
@@ -161,14 +162,17 @@ async def record_quota_payment(
     from sqlalchemy.exc import IntegrityError
 
     collected = float(agent.quota_price or 0) if amount is None else float(amount)
+    # REV-04: key on the billing-period boundary, not the calendar day, so a
+    # cross-midnight race conflicts on uq_quota_payment_agent_period (see
+    # record_settled_payment). Fall back to period_start for legacy callers.
+    settled_key = period_key if period_key is not None else period_start
     payment = Agent_quota_payments(
         user_id=str(agent.user_id),
         agent_id=agent.id,
         amount=collected,
         billing_cycle=cycle,
         period_start=period_start,
-        # FIN-04: settled-period idempotency key (conflicts on uq_quota_payment_agent_period).
-        period_key=period_start,
+        period_key=settled_key,
         period_end=period_end,
         method=charge.method,
         reference=charge.reference,
@@ -181,7 +185,7 @@ async def record_quota_payment(
             await db.flush()  # assign the payment id
     except IntegrityError:
         existing = await existing_quota_payment(
-            db, agent_id=agent.id, period_key=period_start
+            db, agent_id=agent.id, period_key=settled_key
         )
         if existing is not None:
             return existing
@@ -251,10 +255,13 @@ async def run_agent_quota_dunning(
     # FIN-07: anchor to the current quota period end when still ahead (an agent may
     # have renewed early before the sweep); overdue falls back to now.
     period_end = advance_billing_period(now, agent.next_quota_billing_date, cycle)
+    # REV-04: dedup on the quota-period boundary (next_quota_billing_date), not the
+    # calendar day, so a cross-midnight race collides on the unique key.
+    period_key = billing_period_key(agent.next_quota_billing_date, period_end)
 
     # FIN-04: this period may already be settled (the agent paid manually before the
     # sweep, or a prior sweep this day). Don't charge again — report it as skipped.
-    if await existing_quota_payment(db, agent_id=agent.id, period_key=period_start):
+    if await existing_quota_payment(db, agent_id=agent.id, period_key=period_key):
         return {
             "agent_id": agent.id,
             "action": "skipped",
@@ -304,7 +311,8 @@ async def run_agent_quota_dunning(
 
     if charge_ok and charge is not None:
         await record_quota_payment(
-            db, agent, charge=charge, cycle=cycle, period_start=period_start, period_end=period_end
+            db, agent, charge=charge, cycle=cycle, period_start=period_start,
+            period_end=period_end, period_key=period_key,
         )
         grace_deadline = None
     else:

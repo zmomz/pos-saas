@@ -192,6 +192,7 @@ async def record_settled_payment(
     period_end: str,
     agent_row=None,
     amount: Optional[float] = None,
+    period_key: Optional[str] = None,
 ):
     """Persist a settled merchant subscription payment, advance the billing period,
     and clear any dunning state (status -> active).
@@ -217,15 +218,20 @@ async def record_settled_payment(
     from models.subscription_payments import Subscription_payments
 
     collected = float(merchant.subscription_fee or 0) if amount is None else float(amount)
+    # REV-04: the settled-period idempotency key is the billing-period boundary
+    # (``period_key``), not ``period_start`` (the calendar day this charge ran). A
+    # cross-midnight concurrent race for the same period thus collides on
+    # uq_subscription_payment_client_period instead of slipping through on two
+    # distinct per-day keys. Callers pass the boundary; fall back to period_start
+    # only for legacy callers that omit it.
+    settled_key = period_key if period_key is not None else period_start
     payment = Subscription_payments(
         user_id=str(payer_user_id),
         client_id=merchant.id,
         amount=collected,
         billing_cycle=cycle,
         period_start=period_start,
-        # FIN-04: stamp the settled-period idempotency key so a second settlement of
-        # the same period conflicts on uq_subscription_payment_client_period.
-        period_key=period_start,
+        period_key=settled_key,
         period_end=period_end,
         method=charge.method,
         reference=charge.reference,
@@ -238,7 +244,7 @@ async def record_settled_payment(
             await db.flush()  # assign the payment id
     except IntegrityError:
         existing = await existing_settled_payment(
-            db, client_id=merchant.id, period_key=period_start
+            db, client_id=merchant.id, period_key=settled_key
         )
         if existing is not None:
             # The period was already settled — reconcile to it; the account is
