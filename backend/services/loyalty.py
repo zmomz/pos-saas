@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.money import floor_units, quantize_money, to_decimal
@@ -178,15 +178,30 @@ async def redeem_points(
             f"{quantize_money(max_discount):.2f}"
         )
 
-    new_balance = available - points
-    await db.execute(
+    # REV-01: deduct with a single atomic conditional UPDATE acting on rowcount —
+    # never read-check-write. The ``points_balance >= points`` guard makes the
+    # check-and-debit one statement, so N concurrent redemptions on a balance of
+    # K let exactly ``floor(K/points)`` succeed: no double-spend, never negative
+    # (mirrors the DAT-01 stock pattern). The early read above only powers the
+    # friendly "Available: X" message; this UPDATE is the real enforcement.
+    result = await db.execute(
         update(Loyalty_points)
-        .where(Loyalty_points.id == row.id)
+        .where(
+            Loyalty_points.id == row.id,
+            func.coalesce(Loyalty_points.points_balance, 0) >= points,
+        )
         .values(
-            points_balance=new_balance,
-            total_redeemed=(row.total_redeemed or 0) + points,
+            points_balance=func.coalesce(Loyalty_points.points_balance, 0) - points,
+            total_redeemed=func.coalesce(Loyalty_points.total_redeemed, 0) + points,
         )
     )
+    if not result.rowcount:
+        # A concurrent redemption drained the balance between the read and here.
+        raise ValueError(
+            f"Insufficient points. Available: {available}, requested: {points}"
+        )
+    await db.refresh(row)
+    new_balance = row.points_balance
     record_ledger_movement(
         db,
         user_id=user_id,
@@ -227,15 +242,21 @@ async def accrue_points(
 
     row = await _get_balance_row(db, user_id, customer_id)
     if row:
-        new_balance = (row.points_balance or 0) + points_earned
+        # REV-01: atomic increment in the DB (``balance = balance + earned``) so
+        # concurrent accruals can't lose-update each other via an absolute
+        # read-modify-write. Refresh to report the committed-in-this-txn balance.
         await db.execute(
             update(Loyalty_points)
             .where(Loyalty_points.id == row.id)
             .values(
-                points_balance=new_balance,
-                total_earned=(row.total_earned or 0) + points_earned,
+                points_balance=func.coalesce(Loyalty_points.points_balance, 0)
+                + points_earned,
+                total_earned=func.coalesce(Loyalty_points.total_earned, 0)
+                + points_earned,
             )
         )
+        await db.refresh(row)
+        new_balance = row.points_balance
     else:
         new_balance = points_earned
         db.add(
