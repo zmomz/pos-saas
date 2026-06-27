@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     login_max_attempts: int = 5
     login_lockout_minutes: int = 15
     login_attempt_window_minutes: int = 15
+    # SEC-15: two additional cross-cutting counters keyed independently of the
+    # (identifier, IP) pair so a distributed run can't slip under the per-pair
+    # threshold. login_account_max_attempts locks an identifier once that many
+    # failures accumulate across *all* source IPs (defeats distributed spray
+    # against one account). login_ip_max_attempts locks a source IP once that
+    # many failures accumulate across *all* identifiers (defeats one host
+    # spraying many accounts); its threshold is higher to limit NAT false
+    # positives. Both share login_attempt_window_minutes / login_lockout_minutes.
+    login_account_max_attempts: int = 5
+    login_ip_max_attempts: int = 50
 
     # Password-complexity policy (ISSUE-084). Enforced at every set-password
     # entry point — signup, reset, change-password, and staff-login

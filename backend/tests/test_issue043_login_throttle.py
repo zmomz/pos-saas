@@ -79,12 +79,15 @@ async def test_legitimate_login_succeeds_after_lock_expires(client):
     locked = await client.post("/api/v1/auth/login", json={"email": email, "password": "Password123"})
     assert locked.status_code == 429
 
-    # Fast-forward past the lockout window by aging the stored lock.
+    # Fast-forward past the lockout window by aging every stored lock for this
+    # account. SEC-15 keeps both a per-(identifier, IP) counter and a per-account
+    # counter, so the threshold trips more than one row — age them all.
     async with db_manager.async_session_maker() as db:
-        row = (
+        rows = (
             await db.execute(select(LoginAttempts).where(LoginAttempts.identifier == email.lower()))
-        ).scalar_one()
-        row.locked_until = datetime.now(timezone.utc) - timedelta(seconds=1)
+        ).scalars().all()
+        for row in rows:
+            row.locked_until = datetime.now(timezone.utc) - timedelta(seconds=1)
         await db.commit()
 
     # The legitimate user can sign in again.
