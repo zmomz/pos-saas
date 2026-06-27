@@ -1,9 +1,9 @@
 """ZATCA Phase-2 (Fatoora) e-invoicing: real cryptography + onboarding client.
 
 Phase A left ZATCA as a QR + sequencing *skeleton* with a placeholder HMAC
-"stamp" (`services/production.py::ZATCAService.generate_cryptographic_stamp`).
-That is not a valid CSID/ECDSA signature and is a legal blocker for any KSA
-go-live. This module implements the compliance-critical primitives for real:
+"stamp" (since removed) that was not a valid CSID/ECDSA signature and a legal
+blocker for any KSA go-live. This module implements the compliance-critical
+primitives for real:
 
 * **EC keypair + CSR** — secp256k1 private key and a PKCS#10 CSR built from the
   ZATCA EGS (E-invoice Generation Solution) template: the required subject

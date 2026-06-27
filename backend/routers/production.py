@@ -53,7 +53,6 @@ from services.production import (
     fire_event_background,
     performance_monitor,
     rate_limiter,
-    zatca_service,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,12 +91,6 @@ class StaffPermissionSetRequest(BaseModel):
 
 class InvoicePDFRequest(BaseModel):
     transaction_id: int
-
-
-class ZATCAXMLRequest(BaseModel):
-    transaction_id: int
-    buyer_name: Optional[str] = "عميل"
-    buyer_vat: Optional[str] = ""
 
 
 class EmailNotificationRequest(BaseModel):
@@ -610,70 +603,6 @@ async def generate_pdf_invoice(
         "html_content": html,
         "content_type": "text/html",
         "note": "Use a headless browser or wkhtmltopdf to convert HTML to PDF",
-    }
-
-
-@router.post("/invoice/zatca-xml")
-async def generate_zatca_xml(
-    data: ZATCAXMLRequest,
-    current_user: UserResponse = Depends(get_current_user),
-    owner_id: str = Depends(get_owner_id),
-    db: AsyncSession = Depends(get_db),
-):
-    """Generate ZATCA Phase 2 compliant XML invoice."""
-    from models.clients import Clients
-    from models.transactions import Transactions
-
-    result = await db.execute(
-        select(Transactions).where(
-            Transactions.id == data.transaction_id,
-            Transactions.user_id == owner_id,
-        )
-    )
-    txn = result.scalar_one_or_none()
-    if not txn:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-
-    client_result = await db.execute(
-        select(Clients).where(Clients.id == txn.client_id)
-    )
-    client = client_result.scalar_one_or_none()
-
-    seller_name = client.business_name if client else "متجر"
-    seller_vat = client.vat_number if client else "000000000000000"
-
-    items = []
-    if txn.items_json:
-        try:
-            items = json.loads(txn.items_json)
-        except json.JSONDecodeError:
-            items = []
-
-    issue_date = txn.created_at.strftime("%Y-%m-%d") if txn.created_at else datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    issue_time = txn.created_at.strftime("%H:%M:%S") if txn.created_at else datetime.now(timezone.utc).strftime("%H:%M:%S")
-
-    xml_content = zatca_service.generate_xml_invoice(
-        seller_name=seller_name,
-        seller_vat=seller_vat,
-        buyer_name=data.buyer_name or "عميل",
-        buyer_vat=data.buyer_vat or "",
-        invoice_number=txn.invoice_number,
-        issue_date=issue_date,
-        issue_time=issue_time,
-        line_items=items,
-        total_excluding_vat=txn.subtotal or 0,
-        total_vat=txn.vat_amount or 0,
-        total_including_vat=txn.total_amount or 0,
-    )
-
-    invoice_hash = zatca_service.generate_invoice_hash(xml_content.encode("utf-8"))
-
-    return {
-        "invoice_number": txn.invoice_number,
-        "xml_content": xml_content,
-        "invoice_hash": invoice_hash,
-        "content_type": "application/xml",
-        "zatca_phase": 2,
     }
 
 

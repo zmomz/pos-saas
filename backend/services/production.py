@@ -213,65 +213,16 @@ performance_monitor = PerformanceMonitor()
 # ZATCA Phase 2 Service
 # =============================================================================
 class ZATCAService:
-    """ZATCA Phase 2 compliant XML invoice generation with cryptographic stamp."""
+    """ZATCA Phase 2 compliant UBL invoice (XML) generation.
+
+    Hashing, the cryptographic stamp and Fatoora reporting live on the real
+    sale-signing path (``services/zatca.py`` + ``services/zatca_sale.py``); this
+    class only builds the unsigned UBL document those paths sign.
+    """
 
     ZATCA_NS = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
     CAC_NS = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
     CBC_NS = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
-
-    def __init__(self):
-        self._invoice_counter: int = 0
-
-    def _next_sequential_number(self) -> str:
-        """Generate sequential invoice number for ZATCA compliance."""
-        self._invoice_counter += 1
-        return f"ZATCA-{self._invoice_counter:010d}"
-
-    def generate_invoice_hash(self, xml_content: bytes) -> str:
-        """Generate SHA-256 hash of invoice XML."""
-        return hashlib.sha256(xml_content).hexdigest()
-
-    def generate_cryptographic_stamp(
-        self, invoice_hash: str, private_key_pem: Optional[str] = None
-    ) -> str:
-        """Generate the cryptographic stamp for an invoice hash.
-
-        Phase B: when a per-client EGS ``private_key_pem`` is supplied (see
-        ``services/zatca.py`` and ``routers/zatca.py``), this produces a **real**
-        ECDSA-SHA256 signature over the hash — the compliant ZATCA stamp.
-
-        ``invoice_hash`` may be a hex SHA-256 (legacy ``generate_invoice_hash``)
-        or a base64 SHA-256 digest; both are normalised to the base64 digest the
-        signer expects.
-
-        With no key (legacy/dev callers) it falls back to an HMAC tag that is
-        **NOT ZATCA-valid** — kept only so existing demo flows don't break.
-        """
-        digest_b64 = self._normalise_hash_to_b64_digest(invoice_hash)
-        if private_key_pem:
-            from services.zatca import sign_invoice_hash
-
-            return sign_invoice_hash(private_key_pem, digest_b64)
-
-        # Non-compliant dev fallback (no EGS key onboarded yet).
-        stamp_key = b"ZATCA_DEV_FALLBACK_UNSIGNED"
-        signature = hmac.new(stamp_key, digest_b64.encode(), hashlib.sha256).hexdigest()
-        return base64.b64encode(signature.encode()).decode()
-
-    @staticmethod
-    def _normalise_hash_to_b64_digest(invoice_hash: str) -> str:
-        """Return the base64 of the 32-byte SHA-256 digest.
-
-        Accepts a 64-char hex digest (from ``generate_invoice_hash``) or an
-        already-base64-encoded digest.
-        """
-        try:
-            if len(invoice_hash) == 64:
-                int(invoice_hash, 16)  # validate hex
-                return base64.b64encode(bytes.fromhex(invoice_hash)).decode()
-        except ValueError:
-            pass
-        return invoice_hash
 
     def generate_xml_invoice(
         self,
