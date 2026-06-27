@@ -7,6 +7,7 @@ from core.auth import AccessTokenError, decode_access_token
 from core.database import get_db
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from models.auth import User
 from schemas.auth import UserResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,38 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# SEC-07: a user with a pending forced password change may still reach the change
+# endpoint itself, plus the whole auth surface (logout, /me, sessions, mfa) so they
+# can rotate the credential and read their own state. Everything else is gated.
+_PASSWORD_CHANGE_EXEMPT_PATHS = frozenset({"/api/v1/users/change-password"})
+_PASSWORD_CHANGE_EXEMPT_PREFIXES = ("/api/v1/auth/",)
+
+
+def _is_password_change_exempt(path: str) -> bool:
+    """Whether ``path`` stays reachable for a user who must change their password."""
+    if path in _PASSWORD_CHANGE_EXEMPT_PATHS:
+        return True
+    return any(path.startswith(prefix) for prefix in _PASSWORD_CHANGE_EXEMPT_PREFIXES)
+
+
+async def _assert_password_changed(db: AsyncSession, user_id: str, path: str) -> None:
+    """Block a force-flagged user from every non-exempt endpoint (SEC-07).
+
+    Called only when the presented token *claims* ``must_change_password``. The
+    live DB flag is re-read so a user who has just rotated their credential — which
+    clears the flag (``UserService.change_password``) without bumping the security
+    stamp — is unblocked immediately on their existing token, satisfying the
+    "flag cleared after change -> 200" guarantee.
+    """
+    if _is_password_change_exempt(path):
+        return
+    result = await db.execute(select(User.must_change_password).where(User.id == str(user_id)))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You must change your password before continuing.",
+        )
 
 
 async def get_bearer_token(
@@ -62,6 +95,7 @@ async def _assert_account_active(db: AsyncSession, user_id: str) -> None:
 
 
 async def get_current_user(
+    request: Request,
     token: str = Depends(get_bearer_token),
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
@@ -115,6 +149,11 @@ async def get_current_user(
         )
 
     await _assert_account_active(db, user_id)
+
+    # SEC-07: enforce the forced-password-change gate. Only flagged tokens pay the
+    # extra DB read; unflagged users (the common case) are untouched.
+    if bool(payload.get("must_change_password", False)):
+        await _assert_password_changed(db, user_id, request.url.path)
 
     last_login_raw = payload.get("last_login")
     last_login = None

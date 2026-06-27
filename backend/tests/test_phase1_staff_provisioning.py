@@ -48,6 +48,15 @@ async def test_create_staff_provisions_a_login_scoped_to_owner(client):
     assert login.status_code == 200, login.text
     staff_token = login.json()["token"]
 
+    # SEC-07: the provisioned cashier must rotate the temp password before they
+    # may operate; the change clears the force-reset flag.
+    changed = await client.post(
+        "/api/v1/users/change-password",
+        json={"current_password": temp_password, "new_password": "BrandNew123"},
+        headers=auth_headers(staff_token),
+    )
+    assert changed.status_code == 200, changed.text
+
     # And, logged in, the cashier operates within the merchant's tenant: it sees
     # the merchant's product rather than an empty private catalog.
     listing = await client.get("/api/v1/products/list", headers=auth_headers(staff_token))

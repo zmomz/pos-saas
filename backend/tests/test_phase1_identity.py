@@ -289,14 +289,25 @@ async def test_client_cannot_read_other_clients_product(client):
         "/api/v1/auth/login", json={"email": b_email, "password": b_body["temp_password"]}
     )
     a_user_id = a_login.json()["user"]["id"]
+    a_token = a_login.json()["token"]
     b_token = b_login.json()["token"]
+
+    # SEC-07: both provisioned merchants must rotate the temp password before they
+    # may operate; the change clears each one's force-reset flag.
+    for token, temp in ((a_token, a_body["temp_password"]), (b_token, b_body["temp_password"])):
+        changed = await client.post(
+            "/api/v1/users/change-password",
+            json={"current_password": temp, "new_password": "BrandNew123"},
+            headers=auth_headers(token),
+        )
+        assert changed.status_code == 200, changed.text
 
     product_id = await add_product(a_body["id"], a_user_id, name="A-Widget")
 
     # Owner reads it; the sibling tenant gets a 404 (owner-scoped).
     own = await client.get(
         f"/api/v1/entities/products/{product_id}",
-        headers=auth_headers(a_login.json()["token"]),
+        headers=auth_headers(a_token),
     )
     assert own.status_code == 200, own.text
     cross = await client.get(
