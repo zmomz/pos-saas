@@ -188,12 +188,30 @@ async def login_mfa(payload: MfaLoginRequest, request: Request, db: AsyncSession
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid second-factor ticket")
 
+    # SEC-08: throttle second-factor guesses. Reuse the login brute-force guard
+    # keyed on the MFA subject (kept in its own namespace so MFA failures never
+    # lock the password-login counter and vice versa). TOTP and recovery-code
+    # attempts share this counter. Once the threshold is hit the subject is
+    # locked out — invalidating the held ticket — even for a valid code.
+    client_ip = request.client.host if request.client else "unknown"
+    throttle_subject = f"mfa:{user.id}"
+    try:
+        await assert_login_allowed(db, throttle_subject, client_ip)
+    except LoginLockedOut as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed verification attempts. Please sign in again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
     if not await MfaService(db).verify_code(user.id, payload.code):
+        await register_failed_login(db, throttle_subject, client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid verification code",
         )
 
+    await clear_login_attempts(db, throttle_subject, client_ip)
     return await _issue_login_response(service, user, request)
 
 
