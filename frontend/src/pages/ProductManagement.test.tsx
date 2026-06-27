@@ -77,6 +77,12 @@ describe('ProductManagement CSV import (ISSUE-064)', () => {
       http.get(`${BASE}/api/v1/products/reorder-suggestions`, () =>
         HttpResponse.json({ items: [], total: 0 })
       ),
+      // The page loads its category tree on mount (ISSUE-038); without a handler
+      // the unmatched request trips `onUnhandledRequest: 'error'` and the import
+      // summary never renders (REV-05).
+      http.get(`${BASE}/api/v1/entities/categories`, () =>
+        HttpResponse.json({ items: [], total: 0 })
+      ),
       http.post(`${BASE}/api/v1/entities/products/import`, () =>
         HttpResponse.json({
           created: 3,

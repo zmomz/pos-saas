@@ -233,8 +233,11 @@ export async function getText(url: string): Promise<string> {
 export async function uploadMultipart<T = unknown>(url: string, file: File, field = 'file'): Promise<T> {
   const form = new FormData();
   form.append(field, file);
-  // Let the browser set the multipart boundary; override the JSON default.
-  const res = await http.post<T>(url, form, { headers: { 'Content-Type': 'multipart/form-data' } });
+  // Clear the instance JSON default and let axios derive the multipart
+  // Content-Type *with its boundary* from the FormData body. Forcing a bare
+  // `multipart/form-data` (no boundary) yields an unparseable request and
+  // hangs the platform's request machinery.
+  const res = await http.post<T>(url, form, { headers: { 'Content-Type': undefined } });
   return res.data;
 }
 

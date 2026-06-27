@@ -1,6 +1,23 @@
 import '@testing-library/jest-dom/vitest';
+import axios from 'axios';
 import { afterEach, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
+
+// REV-05: jsdom's XHR adapter hangs forever when the request body is a
+// `FormData` (multipart upload) — MSW's XHR interceptor never resolves it, so
+// any test exercising `uploadMultipart` would time out. Route ONLY FormData
+// requests through the node-`http` adapter, which MSW's node interceptor
+// handles cleanly; keep XHR for everything else so credentialed flows (e.g.
+// the cookie refresh, which relies on `withCredentials` surfacing as
+// `credentials: 'include'`) behave exactly as in the browser. The app's axios
+// instance leaves `adapter` unset, so it resolves this global default at
+// request time. Real browsers are unaffected (they keep the XHR adapter).
+const nodeHttpAdapter = axios.getAdapter('http');
+const xhrAdapter = axios.getAdapter('xhr');
+axios.defaults.adapter = (config) => {
+  const isFormData = typeof FormData !== 'undefined' && config.data instanceof FormData;
+  return (isFormData ? nodeHttpAdapter : xhrAdapter)(config);
+};
 
 // Unmount React trees and clear storage between tests for isolation.
 afterEach(() => {
