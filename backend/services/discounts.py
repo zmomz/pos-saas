@@ -1,10 +1,12 @@
 import logging
 from datetime import datetime
+from decimal import Decimal
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy import select, func, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.money import Number, quantize_money, to_decimal
 from models.discounts import Discounts
 from services.query_filter import apply_query_filters
 
@@ -40,19 +42,26 @@ def _as_naive(dt: Optional[datetime]) -> Optional[datetime]:
     return dt
 
 
-def compute_discount_amount(discount: Discounts, subtotal: float) -> float:
+def compute_discount_amount(discount: Discounts, subtotal: Number) -> Decimal:
     """Server-authoritative discount amount for ``subtotal`` (never client-trusted).
 
     Percentage discounts apply ``value`` % of the order subtotal; any other type
     (``fixed``/``flat``) applies a flat ``value``. The result is clamped to
     ``[0, subtotal]`` so a discount can never push the order negative (PRC-01).
+
+    FIN-01/ISSUE-187: computed in exact :class:`~decimal.Decimal` and quantized
+    half-up, so a ``.xx5`` boundary (e.g. 5% of 53.50 = 2.675) rounds to 2.68 —
+    the customer-facing half-up rule — rather than the float half-even 2.67. The
+    POS path previously wrapped a lossily-rounded float in ``to_decimal`` *after*
+    the drift had already occurred.
     """
-    value = float(discount.value or 0)
+    value = to_decimal(discount.value or 0)
+    sub = to_decimal(subtotal)
     if (discount.type or "").lower() in ("percentage", "percent", "%"):
-        amount = subtotal * (value / 100.0)
+        amount = sub * value / Decimal(100)
     else:  # fixed / flat
         amount = value
-    return round(max(0.0, min(amount, subtotal)), 2)
+    return quantize_money(max(Decimal(0), min(amount, sub)))
 
 
 # ------------------ Service Layer ------------------

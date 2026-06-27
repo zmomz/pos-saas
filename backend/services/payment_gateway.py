@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from core.config import settings
+from core.money import to_halalas
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +243,7 @@ class MoyasarGateway(PaymentGateway):
             )
         import httpx  # local import keeps module import cheap
 
-        amount_minor = int(round(amount * 100))
+        amount_minor = to_halalas(amount)
         meta = metadata or {}
         # A merchant-initiated recurring charge (a stored card-on-file billed each
         # cycle — subscription quota / merchant subscription) reuses a saved token
@@ -303,7 +304,7 @@ class MoyasarGateway(PaymentGateway):
     async def refund(self, gateway_ref: str, amount: float) -> GatewayResult:
         import httpx
 
-        amount_minor = int(round(amount * 100))
+        amount_minor = to_halalas(amount)
         try:
             async with httpx.AsyncClient(timeout=30.0) as http:
                 resp = await http.post(
@@ -403,7 +404,7 @@ class GeideaTerminalGateway(PaymentGateway):
         # ---- live capture against the paired Geidea SoftPOS terminal ----
         import httpx  # local import keeps module import cheap
 
-        amount_minor = int(round(amount * 100))
+        amount_minor = to_halalas(amount)
         payload = {
             "amount": amount_minor,
             "currency": currency,
@@ -455,7 +456,7 @@ class GeideaTerminalGateway(PaymentGateway):
             )
         import httpx
 
-        amount_minor = int(round(amount * 100))
+        amount_minor = to_halalas(amount)
         try:
             async with httpx.AsyncClient(timeout=120.0) as http:
                 resp = await http.post(

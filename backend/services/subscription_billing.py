@@ -19,39 +19,45 @@ approve/decline so the flow is demonstrable without onboarding (OPS-08).
 import logging
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from core.config import settings
+from core.money import Number, quantize_money, to_decimal
 
 logger = logging.getLogger(__name__)
 
 
 def apply_coupon(
-    fee: float, coupon_type: Optional[str], coupon_value: Optional[float]
-) -> float:
+    fee: Number, coupon_type: Optional[str], coupon_value: Optional[Number]
+) -> Decimal:
     """Return the net subscription fee after applying a coupon (ISSUE-054).
 
     ``coupon_type`` is ``'percentage'`` (``coupon_value`` is a percent off) or
     ``'fixed'`` (a flat amount off in the fee currency). With no coupon — either
     field missing/zero — the fee is returned unchanged. The result is clamped at
     0 so a fixed coupon larger than the fee never produces a negative charge, and
-    rounded to 2 decimals to match the recorded payment amount.
+    quantized to 2 decimals to match the recorded payment amount.
+
+    FIN-01/ISSUE-187: computed in exact Decimal and quantized half-up so a
+    ``.xx5`` net (e.g. 73.25% off 10.00 = 2.675) charges 2.68, not the float
+    half-even 2.67 that previously fed the gateway.
     """
-    gross = float(fee or 0)
+    gross = to_decimal(fee or 0)
     if not coupon_type or not coupon_value:
-        return round(gross, 2)
+        return quantize_money(gross)
     if coupon_type == "percentage":
-        net = gross * (1 - float(coupon_value) / 100.0)
+        net = gross * (Decimal(1) - to_decimal(coupon_value) / Decimal(100))
     elif coupon_type == "fixed":
-        net = gross - float(coupon_value)
+        net = gross - to_decimal(coupon_value)
     else:
         net = gross
-    return round(max(net, 0.0), 2)
+    return quantize_money(max(net, Decimal(0)))
 
 
 def compute_proration(
-    old_fee: float, new_fee: float, days_remaining: int, cycle_days: int
-) -> float:
+    old_fee: Number, new_fee: Number, days_remaining: int, cycle_days: int
+) -> Decimal:
     """Pro-rated charge (positive) or credit (negative) for a mid-cycle plan change
     (ISSUE-053).
 
@@ -61,12 +67,13 @@ def compute_proration(
     (``days_remaining / cycle_days``). An upgrade yields a charge, a downgrade a
     credit. The fraction is clamped to ``[0, 1]`` so a stale/over-long remaining
     count never bills more than a whole cycle and an elapsed period bills nothing.
-    Rounded to 2 decimals to match the recorded payment amount.
+    Quantized to 2 decimals (half-up) to match the recorded payment amount
+    (FIN-01/ISSUE-187 — exact Decimal, no float drift on a ``.xx5`` boundary).
     """
     if cycle_days <= 0:
-        return 0.0
-    fraction = max(0.0, min(1.0, float(days_remaining) / float(cycle_days)))
-    return round((float(new_fee) - float(old_fee)) * fraction, 2)
+        return quantize_money(0)
+    fraction = max(Decimal(0), min(Decimal(1), to_decimal(days_remaining) / to_decimal(cycle_days)))
+    return quantize_money((to_decimal(new_fee) - to_decimal(old_fee)) * fraction)
 
 
 def is_in_trial(trial_end: Optional[str], today: date) -> bool:
