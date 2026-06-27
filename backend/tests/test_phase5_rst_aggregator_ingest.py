@@ -49,13 +49,31 @@ async def _restaurant_client(client):
     return user, token, client_id
 
 
-async def _connect(client, headers, location, secret=None):
+# A configured webhook secret is now mandatory for a webhook to be accepted
+# (SEC-09: the connector fails closed when no secret is set), so the helpers default
+# to connecting WITH a secret and signing every post. Tests that exercise the
+# unsigned / no-secret paths pass ``secret=None`` explicitly.
+_WEBHOOK_SECRET = "whsec_aggr_default"
+
+
+async def _connect(client, headers, location, secret=_WEBHOOK_SECRET):
     body = {"location_id": location}
     if secret is not None:
         body["webhook_secret"] = secret
     resp = await client.post("/api/v1/aggregator/connect", json=body, headers=headers)
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+async def _post_webhook(client, payload, provider="deliverect", secret=_WEBHOOK_SECRET):
+    """POST an aggregator webhook, HMAC-signing the raw body when a secret is given."""
+    raw = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if secret is not None:
+        headers["X-Webhook-Signature"] = hmac.new(
+            secret.encode("utf-8"), raw, hashlib.sha256
+        ).hexdigest()
+    return await client.post(f"/api/v1/aggregator/{provider}/webhook", content=raw, headers=headers)
 
 
 def _deliverect_payload(*, location, order_id, name="Burger", plu=None, qty=2, price=20.0, order_type="delivery"):
@@ -106,7 +124,7 @@ async def test_deliverect_webhook_creates_ticket_and_sale_idempotent(client):
     await _connect(client, headers, location)
 
     payload = _deliverect_payload(location=location, order_id="DLVR-9001", name="Burger", qty=2)
-    resp = await client.post("/api/v1/aggregator/deliverect/webhook", json=payload)
+    resp = await _post_webhook(client, payload)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "imported"
@@ -140,7 +158,7 @@ async def test_deliverect_webhook_creates_ticket_and_sale_idempotent(client):
     assert rows[0]["transaction_id"] == body["transaction_id"]
 
     # 4) Idempotent: re-delivering the SAME webhook books nothing new.
-    again = await client.post("/api/v1/aggregator/deliverect/webhook", json=payload)
+    again = await _post_webhook(client, payload)
     assert again.status_code == 200, again.text
     assert again.json()["status"] == "duplicate"
     assert again.json()["transaction_id"] == body["transaction_id"]
@@ -194,6 +212,27 @@ async def test_invalid_signature_rejected(client):
 
 
 @pytest.mark.asyncio
+async def test_aggregator_webhook_rejected_when_no_secret_configured(client):
+    """Fail closed (SEC-09): a location connected WITHOUT a webhook secret rejects every
+    webhook with 401. Previously the connector fell open when no secret was set, so an
+    unauthenticated caller could book sales just by guessing the (routable) location id."""
+    user, token, client_id = await _restaurant_client(client)
+    headers = auth_headers(token)
+    location = f"loc_{uuid.uuid4().hex[:8]}"
+    pid = await add_product(client_id, user["id"], name="Pizza", quantity=10, price=30.0)
+    await _connect(client, headers, location, secret=None)
+
+    resp = await client.post(
+        "/api/v1/aggregator/deliverect/webhook",
+        json=_deliverect_payload(location=location, order_id="DLVR-9003", name="Pizza", qty=1, price=30.0),
+    )
+    assert resp.status_code == 401, resp.text
+    # Nothing materialized — no sale, shared stock untouched.
+    assert await get_product_quantity(pid) == 10
+    assert await _txn_count(client_id) == 0
+
+
+@pytest.mark.asyncio
 async def test_unknown_location_and_provider(client):
     """A webhook for an unconnected location is acked-but-ignored; an unknown
     provider is a 404 (no silent ingest)."""
@@ -224,13 +263,15 @@ async def test_delivery_hero_provider_routes_separately(client):
     await _connect(client, headers, location)
 
     shared_id = "ORDER-77"
-    a = await client.post(
-        "/api/v1/aggregator/deliverect/webhook",
-        json=_deliverect_payload(location=location, order_id=shared_id, name="Wrap", qty=1, price=15.0),
+    a = await _post_webhook(
+        client,
+        _deliverect_payload(location=location, order_id=shared_id, name="Wrap", qty=1, price=15.0),
+        provider="deliverect",
     )
-    b = await client.post(
-        "/api/v1/aggregator/delivery_hero/webhook",
-        json=_deliverect_payload(location=location, order_id=shared_id, name="Wrap", qty=1, price=15.0),
+    b = await _post_webhook(
+        client,
+        _deliverect_payload(location=location, order_id=shared_id, name="Wrap", qty=1, price=15.0),
+        provider="delivery_hero",
     )
     assert a.json()["status"] == "imported"
     assert b.json()["status"] == "imported"

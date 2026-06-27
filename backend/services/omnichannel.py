@@ -42,13 +42,15 @@ def verify_salla_signature(secret: Optional[str], raw_body: bytes, signature: Op
     """Return whether ``signature`` is a valid HMAC-SHA256 of ``raw_body``.
 
     Salla's "Signature" security strategy sends ``X-Salla-Signature`` = the hex
-    HMAC-SHA256 of the raw request body keyed by the webhook secret. When no secret
-    is configured we skip verification (sandbox / graceful degradation, OPS-08) and
-    return True; when a secret is set a missing/mismatched signature fails.
+    HMAC-SHA256 of the raw request body keyed by the webhook secret.
+
+    Fail closed (SEC-09): an unset/empty ``secret`` or a missing ``signature``
+    returns ``False`` so the caller rejects. The Salla webhook is unauthenticated and
+    routed only by a guessable ``salla_store_id``; trusting an unsigned body whenever
+    no secret was configured let anyone reaching the URL book sales against a
+    connected store. A store with no secret therefore accepts no webhooks at all.
     """
-    if not secret:
-        return True
-    if not signature:
+    if not secret or not signature:
         return False
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature.strip().lower())

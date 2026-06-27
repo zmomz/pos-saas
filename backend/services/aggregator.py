@@ -51,13 +51,15 @@ def verify_aggregator_signature(
     """Return whether ``signature`` is a valid HMAC-SHA256 of ``raw_body``.
 
     The middleware sends the hex HMAC-SHA256 of the raw request body keyed by the
-    per-location webhook secret. When no secret is configured we skip verification
-    (sandbox / graceful degradation, OPS-08) and return True; when a secret is set a
-    missing/mismatched signature fails.
+    per-location webhook secret.
+
+    Fail closed (SEC-09): an unset/empty ``secret`` or a missing ``signature``
+    returns ``False`` so the caller rejects. The webhook is unauthenticated and routed
+    only by a guessable ``aggregator_location_id``; trusting an unsigned body whenever
+    no secret was configured let anyone reaching the URL book sales against a connected
+    location. A location with no secret therefore accepts no webhooks at all.
     """
-    if not secret:
-        return True
-    if not signature:
+    if not secret or not signature:
         return False
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature.strip().lower())
