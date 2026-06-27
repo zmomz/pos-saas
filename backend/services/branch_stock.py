@@ -158,6 +158,55 @@ async def dispatch_branch_inventory(
     return src.quantity
 
 
+async def receive_branch_inventory(
+    db: AsyncSession,
+    user_id: str,
+    client_id: int,
+    transfer,
+    product: Products,
+    received: int,
+) -> tuple:
+    """Book an ``in_transit`` transfer in at the destination (no commit) — phase 2
+    of a two-phase transfer (DAT-04 receive leg).
+
+    The state transition is gated by a single conditional UPDATE
+    (``... SET status='received' WHERE id=:id AND status='in_transit'``); only the
+    caller that flips the row (``rowcount == 1``) credits the destination, with one
+    atomic increment. Every other concurrent receive sees ``rowcount 0`` and is a
+    no-op — never a read-check-write — so two concurrent receives of the same
+    transfer credit the destination *exactly once* and the transfer settles once.
+
+    Returns ``(won, new_dest_qty)``: ``won`` is False (and ``new_dest_qty`` 0) when
+    the transfer was already received (this caller lost the race / a repeat).
+    """
+    from models.stock_transfers import Stock_transfers
+
+    dispatched = int(transfer.quantity or 0)
+    gate = await db.execute(
+        update(Stock_transfers)
+        .where(
+            Stock_transfers.id == transfer.id,
+            Stock_transfers.status == "in_transit",
+        )
+        .values(
+            status="received",
+            received_quantity=received,
+            discrepancy=dispatched - received,
+        )
+    )
+    if not gate.rowcount:
+        return False, 0
+
+    dst = await get_or_init_row(db, user_id, client_id, int(transfer.to_branch_id), product)
+    await db.execute(
+        update(Product_branch_stock)
+        .where(Product_branch_stock.id == dst.id)
+        .values(quantity=func.coalesce(Product_branch_stock.quantity, 0) + received)
+    )
+    await db.refresh(dst)
+    return True, dst.quantity
+
+
 async def transfer_branch_inventory(
     db: AsyncSession,
     user_id: str,

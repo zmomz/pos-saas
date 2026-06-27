@@ -2071,7 +2071,7 @@ async def receive_branch_stock(
     from models.clients import Clients
     from models.products import Products
     from models.stock_transfers import Stock_transfers as StockTransfers
-    from services.branch_stock import get_or_init_row
+    from services.branch_stock import receive_branch_inventory
 
     client = (
         await db.execute(select(Clients).where(Clients.user_id == owner_id))
@@ -2117,14 +2117,18 @@ async def receive_branch_stock(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    dst = await get_or_init_row(
-        db, owner_id, client.id, int(record.to_branch_id), product
+    # Atomically close the transfer and credit the destination exactly once
+    # (DAT-04 receive leg). The status transition is a single conditional UPDATE;
+    # only the caller that wins it credits the destination — two concurrent
+    # receives can never double-credit (no read-check-write).
+    won, dst_qty = await receive_branch_inventory(
+        db, owner_id, client.id, record, product, received
     )
-    dst.quantity = (dst.quantity or 0) + received
-
-    record.received_quantity = received
-    record.discrepancy = dispatched - received
-    record.status = "received"
+    if not won:
+        raise HTTPException(
+            status_code=400,
+            detail="Transfer is not in transit (status: received)",
+        )
     await db.commit()
     await db.refresh(record)
 
@@ -2138,7 +2142,7 @@ async def receive_branch_stock(
         "received_quantity": record.received_quantity,
         "discrepancy": record.discrepancy,
         "status": record.status,
-        "to_branch_quantity": dst.quantity,
+        "to_branch_quantity": dst_qty,
     }
 
 
