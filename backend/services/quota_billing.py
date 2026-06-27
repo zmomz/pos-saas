@@ -274,7 +274,11 @@ async def run_agent_quota_dunning(
     charge = None
     try:
         charge = await charge_quota(
-            agent, idempotency_key=f"quota-{agent.id}-{period_start}"
+            # REV-06: key the gateway idempotency on the period BOUNDARY (period_key),
+            # not the calendar day (period_start) — otherwise a cross-midnight race
+            # between a manual quota pay and this sweep sends Moyasar two distinct
+            # keys for the same period and double-charges the platform's revenue rail.
+            agent, idempotency_key=f"quota-{agent.id}-{period_key}"
         )
     except QuotaCardUnreadable:
         # FIN-06: the agent's quota card token is present but undecryptable — a
