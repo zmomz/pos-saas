@@ -103,7 +103,7 @@ async def register(payload: RegisterRequest, request: Request, db: AsyncSession 
     "master" tenancy role. For provisioning agents/clients, use the tenant
     endpoints which create scoped accounts.
     """
-    if not getattr(settings, "allow_registration", True):
+    if not getattr(settings, "allow_registration", False):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Self-registration is disabled. Contact your administrator.",

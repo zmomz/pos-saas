@@ -45,8 +45,10 @@ class Settings(BaseSettings):
     admin_name: str = "Administrator"
 
     # Allow open self-registration via POST /api/v1/auth/register.
-    # Disable in production once the master account and provisioning are set up.
-    allow_registration: bool = True
+    # Defaults OFF (SEC-10): this is a wholesale-quota platform where accounts are
+    # provisioned by master/agents, not self-minted. Set ALLOW_REGISTRATION=true to
+    # opt in for self-serve deployments. Provisioning paths are unaffected.
+    allow_registration: bool = False
 
     # Login brute-force protection (ISSUE-043). Failed logins are counted per
     # (identifier, IP); once login_max_attempts failures accumulate within
