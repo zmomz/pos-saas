@@ -77,17 +77,23 @@ async def resolve_tenant_scope(db: AsyncSession, current_user: UserResponse) -> 
 
     uid = str(current_user.id)
 
-    # Agent?
+    # Agent? Resolve to the lowest-id row rather than ``scalar_one_or_none`` so a
+    # duplicate membership row (data-integrity drift) degrades deterministically
+    # instead of raising a 500 (SEC-12) — mirrors the staff resolver below.
     agent = (
-        await db.execute(select(Agents).where(Agents.user_id == uid))
-    ).scalar_one_or_none()
+        await db.execute(
+            select(Agents).where(Agents.user_id == uid).order_by(Agents.id.asc()).limit(1)
+        )
+    ).scalars().first()
     if agent:
         return TenantScope(role="agent", user_id=uid, owner_user_id=uid, agent_id=agent.id)
 
-    # Client merchant?
+    # Client merchant? Deterministic lowest-id match (SEC-12), see above.
     client = (
-        await db.execute(select(Clients).where(Clients.user_id == uid))
-    ).scalar_one_or_none()
+        await db.execute(
+            select(Clients).where(Clients.user_id == uid).order_by(Clients.id.asc()).limit(1)
+        )
+    ).scalars().first()
     if client:
         return TenantScope(
             role="client",
@@ -113,8 +119,13 @@ async def resolve_tenant_scope(db: AsyncSession, current_user: UserResponse) -> 
     ).scalars().first()
     if staff and staff.user_id and staff.user_id != uid:
         owner_client = (
-            await db.execute(select(Clients).where(Clients.user_id == staff.user_id))
-        ).scalar_one_or_none()
+            await db.execute(
+                select(Clients)
+                .where(Clients.user_id == staff.user_id)
+                .order_by(Clients.id.asc())
+                .limit(1)
+            )
+        ).scalars().first()
         return TenantScope(
             role="client",
             user_id=uid,
