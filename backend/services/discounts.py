@@ -9,7 +9,10 @@ from models.discounts import Discounts
 from services.query_filter import apply_query_filters
 
 # SEC-17: columns a client may filter on via the list endpoint's ?query=.
-FILTERABLE_FIELDS = frozenset({"code", "id", "is_active", "type"})
+# ARC-05: ``client_id`` is filterable so list queries can be routed by the tenant
+# scope; the service's own ``user_id`` filter still bounds the result, so the
+# filter can only narrow within the caller's tenant, never cross it.
+FILTERABLE_FIELDS = frozenset({"code", "id", "is_active", "type", "client_id"})
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +62,21 @@ class DiscountsService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    async def create(self, data: Dict[str, Any], user_id: Optional[str] = None) -> Optional[Discounts]:
+    async def create(
+        self,
+        data: Dict[str, Any],
+        user_id: Optional[str] = None,
+        client_id: Optional[int] = None,
+    ) -> Optional[Discounts]:
         """Create a new discounts"""
         try:
             if user_id:
                 data['user_id'] = user_id
+            # ARC-05: stamp the owning merchant's client_id so the row scopes
+            # consistently with the core tables. The caller passes the resolved
+            # tenant scope's client_id; a payload value is never trusted.
+            if client_id is not None:
+                data['client_id'] = client_id
             obj = Discounts(**data)
             self.db.add(obj)
             await self.db.commit()

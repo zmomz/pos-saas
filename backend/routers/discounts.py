@@ -72,6 +72,8 @@ class DiscountsResponse(BaseModel):
     """Entity response schema"""
     id: int
     user_id: str
+    # ARC-05: the owning merchant's client id (null for legacy rows pre-backfill).
+    client_id: Optional[int] = None
     code: str
     type: str
     value: float
@@ -249,7 +251,11 @@ async def create_discounts(
     
     service = DiscountsService(db)
     try:
-        result = await service.create(data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
+        result = await service.create(
+            data.model_dump(),
+            user_id=(scope.owner_user_id or str(current_user.id)),
+            client_id=scope.client_id,
+        )
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create discounts")
         
@@ -321,7 +327,11 @@ async def create_discountss_batch(
     
     try:
         for item_data in request.items:
-            result = await service.create(item_data.model_dump(), user_id=(scope.owner_user_id or str(current_user.id)))
+            result = await service.create(
+                item_data.model_dump(),
+                user_id=(scope.owner_user_id or str(current_user.id)),
+                client_id=scope.client_id,
+            )
             if result:
                 results.append(result)
         
