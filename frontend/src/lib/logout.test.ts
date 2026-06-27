@@ -24,9 +24,11 @@ describe('logout (ISSUE-042)', () => {
     expect((client as unknown as { auth?: unknown }).auth).toBeUndefined();
   });
 
-  it('authApi.logout revokes the refresh token and clears both keys [AC1/AC2]', async () => {
+  it('authApi.logout revokes via the cookie and clears both keys [AC1/AC2]', async () => {
     localStorage.setItem('pos_auth_token', 'access-jwt');
-    localStorage.setItem('pos_refresh_token', 'refresh-jwt');
+    // FE-01: an old build may have left a refresh token in localStorage; logout
+    // must purge it. The token sent for revocation now rides the HttpOnly cookie.
+    localStorage.setItem('pos_refresh_token', 'legacy-refresh-jwt');
 
     let postedBody: Record<string, unknown> | null = null;
     server.use(
@@ -38,10 +40,11 @@ describe('logout (ISSUE-042)', () => {
 
     await authApi.logout();
 
-    // The refresh token is sent so the server revokes its jti — without this a
-    // subsequent /auth/refresh would resurrect the session.
-    expect(postedBody).toEqual({ refresh_token: 'refresh-jwt' });
-    // Both halves of the local session are cleared.
+    // No body token — the server revokes the jti from the HttpOnly refresh cookie
+    // (sent via withCredentials) and expires it; without revocation a subsequent
+    // /auth/refresh would resurrect the session.
+    expect(postedBody).toEqual({});
+    // Both halves of the local session are cleared (incl. any legacy refresh copy).
     expect(localStorage.getItem('pos_auth_token')).toBeNull();
     expect(localStorage.getItem('pos_refresh_token')).toBeNull();
   });

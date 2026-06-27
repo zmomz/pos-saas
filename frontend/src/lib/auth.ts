@@ -22,26 +22,28 @@ interface LoginResponse {
 
 const REFRESH_TOKEN_KEY = 'pos_refresh_token';
 
-function setRefreshToken(token?: string) {
-  if (token) localStorage.setItem(REFRESH_TOKEN_KEY, token);
-}
-
-function clearRefreshToken() {
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-}
-
-// Module-private: the only consumers are refreshAccessToken() and logout()
-// below. Nothing outside auth.ts reads the refresh token directly.
-function getRefreshToken(): string | null {
-  return localStorage.getItem(REFRESH_TOKEN_KEY);
+// FE-01: the refresh token now lives ONLY in an HttpOnly cookie the backend sets
+// on every token-minting endpoint (scoped to /api/v1/auth) — never in
+// localStorage, where any XSS could read it. Older builds did persist it here, so
+// purge any leftover copy whenever we touch the session.
+function purgeLegacyRefreshToken() {
+  try {
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+  } catch {
+    /* ignore storage errors */
+  }
 }
 
 class LocalAuthApi {
   private client: AxiosInstance;
 
   constructor() {
+    // withCredentials so the HttpOnly refresh cookie round-trips on the auth
+    // endpoints (Set-Cookie on login/register/refresh, sent back on
+    // refresh/logout). Requires same-origin in prod, or ALLOWED_ORIGINS set.
     this.client = axios.create({
       headers: { 'Content-Type': 'application/json' },
+      withCredentials: true,
     });
   }
 
@@ -77,7 +79,7 @@ class LocalAuthApi {
         { email, password }
       );
       setToken(response.data.token);
-      setRefreshToken(response.data.refresh_token);
+      purgeLegacyRefreshToken();
       return response.data.user;
     } catch (error) {
       throw new Error(
@@ -86,19 +88,22 @@ class LocalAuthApi {
     }
   }
 
-  /** Exchange the stored refresh token for a new access token. */
+  /**
+   * Mint a fresh access token. The refresh token is no longer held in JS — it
+   * rides the HttpOnly cookie, so we send an empty body with credentials and let
+   * the backend read it from there. Gated on an existing access token so a
+   * logged-out app makes no needless call.
+   */
   async refreshAccessToken(): Promise<boolean> {
-    const refresh = getRefreshToken();
-    if (!refresh) return false;
+    if (!getToken()) return false;
     try {
       const response = await this.client.post<{ token: string }>(
         `${this.getBaseURL()}/api/v1/auth/refresh`,
-        { refresh_token: refresh }
+        {}
       );
       setToken(response.data.token);
       return true;
     } catch {
-      clearRefreshToken();
       return false;
     }
   }
@@ -111,7 +116,7 @@ class LocalAuthApi {
         { email, password, name }
       );
       setToken(response.data.token);
-      setRefreshToken(response.data.refresh_token);
+      purgeLegacyRefreshToken();
       return response.data.user;
     } catch (error) {
       throw new Error(
@@ -123,20 +128,20 @@ class LocalAuthApi {
   /** Discard the local session and revoke the tokens server-side. */
   async logout(): Promise<void> {
     const token = getToken();
-    const refresh = getRefreshToken();
     try {
       await this.client.post(
         `${this.getBaseURL()}/api/v1/auth/logout`,
-        // Pass the refresh token so the server revokes it too — without this the
+        // The refresh token rides the HttpOnly cookie (sent via withCredentials);
+        // the server revokes it and expires the cookie. Without revocation the
         // session could be resurrected via /auth/refresh after logout.
-        refresh ? { refresh_token: refresh } : {},
+        {},
         token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
       );
     } catch {
       /* logout is best-effort */
     }
     clearToken();
-    clearRefreshToken();
+    purgeLegacyRefreshToken();
   }
 }
 
