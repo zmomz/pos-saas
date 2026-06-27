@@ -8,7 +8,7 @@ from core.config import settings
 from core.database import get_db
 from dependencies.auth import get_bearer_token, get_current_user
 from services.mfa import MfaService
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel
 from schemas.auth import (
     LoginRequest,
@@ -51,6 +51,46 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/v1/auth", tags=["authentication"])
 logger = logging.getLogger(__name__)
+
+# FE-01: the refresh token rides an HttpOnly cookie so the SPA never has to keep
+# it in JS-reachable storage (localStorage was XSS-readable). The cookie is
+# scoped to the auth endpoints (the only routes that consume it) to minimise its
+# exposure surface.
+REFRESH_COOKIE_NAME = "pos_refresh_token"
+REFRESH_COOKIE_PATH = "/api/v1/auth"
+
+
+def _refresh_cookie_max_age() -> int:
+    """Cookie lifetime (seconds) — kept in lockstep with the refresh-token TTL."""
+    return int(getattr(settings, "refresh_token_expire_minutes", 10080)) * 60
+
+
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    """Attach the refresh token as an HttpOnly / SameSite cookie (FE-01).
+
+    ``Secure`` is set everywhere except dev so the cookie is testable over
+    plain HTTP locally but never travels in clear in production.
+    """
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        max_age=_refresh_cookie_max_age(),
+        httponly=True,
+        secure=not _is_dev(),
+        samesite="lax",
+        path=REFRESH_COOKIE_PATH,
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    """Expire the refresh cookie on logout (FE-01)."""
+    response.delete_cookie(
+        key=REFRESH_COOKIE_NAME,
+        path=REFRESH_COOKIE_PATH,
+        httponly=True,
+        secure=not _is_dev(),
+        samesite="lax",
+    )
 
 
 async def _issue_login_response(
@@ -96,7 +136,12 @@ def _refresh_token_exp(refresh_token: str) -> Optional[int]:
 
 
 @router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def register(
+    payload: RegisterRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     """Register a new local user and return an access token.
 
     Note: in this multi-tenant POS, self-registered users default to the
@@ -121,11 +166,18 @@ async def register(payload: RegisterRequest, request: Request, db: AsyncSession 
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
-    return await _issue_login_response(service, user, request)
+    result = await _issue_login_response(service, user, request)
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
 
 
 @router.post("/login")
-async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     """Authenticate with email + password and return an access token.
 
     Repeated failed logins for the same (identifier, IP) are throttled to blunt
@@ -162,11 +214,18 @@ async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depe
         ticket = create_mfa_token({"sub": user.id})
         return MfaChallengeResponse(mfa_required=True, mfa_token=ticket)
 
-    return await _issue_login_response(service, user, request)
+    result = await _issue_login_response(service, user, request)
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
 
 
 @router.post("/login/mfa", response_model=LoginResponse)
-async def login_mfa(payload: MfaLoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+async def login_mfa(
+    payload: MfaLoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
     """Complete an MFA login: exchange the challenge ticket + a code for tokens (#81).
 
     ``code`` may be a current TOTP code or a single-use recovery code.
@@ -212,7 +271,9 @@ async def login_mfa(payload: MfaLoginRequest, request: Request, db: AsyncSession
         )
 
     await clear_login_attempts(db, throttle_subject, client_ip)
-    return await _issue_login_response(service, user, request)
+    result = await _issue_login_response(service, user, request)
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
 
 
 def _is_dev() -> bool:
@@ -255,10 +316,27 @@ async def reset_password(payload: PasswordResetConfirm, db: AsyncSession = Depen
 
 
 @router.post("/refresh", response_model=RefreshResponse)
-async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_db)):
-    """Exchange a valid refresh token for a new access token."""
+async def refresh_token(
+    request: Request,
+    response: Response,
+    body: RefreshRequest = Body(default=RefreshRequest()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Exchange a valid refresh token for a new access token.
+
+    FE-01: the token is taken from the request body when supplied (legacy/SPA
+    transition path) and otherwise from the HttpOnly ``pos_refresh_token``
+    cookie. The body takes precedence so an explicit token always wins.
+    """
+    refresh = body.refresh_token or request.cookies.get(REFRESH_COOKIE_NAME)
+    if not refresh:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="No refresh token provided",
+        )
+
     try:
-        claims = decode_access_token(payload.refresh_token)
+        claims = decode_access_token(refresh)
     except AccessTokenError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=exc.message)
 
@@ -295,6 +373,9 @@ async def refresh_token(payload: RefreshRequest, db: AsyncSession = Depends(get_
     sid = claims.get("jti")
     await touch_session(db, sid)
     token, expires_at, _ = await service.issue_app_token(user, sid=sid)
+    # Re-affirm the cookie so the browser keeps the refresh token after a refresh
+    # (a no-op for the legacy body path, which carries no cookie of its own).
+    _set_refresh_cookie(response, refresh)
     return RefreshResponse(token=token, expires_at=int(expires_at.timestamp()))
 
 
@@ -445,6 +526,8 @@ class LogoutRequest(BaseModel):
 
 @router.post("/logout")
 async def logout(
+    request: Request,
+    response: Response,
     body: LogoutRequest = Body(default=LogoutRequest()),
     token: str = Depends(get_bearer_token),
     db: AsyncSession = Depends(get_db),
@@ -477,9 +560,15 @@ async def logout(
     if claims.get("sid") and claims.get("sub"):
         await revoke_session(db, claims["sub"], claims["sid"])
 
-    if body and body.refresh_token:
+    # FE-01: the refresh token may arrive in the body (legacy) or the HttpOnly
+    # cookie. Revoke whichever is present so the session can't be resurrected via
+    # /auth/refresh, then expire the cookie.
+    refresh_value = (body.refresh_token if body else None) or request.cookies.get(
+        REFRESH_COOKIE_NAME
+    )
+    if refresh_value:
         try:
-            refresh_claims = decode_access_token(body.refresh_token)
+            refresh_claims = decode_access_token(refresh_value)
             await revoke_token(
                 db,
                 refresh_claims.get("jti"),
@@ -491,4 +580,5 @@ async def logout(
         except AccessTokenError:
             pass
 
+    _clear_refresh_cookie(response)
     return {"success": True}

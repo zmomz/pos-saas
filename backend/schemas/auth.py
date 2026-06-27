@@ -44,9 +44,14 @@ class LoginResponse(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    """Request body for exchanging a refresh token for a new access token."""
+    """Request body for exchanging a refresh token for a new access token.
 
-    refresh_token: str
+    ``refresh_token`` is optional (FE-01): the SPA sends it via the HttpOnly
+    refresh cookie instead of the body, so an empty body falls back to the
+    cookie. The body path is kept for backward compatibility.
+    """
+
+    refresh_token: Optional[str] = None
 
 
 class RefreshResponse(BaseModel):
