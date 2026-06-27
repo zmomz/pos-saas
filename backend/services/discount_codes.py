@@ -46,12 +46,17 @@ class DiscountCodesService:
         min_purchase: Optional[float] = None,
         starts_at: Optional[datetime] = None,
         ends_at: Optional[datetime] = None,
+        client_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Mint ``count`` unique codes in one batch and persist them.
 
         Returns ``{batch_id, count, codes:[DiscountCodes]}``. Each code is unique
         within the batch; uniqueness across the owner's existing codes is best-effort
         (collisions on a 10-char 32-symbol space are astronomically unlikely).
+
+        ARC-05: ``client_id`` is the resolved tenant scope's owning client, stamped
+        on every minted code so they scope consistently with the core tables; a
+        payload value is never trusted.
         """
         batch_id = uuid.uuid4().hex
         seen: set[str] = set()
@@ -63,6 +68,7 @@ class DiscountCodesService:
             seen.add(code)
             obj = DiscountCodes(
                 user_id=str(user_id),
+                client_id=client_id,
                 batch_id=batch_id,
                 code=code,
                 type=type,

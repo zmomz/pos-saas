@@ -32,6 +32,8 @@ class GenerateCodesRequest(BaseModel):
 class DiscountCodeResponse(BaseModel):
     id: int
     user_id: str
+    # ARC-05: the owning merchant's client id (null for legacy rows pre-backfill).
+    client_id: Optional[int] = None
     batch_id: str
     code: str
     type: str
@@ -86,6 +88,7 @@ async def generate_codes(
         min_purchase=data.min_purchase,
         starts_at=data.starts_at,
         ends_at=data.ends_at,
+        client_id=scope.client_id,
     )
     return result
 

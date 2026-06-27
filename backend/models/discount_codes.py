@@ -19,6 +19,10 @@ class DiscountCodes(Base):
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     user_id = Column(String, nullable=False, index=True)
+    # ARC-05: the owning merchant's client id, stamped at mint time so codes scope
+    # consistently with the core tables (products, transactions, …) instead of being
+    # user-scoped only. Nullable for legacy rows the backfill migration populates.
+    client_id = Column(Integer, nullable=True, index=True)
     # Codes are minted in batches; the batch id groups one generation run.
     batch_id = Column(String, nullable=False, index=True)
     code = Column(String, nullable=False, index=True)
