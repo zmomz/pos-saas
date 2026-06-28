@@ -32,7 +32,10 @@ def verify_moyasar_signature(
     Fail-closed: an unset/empty ``secret`` or a missing ``header_sig`` returns
     ``False`` so an unconfigured deployment rejects rather than trusting the body.
     """
-    if not secret or not header_sig:
+    if not secret or not header_sig or not header_sig.isascii():
+        # ``compare_digest`` raises TypeError on a non-ASCII str (which would
+        # surface as a 500); a real hex digest is always ASCII, so a non-ASCII
+        # header is simply a malformed signature — fail closed.
         return False
     expected = compute_moyasar_signature(raw_body, secret)
     return hmac.compare_digest(expected, header_sig)

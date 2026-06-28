@@ -30,11 +30,19 @@ from models.channel_orders import Channel_orders
 from models.clients import Clients
 from models.transactions import Transactions
 from models.zatca_documents import ZatcaDocuments
+from services.aggregator import verify_aggregator_signature
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def test_verify_aggregator_signature_rejects_non_ascii_without_raising():
+    # A non-ASCII signature header must fail closed (False -> 401), not raise
+    # TypeError inside hmac.compare_digest (-> 500). A real hex digest is ASCII.
+    assert verify_aggregator_signature("secret", b"{}", "deadbeefé") is False
+
+
+
 async def _set_vat(client_id: int, vat: str = "300000000000003"):
     async with db_manager.async_session_maker() as db:
         row = (await db.execute(select(Clients).where(Clients.id == client_id))).scalar_one()

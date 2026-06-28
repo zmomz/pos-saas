@@ -51,6 +51,13 @@ def test_verify_accepts_valid_signature_over_raw_body():
     assert verify_moyasar_signature(body, _sign(body), _SECRET) is True
 
 
+def test_verify_rejects_non_ascii_signature_without_raising():
+    # A non-ASCII signature header must fail closed (False -> 401), not blow up
+    # in hmac.compare_digest (which raises TypeError on non-ASCII str -> 500).
+    body = b'{"type":"payment_failed"}'
+    assert verify_moyasar_signature(body, "deadbeefé", _SECRET) is False
+
+
 # ------------------------------------------------------------- endpoint contract
 
 _QUOTA_URL = "/api/v1/tenant/quota/webhook"

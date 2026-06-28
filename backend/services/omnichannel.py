@@ -52,8 +52,13 @@ def verify_salla_signature(secret: Optional[str], raw_body: bytes, signature: Op
     """
     if not secret or not signature:
         return False
+    candidate = signature.strip().lower()
+    if not candidate.isascii():
+        # ``compare_digest`` raises TypeError on a non-ASCII str (-> 500); a real
+        # hex digest is always ASCII, so this is just a malformed signature.
+        return False
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, signature.strip().lower())
+    return hmac.compare_digest(expected, candidate)
 
 
 # ---------- Payload parsing (pure) ----------

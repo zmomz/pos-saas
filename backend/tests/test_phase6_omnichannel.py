@@ -25,6 +25,13 @@ from models.channel_orders import Channel_orders
 from models.client_features import Client_features
 from models.products import Products
 from models.transactions import Transactions
+from services.omnichannel import verify_salla_signature
+
+
+def test_verify_salla_signature_rejects_non_ascii_without_raising():
+    # A non-ASCII signature header must fail closed (False -> 401), not raise
+    # TypeError inside hmac.compare_digest (-> 500). A real hex digest is ASCII.
+    assert verify_salla_signature("secret", b"{}", "deadbeefé") is False
 
 
 async def _add_product_with_barcode(client_id, user_id, *, barcode, name="T-Shirt", quantity=10, price=100.0):
