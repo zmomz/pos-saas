@@ -9,6 +9,7 @@ import OnboardingTour from '@/components/OnboardingTour';
 import OfflineBanner from '@/components/states/OfflineBanner';
 import CommandPalette, { type PaletteGroup } from '@/components/dashboard/rx/CommandPalette';
 import { PageChromeProvider, useShellChrome } from '@/contexts/PageChromeContext';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   LayoutDashboard,
   Users,
@@ -213,35 +214,46 @@ const Shell: React.FC = () => {
           <X className="h-5 w-5" />
         </button>
 
-        {/* Nav icons */}
-        <nav className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto px-1 py-1">
-          {navItems.map((item, index) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={`${item.path}-${index}`}
-                to={item.path}
-                end={DASHBOARD_PATHS.has(item.path)}
-                onClick={() => setDrawerOpen(false)}
-                title={t(item.label)}
-                className={({ isActive }) =>
-                  cn(
-                    'group relative flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[14px] transition-all',
-                    isActive
-                      ? 'bg-gradient-to-br from-brand to-brand-700 text-white shadow-brand'
-                      : 'text-muted-foreground hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10'
-                  )
-                }
-              >
-                <Icon className="h-[21px] w-[21px]" />
-                {/* Hover tooltip (desktop rail only) */}
-                <span className="pointer-events-none absolute start-[54px] z-50 hidden whitespace-nowrap rounded-md bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background opacity-0 shadow-lg transition-opacity group-hover:opacity-100 lg:block">
-                  {t(item.label)}
-                </span>
-              </NavLink>
-            );
-          })}
-        </nav>
+        {/* Nav icons. overflow-x-hidden is required: overflow-y-auto would
+            otherwise compute overflow-x to `auto` too (CSS spec coupling) and
+            the rail would scroll horizontally toward the portalled tooltips. */}
+        <TooltipProvider delayDuration={0}>
+          <nav className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden px-1 py-1">
+            {navItems.map((item, index) => {
+              const Icon = item.icon;
+              return (
+                <Tooltip key={`${item.path}-${index}`}>
+                  <TooltipTrigger asChild>
+                    <NavLink
+                      to={item.path}
+                      end={DASHBOARD_PATHS.has(item.path)}
+                      onClick={() => setDrawerOpen(false)}
+                      aria-label={t(item.label)}
+                      className={({ isActive }) =>
+                        cn(
+                          'flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[14px] transition-all',
+                          isActive
+                            ? 'bg-gradient-to-br from-brand to-brand-700 text-white shadow-brand'
+                            : 'text-muted-foreground hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10'
+                        )
+                      }
+                    >
+                      <Icon className="h-[21px] w-[21px]" />
+                    </NavLink>
+                  </TooltipTrigger>
+                  {/* Portalled to <body>, so the label escapes the rail instead
+                      of widening it. Desktop only — mobile uses the drawer. */}
+                  <TooltipContent
+                    side={isRTL ? 'left' : 'right'}
+                    className="hidden font-semibold lg:block"
+                  >
+                    {t(item.label)}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })}
+          </nav>
+        </TooltipProvider>
 
         {/* Bottom controls */}
         <div className="flex w-full flex-col items-center gap-1.5 px-1">
