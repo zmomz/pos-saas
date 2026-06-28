@@ -69,35 +69,58 @@ async def get_bearer_token(
 async def _assert_account_active(db: AsyncSession, user_id: str) -> None:
     """Block suspended tenants from authenticating.
 
-    Tenancy-suspended clients (``clients.is_active = False``) must not be able to
-    use any authenticated endpoint. The suspension flag lives on the *owning*
-    merchant's ``Clients`` row, so we resolve the caller to their tenancy owner
-    first (exactly as ``resolve_tenant_scope`` does): a **staff** member has no
-    client row of their own, yet must inherit the owning merchant's suspension
-    (SEC-06). Master/agent accounts have no owner to suspend and stay unaffected.
-    Imported lazily to avoid a circular import at module load.
+    Two independent suspension flags gate every authenticated endpoint, both
+    resolved through the caller's :class:`TenantScope` so the staff→merchant and
+    merchant→agent mappings are computed in exactly one place:
+
+    - **SEC-06 — tenancy-suspended merchant** (``Clients.is_active = False``):
+      the merchant and any **staff** member operating under it (who has no client
+      row of their own) are blocked.
+    - **SEC-02 — quota-suspended agent** (``Agents.is_active = False``, set by the
+      quota dunning sweep when an agent fails to pay for his slot quota): the agent
+      himself AND every merchant provisioned under him go dark together (cascade,
+      #184). ``scope.agent_id`` is the caller's *owning* agent — his own id for an
+      agent self-login, the merchant's ``agent_id`` for a client/staff caller.
+
+    Master accounts have no owning merchant or agent (``owner_user_id`` /
+    ``agent_id`` are ``None``) and stay unaffected. Imported lazily to avoid a
+    circular import at module load.
     """
-    from dependencies.tenancy import resolve_owner_user_id
+    from dependencies.tenancy import resolve_tenant_scope
+    from models.agents import Agents
     from models.clients import Clients
 
-    # ``None`` => platform master (unrestricted, no client row). For everyone else
-    # this is the owning merchant's id — the caller's own id for a client/agent,
-    # the owning merchant's for a staff member.
-    owner_user_id = await resolve_owner_user_id(db, str(user_id))
-    if owner_user_id is None:
-        return
-
-    result = await db.execute(
-        select(Clients.is_active).where(Clients.user_id == str(owner_user_id))
+    scope = await resolve_tenant_scope(
+        db, UserResponse(id=str(user_id), email="", role="user")
     )
-    is_active = result.scalar_one_or_none()
-    # ``None`` => no client row (agent/master) => allowed. A row with is_active
-    # explicitly False => suspended.
-    if is_active is False:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account has been suspended. Contact your provider.",
-        )
+
+    # SEC-06: the owning merchant's row (``None`` for an agent/master => no merchant
+    # to suspend). An is_active that is explicitly False => suspended; NULL/True pass.
+    if scope.owner_user_id is not None:
+        client_active = (
+            await db.execute(
+                select(Clients.is_active).where(Clients.user_id == str(scope.owner_user_id))
+            )
+        ).scalar_one_or_none()
+        if client_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account has been suspended. Contact your provider.",
+            )
+
+    # SEC-02: the owning agent (``None`` for master => no agent to suspend). A
+    # suspended agent blocks himself and cascades to all his merchants.
+    if scope.agent_id is not None:
+        agent_active = (
+            await db.execute(
+                select(Agents.is_active).where(Agents.id == scope.agent_id)
+            )
+        ).scalar_one_or_none()
+        if agent_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account has been suspended. Contact your provider.",
+            )
 
 
 async def get_current_user(
