@@ -235,6 +235,15 @@ class FeatureToggleResponse(BaseModel):
     is_enabled: bool
 
 
+class ClientFeaturesResponse(BaseModel):
+    """Resolved feature flags for one client — every canonical key with its
+    effective on/off state (default-on unless an explicit row disables it). Lets
+    the agent UI render real toggle state instead of fabricating one."""
+
+    client_id: int
+    features: dict[str, bool]
+
+
 # ---------- Helper: Determine user role ----------
 async def get_user_role(db: AsyncSession, user_id: str) -> dict:
     """Determine user role based on database records"""
@@ -1498,6 +1507,43 @@ async def set_client_feature(
         feature_name=data.feature_name,
         is_enabled=data.is_enabled,
     )
+
+
+@router.get("/agent/clients/{client_id}/features", response_model=ClientFeaturesResponse)
+async def get_client_features(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: read the resolved feature flags for one of their clients (AG-03).
+
+    Returns every canonical key with its effective state — default-on unless an
+    explicit ``client_features`` row disables it — so the dashboard hydrates real
+    toggle state per client instead of assuming every switch is on.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    result = await db.execute(
+        select(Clients).where(
+            Clients.id == client_id, Clients.agent_id == role_info["entity_id"]
+        )
+    )
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    rows = await db.execute(
+        select(Client_features.feature_name, Client_features.is_enabled).where(
+            Client_features.client_id == client_id
+        )
+    )
+    stored = {name: bool(enabled) for name, enabled in rows.all()}
+    # Default-on: a key with no explicit row is enabled (mirrors is_feature_enabled).
+    features = {key: stored.get(key, True) for key in sorted(FEATURE_KEYS)}
+
+    return ClientFeaturesResponse(client_id=client_id, features=features)
 
 
 # ---------- Client Endpoints ----------

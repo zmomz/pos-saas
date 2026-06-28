@@ -1210,6 +1210,26 @@ export async function changePassword(currentPassword: string, newPassword: strin
   return response.data;
 }
 
+// Active login sessions for the current user (auth/sessions). Used to show the
+// real current-session details on the profile instead of a hardcoded row.
+export interface SessionInfo {
+  id: string;
+  current: boolean;
+  user_agent?: string | null;
+  ip_address?: string | null;
+  created_at?: string | null;
+  last_used_at?: string | null;
+}
+
+export async function getActiveSessions() {
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/auth/sessions',
+    method: 'GET',
+    data: {},
+  });
+  return response.data as { sessions: SessionInfo[] };
+}
+
 // Per-user profile + notification preferences (ISSUE-078, persisted server-side)
 export interface NotificationPrefs {
   email_alerts: boolean;
@@ -2383,6 +2403,18 @@ export async function setGlobalTaxRate(taxRate: number) {
     data: { tax_rate: taxRate },
   });
   return response.data;
+}
+
+// Agent: read the resolved per-client feature flags (AG-03). Every canonical key
+// with its effective on/off state (default-on unless explicitly disabled), so the
+// dashboard hydrates real toggle state per client instead of fabricating one.
+export async function getClientFeatures(clientId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/agent/clients/${clientId}/features`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data as { client_id: number; features: Record<string, boolean> };
 }
 
 // Agent: toggle a per-client feature flag at runtime (AG-03)

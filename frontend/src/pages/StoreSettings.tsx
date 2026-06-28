@@ -70,7 +70,10 @@ export default function StoreSettings() {
         phone,
         business_hours: hours,
       });
-      toast.success(t('save_changes'));
+      toast.success(t('settings_saved'));
+    } catch (err) {
+      console.error('Failed to save store settings:', err);
+      toast.error(err instanceof Error ? err.message : t('settings_save_failed'));
     } finally {
       setSaving(false);
     }

@@ -19,6 +19,7 @@ import {
 import { getCategories, createCategory, updateCategory, deleteCategory } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import ErrorState from '@/components/states/ErrorState';
 import { FolderTree, Folder, FolderOpen, Plus } from 'lucide-react';
 
 interface Category {
@@ -47,6 +48,7 @@ const emptyForm: CategoryFormData = {
 export default function CategoryManagement() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -62,12 +64,14 @@ export default function CategoryManagement() {
 
   async function loadCategories() {
     setLoading(true);
+    setLoadError(false);
     try {
       const data = await getCategories();
       setCategories(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('Failed to load categories:', err);
       setCategories([]);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -332,8 +336,10 @@ export default function CategoryManagement() {
         </Dialog>
       </PageHeading>
 
-      {/* Category Tree */}
-      {categories.length === 0 ? (
+      {/* Category Tree — a failed load shows an error+retry, never "none yet" */}
+      {loadError ? (
+        <ErrorState message={t('categories_load_error')} onRetry={loadCategories} />
+      ) : categories.length === 0 ? (
         <div className="dxr-tile flex flex-col items-center justify-center py-16 text-center text-muted-foreground">
           <FolderTree className="mb-3 h-12 w-12 opacity-25" />
           <p>{tt('no_categories_yet', 'No categories yet. Add your first category above.')}</p>
