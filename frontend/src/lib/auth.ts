@@ -51,17 +51,50 @@ class LocalAuthApi {
     return getAPIBaseURL();
   }
 
-  /** Return the current user, or null if not authenticated. */
+  /** GET /auth/me with an explicit bearer token. Throws on any non-2xx. */
+  private async fetchMe(token: string): Promise<AuthUser> {
+    const response = await this.client.get(`${this.getBaseURL()}/api/v1/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return response.data;
+  }
+
+  /**
+   * Return the current user, or null if not authenticated.
+   *
+   * This drives the app bootstrap (`AuthContext.checkAuthStatus`) and runs on a
+   * client with no response interceptor, so it must handle the expired-token
+   * case itself. ISSUE-192: on a fresh load past the access-token boundary the
+   * stored access token is stale but the HttpOnly refresh cookie is still valid;
+   * a bare 401 → clearToken would log the user out without ever trying the one
+   * path FE-01 added to rescue them. So on a 401 we attempt a single
+   * cookie-driven refresh and replay /auth/me before clearing the session.
+   */
   async getCurrentUser(): Promise<AuthUser | null> {
     const token = getToken();
     if (!token) return null;
     try {
-      const response = await this.client.get(`${this.getBaseURL()}/api/v1/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      return response.data;
+      return await this.fetchMe(token);
     } catch (error) {
       if (axios.isAxiosError(error) && error.response?.status === 401) {
+        // One refresh attempt; the cookie carries the refresh token.
+        if (await this.refreshAccessToken()) {
+          const refreshed = getToken();
+          if (refreshed) {
+            try {
+              return await this.fetchMe(refreshed);
+            } catch (retryError) {
+              if (axios.isAxiosError(retryError) && retryError.response?.status === 401) {
+                clearToken();
+                return null;
+              }
+              throw new Error(
+                (axios.isAxiosError(retryError) && retryError.response?.data?.detail) ||
+                  'Failed to get user info'
+              );
+            }
+          }
+        }
         clearToken();
         return null;
       }
