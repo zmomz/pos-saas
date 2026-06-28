@@ -44,6 +44,9 @@ backend/.coverage
 backend/coverage.xml
 backend/htmlcov/
 
+# ---- Scratch / playground (not part of the app) ----
+sandcastle-playground/
+
 # ---- Editor / OS ----
 .vscode/
 .idea/
