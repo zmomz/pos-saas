@@ -55,10 +55,15 @@ class LoginLockedOut(Exception):
 
 
 # SEC-15: cross-cutting counters live in the same table as the per-pair rows,
-# distinguished by a sentinel in the "other" key column. The sentinels carry a
-# NUL byte so they can never collide with a real email/identifier or IP address.
-_ACCOUNT_IP_SENTINEL = "\x00account-wide"  # ip_address slot of a per-account row
-_IP_IDENTIFIER_SENTINEL = "\x00ip-wide"    # identifier slot of a per-IP row
+# distinguished by a sentinel in the "other" key column. The sentinels are
+# collision-proof by construction: the identifier slot only ever holds a
+# normalised, validated email (always contains "@"), and the ip_address slot only
+# ever holds a server-derived request.client.host — neither can equal these
+# hyphenated tokens. (They previously carried a NUL byte for extra safety, but
+# Postgres/asyncpg reject 0x00 in text columns, which broke every login on
+# Postgres while passing on SQLite.)
+_ACCOUNT_IP_SENTINEL = "account-wide"  # ip_address slot of a per-account row
+_IP_IDENTIFIER_SENTINEL = "ip-wide"    # identifier slot of a per-IP row
 
 
 def _max_attempts() -> int:
