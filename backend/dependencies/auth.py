@@ -33,11 +33,17 @@ def _is_password_change_exempt(path: str) -> bool:
 async def _assert_password_changed(db: AsyncSession, user_id: str, path: str) -> None:
     """Block a force-flagged user from every non-exempt endpoint (SEC-07).
 
-    Called only when the presented token *claims* ``must_change_password``. The
-    live DB flag is re-read so a user who has just rotated their credential — which
-    clears the flag (``UserService.change_password``) without bumping the security
-    stamp — is unblocked immediately on their existing token, satisfying the
-    "flag cleared after change -> 200" guarantee.
+    The authoritative live DB flag is always re-read — the token's own
+    ``must_change_password`` claim is never trusted to decide whether to check
+    (#183). This covers two directions:
+
+    - **Admin-forced rotation** sets the flag on a user who already holds a live
+      access token whose claim is ``False``; that stale-claim token must still be
+      gated until the password is rotated.
+    - A user who has just rotated their credential — which clears the flag
+      (``UserService.change_password``) without bumping the security stamp — is
+      unblocked immediately on their existing (still ``True``-claiming) token,
+      satisfying the "flag cleared after change -> 200" guarantee.
     """
     if _is_password_change_exempt(path):
         return
@@ -150,10 +156,11 @@ async def get_current_user(
 
     await _assert_account_active(db, user_id)
 
-    # SEC-07: enforce the forced-password-change gate. Only flagged tokens pay the
-    # extra DB read; unflagged users (the common case) are untouched.
-    if bool(payload.get("must_change_password", False)):
-        await _assert_password_changed(db, user_id, request.url.path)
+    # SEC-07: enforce the forced-password-change gate. The cheap indexed DB read
+    # runs on every protected request so admin-forced rotation revokes a live
+    # token whose own claim is still ``False`` (#183); the stale token claim is
+    # never trusted to decide whether to check.
+    await _assert_password_changed(db, user_id, request.url.path)
 
     last_login_raw = payload.get("last_login")
     last_login = None
