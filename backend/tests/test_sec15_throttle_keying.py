@@ -20,6 +20,7 @@ from core.database import db_manager
 from services.login_throttle import (
     LoginLockedOut,
     assert_login_allowed,
+    clear_login_attempts,
     register_failed_login,
 )
 
@@ -73,6 +74,42 @@ async def test_spray_from_one_ip_across_accounts_locks_the_ip(monkeypatch):
         # ...while the very same account from a *different* IP is unaffected —
         # the lock is keyed on the source IP, not the account.
         assert not await _is_locked(db, "newcomer@example.com", "198.51.100.2")
+
+
+async def test_ip_spray_lock_survives_attacker_controlled_success(monkeypatch):
+    # ISSUE-190: a host spraying many accounts must not be able to wipe its own
+    # IP-wide lock by authenticating to a single account it controls.
+    monkeypatch.setattr(settings, "login_account_max_attempts", 100, raising=False)
+    monkeypatch.setattr(settings, "login_ip_max_attempts", 4, raising=False)
+
+    attacker_ip = "203.0.113.42"
+    async with db_manager.async_session_maker() as db:
+        # Spray four distinct accounts from the attacker IP — trips the per-IP lock.
+        for i in range(4):
+            await register_failed_login(db, f"spray{i}@example.com", attacker_ip)
+        assert await _is_locked(db, "victim@example.com", attacker_ip)
+
+        # The attacker now signs in successfully to an account it owns from the
+        # same IP. A genuine success clears that account's own counters, but it
+        # must NOT reset the IP-wide spray lock.
+        await clear_login_attempts(db, "attacker-owned@example.com", attacker_ip)
+        assert await _is_locked(db, "victim@example.com", attacker_ip)
+
+
+async def test_per_account_counter_still_clears_on_success(monkeypatch):
+    # The legitimate account owner's success must still relieve that account's
+    # own distributed-spray counter (the fix is scoped to the IP-wide row only).
+    monkeypatch.setattr(settings, "login_account_max_attempts", 4, raising=False)
+    monkeypatch.setattr(settings, "login_ip_max_attempts", 100, raising=False)
+
+    identifier = "owner@example.com"
+    async with db_manager.async_session_maker() as db:
+        for i in range(4):
+            await register_failed_login(db, identifier, f"10.1.0.{i}")
+        assert await _is_locked(db, identifier, "10.1.0.99")
+
+        await clear_login_attempts(db, identifier, "10.1.0.50")
+        assert not await _is_locked(db, identifier, "10.1.0.99")
 
 
 def test_per_ip_threshold_is_higher_than_per_account_by_default():

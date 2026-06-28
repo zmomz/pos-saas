@@ -206,18 +206,48 @@ async def register_failed_login(db: AsyncSession, identifier: str, ip_address: s
 async def clear_login_attempts(db: AsyncSession, identifier: str, ip_address: str) -> None:
     """Clear the failure counters after a successful login.
 
-    Drops the pair row, the account-wide row, and the IP-wide row. Clearing the
-    IP-wide counter on a *successful* sign-in is the NAT mitigation: a legitimate
-    user behind a shared IP relieves pressure that would otherwise lock the host.
+    Drops the pair row and the account-wide row outright — both are scoped to the
+    authenticating account, so only its legitimate owner can ever trigger this.
+
+    The IP-wide counter is the spray defense and is *not* reset (ISSUE-190): an
+    attacker spraying many accounts from one host could otherwise wipe the IP-wide
+    lock by signing in to a single account it controls. Instead it is *decayed* by
+    one — preserving the NAT-relief intent (a legitimate user behind a shared IP
+    still drains pressure over repeated sign-ins) while a single success can no
+    longer reset the counter. A currently-active IP lock is left untouched so it
+    survives an attacker-controlled success.
     """
     identifier = _normalize(identifier)
     ip_address = ip_address or "unknown"
     for ident, ip in (
         (identifier, ip_address),
         (identifier, _ACCOUNT_IP_SENTINEL),
-        (_IP_IDENTIFIER_SENTINEL, ip_address),
     ):
         row = await _get_row(db, ident, ip)
         if row is not None:
             await db.delete(row)
+
+    await _decay_ip_counter(db, ip_address)
     await db.commit()
+
+
+async def _decay_ip_counter(db: AsyncSession, ip_address: str) -> None:
+    """Drain one failure from the IP-wide spray counter on a successful login.
+
+    Never relieves a counter that is *currently locked* — an attacker-controlled
+    success must not lift an active spray lock (ISSUE-190). Below the lock, each
+    success drops the count by one, deleting the row once it reaches zero so the
+    table stays clean and a quiet host eventually returns to a pristine state.
+    """
+    row = await _get_row(db, _IP_IDENTIFIER_SENTINEL, ip_address)
+    if row is None:
+        return
+    now = datetime.now(timezone.utc)
+    if _row_locked_for(row, now) is not None:
+        return
+    new_count = (row.count or 0) - 1
+    if new_count <= 0:
+        await db.delete(row)
+    else:
+        row.count = new_count
+        row.locked_until = None
