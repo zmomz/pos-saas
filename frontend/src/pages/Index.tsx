@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -104,6 +104,14 @@ export default function Index() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
+          {mode === 'login' && (
+            <Link
+              to="/auth/password/forgot"
+              className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground self-end"
+            >
+              {t('forgot_password_link')}
+            </Link>
+          )}
         </div>
 
         {error && <p className="text-sm text-destructive">{error}</p>}

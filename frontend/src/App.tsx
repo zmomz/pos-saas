@@ -49,6 +49,8 @@ import DevicesSettings from './pages/DevicesSettings';
 import ReceiptTemplateDesigner from './pages/ReceiptTemplateDesigner';
 import CustomerDisplay from './pages/CustomerDisplay';
 import ForceResetPassword from './pages/ForceResetPassword';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import NotFound from './pages/NotFound';
 import ProtectedRoute from './components/ProtectedRoute';
 import DashboardLayout from './components/DashboardLayout';
@@ -93,6 +95,9 @@ const AppRoutes = () => (
     <Route path="/customer-display" element={<CustomerDisplay />} />
     {/* First-login force-password-change (consumes must_change_password) */}
     <Route path="/force-reset" element={<ForceResetPassword />} />
+    {/* Self-service forgot/reset password (#199, parity #3) */}
+    <Route path="/auth/password/forgot" element={<ForgotPassword />} />
+    <Route path="/auth/password/reset" element={<ResetPassword />} />
 
     {/* Master admin routes */}
     <Route
