@@ -1244,6 +1244,95 @@ export async function saveUserPreferences(prefs: {
   return response.data;
 }
 
+// Two-step verification (TOTP) + active sessions — ISSUE-202.
+// Backs the MFA enroll/activate/status flow (backend #81) and the active-session
+// list/revoke management (backend #83). The login-time MFA challenge is exchanged
+// on the unauthenticated auth client in `lib/auth.ts`; everything here runs with
+// the caller's bearer token.
+
+export interface MfaStatus {
+  enabled: boolean;
+  recovery_codes_remaining: number;
+}
+
+export interface MfaEnrollment {
+  /** base32 shared secret to type into an authenticator app. */
+  secret: string;
+  /** otpauth://totp/… provisioning URI (for a QR / deep link). */
+  otpauth_uri: string;
+  enabled: boolean;
+}
+
+export interface MfaActivation {
+  enabled: boolean;
+  /** Single-use backup codes — shown once, on activation. */
+  recovery_codes: string[];
+}
+
+export async function getMfaStatus(): Promise<MfaStatus> {
+  const response = await client.apiCall.invoke<MfaStatus>({
+    url: '/api/v1/auth/mfa/status',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+export async function enrollMfa(): Promise<MfaEnrollment> {
+  const response = await client.apiCall.invoke<MfaEnrollment>({
+    url: '/api/v1/auth/mfa/enroll',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+export async function activateMfa(code: string): Promise<MfaActivation> {
+  const response = await client.apiCall.invoke<MfaActivation>({
+    url: '/api/v1/auth/mfa/activate',
+    method: 'POST',
+    data: { code },
+  });
+  return response.data;
+}
+
+export interface SessionInfo {
+  /** Refresh-token id — pass to revokeSession to end this session. */
+  id: string;
+  /** The session this access token was minted from. */
+  current: boolean;
+  user_agent: string | null;
+  ip_address: string | null;
+  created_at: string | null;
+  last_used_at: string | null;
+}
+
+export async function getActiveSessions(): Promise<SessionInfo[]> {
+  const response = await client.apiCall.invoke<{ sessions: SessionInfo[] }>({
+    url: '/api/v1/auth/sessions',
+    method: 'GET',
+    data: {},
+  });
+  return response.data.sessions;
+}
+
+export async function revokeSession(sessionId: string): Promise<void> {
+  await client.apiCall.invoke({
+    url: `/api/v1/auth/sessions/${sessionId}`,
+    method: 'DELETE',
+    data: {},
+  });
+}
+
+export async function revokeOtherSessions(): Promise<number> {
+  const response = await client.apiCall.invoke<{ success: boolean; revoked: number }>({
+    url: '/api/v1/auth/sessions/others',
+    method: 'DELETE',
+    data: {},
+  });
+  return response.data.revoked;
+}
+
 // Merchant store settings (ISSUE-079) — the store-level identity + operational
 // defaults that feed every receipt/invoice: VAT/CR numbers, receipt footer, the
 // branch profile and business hours. Persisted server-side at

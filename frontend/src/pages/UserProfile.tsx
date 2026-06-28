@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check } from 'lucide-react';
 import { changePassword, getUserPreferences, saveUserPreferences, type NotificationPrefs } from '@/lib/api';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import MfaSettings from '@/components/auth/MfaSettings';
+import SessionManager from '@/components/auth/SessionManager';
 
 export default function UserProfile() {
   const { language, setLanguage, t, tt } = useLanguage();
@@ -201,19 +202,22 @@ export default function UserProfile() {
           ))}
         </div>
 
-        {/* Session Info */}
-        <div className="dxr-tile space-y-3">
+        {/* Security & Sessions */}
+        <div className="dxr-tile space-y-4">
           <h2 className="text-foreground flex items-center gap-2 font-semibold">
             <Shield className="h-5 w-5 text-danger" />
             {tt('security_and_sessions', 'Security & Sessions')}
           </h2>
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <p className="text-foreground text-sm font-medium">{tt('current_session', 'Current Session')}</p>
-              <p className="text-muted-foreground text-xs">{tt('active_now', 'Active now')}</p>
-            </div>
-            <Badge className="pill-success">{tt('active', 'Active')}</Badge>
+
+          {/* Two-step verification (ISSUE-202) */}
+          <MfaSettings />
+
+          {/* Real active sessions + revoke (ISSUE-202) — replaces the static
+              "Active now" placeholder that always claimed one live session. */}
+          <div className="border-t border-border pt-4">
+            <SessionManager />
           </div>
+
           <div className="py-2 border-t border-border space-y-3">
             <p className="text-foreground text-sm font-medium">{t('change_password')}</p>
             <Input

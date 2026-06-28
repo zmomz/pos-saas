@@ -14,6 +14,18 @@ import UserProfile from './UserProfile';
 const BASE = 'http://127.0.0.1:8000/api/v1';
 const PREFS_URL = `${BASE}/users/preferences`;
 
+// ISSUE-202 — the Security card now loads two-step status + active sessions on
+// mount; stub them so the prefs-focused assertions here don't trip the
+// onUnhandledRequest guard.
+function stubSecurity() {
+  server.use(
+    http.get(`${BASE}/auth/mfa/status`, () =>
+      HttpResponse.json({ enabled: false, recovery_codes_remaining: 0 })
+    ),
+    http.get(`${BASE}/auth/sessions`, () => HttpResponse.json({ sessions: [] }))
+  );
+}
+
 function renderPage() {
   return render(
     <MemoryRouter>
@@ -32,6 +44,7 @@ afterAll(() => server.close());
 
 describe('UserProfile server persistence', () => {
   it('loads the persisted profile from the server on mount', async () => {
+    stubSecurity();
     server.use(
       http.get(PREFS_URL, () =>
         HttpResponse.json({
@@ -55,6 +68,7 @@ describe('UserProfile server persistence', () => {
 
   it('saves the profile to the server via PUT', async () => {
     let putBody: any = null;
+    stubSecurity();
     server.use(
       http.get(PREFS_URL, () =>
         HttpResponse.json({

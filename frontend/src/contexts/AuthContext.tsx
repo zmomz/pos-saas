@@ -17,11 +17,21 @@ interface User {
   last_login?: string;
 }
 
+// `login` resolves to an MFA challenge instead of signing in when the account has
+// two-step verification enabled (ISSUE-202); the caller then collects a code and
+// calls `completeMfaLogin` with the returned ticket.
+export interface LoginOutcome {
+  mfaRequired: boolean;
+  /** Set when `mfaRequired` is true — the ticket to pass to completeMfaLogin. */
+  mfaToken?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<LoginOutcome>;
+  completeMfaLogin: (mfaToken: string, code: string) => Promise<void>;
   register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => Promise<void>;
   refetch: () => Promise<void>;
@@ -94,9 +104,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<LoginOutcome> => {
     setError(null);
-    const userData = await authApi.login(email, password);
+    const result = await authApi.login(email, password);
+    // MFA-enabled account: don't sign in yet — hand the ticket back so the caller
+    // can challenge for a second factor.
+    if (result.mfaRequired) {
+      return { mfaRequired: true, mfaToken: result.mfaToken };
+    }
+    const role = await resolveTenancyRole();
+    setUser({ ...(result.user as User), role });
+    return { mfaRequired: false };
+  };
+
+  const completeMfaLogin = async (mfaToken: string, code: string) => {
+    setError(null);
+    const userData = await authApi.completeMfaLogin(mfaToken, code);
     const role = await resolveTenancyRole();
     setUser({ ...userData, role });
   };
@@ -128,6 +151,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loading,
     error,
     login,
+    completeMfaLogin,
     register,
     logout,
     refetch: checkAuthStatus,

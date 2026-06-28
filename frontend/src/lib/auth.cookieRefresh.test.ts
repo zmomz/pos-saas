@@ -36,9 +36,12 @@ describe('FE-01 — refresh token lives only in the HttpOnly cookie', () => {
       )
     );
 
-    const user = await authApi.login('a@b.c', 'pw');
+    const result = await authApi.login('a@b.c', 'pw');
 
-    expect(user.email).toBe('a@b.c');
+    // ISSUE-202: login now returns a result wrapper (so it can also signal an MFA
+    // challenge); a no-MFA account resolves to the signed-in user.
+    expect(result.mfaRequired).toBe(false);
+    expect(result.user?.email).toBe('a@b.c');
     expect(getToken()).toBe('access-1');
     expect(localStorage.getItem(REFRESH_KEY)).toBeNull();
   });

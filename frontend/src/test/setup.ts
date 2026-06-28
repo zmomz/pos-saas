@@ -60,3 +60,10 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.setPointerCapture = vi.fn();
   Element.prototype.releasePointerCapture = vi.fn();
 }
+
+// jsdom doesn't implement elementFromPoint, which `input-otp` polls on a timer
+// for its password-manager badge — without it the OTP field (ISSUE-202) throws
+// an unhandled error after the test completes.
+if (!document.elementFromPoint) {
+  document.elementFromPoint = () => null;
+}

@@ -44,7 +44,14 @@ function stubPrefs() {
           transaction_alerts: true,
         },
       })
-    )
+    ),
+    // ISSUE-202 — the Security card loads two-step status + active sessions on
+    // mount; stub them so the password-focused assertions don't trip the
+    // onUnhandledRequest guard.
+    http.get(`${BASE}/auth/mfa/status`, () =>
+      HttpResponse.json({ enabled: false, recovery_codes_remaining: 0 })
+    ),
+    http.get(`${BASE}/auth/sessions`, () => HttpResponse.json({ sessions: [] }))
   );
 }
 

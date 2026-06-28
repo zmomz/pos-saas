@@ -20,6 +20,30 @@ interface LoginResponse {
   user: AuthUser;
 }
 
+// /auth/login answers with tokens when the account has no second factor, or with
+// a short-lived MFA ticket when it does (ISSUE-202, backend #81). The caller must
+// branch on `mfaRequired` and, when set, exchange the ticket + a code at
+// `/auth/login/mfa`.
+interface MfaChallenge {
+  mfa_required: true;
+  mfa_token: string;
+}
+
+// Flat result rather than a discriminated union: this codebase compiles with
+// `strict: false`, where union narrowing on a boolean discriminant doesn't apply,
+// so callers read the optional field that matches `mfaRequired`.
+export interface LoginResult {
+  mfaRequired: boolean;
+  /** Set when `mfaRequired` is false — the signed-in user. */
+  user?: AuthUser;
+  /** Set when `mfaRequired` is true — ticket to exchange at completeMfaLogin. */
+  mfaToken?: string;
+}
+
+function isMfaChallenge(data: LoginResponse | MfaChallenge): data is MfaChallenge {
+  return (data as MfaChallenge).mfa_required === true;
+}
+
 const REFRESH_TOKEN_KEY = 'pos_refresh_token';
 
 // FE-01: the refresh token now lives ONLY in an HttpOnly cookie the backend sets
@@ -104,19 +128,49 @@ class LocalAuthApi {
     }
   }
 
-  /** Email/password login. Stores the JWT and returns the user. */
-  async login(email: string, password: string): Promise<AuthUser> {
+  /**
+   * Email/password login. On success stores the JWT and returns the user; if the
+   * account has two-step verification enabled the backend returns a challenge
+   * instead of tokens, which we surface as `{ mfaRequired: true, mfaToken }` so
+   * the caller can prompt for a code (ISSUE-202). No token is stored until the
+   * second factor is verified at `completeMfaLogin`.
+   */
+  async login(email: string, password: string): Promise<LoginResult> {
     try {
-      const response = await this.client.post<LoginResponse>(
+      const response = await this.client.post<LoginResponse | MfaChallenge>(
         `${this.getBaseURL()}/api/v1/auth/login`,
         { email, password }
+      );
+      if (isMfaChallenge(response.data)) {
+        return { mfaRequired: true, mfaToken: response.data.mfa_token };
+      }
+      setToken(response.data.token);
+      purgeLegacyRefreshToken();
+      return { mfaRequired: false, user: response.data.user };
+    } catch (error) {
+      throw new Error(
+        (axios.isAxiosError(error) && error.response?.data?.detail) || 'Invalid email or password'
+      );
+    }
+  }
+
+  /**
+   * Complete a two-step login: exchange the challenge ticket + a code (a current
+   * TOTP code or a single-use recovery code) for tokens. Stores the JWT and
+   * returns the user (ISSUE-202).
+   */
+  async completeMfaLogin(mfaToken: string, code: string): Promise<AuthUser> {
+    try {
+      const response = await this.client.post<LoginResponse>(
+        `${this.getBaseURL()}/api/v1/auth/login/mfa`,
+        { mfa_token: mfaToken, code }
       );
       setToken(response.data.token);
       purgeLegacyRefreshToken();
       return response.data.user;
     } catch (error) {
       throw new Error(
-        (axios.isAxiosError(error) && error.response?.data?.detail) || 'Invalid email or password'
+        (axios.isAxiosError(error) && error.response?.data?.detail) || 'Invalid verification code'
       );
     }
   }
