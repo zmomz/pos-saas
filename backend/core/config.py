@@ -39,6 +39,17 @@ class Settings(BaseSettings):
     # falls back to localhost only.
     allowed_origins: str = ""
 
+    # ISSUE-185: refresh-cookie SameSite policy. The default (False) keeps the
+    # FE-01 same-origin posture — SameSite=Lax, which rides same-origin XHR and
+    # resists CSRF. Set REFRESH_COOKIE_CROSS_SITE=true ONLY when the SPA and API
+    # are served on different sites: the cookie then becomes SameSite=None;Secure
+    # (the sole combination a browser sends on cross-site credentialed XHR), so
+    # /auth/refresh keeps working across the origin split. Cross-site mode is
+    # meaningless without credentialed CORS pinned to explicit origins, so
+    # validate_secrets() refuses a prod boot that enables it while ALLOWED_ORIGINS
+    # is empty (a wildcard origin can't carry credentials).
+    refresh_cookie_cross_site: bool = False
+
     # Master/admin bootstrap account (seeded on startup if it does not exist)
     admin_email: str = ""
     admin_password: str = ""
@@ -196,6 +207,7 @@ def validate_secrets() -> None:
     """
     _validate_jwt_secret()
     _validate_secrets_encryption_key()
+    _validate_cookie_policy()
 
 
 def _validate_jwt_secret() -> None:
@@ -229,6 +241,41 @@ def _validate_jwt_secret() -> None:
     raise RuntimeError(
         f"Refusing to start: the JWT secret {reason}. Set a strong, unique "
         f"JWT_SECRET_KEY (>= {MIN_JWT_SECRET_LENGTH} characters) in the environment."
+    )
+
+
+def _validate_cookie_policy() -> None:
+    """Guard the ISSUE-185 cross-site refresh-cookie invariant.
+
+    Cross-site mode emits ``SameSite=None`` so the refresh cookie rides
+    cross-site credentialed XHR, but the browser only attaches it when CORS
+    answers that XHR with credentials — and credentialed CORS is impossible
+    against a wildcard origin. So enabling cross-site mode without an explicit
+    ``ALLOWED_ORIGINS`` list silently re-breaks refresh exactly as the same-site
+    Lax cookie did. In production we refuse to boot on that contradiction; in dev
+    we only warn so local cross-site experiments stay frictionless.
+    """
+    if not getattr(settings, "refresh_cookie_cross_site", False):
+        return  # Same-origin default imposes no extra requirement.
+
+    if (getattr(settings, "allowed_origins", "") or "").strip():
+        return  # Explicit credentialed origins configured — invariant holds.
+
+    if _is_dev():
+        logger.warning(
+            "REFRESH_COOKIE_CROSS_SITE is on but ALLOWED_ORIGINS is empty; "
+            "cross-site refresh needs credentialed CORS pinned to explicit "
+            "origins. Set ALLOWED_ORIGINS before production."
+        )
+        return
+
+    raise RuntimeError(
+        "Refusing to start: REFRESH_COOKIE_CROSS_SITE is enabled but "
+        "ALLOWED_ORIGINS is empty. A SameSite=None refresh cookie is only sent "
+        "on cross-site XHR that CORS answers with credentials, which requires "
+        "explicit origins (a wildcard cannot carry credentials). Set "
+        "ALLOWED_ORIGINS, or disable REFRESH_COOKIE_CROSS_SITE for a same-origin "
+        "deployment."
     )
 
 

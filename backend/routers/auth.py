@@ -65,31 +65,52 @@ def _refresh_cookie_max_age() -> int:
     return int(getattr(settings, "refresh_token_expire_minutes", 10080)) * 60
 
 
-def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
-    """Attach the refresh token as an HttpOnly / SameSite cookie (FE-01).
+def _refresh_cookie_security() -> tuple[str, bool]:
+    """Resolve ``(SameSite, Secure)`` for the refresh cookie (ISSUE-185).
 
-    ``Secure`` is set everywhere except dev so the cookie is testable over
-    plain HTTP locally but never travels in clear in production.
+    Default (same-origin deployment): ``SameSite=Lax`` — it rides same-origin XHR
+    and resists CSRF — with ``Secure`` everywhere but dev so the cookie is
+    testable over plain HTTP locally yet never travels in clear in production.
+
+    Cross-site mode (``REFRESH_COOKIE_CROSS_SITE=true``, for a SPA/API origin
+    split): ``SameSite=None`` so the cookie is sent on cross-site credentialed
+    XHR, which browsers only honor alongside ``Secure`` — so ``Secure`` is forced
+    on regardless of ``ENVIRONMENT``. Pair with credentialed CORS pinned to
+    explicit origins (enforced at boot by ``validate_secrets``).
     """
+    if getattr(settings, "refresh_cookie_cross_site", False):
+        return "none", True
+    return "lax", not _is_dev()
+
+
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    """Attach the refresh token as an HttpOnly / SameSite cookie (FE-01)."""
+    samesite, secure = _refresh_cookie_security()
     response.set_cookie(
         key=REFRESH_COOKIE_NAME,
         value=refresh_token,
         max_age=_refresh_cookie_max_age(),
         httponly=True,
-        secure=not _is_dev(),
-        samesite="lax",
+        secure=secure,
+        samesite=samesite,
         path=REFRESH_COOKIE_PATH,
     )
 
 
 def _clear_refresh_cookie(response: Response) -> None:
-    """Expire the refresh cookie on logout (FE-01)."""
+    """Expire the refresh cookie on logout (FE-01).
+
+    Mirrors the live cookie's SameSite/Secure attributes (ISSUE-185) so the
+    browser matches and actually drops it under both same-origin and cross-site
+    policies.
+    """
+    samesite, secure = _refresh_cookie_security()
     response.delete_cookie(
         key=REFRESH_COOKIE_NAME,
         path=REFRESH_COOKIE_PATH,
         httponly=True,
-        secure=not _is_dev(),
-        samesite="lax",
+        secure=secure,
+        samesite=samesite,
     )
 
 
