@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, saveSubscriptionCard, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
+import { getClientDashboard, getClientBranding, getClientProfile, getTransactions, getClientSubscription, payClientSubscription, saveSubscriptionCard, downloadSubscriptionInvoice, type SubscriptionStatus, type BusinessType } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { notifyError } from '@/lib/notify';
 import { formatMoney, formatDate, currencyLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
+import ErrorState from '@/components/states/ErrorState';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
 import {
-  DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag,
-  BarChart3, Users, Download, AlertTriangle, ArrowRight, Receipt, CreditCard,
+  DollarSign, Monitor, ShoppingBag, BarChart3, Users, Download, AlertTriangle,
+  ArrowRight, CreditCard, UtensilsCrossed, ChefHat, Layers,
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -40,7 +41,11 @@ export default function ClientDashboard() {
   // SubscriptionStatus does not expose the saved card, so we reflect a just-saved
   // card locally (Rail 2 — merchant card-on-file).
   const [savedCard, setSavedCard] = useState<{ last4: string; brand: string } | null>(null);
+  const [businessType, setBusinessType] = useState<BusinessType>('retail');
   const [loading, setLoading] = useState(true);
+  // H4 — the KPI block is sourced from a single endpoint; when it fails we show
+  // an ErrorState + retry instead of rendering fabricated all-zero headline KPIs.
+  const [error, setError] = useState(false);
   const navigate = useNavigate();
   const { t, language } = useLanguage();
 
@@ -49,22 +54,33 @@ export default function ClientDashboard() {
   }, []);
 
   async function loadData() {
+    setLoading(true);
+    setError(false);
+    // The dashboard stats are the page's headline KPIs — if they can't load we
+    // refuse to show zeros, so this fetch is the one that gates the page.
+    let dashData;
     try {
-      const [dashData, brandData, txData, subData] = await Promise.all([
-        getClientDashboard(),
-        getClientBranding().catch(() => null),
-        getTransactions(1, 10),
-        getClientSubscription().catch(() => null),
-      ]);
-      setStats(dashData);
-      setBrandName(brandData?.company_name || '');
-      setTransactions(Array.isArray(txData) ? txData : (txData?.items || txData?.transactions || []));
-      setSubscription(subData);
+      dashData = await getClientDashboard();
     } catch (err) {
-      console.error('Failed to load:', err);
-    } finally {
+      console.error('Failed to load dashboard:', err);
+      setError(true);
       setLoading(false);
+      return;
     }
+    setStats(dashData);
+    // Everything below is best-effort context around the KPIs — a failure here
+    // degrades one panel, it never fakes the headline numbers.
+    const [profileData, brandData, txData, subData] = await Promise.all([
+      getClientProfile().catch(() => null),
+      getClientBranding().catch(() => null),
+      getTransactions(1, 10).catch(() => [] as Transaction[]),
+      getClientSubscription().catch(() => null),
+    ]);
+    setBusinessType(profileData?.business_type || 'retail');
+    setBrandName(brandData?.company_name || '');
+    setTransactions(Array.isArray(txData) ? txData : (txData?.items || txData?.transactions || []));
+    setSubscription(subData);
+    setLoading(false);
   }
 
   async function handleSaveCard(token: CardOnFileToken) {
@@ -84,9 +100,27 @@ export default function ClientDashboard() {
     }
   }
 
+  // CL-02 / H4 — a restaurant (or "both") merchant runs a floor, kitchen and
+  // menu; a retail merchant runs a catalog. The dashboard speaks the matching
+  // vocabulary and points its shortcuts at the matching workspaces.
+  const isRestaurant = businessType === 'restaurant' || businessType === 'both';
+
+  // Restaurant-first vs retail-first quick actions (shared by the chip row and ⌘K).
+  const quickActions = isRestaurant
+    ? [
+        { icon: UtensilsCrossed, label: t('floor_map'), path: '/floor' },
+        { icon: ChefHat, label: t('kds'), path: '/kds' },
+        { icon: Layers, label: t('menu_builder'), path: '/menu-builder' },
+      ]
+    : [
+        { icon: ShoppingBag, label: t('manage_products') || t('products'), path: '/products' },
+        { icon: BarChart3, label: t('reports_analytics') || t('reports'), path: '/reports' },
+        { icon: Users, label: t('staff'), path: '/staff' },
+      ];
+
   usePageChrome(
     {
-      subtitle: `${brandName ? `${brandName} · ` : ''}${t('recent_transactions')}`,
+      subtitle: `${brandName ? `${brandName} · ` : ''}${isRestaurant ? t('recent_orders') : t('recent_transactions')}`,
       primaryAction: (
         <Button onClick={() => navigate('/pos')} className="h-11 rounded-[10px] shadow-brand">
           <Monitor className="h-4 w-4" />
@@ -98,14 +132,12 @@ export default function ClientDashboard() {
           label: t('cmd_quick_actions'),
           items: [
             { icon: Monitor, label: t('go_to_pos') || 'Open POS', kbd: 'P', onSelect: () => navigate('/pos') },
-            { icon: ShoppingBag, label: t('products') || 'Products', onSelect: () => navigate('/products') },
-            { icon: BarChart3, label: t('reports') || 'Reports', onSelect: () => navigate('/reports') },
-            { icon: Users, label: t('staff') || 'Staff', onSelect: () => navigate('/staff') },
+            ...quickActions.map((a) => ({ icon: a.icon, label: a.label, onSelect: () => navigate(a.path) })),
           ],
         },
       ],
     },
-    [language, brandName]
+    [language, brandName, isRestaurant]
   );
 
   if (loading) {
@@ -116,9 +148,24 @@ export default function ClientDashboard() {
     );
   }
 
+  // H4 — never paint all-zero KPIs over a failed load; tell the truth and offer retry.
+  if (error) {
+    return (
+      <ErrorState
+        message={t('dashboard_load_error')}
+        description={t('dashboard_load_error_desc')}
+        onRetry={loadData}
+      />
+    );
+  }
+
   const todaySales = stats?.today_sales || 0;
   const todayTx = stats?.today_transactions || 0;
   const avgTicket = todayTx > 0 ? todaySales / todayTx : 0;
+  // Restaurant counts checks/orders with an "average check"; retail counts
+  // transactions with an "average ticket".
+  const txCountLabel = isRestaurant ? t('orders') : (t('total_transactions') || 'Transactions');
+  const avgLabel = isRestaurant ? t('avg_check') : t('avg_ticket');
   // Currency label placement matches formatMoney: trailing in RTL, leading otherwise.
   const curProps = language === 'ar' || language === 'ur'
     ? { suffix: ` ${currencyLabel(language)}` }
@@ -174,7 +221,7 @@ export default function ClientDashboard() {
               <div className="mt-2 text-[clamp(30px,3.6vw,44px)] font-extrabold leading-none tracking-tight tabular-nums">
                 <CountUp value={todaySales} {...curProps} />
               </div>
-              <div className="mt-1.5 text-[13px] text-white/65">{todayTx} {t('total_transactions') || 'transactions'} · {t('avg_ticket') || 'avg'} {formatMoney(avgTicket, language)}</div>
+              <div className="mt-1.5 text-[13px] text-white/65">{todayTx} {txCountLabel.toLowerCase()} · {avgLabel.toLowerCase()} {formatMoney(avgTicket, language)}</div>
             </div>
           </div>
           <div className="mt-auto">
@@ -202,7 +249,7 @@ export default function ClientDashboard() {
 
         {/* KPI chips */}
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
-          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('total_transactions') || 'Transactions'}</div>
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{txCountLabel}</div>
           <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_transactions || 0} /></div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{todayTx} {t('today') || 'today'}</div>
         </section>
@@ -212,22 +259,22 @@ export default function ClientDashboard() {
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('all_time') || 'all time'}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
-          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('avg_ticket') || 'Avg Ticket'}</div>
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{avgLabel}</div>
           <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{formatMoney(avgTicket, language)}</div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('today') || 'today'}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
-          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('products_count') || 'Products'}</div>
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{isRestaurant ? t('menu_items') : t('products_count')}</div>
           <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.products_count || 0} /></div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('active') || 'active'}</div>
         </section>
       </div>
 
-      {/* Quick actions */}
+      {/* Quick actions — adapt to the merchant's business type */}
       <div data-tour="quick-actions" className="flex flex-wrap gap-2.5">
-        <button onClick={() => navigate('/products')} className="chip-link"><ShoppingBag className="h-4 w-4" /> {t('manage_products') || 'Products'}</button>
-        <button onClick={() => navigate('/reports')} className="chip-link"><BarChart3 className="h-4 w-4" /> {t('reports_analytics') || 'Reports'}</button>
-        <button onClick={() => navigate('/staff')} className="chip-link"><Users className="h-4 w-4" /> {t('staff') || 'Staff'}</button>
+        {quickActions.map((a) => (
+          <button key={a.path} onClick={() => navigate(a.path)} className="chip-link"><a.icon className="h-4 w-4" /> {a.label}</button>
+        ))}
       </div>
 
       {/* Subscription + transactions */}
@@ -302,7 +349,7 @@ export default function ClientDashboard() {
         {/* Recent transactions */}
         <div className="dxr-tile p-0">
           <div className="flex items-center justify-between px-5 pb-3 pt-5">
-            <h2 className="text-[16px] font-extrabold tracking-tight">{t('recent_transactions') || 'Recent Transactions'}</h2>
+            <h2 className="text-[16px] font-extrabold tracking-tight">{isRestaurant ? t('recent_orders') : (t('recent_transactions') || 'Recent Transactions')}</h2>
             <button onClick={() => navigate('/reports')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{t('view_all') || 'View all'} <ArrowRight className="h-[15px] w-[15px]" /></button>
           </div>
           <div className="overflow-x-auto px-2 pb-2">

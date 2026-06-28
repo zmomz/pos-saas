@@ -21,6 +21,9 @@ function baseHandlers() {
       HttpResponse.json({ today_sales: 0, today_transactions: 0, total_products: 0, low_stock_count: 0 })
     ),
     http.get(`${BASE}/tenant/client/branding`, () => HttpResponse.json(null)),
+    http.get(`${BASE}/tenant/client/profile`, () =>
+      HttpResponse.json({ client_id: 1, business_name: 'Test Shop', business_type: 'retail', language_preference: 'en' })
+    ),
     http.get(`${BASE}/pos/transactions`, () => HttpResponse.json([])),
     http.get(`${BASE}/tenant/client/subscription`, () =>
       HttpResponse.json({
