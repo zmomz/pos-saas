@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.product_branch_stock import Product_branch_stock
@@ -37,17 +38,32 @@ async def get_or_init_row(
     """Return the branch-stock row, seeding it from the product's client-level
     quantity the first time the branch transacts this product."""
     row = await _get_row(db, client_id, branch_id, product.id)
-    if row is None:
-        row = Product_branch_stock(
-            user_id=str(user_id),
-            client_id=client_id,
-            branch_id=branch_id,
-            product_id=product.id,
-            quantity=product.quantity or 0,
-        )
-        db.add(row)
-        await db.flush()
-    return row
+    if row is not None:
+        return row
+
+    # issue #191: two concurrent first-touch sales both see "no row" and both try
+    # to INSERT one; the loser violates ``uq_branch_stock``. Seed inside a SAVEPOINT
+    # so the unique violation rolls back only this INSERT (not the caller's sale
+    # transaction); then re-select the row the winner committed. The first-touch
+    # path stays idempotent instead of surfacing as a 500.
+    new_row = Product_branch_stock(
+        user_id=str(user_id),
+        client_id=client_id,
+        branch_id=branch_id,
+        product_id=product.id,
+        quantity=product.quantity or 0,
+    )
+    try:
+        async with db.begin_nested():
+            db.add(new_row)
+            await db.flush()
+        return new_row
+    except IntegrityError:
+        existing = await _get_row(db, client_id, branch_id, product.id)
+        if existing is None:
+            # Constraint fired but the row isn't visible — not the first-touch race.
+            raise
+        return existing
 
 
 async def deduct_branch_inventory(
