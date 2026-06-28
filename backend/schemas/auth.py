@@ -8,6 +8,7 @@ class UserResponse(BaseModel):
     id: str  # UUID
     email: str
     name: Optional[str] = None
+    phone: Optional[str] = None
     role: str = "user"  # user/admin
     # True for freshly-provisioned accounts that must reset their temp password
     # before doing anything else (consumed by the first-login reset screen).

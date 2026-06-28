@@ -1210,6 +1210,41 @@ export async function changePassword(currentPassword: string, newPassword: strin
   return response.data;
 }
 
+// Account identity (#203 / parity #4) — the signed-in user's own name, email and
+// phone, persisted server-side via /users/profile (distinct from the per-user
+// display name + notification preferences below).
+export interface UserAccount {
+  id: string;
+  email: string;
+  name: string | null;
+  phone: string | null;
+  role: string;
+  must_change_password?: boolean;
+  last_login?: string | null;
+}
+
+export async function getProfile(): Promise<UserAccount> {
+  const response = await client.apiCall.invoke<UserAccount>({
+    url: '/api/v1/users/profile',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+export async function updateProfile(account: {
+  name?: string | null;
+  email?: string;
+  phone?: string | null;
+}): Promise<UserAccount> {
+  const response = await client.apiCall.invoke<UserAccount>({
+    url: '/api/v1/users/profile',
+    method: 'PUT',
+    data: account,
+  });
+  return response.data;
+}
+
 // Per-user profile + notification preferences (ISSUE-078, persisted server-side)
 export interface NotificationPrefs {
   email_alerts: boolean;

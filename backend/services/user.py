@@ -5,7 +5,7 @@ from typing import Optional
 from core.security import hash_password, verify_password
 from models.auth import User
 from models.user_profile import UserProfile
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Notification-preference fields that live on UserProfile.
@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 
 class PasswordError(Exception):
     """Raised when a password change fails validation (wrong current password)."""
+
+
+class EmailInUseError(Exception):
+    """Raised when a profile update would collide with another account's email."""
 
 
 class UserService:
@@ -32,18 +36,50 @@ class UserService:
         return user
 
     @staticmethod
-    async def update_user_profile(db: AsyncSession, user_id: str, name: Optional[str] = None) -> Optional[User]:
-        """Update user profile."""
+    async def update_user_profile(
+        db: AsyncSession,
+        user_id: str,
+        name: Optional[str] = None,
+        email: Optional[str] = None,
+        phone: Optional[str] = None,
+    ) -> Optional[User]:
+        """Update the account identity fields (name / email / phone).
+
+        Only the provided fields are touched; passing ``None`` leaves a field
+        unchanged. An empty string clears ``name``/``phone``. ``email`` is
+        normalised (trim + lowercase, mirroring registration) and checked for
+        uniqueness against other accounts — a collision raises
+        :class:`EmailInUseError`.
+        """
         start_time = time.time()
         logger.debug(f"[DB_OP] Starting update_user_profile - user_id: {user_id}")
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
         logger.debug(f"[DB_OP] User lookup completed in {time.time() - start_time:.4f}s - found: {user is not None}")
+        if not user:
+            return None
 
-        if user and name is not None:
+        changed = False
+        if name is not None:
+            user.name = name.strip() or None
+            changed = True
+        if phone is not None:
+            user.phone = phone.strip() or None
+            changed = True
+        if email is not None:
+            normalized = email.strip().lower()
+            if normalized and normalized != (user.email or "").lower():
+                clash = await db.execute(
+                    select(User.id).where(func.lower(User.email) == normalized, User.id != user_id)
+                )
+                if clash.scalar_one_or_none() is not None:
+                    raise EmailInUseError("That email is already in use")
+                user.email = normalized
+                changed = True
+
+        if changed:
             start_time_update = time.time()
             logger.debug("[DB_OP] Starting user profile update")
-            user.name = name
             await db.commit()
             await db.refresh(user)
             logger.debug(f"[DB_OP] User profile update completed in {time.time() - start_time_update:.4f}s")

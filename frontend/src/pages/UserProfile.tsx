@@ -1,17 +1,37 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
-import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check } from 'lucide-react';
-import { changePassword, getUserPreferences, saveUserPreferences, type NotificationPrefs } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check, Mail, Phone } from 'lucide-react';
+import {
+  changePassword,
+  getProfile,
+  getUserPreferences,
+  saveUserPreferences,
+  updateProfile,
+  type NotificationPrefs,
+} from '@/lib/api';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import LoadingState from '@/components/states/LoadingState';
+import ErrorState from '@/components/states/ErrorState';
 
 export default function UserProfile() {
   const { language, setLanguage, t, tt } = useLanguage();
   const { theme, toggleTheme, isDark } = useTheme();
+  const { refetch } = useAuth();
+  // Account identity (#203 / parity #4) — name/email/phone wired to /users/profile.
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [accountLoading, setAccountLoading] = useState(true);
+  const [accountLoadError, setAccountLoadError] = useState(false);
+  const [accountSaving, setAccountSaving] = useState(false);
+  const [accountSaved, setAccountSaved] = useState(false);
+  const [accountError, setAccountError] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>({
     email_alerts: true,
@@ -56,6 +76,73 @@ export default function UserProfile() {
       cancelled = true;
     };
   }, []);
+
+  const loadAccount = useCallback(() => {
+    let cancelled = false;
+    setAccountLoading(true);
+    setAccountLoadError(false);
+    getProfile()
+      .then((acct) => {
+        if (cancelled) return;
+        setName(acct.name || '');
+        setEmail(acct.email || '');
+        setPhone(acct.phone || '');
+      })
+      .catch(() => {
+        if (!cancelled) setAccountLoadError(true);
+      })
+      .finally(() => {
+        if (!cancelled) setAccountLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => loadAccount(), [loadAccount]);
+
+  async function handleSaveAccount() {
+    setAccountError(null);
+    setAccountSaved(false);
+    const trimmedEmail = email.trim();
+    // Validate before hitting the server so the user gets immediate, specific
+    // feedback instead of a raw 422 from the EmailStr field.
+    if (!trimmedEmail) {
+      setAccountError(t('email_required'));
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setAccountError(t('invalid_email'));
+      return;
+    }
+    setAccountSaving(true);
+    try {
+      const updated = await updateProfile({
+        name: name.trim(),
+        email: trimmedEmail,
+        phone: phone.trim(),
+      });
+      // Reflect what the server actually stored (normalised email, cleared phone).
+      setName(updated.name || '');
+      setEmail(updated.email || '');
+      setPhone(updated.phone || '');
+      setAccountSaved(true);
+      setTimeout(() => setAccountSaved(false), 2500);
+      // Keep the cached auth user (name/email shown elsewhere) in sync.
+      refetch().catch(() => {});
+    } catch (err) {
+      const response = (err as { response?: { status?: number; data?: { detail?: unknown } } })
+        ?.response;
+      if (response?.status === 409) {
+        setAccountError(t('email_in_use'));
+      } else {
+        const detail = response?.data?.detail;
+        setAccountError(typeof detail === 'string' ? detail : t('profile_update_failed'));
+      }
+    } finally {
+      setAccountSaving(false);
+    }
+  }
 
   async function handleSaveProfile() {
     setSaving(true);
@@ -112,25 +199,97 @@ export default function UserProfile() {
       />
 
       <div className="max-w-3xl space-y-6">
-        {/* Profile Section */}
+        {/* Account identity (#203 / parity #4) — name/email/phone via /users/profile */}
+        <div className="dxr-tile space-y-4">
+          <div className="flex items-center gap-3">
+            <span className="dxr-sw dxr-sw-brand h-9 w-9"><User className="h-[18px] w-[18px]" /></span>
+            <div>
+              <h2 className="text-foreground font-semibold">{tt('account_details', 'Account')}</h2>
+              <p className="text-muted-foreground text-xs">
+                {tt('account_details_desc', 'Your name, email and phone')}
+              </p>
+            </div>
+          </div>
+
+          {accountLoading ? (
+            <LoadingState className="py-10" />
+          ) : accountLoadError ? (
+            <ErrorState onRetry={loadAccount} />
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="account-name" className="text-sm text-muted-foreground mb-1 block">
+                  {t('name')}
+                </label>
+                <Input
+                  id="account-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={tt('your_full_name', 'Your full name')}
+                  autoComplete="name"
+                />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="account-email" className="text-sm text-muted-foreground mb-1 flex items-center gap-1.5">
+                    <Mail className="h-3.5 w-3.5" />
+                    {t('email')}
+                  </label>
+                  <Input
+                    id="account-email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder={tt('your_email', 'you@example.com')}
+                    autoComplete="email"
+                    dir="ltr"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="account-phone" className="text-sm text-muted-foreground mb-1 flex items-center gap-1.5">
+                    <Phone className="h-3.5 w-3.5" />
+                    {t('phone')}
+                  </label>
+                  <Input
+                    id="account-phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder={tt('your_phone', 'Phone number')}
+                    autoComplete="tel"
+                    dir="ltr"
+                  />
+                </div>
+              </div>
+
+              {accountError && <p className="text-sm text-danger" role="alert">{accountError}</p>}
+              <div>
+                <Button onClick={handleSaveAccount} disabled={accountSaving}>
+                  {accountSaving ? t('saving') : accountSaved ? (
+                    <>
+                      <Check className="h-4 w-4 me-2" />
+                      {t('profile_updated')}
+                    </>
+                  ) : t('save')}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Display name + notification preferences (ISSUE-078, /users/preferences) */}
         <div className="dxr-tile space-y-4">
           <h2 className="text-foreground flex items-center gap-2 font-semibold">
             <User className="h-5 w-5 text-brand-400" />
-            {tt('profile', 'Profile')}
+            {tt('display_name', 'Display Name')}
           </h2>
-          <div className="flex items-center gap-4">
-            <div className="h-16 w-16 rounded-full bg-brand-600/30 flex items-center justify-center">
-              <User className="h-8 w-8 text-brand-400" />
-            </div>
-            <div className="flex-1">
-              <label className="text-sm text-muted-foreground mb-1 block">{tt('display_name', 'Display Name')}</label>
-              <Input
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder={tt('your_name', 'Your name')}
-                className="max-w-sm"
-              />
-            </div>
+          <div>
+            <Input
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={tt('your_name', 'Your name')}
+              className="max-w-sm"
+            />
           </div>
         </div>
 

@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
 import { LanguageProvider } from '@/lib/i18n';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { AuthProvider } from '@/contexts/AuthContext';
 import UserProfile from './UserProfile';
 
 // ISSUE-097 — the atoms.dev "Change Password — managed by authentication
@@ -13,16 +14,19 @@ import UserProfile from './UserProfile';
 
 const BASE = 'http://127.0.0.1:8000/api/v1';
 const PREFS_URL = `${BASE}/users/preferences`;
+const PROFILE_URL = `${BASE}/users/profile`;
 const CHANGE_URL = `${BASE}/users/change-password`;
 
 function renderPage() {
   return render(
     <MemoryRouter>
-      <LanguageProvider>
-        <ThemeProvider>
-          <UserProfile />
-        </ThemeProvider>
-      </LanguageProvider>
+      <AuthProvider>
+        <LanguageProvider>
+          <ThemeProvider>
+            <UserProfile />
+          </ThemeProvider>
+        </LanguageProvider>
+      </AuthProvider>
     </MemoryRouter>
   );
 }
@@ -31,7 +35,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-// Every test needs the on-mount preferences fetch satisfied.
+// Every test needs the on-mount preferences + profile fetches satisfied.
 function stubPrefs() {
   server.use(
     http.get(PREFS_URL, () =>
@@ -43,6 +47,15 @@ function stubPrefs() {
           daily_summary: false,
           transaction_alerts: true,
         },
+      })
+    ),
+    http.get(PROFILE_URL, () =>
+      HttpResponse.json({
+        id: 'u1',
+        email: 'owner@shop.test',
+        name: 'Owner',
+        phone: null,
+        role: 'client',
       })
     )
   );

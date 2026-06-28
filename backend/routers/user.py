@@ -4,7 +4,7 @@ from core.database import get_db
 from dependencies.auth import get_current_user
 from fastapi import APIRouter, Depends, HTTPException, status
 from models.auth import User
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from schemas.auth import (
     ChangePasswordRequest,
     NotificationPrefs,
@@ -12,7 +12,7 @@ from schemas.auth import (
     UserPreferencesResponse,
     UserResponse,
 )
-from services.user import PasswordError, UserService
+from services.user import EmailInUseError, PasswordError, UserService
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.password_policy import enforce_password_complexity
 
@@ -21,6 +21,8 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 class UpdateProfileRequest(BaseModel):
     name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
 
 
 @router.get("/profile", response_model=UserResponse)
@@ -38,8 +40,17 @@ async def update_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update current user profile"""
-    profile = await UserService.update_user_profile(db, current_user.id, profile_data.name)
+    """Update current user profile (name / email / phone)."""
+    try:
+        profile = await UserService.update_user_profile(
+            db,
+            current_user.id,
+            name=profile_data.name,
+            email=str(profile_data.email) if profile_data.email is not None else None,
+            phone=profile_data.phone,
+        )
+    except EmailInUseError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
     return profile
