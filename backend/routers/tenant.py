@@ -2397,6 +2397,20 @@ def _parse_moyasar_event(payload: bytes) -> tuple[str, dict, Optional[str], Opti
     return event_type, data, secret_token, event_id
 
 
+def _dedup_key(event_id: Optional[str], raw_body: bytes) -> str:
+    """Stable replay-guard key for a webhook delivery.
+
+    Uses the event ``id`` when present; otherwise falls back to a hash of the raw
+    body so an id-less (but validly-signed) event is still de-duped rather than
+    replayable indefinitely (issue #188 — the guard used to fail open with no id).
+    """
+    if event_id:
+        return str(event_id)
+    import hashlib
+
+    return "body:" + hashlib.sha256(raw_body or b"").hexdigest()
+
+
 async def _already_processed(db: AsyncSession, source: str, event_id: str) -> bool:
     """Claim ``(source, event_id)`` for processing; return True if it was already seen.
 
@@ -2459,8 +2473,9 @@ async def quota_billing_webhook(request: Request, db: AsyncSession = Depends(get
     if event_type not in _FAILURE_EVENTS and event_type not in _RECOVERY_EVENTS:
         return {"received": True, "action": "ignored", "event": event_type}
 
-    # Replay guard: claim the event id before mutating so a redelivery is a no-op.
-    if event_id and await _already_processed(db, "moyasar_quota", str(event_id)):
+    # Replay guard: claim the event before mutating so a redelivery is a no-op.
+    # Falls back to a body hash when the event carries no id (issue #188).
+    if await _already_processed(db, "moyasar_quota", _dedup_key(event_id, raw_body)):
         return {"received": True, "action": "ignored", "reason": "duplicate event"}
 
     if event_type in _FAILURE_EVENTS:
@@ -2546,9 +2561,12 @@ async def merchant_billing_webhook(
     if event_type not in _FAILURE_EVENTS and event_type not in _RECOVERY_EVENTS:
         return {"received": True, "action": "ignored", "event": event_type}
 
-    # Replay guard: claim the event id (scoped per agent) before mutating so a
-    # redelivery is a no-op.
-    if event_id and await _already_processed(db, f"moyasar_merchant:{agent_id}", str(event_id)):
+    # Replay guard: claim the event (scoped per agent) before mutating so a
+    # redelivery is a no-op. Falls back to a body hash when the event carries no
+    # id (issue #188).
+    if await _already_processed(
+        db, f"moyasar_merchant:{agent_id}", _dedup_key(event_id, raw_body)
+    ):
         return {"received": True, "action": "ignored", "reason": "duplicate event"}
 
     if event_type in _FAILURE_EVENTS:

@@ -173,6 +173,33 @@ async def test_merchant_webhook_replay_is_ignored(client):
 
 
 @pytest.mark.asyncio
+async def test_merchant_webhook_no_id_is_deduped_by_body_hash(client):
+    """A validly-signed event lacking ``id`` must still be replay-guarded (#188)."""
+    _au, _at, agent_id = await make_agent_account(client)
+    _cu, _ct, client_id = await make_client_under_agent(client, agent_id)
+    await _set_agent_secret(agent_id)
+    # No "id" key in the body at all.
+    body = json.dumps(
+        {"type": "payment_failed", "data": {"metadata": {"client_id": str(client_id)}}}
+    ).encode()
+    headers = {MOYASAR_SIGNATURE_HEADER: _sign(body)}
+
+    first = await client.post(_url(agent_id), content=body, headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["action"] == "suspended"
+
+    # Operator re-activates; the same id-less body must not re-suspend.
+    async with db_manager.async_session_maker() as db:
+        await db.execute(update(Clients).where(Clients.id == client_id).values(is_active=True))
+        await db.commit()
+
+    replay = await client.post(_url(agent_id), content=body, headers=headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["action"] == "ignored"
+    assert await _client_active(client_id) is True
+
+
+@pytest.mark.asyncio
 async def test_merchant_webhook_ignores_client_of_other_agent(client):
     _a1u, _a1t, agent1 = await make_agent_account(client)
     _a2u, _a2t, agent2 = await make_agent_account(client)

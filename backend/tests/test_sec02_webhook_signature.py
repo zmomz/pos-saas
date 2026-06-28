@@ -126,6 +126,39 @@ async def test_quota_webhook_valid_signature_suspends(client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_quota_webhook_no_id_is_deduped_by_body_hash(client, monkeypatch):
+    """A validly-signed event lacking ``id`` must still be replay-guarded.
+
+    Issue #188: the de-dup guard was skipped (failed open) when the event had no
+    ``id``, so an id-less body could be replayed indefinitely. The guard now falls
+    back to a hash of the raw body, so a redelivery of the identical body is a no-op.
+    """
+    from sqlalchemy import update
+
+    monkeypatch.setitem(settings.__dict__, "moyasar_webhook_secret", _SECRET)
+    _u, _t, agent_id = await make_agent_account(client)
+    # No "id" key in the body at all.
+    body = json.dumps(
+        {"type": "payment_failed", "data": {"metadata": {"agent_id": str(agent_id)}}}
+    ).encode()
+    headers = {MOYASAR_SIGNATURE_HEADER: _sign(body)}
+
+    first = await client.post(_QUOTA_URL, content=body, headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["action"] == "suspended"
+
+    # Operator re-activates; the same id-less body must not re-suspend.
+    async with db_manager.async_session_maker() as db:
+        await db.execute(update(Agents).where(Agents.id == agent_id).values(is_active=True))
+        await db.commit()
+
+    replay = await client.post(_QUOTA_URL, content=body, headers=headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["action"] == "ignored"
+    assert await _agent_active(agent_id) is True
+
+
+@pytest.mark.asyncio
 async def test_quota_webhook_replay_is_ignored(client, monkeypatch):
     from sqlalchemy import update
 
