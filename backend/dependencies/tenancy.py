@@ -45,6 +45,16 @@ class TenantScope:
 
     ``owner_user_id`` is the value entity queries should filter on. It is
     ``None`` only for the platform master, who sees everything.
+
+    ARC-05 / ISSUE-193 — the authoritative tenant boundary is ``owner_user_id``
+    (the tenancy owner's ``user_id``), for both reads and writes. ``client_id`` is
+    *advisory*: denormalised metadata stamped on write for parity with the core
+    tables (products, transactions, …) and offered as an optional within-tenant
+    ``?query=`` narrowing filter. It is never an isolation boundary on its own — a
+    ``client_id`` filter can only narrow within the caller's ``owner_user_id``
+    scope, never cross it. Reads, writes, and the ARC-05 migration backfill agree
+    on a single ``client_id`` per owner because all three resolve it the same way:
+    the lowest-id ``clients`` row for the ``user_id`` (SEC-12).
     """
 
     role: str  # "master" | "agent" | "client"

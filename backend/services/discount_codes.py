@@ -54,9 +54,10 @@ class DiscountCodesService:
         within the batch; uniqueness across the owner's existing codes is best-effort
         (collisions on a 10-char 32-symbol space are astronomically unlikely).
 
-        ARC-05: ``client_id`` is the resolved tenant scope's owning client, stamped
-        on every minted code so they scope consistently with the core tables; a
-        payload value is never trusted.
+        ARC-05 / ISSUE-193: ``client_id`` is the resolved tenant scope's owning
+        client, stamped on every minted code as advisory metadata for parity with
+        the core tables — isolation stays bounded by ``user_id`` (see
+        ``get_by_code``), not this column; a payload value is never trusted.
         """
         batch_id = uuid.uuid4().hex
         seen: set[str] = set()

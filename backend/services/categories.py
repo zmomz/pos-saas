@@ -8,9 +8,10 @@ from models.categories import Categories
 from services.query_filter import apply_query_filters
 
 # SEC-17: columns a client may filter on via the list endpoint's ?query=.
-# ARC-05: ``client_id`` is filterable so list queries can be routed by the tenant
-# scope; the service's own ``user_id`` filter still bounds the result, so the
-# filter can only narrow within the caller's tenant, never cross it.
+# ARC-05 / ISSUE-193: ``client_id`` is *advisory* — an optional within-tenant
+# narrowing filter, not the isolation boundary. The service's own ``user_id``
+# filter still bounds every result, so a client_id filter can only narrow within
+# the caller's tenant, never cross it. See dependencies.tenancy.TenantScope.
 FILTERABLE_FIELDS = frozenset({"id", "name", "parent_id", "client_id"})
 
 logger = logging.getLogger(__name__)
@@ -33,9 +34,10 @@ class CategoriesService:
         try:
             if user_id:
                 data['user_id'] = user_id
-            # ARC-05: stamp the owning merchant's client_id so the row scopes
-            # consistently with the core tables. The caller passes the resolved
-            # tenant scope's client_id; a payload value is never trusted.
+            # ARC-05 / ISSUE-193: stamp the owning merchant's client_id as advisory
+            # metadata, for parity with the core tables — isolation stays bounded by
+            # user_id, not this column. The caller passes the resolved tenant scope's
+            # client_id; a payload value is never trusted.
             if client_id is not None:
                 data['client_id'] = client_id
             obj = Categories(**data)
