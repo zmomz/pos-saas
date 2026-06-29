@@ -44,6 +44,7 @@ REGISTERED_MODULES = (
     "receipt_templates",
     "restaurant",
     "staff_members",
+    "stocktake",
     "storage",
     "store_settings",
     "suppliers",

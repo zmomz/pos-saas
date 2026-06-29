@@ -35,6 +35,7 @@ import WebhookManagement from './pages/WebhookManagement';
 import UserProfile from './pages/UserProfile';
 import StoreSettings from './pages/StoreSettings';
 import BranchManagement from './pages/BranchManagement';
+import GuidedStocktake from './pages/GuidedStocktake';
 import FloorMap from './pages/FloorMap';
 import Reservations from './pages/Reservations';
 import OrderTicket from './pages/OrderTicket';
@@ -157,6 +158,7 @@ const AppRoutes = () => (
       }
     >
       <Route path="/products" element={<ProductManagement />} />
+      <Route path="/stocktake" element={<GuidedStocktake />} />
       <Route path="/reports" element={<ReportsAnalytics />} />
       <Route path="/customers" element={<CustomerManagement />} />
       <Route path="/staff" element={<StaffManagement />} />

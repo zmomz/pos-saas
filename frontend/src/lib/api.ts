@@ -844,6 +844,123 @@ export async function receiveBranchTransfer(
   return response.data;
 }
 
+// M4 / #207 — guided stocktake (sessioned count → freeze → count → approve).
+// A resumable physical count layered on the stock-adjustments variance primitive:
+// freeze snapshots the on-hand baseline, counts fill it in, approve posts one
+// adjustment per counted line atomically.
+export type StocktakeStatus = 'draft' | 'frozen' | 'approved' | 'cancelled';
+
+export interface StocktakeLine {
+  id: number;
+  product_id: number;
+  product_name?: string | null;
+  system_quantity: number;
+  counted_quantity: number | null;
+  variance: number | null;
+  counted: boolean;
+  note?: string | null;
+  counted_at?: string | null;
+}
+
+export interface StocktakeSession {
+  id: number;
+  branch_id?: number | null;
+  name?: string | null;
+  status: StocktakeStatus;
+  note?: string | null;
+  frozen_at?: string | null;
+  approved_at?: string | null;
+  created_at?: string | null;
+  // Present on the detail/freeze/approve responses (the session + its lines).
+  lines?: StocktakeLine[];
+  line_count?: number;
+  counted_count?: number;
+  variance_count?: number;
+  total_variance?: number;
+  // Present on the approve response.
+  adjustments_posted?: number;
+}
+
+export interface StocktakeCountResult {
+  id: number;
+  session_id: number;
+  product_id: number;
+  product_name?: string | null;
+  system_quantity: number;
+  counted_quantity: number;
+  variance: number;
+  counted_at?: string | null;
+}
+
+export async function listStocktakes(params?: {
+  status?: StocktakeStatus;
+  branch_id?: number;
+}): Promise<{ items: StocktakeSession[]; total: number }> {
+  const response = await client.apiCall.invoke<{ items: StocktakeSession[]; total: number }>({
+    url: '/api/v1/production/stock-counts',
+    method: 'GET',
+    data: params || {},
+  });
+  return response.data;
+}
+
+export async function getStocktake(sessionId: number): Promise<StocktakeSession> {
+  const response = await client.apiCall.invoke<StocktakeSession>({
+    url: `/api/v1/production/stock-counts/${sessionId}`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function startStocktake(data: {
+  branch_id?: number;
+  name?: string;
+  note?: string;
+}): Promise<StocktakeSession> {
+  const response = await client.apiCall.invoke<StocktakeSession>({
+    url: '/api/v1/production/stock-counts',
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function freezeStocktake(sessionId: number): Promise<StocktakeSession> {
+  const response = await client.apiCall.invoke<StocktakeSession>({
+    url: `/api/v1/production/stock-counts/${sessionId}/freeze`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+export async function countStocktakeLine(
+  sessionId: number,
+  data: { product_id?: number; barcode?: string; counted_quantity: number; note?: string },
+): Promise<StocktakeCountResult> {
+  const response = await client.apiCall.invoke<StocktakeCountResult>({
+    url: `/api/v1/production/stock-counts/${sessionId}/count`,
+    method: 'POST',
+    data,
+  });
+  return response.data;
+}
+
+export async function approveStocktake(sessionId: number): Promise<StocktakeSession> {
+  const response = await client.apiCall.invoke<StocktakeSession>({
+    url: `/api/v1/production/stock-counts/${sessionId}/approve`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+export async function cancelStocktake(sessionId: number): Promise<StocktakeSession> {
+  const response = await client.apiCall.invoke<StocktakeSession>({
+    url: `/api/v1/production/stock-counts/${sessionId}/cancel`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
 // Phase 3: the caller's effective permission grants/denies, so the UI can
 // hide/disable actions (e.g. refund) the staff member lacks. Master accounts
 // come back with is_master=true and gate nothing.

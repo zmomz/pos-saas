@@ -45,6 +45,7 @@ import {
   Star,
   GitBranch,
   Webhook,
+  ClipboardList,
 } from 'lucide-react';
 
 type UserRole = 'master' | 'agent' | 'client';
@@ -93,6 +94,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: Tag, label: 'discounts', path: '/discounts' },
     { icon: Gift, label: 'gift_cards', path: '/gift-cards' },
     { icon: GitBranch, label: 'branches', path: '/branches' },
+    { icon: ClipboardList, label: 'stocktake', path: '/stocktake' },
     { icon: Printer, label: 'printers', path: '/printers' },
     { icon: CreditCard, label: 'devices', path: '/devices' },
     { icon: Receipt, label: 'receipt_template', path: '/receipt-template' },
