@@ -45,6 +45,7 @@ import {
   Star,
   GitBranch,
   Webhook,
+  Activity,
 } from 'lucide-react';
 
 type UserRole = 'master' | 'agent' | 'client';
@@ -101,6 +102,7 @@ const navConfig: Record<UserRole, NavItem[]> = {
     { icon: Globe, label: 'online_orders', path: '/channels' },
     { icon: Webhook, label: 'webhooks', path: '/webhooks' },
     { icon: ShieldCheck, label: 'zatca_status', path: '/zatca' },
+    { icon: Activity, label: 'ops_title', path: '/ops' },
     { icon: Shield, label: 'audit_log', path: '/audit' },
     { icon: Bell, label: 'notifications', path: '/notifications' },
   ],

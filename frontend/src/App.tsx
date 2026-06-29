@@ -42,6 +42,7 @@ import MenuBuilder from './pages/MenuBuilder';
 import CatalogModifiers from './pages/CatalogModifiers';
 import KDS from './pages/KDS';
 import ZatcaStatus from './pages/ZatcaStatus';
+import Operations from './pages/Operations';
 import ChannelOrders from './pages/ChannelOrders';
 import GiftCardManagement from './pages/GiftCardManagement';
 import PrinterSettings from './pages/PrinterSettings';
@@ -139,6 +140,7 @@ const AppRoutes = () => (
       <Route path="/kds" element={<KDS />} />
       <Route path="/channels" element={<ChannelOrders />} />
       <Route path="/zatca" element={<ZatcaStatus />} />
+      <Route path="/ops" element={<Operations />} />
       <Route path="/gift-cards" element={<GiftCardManagement />} />
       <Route path="/printers" element={<PrinterSettings />} />
       <Route path="/devices" element={<DevicesSettings />} />
