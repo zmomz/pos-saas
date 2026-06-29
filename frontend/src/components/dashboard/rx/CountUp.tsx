@@ -7,6 +7,13 @@ interface CountUpProps {
   decimals?: number;
   duration?: number;
   className?: string;
+  /**
+   * Render the animated value through a formatter (e.g. `formatMoney`) instead
+   * of the bare `prefix + number + suffix` path. When set, it owns the whole
+   * string — the single money/number formatting path (ISSUE-208 M11) so no
+   * caller hand-rolls a currency glyph via `prefix`.
+   */
+  format?: (value: number) => string;
 }
 
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
@@ -22,6 +29,7 @@ export default function CountUp({
   decimals = 0,
   duration = 1100,
   className,
+  format,
 }: CountUpProps) {
   const [display, setDisplay] = useState(value);
   const rafRef = useRef<number>();
@@ -53,13 +61,14 @@ export default function CountUp({
     };
   }, [value, duration]);
 
-  const text =
-    prefix +
-    display.toLocaleString('en-US', {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }) +
-    suffix;
+  const text = format
+    ? format(display)
+    : prefix +
+      display.toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      }) +
+      suffix;
 
   return <span className={className}>{text}</span>;
 }

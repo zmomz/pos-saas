@@ -4,9 +4,10 @@ import { Button } from '@/components/ui/button';
 import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, saveSubscriptionCard, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { notifyError } from '@/lib/notify';
-import { formatMoney, formatDate, currencyLabel } from '@/lib/format';
+import { formatMoney, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { usePageChrome } from '@/contexts/PageChromeContext';
+import LoadingState from '@/components/states/LoadingState';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
 import {
@@ -109,20 +110,15 @@ export default function ClientDashboard() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   const todaySales = stats?.today_sales || 0;
   const todayTx = stats?.today_transactions || 0;
   const avgTicket = todayTx > 0 ? todaySales / todayTx : 0;
-  // Currency label placement matches formatMoney: trailing in RTL, leading otherwise.
-  const curProps = language === 'ar' || language === 'ur'
-    ? { suffix: ` ${currencyLabel(language)}` }
-    : { prefix: `${currencyLabel(language)} ` };
+  // Single money path (ISSUE-208 M11): animate through formatMoney so the Riyal
+  // glyph and digit/separator rules match every other amount on the page.
+  const money = (v: number) => formatMoney(v, language);
   const subOverdue = subscription && ['past_due', 'dunning', 'suspended'].includes(subscription.subscription_status);
   const subStatusCls = subscription?.subscription_status === 'active'
     ? 'bg-success/10 text-success'
@@ -172,7 +168,7 @@ export default function ClientDashboard() {
             <div>
               <div className="dxr-eyebrow">{t('today_sales') || "Today's Sales"}</div>
               <div className="mt-2 text-[clamp(30px,3.6vw,44px)] font-extrabold leading-none tracking-tight tabular-nums">
-                <CountUp value={todaySales} {...curProps} />
+                <CountUp value={todaySales} format={money} />
               </div>
               <div className="mt-1.5 text-[13px] text-white/65">{todayTx} {t('total_transactions') || 'transactions'} · {t('avg_ticket') || 'avg'} {formatMoney(avgTicket, language)}</div>
             </div>
@@ -208,7 +204,7 @@ export default function ClientDashboard() {
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
           <div className="text-[12.5px] font-semibold text-muted-foreground">{t('total_sales') || 'Total Sales'}</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_sales || 0} {...curProps} /></div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_sales || 0} format={money} /></div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('all_time') || 'all time'}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
@@ -306,25 +302,25 @@ export default function ClientDashboard() {
             <button onClick={() => navigate('/reports')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{t('view_all') || 'View all'} <ArrowRight className="h-[15px] w-[15px]" /></button>
           </div>
           <div className="overflow-x-auto px-2 pb-2">
-            <table className="w-full text-sm">
+            <table className="dxr-tbl">
               <thead>
-                <tr className="text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground/80">
-                  <th className="px-3 py-2.5 text-start">{t('invoice_number') || 'Invoice'}</th>
-                  <th className="px-3 py-2.5 text-start">{t('total') || 'Total'}</th>
-                  <th className="px-3 py-2.5 text-start">{t('payment_method') || 'Payment'}</th>
-                  <th className="px-3 py-2.5 text-start">{t('status') || 'Status'}</th>
+                <tr>
+                  <th>{t('invoice_number') || 'Invoice'}</th>
+                  <th>{t('total') || 'Total'}</th>
+                  <th>{t('payment_method') || 'Payment'}</th>
+                  <th>{t('status') || 'Status'}</th>
                 </tr>
               </thead>
               <tbody>
                 {transactions.length === 0 ? (
-                  <tr><td colSpan={4} className="px-3 py-10 text-center text-muted-foreground">{t('empty_cart') || 'No transactions yet.'}</td></tr>
+                  <tr><td colSpan={4} className="py-10 text-center text-muted-foreground">{t('empty_cart') || 'No transactions yet.'}</td></tr>
                 ) : (
                   transactions.map((tx) => (
-                    <tr key={tx.id} className="border-t border-border/70 transition-colors hover:bg-muted/40">
-                      <td className="px-3 py-3 font-mono text-[13px]">{tx.invoice_number}</td>
-                      <td className="px-3 py-3 font-semibold tabular-nums">{formatMoney(tx.total_amount || 0, language)}</td>
-                      <td className="px-3 py-3"><span className="pill-sky">{tx.payment_method}</span></td>
-                      <td className="px-3 py-3"><span className="pill-success"><span className="h-1.5 w-1.5 rounded-full bg-current" />{t('paid') || 'Paid'}</span></td>
+                    <tr key={tx.id}>
+                      <td className="font-mono text-[13px]">{tx.invoice_number}</td>
+                      <td className="font-semibold tabular-nums">{formatMoney(tx.total_amount || 0, language)}</td>
+                      <td><span className="pill-sky">{tx.payment_method}</span></td>
+                      <td><span className="pill-success"><span className="h-1.5 w-1.5 rounded-full bg-current" />{t('paid') || 'Paid'}</span></td>
                     </tr>
                   ))
                 )}

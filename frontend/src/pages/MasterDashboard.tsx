@@ -9,6 +9,7 @@ import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
@@ -227,11 +228,7 @@ export default function MasterDashboard() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   return (
@@ -245,7 +242,7 @@ export default function MasterDashboard() {
             <div>
               <div className="dxr-eyebrow">{tt('platform_mrr', 'Platform MRR')}</div>
               <div className="mt-2 text-[clamp(32px,4vw,46px)] font-extrabold leading-none tracking-tight tabular-nums">
-                <CountUp value={mrr} prefix="⃁ " />
+                <CountUp value={mrr} format={(v) => formatMoney(v, language)} />
               </div>
               <div className="mt-3 flex items-center gap-2.5 text-[13px] text-white/70">
                 <span>{t('arr')} <b className="text-white">{formatMoney(economics?.arr ?? 0, language)}</b></span>
@@ -279,9 +276,9 @@ export default function MasterDashboard() {
 
         {/* KPI chips */}
         <KpiChip label={tt('total_agents', 'Total Agents')} value={<CountUp value={totalAgents} />} delta={{ dir: 'up', text: `${activeAgents} ${tt('active', 'active')}` }} foot={`${totalSlots} ${tt('slots', 'slots')} total`} />
-        <KpiChip label={t('arr')} value={<CountUp value={economics?.arr ?? 0} prefix="⃁ " />} foot={tt('annual_run_rate', 'annual run-rate')} />
+        <KpiChip label={t('arr')} value={<CountUp value={economics?.arr ?? 0} format={(v) => formatMoney(v, language)} />} foot={tt('annual_run_rate', 'annual run-rate')} />
         <KpiChip label={tt('churn_rate', 'Churn Rate')} value={<CountUp value={(economics?.churn_rate ?? 0) * 100} decimals={1} suffix="%" />} foot={`${economics?.churned_clients ?? 0} ${tt('churned', 'churned')}`} />
-        <KpiChip label={tt('collected', 'Collected')} value={<CountUp value={economics?.collected ?? 0} prefix="⃁ " />} foot={`${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
+        <KpiChip label={tt('collected', 'Collected')} value={<CountUp value={economics?.collected ?? 0} format={(v) => formatMoney(v, language)} />} foot={`${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
 
         {/* Leaderboard */}
         <section className="dxr-tile lg:col-span-8 lg:row-span-4">
@@ -290,7 +287,7 @@ export default function MasterDashboard() {
             <button onClick={() => navigate('/audit')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{tt('view_all', 'View all')} <ArrowRight className="h-[15px] w-[15px]" /></button>
           </div>
           {ecoLoading ? (
-            <div className="animate-pulse py-10 text-center text-muted-foreground">{t('loading')}</div>
+            <LoadingState className="py-10" />
           ) : ecoError ? (
             <ErrorState onRetry={loadEconomics} />
           ) : leaderboard.length === 0 ? (

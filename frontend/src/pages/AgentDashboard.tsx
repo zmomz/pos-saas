@@ -13,6 +13,7 @@ import { formatMoney, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/dashboard/Avatar';
 import { usePageChrome } from '@/contexts/PageChromeContext';
+import LoadingState from '@/components/states/LoadingState';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
@@ -333,11 +334,7 @@ export default function AgentDashboard() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   return (
@@ -361,7 +358,7 @@ export default function AgentDashboard() {
             <div>
               <div className="dxr-eyebrow">{t('revenue_commission') || 'Revenue & Margin'}</div>
               <div className="mt-2 text-[clamp(28px,3.4vw,40px)] font-extrabold leading-none tracking-tight tabular-nums">
-                <CountUp value={hasRevenue ? collected : totalMonthlyRevenue} prefix="⃁ " />
+                <CountUp value={hasRevenue ? collected : totalMonthlyRevenue} format={(v) => formatMoney(v, language)} />
               </div>
               <div className="mt-1.5 text-[13px] text-white/65">{t('revenue_collected') || 'Collected'} · {activeClients.length} {t('active_subscriptions') || 'subscriptions'}</div>
             </div>
@@ -373,7 +370,7 @@ export default function AgentDashboard() {
 
           <div className="mt-auto">
             {revenueLoading ? (
-              <div className="animate-pulse py-2 text-sm text-white/60">{t('loading')}</div>
+              <LoadingState className="py-2" />
             ) : revenueError ? (
               <div role="alert" className="flex flex-col items-start gap-2">
                 <p className="text-sm text-[hsl(6_70%_80%)]">{t('revenue_load_error') || 'Could not load revenue.'}</p>
@@ -563,7 +560,7 @@ export default function AgentDashboard() {
           <span className="text-[12.5px] text-muted-foreground">{t('per_billing_period') || 'Per billing period'}</span>
         </div>
         {statementsLoading ? (
-          <div className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</div>
+          <LoadingState className="py-4" />
         ) : statementsError ? (
           <div role="alert" className="flex flex-col items-start gap-2">
             <p className="text-sm text-danger">{t('statements_load_error') || 'Could not load statements.'}</p>
@@ -619,7 +616,7 @@ export default function AgentDashboard() {
             )}
           </div>
           {quotaLoading ? (
-            <div className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</div>
+            <LoadingState className="py-4" />
           ) : quotaError ? (
             <div role="alert" className="flex flex-col items-start gap-2">
               <p className="text-sm text-danger">{t('quota_load_error') || 'Could not load quota status.'}</p>

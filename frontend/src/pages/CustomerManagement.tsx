@@ -22,6 +22,8 @@ import {
   type CustomerInsights,
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
@@ -401,12 +403,87 @@ export default function CustomerManagement() {
   }
 
   if (loading && customers.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState />;
   }
+
+  const customerColumns: DataTableColumn<Customer>[] = [
+    {
+      key: 'name',
+      header: tt('name', 'Name'),
+      cell: (customer) => (
+        <span className="text-foreground font-medium">
+          {customer.name}
+          {customer.pii_erased_at && (
+            <Badge variant="outline" className="ms-2 border-input text-muted-foreground text-xs">
+              {t('pii_erased')}
+            </Badge>
+          )}
+        </span>
+      ),
+    },
+    { key: 'phone', header: tt('phone', 'Phone'), cell: (customer) => customer.phone || '—' },
+    { key: 'email', header: tt('email', 'Email'), cell: (customer) => customer.email || '—' },
+    {
+      key: 'vat',
+      header: tt('vat_number', 'VAT Number'),
+      cell: (customer) => customer.vat_number || '—',
+    },
+    {
+      key: 'tags',
+      header: t('tags'),
+      cell: (customer) =>
+        Array.isArray(customer.tags) && customer.tags.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {customer.tags.map((tag) => (
+              <Badge key={tag} variant="outline" className="border-brand/40 text-brand text-xs">
+                {tag}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
+    },
+    {
+      key: 'consent',
+      header: t('consent'),
+      cell: (customer) =>
+        customer.marketing_consent ? (
+          <span className="pill-success">{t('consent_given')}</span>
+        ) : (
+          <span className="text-muted-foreground">{t('consent_none')}</span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: tt('actions', 'Actions'),
+      cell: (customer) => {
+        const erased = !!customer.pii_erased_at;
+        return (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => openEdit(customer)} disabled={erased} className="text-xs">
+              {tt('edit', 'Edit')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => openInsights(customer)} className="text-xs">
+              <BarChart3 className="h-3 w-3 me-1" />
+              {t('view_insights')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => handleExportData(customer)} className="text-xs">
+              <Download className="h-3 w-3 me-1" />
+              {t('export_data')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => openErase(customer)} disabled={erased} className="text-xs">
+              <ShieldOff className="h-3 w-3 me-1" />
+              {t('erase_pii')}
+            </Button>
+            <Button size="sm" variant="destructive" onClick={() => openDelete(customer)} className="text-xs">
+              {tt('delete', 'Delete')}
+            </Button>
+          </div>
+        );
+      },
+    },
+  ];
 
   return (
     <div className="animate-fade-up space-y-6">
@@ -506,122 +583,13 @@ export default function CustomerManagement() {
       )}
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead className="bg-card">
-            <tr className="text-muted-foreground">
-              <th className="p-3 text-start">{tt('name', 'Name')}</th>
-              <th className="p-3 text-start">{tt('phone', 'Phone')}</th>
-              <th className="p-3 text-start">{tt('email', 'Email')}</th>
-              <th className="p-3 text-start">{tt('vat_number', 'VAT Number')}</th>
-              <th className="p-3 text-start">{t('tags')}</th>
-              <th className="p-3 text-start">{t('consent')}</th>
-              <th className="p-3 text-start">{tt('actions', 'Actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredCustomers.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="p-6 text-center text-muted-foreground">
-                  {tt('no_customers_found', 'No customers found')}
-                </td>
-              </tr>
-            ) : (
-              filteredCustomers.map((customer) => {
-                const erased = !!customer.pii_erased_at;
-                return (
-                <tr key={customer.id} className="border-t border-border text-foreground/90">
-                  <td className="p-3 text-foreground font-medium">
-                    {customer.name}
-                    {erased && (
-                      <Badge variant="outline" className="ms-2 border-input text-muted-foreground text-xs">
-                        {t('pii_erased')}
-                      </Badge>
-                    )}
-                  </td>
-                  <td className="p-3">{customer.phone || '—'}</td>
-                  <td className="p-3">{customer.email || '—'}</td>
-                  <td className="p-3">{customer.vat_number || '—'}</td>
-                  <td className="p-3">
-                    {Array.isArray(customer.tags) && customer.tags.length > 0 ? (
-                      <div className="flex flex-wrap gap-1">
-                        {customer.tags.map((tag) => (
-                          <Badge
-                            key={tag}
-                            variant="outline"
-                            className="border-brand/40 text-brand text-xs"
-                          >
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    {customer.marketing_consent ? (
-                      <span className="pill-success">{t('consent_given')}</span>
-                    ) : (
-                      <span className="text-muted-foreground">{t('consent_none')}</span>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEdit(customer)}
-                        disabled={erased}
-                        className="text-xs"
-                      >
-                        {tt('edit', 'Edit')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openInsights(customer)}
-                        className="text-xs"
-                      >
-                        <BarChart3 className="h-3 w-3 me-1" />
-                        {t('view_insights')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleExportData(customer)}
-                        className="text-xs"
-                      >
-                        <Download className="h-3 w-3 me-1" />
-                        {t('export_data')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openErase(customer)}
-                        disabled={erased}
-                        className="text-xs"
-                      >
-                        <ShieldOff className="h-3 w-3 me-1" />
-                        {t('erase_pii')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => openDelete(customer)}
-                        className="text-xs"
-                      >
-                        {tt('delete', 'Delete')}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        className="rounded-lg border border-border"
+        columns={customerColumns}
+        rows={filteredCustomers}
+        rowKey={(customer) => customer.id}
+        empty={tt('no_customers_found', 'No customers found')}
+      />
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
@@ -711,7 +679,7 @@ export default function CustomerManagement() {
           </DialogHeader>
 
           {insightsLoading ? (
-            <div className="py-12 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
+            <LoadingState className="py-12" />
           ) : insightsError ? (
             <ErrorState
               message={t('insights_error')}

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import AuthLayout from '@/components/auth/AuthLayout';
+import LoadingState from '@/components/states/LoadingState';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLanguage } from '@/lib/i18n';
 
@@ -56,7 +57,7 @@ export default function Index() {
         dir={isRTL ? 'rtl' : 'ltr'}
         className="min-h-screen bg-background flex items-center justify-center"
       >
-        <div className="text-foreground text-lg animate-pulse">{t('loading')}</div>
+        <LoadingState />
       </div>
     );
   }

@@ -12,6 +12,7 @@ import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { notifyError } from '@/lib/notify';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon } from 'lucide-react';
 
 export interface Product {
@@ -1088,7 +1089,7 @@ export default function POSTerminal() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
+        <LoadingState />
       </div>
     );
   }

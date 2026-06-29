@@ -5,6 +5,8 @@ import { useLanguage } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { getNotifications, markNotificationRead } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
+import EmptyState from '@/components/states/EmptyState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 
@@ -95,21 +97,13 @@ export default function Notifications() {
         )}
       </PageHeading>
 
-      {loading && (
-        <div className="flex items-center justify-center py-20">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
-          <span className="ms-3 text-muted-foreground">{t('loading')}</span>
-        </div>
-      )}
+      {loading && <LoadingState />}
 
       {!loading && denied && <PermissionDenied />}
       {!loading && !denied && error && <ErrorState onRetry={fetchNotifications} />}
 
       {!loading && !denied && !error && notifications.length === 0 && (
-        <div className="dxr-tile flex flex-col items-center justify-center py-20 text-muted-foreground">
-          <Bell className="mb-4 h-16 w-16 opacity-25" />
-          <p className="text-lg">{emptyLabel}</p>
-        </div>
+        <EmptyState icon={Bell} message={emptyLabel} />
       )}
 
       {!loading && !denied && !error && notifications.length > 0 && (

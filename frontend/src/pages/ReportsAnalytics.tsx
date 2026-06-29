@@ -1,18 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { BarChart3, DollarSign, Receipt, TrendingUp, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatNumber } from '@/lib/format';
 import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, downloadReportPdf, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import Bar from '@/components/dashboard/rx/Bar';
@@ -38,459 +30,8 @@ interface PaymentTender {
   count: number;
 }
 
-const reportTranslations: Record<string, Record<string, string>> = {
-  en: {
-    reports_analytics: 'Reports & Analytics',
-    back_to_dashboard: 'Back to Dashboard',
-    period: 'Period',
-    daily: 'Daily',
-    weekly: 'Weekly',
-    monthly: 'Monthly',
-    total_revenue: 'Total Revenue',
-    total_transactions: 'Total Transactions',
-    avg_order_value: 'Average Order Value',
-    sales_chart: 'Sales Overview',
-    top_products: 'Top Products',
-    rank: 'Rank',
-    product_name: 'Product Name',
-    qty_sold: 'Qty Sold',
-    revenue: 'Revenue',
-    export_csv: 'Export CSV',
-    export_pdf: 'PDF',
-    loading: 'Loading...',
-    no_data: 'No data available',
-    sar: '⃁',
-    payment_breakdown: 'Payment Breakdown',
-    method: 'Method',
-    collected: 'Collected',
-    refunds: 'Refunds',
-    net: 'Net',
-    txns: 'Txns',
-    total: 'Total',
-    error_loading: 'Could not load data. Please retry.',
-    tender_cash: 'Cash',
-    tender_card: 'Card',
-    tender_mada: 'Mada',
-    tender_applepay: 'Apple Pay',
-    tender_stcpay: 'STC Pay',
-    tender_tabby: 'Tabby',
-    tender_tamara: 'Tamara',
-    tender_transfer: 'Bank Transfer',
-    tender_loyalty: 'Loyalty',
-    journal_export: 'Accounting Journal (GL)',
-    journal_hint: 'Double-entry journal for the last 30 days — import into Zoho / QuickBooks / Odoo.',
-    download_journal: 'Download Journal CSV',
-    account_code: 'Code',
-    gl_account: 'Account',
-    description: 'Description',
-    debit: 'Debit',
-    credit: 'Credit',
-    journal_balanced: 'Balanced',
-    journal_unbalanced: 'Out of balance',
-    retry: 'Retry',
-    profit_margin: 'Profit & Margin',
-    profit_margin_hint: 'Gross profit and margin by item and category for the last 30 days — COGS uses the cost recorded at sale time.',
-    download_margin: 'Download Margin CSV',
-    cogs: 'COGS',
-    gross_profit: 'Gross Profit',
-    margin: 'Margin %',
-    by_item: 'By Item',
-    by_category: 'By Category',
-    item: 'Item',
-    category: 'Category',
-    dead_stock: 'Dead Stock',
-    dead_stock_hint: 'On-hand products with no sale in the last 30 days.',
-    on_hand: 'On Hand',
-    cost: 'Cost',
-    stock_value: 'Stock Value',
-    no_dead_stock: 'No dead stock — everything is selling.',
-    vat_summary: 'VAT Summary',
-    vat_summary_hint: 'Output VAT by rate for the last 30 days — the ZATCA VAT-return boxes. Credit notes are netted.',
-    download_vat: 'Download VAT CSV',
-    tax_category: 'Tax Category',
-    taxable_base: 'Taxable Base',
-    vat_amount: 'VAT Amount',
-    vat_collected: 'VAT Collected',
-    vat_reversed: 'VAT Reversed',
-    net_vat: 'Net VAT Payable',
-    inventory_report: 'Inventory (at Cost)',
-    inventory_hint: 'On-hand stock valued at cost — per product and per branch — plus a movement ledger for the last 30 days.',
-    download_inventory: 'Download Inventory CSV',
-    total_valuation: 'Total Stock Value',
-    total_on_hand: 'Total On Hand',
-    branch: 'Branch',
-    by_branch: 'By Branch',
-    movements: 'Stock Movements',
-    no_movements: 'No stock movements in this period.',
-    mv_type: 'Type',
-    mv_date: 'Date',
-    mv_reference: 'Reference',
-    mv_qty: 'Qty',
-    mv_receipt: 'Receipt',
-    mv_transfer: 'Transfer',
-    mv_adjustment: 'Adjustment',
-    refunds_voids: 'Refunds & Voids',
-    refunds_voids_hint: 'Every refund and void in the last 30 days — who did it, why, and how much.',
-    download_refunds_voids: 'Download Refunds/Voids CSV',
-    discounts_report: 'Discounts',
-    discounts_hint: 'Every discounted sale in the last 30 days — who applied it, the code, and how much.',
-    download_discounts: 'Download Discounts CSV',
-    rv_type: 'Type',
-    rv_refund: 'Refund',
-    rv_void: 'Void',
-    actor: 'Actor',
-    reason: 'Reason',
-    amount: 'Amount',
-    when: 'When',
-    invoice: 'Invoice',
-    original_invoice: 'Original Invoice',
-    code: 'Code',
-    manual: 'Manual',
-    refund_count: 'Refunds',
-    void_count: 'Voids',
-    discount_count: 'Discounts',
-    discount_total: 'Total Discount',
-  },
-  ar: {
-    reports_analytics: 'التقارير والتحليلات',
-    back_to_dashboard: 'العودة للوحة التحكم',
-    period: 'الفترة',
-    daily: 'يومي',
-    weekly: 'أسبوعي',
-    monthly: 'شهري',
-    total_revenue: 'إجمالي الإيرادات',
-    total_transactions: 'إجمالي المعاملات',
-    avg_order_value: 'متوسط قيمة الطلب',
-    sales_chart: 'نظرة عامة على المبيعات',
-    top_products: 'أفضل المنتجات',
-    rank: 'الترتيب',
-    product_name: 'اسم المنتج',
-    qty_sold: 'الكمية المباعة',
-    revenue: 'الإيرادات',
-    export_csv: 'تصدير CSV',
-    export_pdf: 'PDF',
-    loading: 'جاري التحميل...',
-    no_data: 'لا توجد بيانات',
-    sar: '⃁',
-    payment_breakdown: 'تفصيل طرق الدفع',
-    method: 'الطريقة',
-    collected: 'المحصّل',
-    refunds: 'المستردات',
-    net: 'الصافي',
-    txns: 'العمليات',
-    total: 'الإجمالي',
-    error_loading: 'تعذّر تحميل البيانات. حاول مرة أخرى.',
-    tender_cash: 'نقدي',
-    tender_card: 'بطاقة',
-    tender_mada: 'مدى',
-    tender_applepay: 'أبل باي',
-    tender_stcpay: 'STC Pay',
-    tender_tabby: 'تابي',
-    tender_tamara: 'تمارا',
-    tender_transfer: 'تحويل بنكي',
-    tender_loyalty: 'نقاط الولاء',
-    journal_export: 'قيد اليومية المحاسبي (الأستاذ العام)',
-    journal_hint: 'قيد مزدوج لآخر 30 يومًا — للاستيراد إلى زوهو / كويك بوكس / أودو.',
-    download_journal: 'تنزيل ملف القيود CSV',
-    account_code: 'الرمز',
-    gl_account: 'الحساب',
-    description: 'البيان',
-    debit: 'مدين',
-    credit: 'دائن',
-    journal_balanced: 'متوازن',
-    journal_unbalanced: 'غير متوازن',
-    retry: 'إعادة المحاولة',
-    profit_margin: 'الربح والهامش',
-    profit_margin_hint: 'إجمالي الربح والهامش حسب الصنف والفئة لآخر 30 يومًا — تكلفة البضاعة المباعة تُحتسب بالتكلفة وقت البيع.',
-    download_margin: 'تنزيل ملف الهامش CSV',
-    cogs: 'تكلفة البضاعة',
-    gross_profit: 'إجمالي الربح',
-    margin: 'الهامش %',
-    by_item: 'حسب الصنف',
-    by_category: 'حسب الفئة',
-    item: 'الصنف',
-    category: 'الفئة',
-    dead_stock: 'المخزون الراكد',
-    dead_stock_hint: 'منتجات متوفرة في المخزون ولم تُبَع خلال آخر 30 يومًا.',
-    on_hand: 'المتوفر',
-    cost: 'التكلفة',
-    stock_value: 'قيمة المخزون',
-    no_dead_stock: 'لا يوجد مخزون راكد — كل المنتجات تُباع.',
-    vat_summary: 'ملخص ضريبة القيمة المضافة',
-    vat_summary_hint: 'ضريبة المخرجات حسب النسبة لآخر 30 يومًا — خانات إقرار ضريبة القيمة المضافة لهيئة الزكاة. تُخصم الإشعارات الدائنة.',
-    download_vat: 'تنزيل ملف الضريبة CSV',
-    tax_category: 'الفئة الضريبية',
-    taxable_base: 'الوعاء الخاضع للضريبة',
-    vat_amount: 'مبلغ الضريبة',
-    vat_collected: 'الضريبة المحصلة',
-    vat_reversed: 'الضريبة المعكوسة',
-    net_vat: 'صافي الضريبة المستحقة',
-    inventory_report: 'المخزون (بالتكلفة)',
-    inventory_hint: 'قيمة المخزون المتوفر بالتكلفة — لكل منتج ولكل فرع — مع سجل الحركات لآخر 30 يومًا.',
-    download_inventory: 'تنزيل ملف المخزون CSV',
-    total_valuation: 'إجمالي قيمة المخزون',
-    total_on_hand: 'إجمالي المتوفر',
-    branch: 'الفرع',
-    by_branch: 'حسب الفرع',
-    movements: 'حركات المخزون',
-    no_movements: 'لا توجد حركات مخزون في هذه الفترة.',
-    mv_type: 'النوع',
-    mv_date: 'التاريخ',
-    mv_reference: 'المرجع',
-    mv_qty: 'الكمية',
-    mv_receipt: 'استلام',
-    mv_transfer: 'تحويل',
-    mv_adjustment: 'تسوية',
-    refunds_voids: 'المبالغ المستردة والملغاة',
-    refunds_voids_hint: 'كل عملية استرداد وإلغاء خلال آخر 30 يومًا — من قام بها ولماذا وبكم.',
-    download_refunds_voids: 'تنزيل ملف المستردات/الملغاة CSV',
-    discounts_report: 'الخصومات',
-    discounts_hint: 'كل عملية بيع عليها خصم خلال آخر 30 يومًا — من طبّقها والرمز والمبلغ.',
-    download_discounts: 'تنزيل ملف الخصومات CSV',
-    rv_type: 'النوع',
-    rv_refund: 'استرداد',
-    rv_void: 'إلغاء',
-    actor: 'المستخدم',
-    reason: 'السبب',
-    amount: 'المبلغ',
-    when: 'التاريخ',
-    invoice: 'الفاتورة',
-    original_invoice: 'الفاتورة الأصلية',
-    code: 'الرمز',
-    manual: 'يدوي',
-    refund_count: 'المستردات',
-    void_count: 'الملغاة',
-    discount_count: 'الخصومات',
-    discount_total: 'إجمالي الخصم',
-  },
-  hi: {
-    reports_analytics: 'रिपोर्ट और विश्लेषण',
-    back_to_dashboard: 'डैशबोर्ड पर वापस',
-    period: 'अवधि',
-    daily: 'दैनिक',
-    weekly: 'साप्ताहिक',
-    monthly: 'मासिक',
-    total_revenue: 'कुल राजस्व',
-    total_transactions: 'कुल लेनदेन',
-    avg_order_value: 'औसत ऑर्डर मूल्य',
-    sales_chart: 'बिक्री अवलोकन',
-    top_products: 'शीर्ष उत्पाद',
-    rank: 'रैंक',
-    product_name: 'उत्पाद का नाम',
-    qty_sold: 'बेची गई मात्रा',
-    revenue: 'राजस्व',
-    export_csv: 'CSV निर्यात',
-    export_pdf: 'PDF',
-    loading: 'लोड हो रहा है...',
-    no_data: 'कोई डेटा उपलब्ध नहीं',
-    sar: '⃁',
-    payment_breakdown: 'भुगतान विवरण',
-    method: 'विधि',
-    collected: 'एकत्रित',
-    refunds: 'रिफंड',
-    net: 'शुद्ध',
-    txns: 'लेनदेन',
-    total: 'कुल',
-    error_loading: 'डेटा लोड नहीं हो सका। पुनः प्रयास करें।',
-    tender_cash: 'नकद',
-    tender_card: 'कार्ड',
-    tender_mada: 'मदा',
-    tender_applepay: 'ऐपल पे',
-    tender_stcpay: 'STC पे',
-    tender_tabby: 'टैबी',
-    tender_tamara: 'तमारा',
-    tender_transfer: 'बैंक ट्रांसफर',
-    tender_loyalty: 'लॉयल्टी',
-    journal_export: 'लेखा जर्नल (GL)',
-    journal_hint: 'पिछले 30 दिनों की डबल-एंट्री जर्नल — Zoho / QuickBooks / Odoo में आयात करें।',
-    download_journal: 'जर्नल CSV डाउनलोड करें',
-    account_code: 'कोड',
-    gl_account: 'खाता',
-    description: 'विवरण',
-    debit: 'डेबिट',
-    credit: 'क्रेडिट',
-    journal_balanced: 'संतुलित',
-    journal_unbalanced: 'असंतुलित',
-    retry: 'पुनः प्रयास',
-    profit_margin: 'लाभ और मार्जिन',
-    profit_margin_hint: 'पिछले 30 दिनों के लिए वस्तु और श्रेणी के अनुसार सकल लाभ और मार्जिन — COGS बिक्री के समय की लागत का उपयोग करता है।',
-    download_margin: 'मार्जिन CSV डाउनलोड करें',
-    cogs: 'COGS',
-    gross_profit: 'सकल लाभ',
-    margin: 'मार्जिन %',
-    by_item: 'वस्तु अनुसार',
-    by_category: 'श्रेणी अनुसार',
-    item: 'वस्तु',
-    category: 'श्रेणी',
-    dead_stock: 'मृत स्टॉक',
-    dead_stock_hint: 'पिछले 30 दिनों में बिना बिक्री वाले उपलब्ध उत्पाद।',
-    on_hand: 'उपलब्ध',
-    cost: 'लागत',
-    stock_value: 'स्टॉक मूल्य',
-    no_dead_stock: 'कोई मृत स्टॉक नहीं — सब कुछ बिक रहा है।',
-    vat_summary: 'वैट सारांश',
-    vat_summary_hint: 'पिछले 30 दिनों के लिए दर के अनुसार आउटपुट वैट — ZATCA वैट-रिटर्न बॉक्स। क्रेडिट नोट घटाए जाते हैं।',
-    download_vat: 'वैट CSV डाउनलोड करें',
-    tax_category: 'कर श्रेणी',
-    taxable_base: 'कर योग्य आधार',
-    vat_amount: 'वैट राशि',
-    vat_collected: 'वैट संग्रहित',
-    vat_reversed: 'वैट प्रतिवर्तित',
-    net_vat: 'देय शुद्ध वैट',
-    inventory_report: 'इन्वेंटरी (लागत पर)',
-    inventory_hint: 'उपलब्ध स्टॉक का मूल्य लागत पर — प्रति उत्पाद और प्रति शाखा — पिछले 30 दिनों के मूवमेंट लेजर के साथ।',
-    download_inventory: 'इन्वेंटरी CSV डाउनलोड करें',
-    total_valuation: 'कुल स्टॉक मूल्य',
-    total_on_hand: 'कुल उपलब्ध',
-    branch: 'शाखा',
-    by_branch: 'शाखा के अनुसार',
-    movements: 'स्टॉक मूवमेंट',
-    no_movements: 'इस अवधि में कोई स्टॉक मूवमेंट नहीं।',
-    mv_type: 'प्रकार',
-    mv_date: 'तारीख',
-    mv_reference: 'संदर्भ',
-    mv_qty: 'मात्रा',
-    mv_receipt: 'प्राप्ति',
-    mv_transfer: 'स्थानांतरण',
-    mv_adjustment: 'समायोजन',
-    refunds_voids: 'रिफंड और रद्दीकरण',
-    refunds_voids_hint: 'पिछले 30 दिनों की हर रिफंड और रद्दीकरण — किसने की, क्यों, और कितनी।',
-    download_refunds_voids: 'रिफंड/रद्दीकरण CSV डाउनलोड करें',
-    discounts_report: 'छूट',
-    discounts_hint: 'पिछले 30 दिनों की हर छूट वाली बिक्री — किसने लगाई, कोड, और कितनी।',
-    download_discounts: 'छूट CSV डाउनलोड करें',
-    rv_type: 'प्रकार',
-    rv_refund: 'रिफंड',
-    rv_void: 'रद्द',
-    actor: 'उपयोगकर्ता',
-    reason: 'कारण',
-    amount: 'राशि',
-    when: 'कब',
-    invoice: 'चालान',
-    original_invoice: 'मूल चालान',
-    code: 'कोड',
-    manual: 'मैनुअल',
-    refund_count: 'रिफंड',
-    void_count: 'रद्दीकरण',
-    discount_count: 'छूट',
-    discount_total: 'कुल छूट',
-  },
-  ur: {
-    reports_analytics: 'رپورٹس اور تجزیات',
-    back_to_dashboard: 'ڈیش بورڈ پر واپس',
-    period: 'مدت',
-    daily: 'روزانہ',
-    weekly: 'ہفتہ وار',
-    monthly: 'ماہانہ',
-    total_revenue: 'کل آمدنی',
-    total_transactions: 'کل لین دین',
-    avg_order_value: 'اوسط آرڈر ویلیو',
-    sales_chart: 'فروخت کا جائزہ',
-    top_products: 'سرفہرست مصنوعات',
-    rank: 'درجہ',
-    product_name: 'مصنوعات کا نام',
-    qty_sold: 'فروخت شدہ مقدار',
-    revenue: 'آمدنی',
-    export_csv: 'CSV برآمد',
-    export_pdf: 'PDF',
-    loading: 'لوڈ ہو رہا ہے...',
-    no_data: 'کوئی ڈیٹا دستیاب نہیں',
-    sar: '⃁',
-    payment_breakdown: 'ادائیگی کی تفصیل',
-    method: 'طریقہ',
-    collected: 'وصول شدہ',
-    refunds: 'ری فنڈز',
-    net: 'خالص',
-    txns: 'لین دین',
-    total: 'کل',
-    error_loading: 'ڈیٹا لوڈ نہیں ہو سکا۔ دوبارہ کوشش کریں۔',
-    tender_cash: 'نقد',
-    tender_card: 'کارڈ',
-    tender_mada: 'مدیٰ',
-    tender_applepay: 'ایپل پے',
-    tender_stcpay: 'STC پے',
-    tender_tabby: 'ٹیبی',
-    tender_tamara: 'تمارا',
-    tender_transfer: 'بینک منتقلی',
-    tender_loyalty: 'وفاداری',
-    journal_export: 'اکاؤنٹنگ جرنل (GL)',
-    journal_hint: 'پچھلے 30 دن کی ڈبل اینٹری جرنل — Zoho / QuickBooks / Odoo میں درآمد کریں۔',
-    download_journal: 'جرنل CSV ڈاؤن لوڈ کریں',
-    account_code: 'کوڈ',
-    gl_account: 'اکاؤنٹ',
-    description: 'تفصیل',
-    debit: 'ڈیبٹ',
-    credit: 'کریڈٹ',
-    journal_balanced: 'متوازن',
-    journal_unbalanced: 'غیر متوازن',
-    retry: 'دوبارہ کوشش',
-    profit_margin: 'منافع اور مارجن',
-    profit_margin_hint: 'پچھلے 30 دن کے لیے آئٹم اور زمرے کے حساب سے مجموعی منافع اور مارجن — COGS فروخت کے وقت کی لاگت استعمال کرتا ہے۔',
-    download_margin: 'مارجن CSV ڈاؤن لوڈ کریں',
-    cogs: 'لاگتِ فروخت',
-    gross_profit: 'مجموعی منافع',
-    margin: 'مارجن %',
-    by_item: 'آئٹم کے حساب سے',
-    by_category: 'زمرے کے حساب سے',
-    item: 'آئٹم',
-    category: 'زمرہ',
-    dead_stock: 'غیر فعال اسٹاک',
-    dead_stock_hint: 'موجودہ اسٹاک والے مصنوعات جو پچھلے 30 دن میں فروخت نہیں ہوئیں۔',
-    on_hand: 'دستیاب',
-    cost: 'لاگت',
-    stock_value: 'اسٹاک ویلیو',
-    no_dead_stock: 'کوئی غیر فعال اسٹاک نہیں — سب کچھ فروخت ہو رہا ہے۔',
-    vat_summary: 'ویٹ خلاصہ',
-    vat_summary_hint: 'پچھلے 30 دن کے لیے شرح کے حساب سے آؤٹ پٹ ویٹ — ZATCA ویٹ ریٹرن خانے۔ کریڈٹ نوٹس منہا کیے جاتے ہیں۔',
-    download_vat: 'ویٹ CSV ڈاؤن لوڈ کریں',
-    tax_category: 'ٹیکس زمرہ',
-    taxable_base: 'قابل ٹیکس بنیاد',
-    vat_amount: 'ویٹ رقم',
-    vat_collected: 'ویٹ وصول شدہ',
-    vat_reversed: 'ویٹ واپس شدہ',
-    net_vat: 'قابل ادائیگی خالص ویٹ',
-    inventory_report: 'انوینٹری (لاگت پر)',
-    inventory_hint: 'دستیاب اسٹاک کی قیمت لاگت پر — فی پروڈکٹ اور فی برانچ — پچھلے 30 دن کے موومنٹ لیجر کے ساتھ۔',
-    download_inventory: 'انوینٹری CSV ڈاؤن لوڈ کریں',
-    total_valuation: 'کل اسٹاک قیمت',
-    total_on_hand: 'کل دستیاب',
-    branch: 'برانچ',
-    by_branch: 'برانچ کے لحاظ سے',
-    movements: 'اسٹاک موومنٹس',
-    no_movements: 'اس مدت میں کوئی اسٹاک موومنٹ نہیں۔',
-    mv_type: 'قسم',
-    mv_date: 'تاریخ',
-    mv_reference: 'حوالہ',
-    mv_qty: 'مقدار',
-    mv_receipt: 'وصولی',
-    mv_transfer: 'منتقلی',
-    mv_adjustment: 'ایڈجسٹمنٹ',
-    refunds_voids: 'ری فنڈز اور منسوخیاں',
-    refunds_voids_hint: 'پچھلے 30 دن کی ہر ری فنڈ اور منسوخی — کس نے کی، کیوں، اور کتنی۔',
-    download_refunds_voids: 'ری فنڈز/منسوخیاں CSV ڈاؤن لوڈ کریں',
-    discounts_report: 'رعایتیں',
-    discounts_hint: 'پچھلے 30 دن کی ہر رعایتی فروخت — کس نے لگائی، کوڈ، اور کتنی۔',
-    download_discounts: 'رعایتیں CSV ڈاؤن لوڈ کریں',
-    rv_type: 'قسم',
-    rv_refund: 'ری فنڈ',
-    rv_void: 'منسوخ',
-    actor: 'صارف',
-    reason: 'وجہ',
-    amount: 'رقم',
-    when: 'کب',
-    invoice: 'انوائس',
-    original_invoice: 'اصل انوائس',
-    code: 'کوڈ',
-    manual: 'دستی',
-    refund_count: 'ری فنڈز',
-    void_count: 'منسوخیاں',
-    discount_count: 'رعایتیں',
-    discount_total: 'کل رعایت',
-  },
-};
-
 export default function ReportsAnalytics() {
-  const { language } = useLanguage();
+  const { t, language } = useLanguage();
   const [period, setPeriod] = useState<string>('daily');
   const [salesData, setSalesData] = useState<SalesDataPoint[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
@@ -530,13 +71,6 @@ export default function ReportsAnalytics() {
   const [exportingDiscounts, setExportingDiscounts] = useState(false);
   // F-072: which report's PDF is currently downloading (its path), else null.
   const [exportingPdf, setExportingPdf] = useState<string | null>(null);
-
-  const tr = useCallback(
-    (key: string): string => {
-      return reportTranslations[language]?.[key] || reportTranslations.en[key] || key;
-    },
-    [language]
-  );
 
   useEffect(() => {
     fetchSalesData();
@@ -826,8 +360,8 @@ export default function ReportsAnalytics() {
   // any tender the UI doesn't yet have a label for.
   function tenderLabel(type: string): string {
     const key = `tender_${type}`;
-    const label = reportTranslations[language]?.[key] || reportTranslations.en[key];
-    return label || type;
+    const label = t(key);
+    return label === key ? type : label;
   }
 
   async function handleExportCSV() {
@@ -873,8 +407,8 @@ export default function ReportsAnalytics() {
     <div className="animate-fade-up space-y-6">
       {/* Header */}
       <PageHeading
-        title={tr('reports_analytics')}
-        subtitle={tr('sales_chart')}
+        title={t('reports_analytics')}
+        subtitle={t('sales_chart')}
         icon={
           <span className="dxr-sw dxr-sw-brand h-10 w-10">
             <BarChart3 className="h-[18px] w-[18px]" />
@@ -882,7 +416,7 @@ export default function ReportsAnalytics() {
         }
       >
         <Button onClick={handleExportCSV} disabled={exporting} className="h-11 rounded-[10px] shadow-brand">
-          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_csv')}
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_csv')}
         </Button>
       </PageHeading>
 
@@ -890,7 +424,7 @@ export default function ReportsAnalytics() {
       <div className="dxr-seg">
         {(['daily', 'weekly', 'monthly'] as const).map((p) => (
           <button key={p} data-active={period === p} onClick={() => setPeriod(p)}>
-            {tr(p)}
+            {t(p)}
           </button>
         ))}
       </div>
@@ -900,7 +434,7 @@ export default function ReportsAnalytics() {
         <StatTile
           icon={DollarSign}
           tone="brand"
-          label={tr('total_revenue')}
+          label={t('total_revenue')}
           value={
             loadingSales ? (
               <span className="inline-block h-7 w-24 animate-pulse rounded bg-muted align-middle" />
@@ -912,7 +446,7 @@ export default function ReportsAnalytics() {
         <StatTile
           icon={Receipt}
           tone="sky"
-          label={tr('total_transactions')}
+          label={t('total_transactions')}
           value={
             loadingSales ? (
               <span className="inline-block h-7 w-16 animate-pulse rounded bg-muted align-middle" />
@@ -924,7 +458,7 @@ export default function ReportsAnalytics() {
         <StatTile
           icon={TrendingUp}
           tone="success"
-          label={tr('avg_order_value')}
+          label={t('avg_order_value')}
           value={
             loadingSales ? (
               <span className="inline-block h-7 w-24 animate-pulse rounded bg-muted align-middle" />
@@ -938,14 +472,14 @@ export default function ReportsAnalytics() {
       {/* Sales Chart */}
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-foreground">{tr('sales_chart')}</CardTitle>
+          <CardTitle className="text-foreground">{t('sales_chart')}</CardTitle>
           <Button
             onClick={() => handleExportPdf('sales-summary', 'sales_summary', { period })}
             disabled={exportingPdf === 'sales-summary' || salesData.length === 0}
             variant="outline"
             className="shrink-0"
           >
-            {exportingPdf === 'sales-summary' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+            {exportingPdf === 'sales-summary' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
           </Button>
         </CardHeader>
         <CardContent>
@@ -956,9 +490,9 @@ export default function ReportsAnalytics() {
               ))}
             </div>
           ) : salesError ? (
-            <p className="text-danger text-center py-8">{tr('error_loading')}</p>
+            <p className="text-danger text-center py-8">{t('error_loading')}</p>
           ) : salesData.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
             <div className="space-y-4">
               {salesData.map((point) => {
@@ -986,14 +520,14 @@ export default function ReportsAnalytics() {
       {/* Payment Breakdown (RPT-03) */}
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-foreground">{tr('payment_breakdown')}</CardTitle>
+          <CardTitle className="text-foreground">{t('payment_breakdown')}</CardTitle>
           <Button
             onClick={() => handleExportPdf('payment-breakdown', 'payment_breakdown')}
             disabled={exportingPdf === 'payment-breakdown' || paymentTenders.length === 0}
             variant="outline"
             className="shrink-0"
           >
-            {exportingPdf === 'payment-breakdown' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+            {exportingPdf === 'payment-breakdown' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
           </Button>
         </CardHeader>
         <CardContent>
@@ -1004,58 +538,58 @@ export default function ReportsAnalytics() {
               ))}
             </div>
           ) : paymentError ? (
-            <p className="text-danger text-center py-8">{tr('error_loading')}</p>
+            <p className="text-danger text-center py-8">{t('error_loading')}</p>
           ) : paymentTenders.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="border-border hover:bg-card">
-                  <TableHead className="text-muted-foreground">{tr('method')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('collected')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('refunds')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('net')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('txns')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paymentTenders.map((t) => (
-                  <TableRow
-                    key={t.tender_type}
+            <table className="dxr-tbl">
+              <thead>
+                <tr className="border-border hover:bg-card">
+                  <th className="text-muted-foreground">{t('method')}</th>
+                  <th className="text-muted-foreground text-end">{t('collected')}</th>
+                  <th className="text-muted-foreground text-end">{t('refunds')}</th>
+                  <th className="text-muted-foreground text-end">{t('net')}</th>
+                  <th className="text-muted-foreground text-end">{t('txns')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paymentTenders.map((tender) => (
+                  <tr
+                    key={tender.tender_type}
                     className="border-border hover:bg-muted"
                   >
-                    <TableCell className="text-foreground font-medium">
-                      {tenderLabel(t.tender_type)}
-                    </TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">
-                      {formatMoney(t.collected, language)}
-                    </TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">
-                      {t.refunds > 0 ? `- ${formatMoney(t.refunds, language)}` : '—'}
-                    </TableCell>
-                    <TableCell className="text-foreground text-end font-medium tabular-nums">
-                      {formatMoney(t.net, language)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-end tabular-nums">{t.count}</TableCell>
-                  </TableRow>
+                    <td className="text-foreground font-medium">
+                      {tenderLabel(tender.tender_type)}
+                    </td>
+                    <td className="text-foreground/90 text-end tabular-nums">
+                      {formatMoney(tender.collected, language)}
+                    </td>
+                    <td className="text-foreground/90 text-end tabular-nums">
+                      {tender.refunds > 0 ? `- ${formatMoney(tender.refunds, language)}` : '—'}
+                    </td>
+                    <td className="text-foreground text-end font-medium tabular-nums">
+                      {formatMoney(tender.net, language)}
+                    </td>
+                    <td className="text-muted-foreground text-end tabular-nums">{tender.count}</td>
+                  </tr>
                 ))}
-                <TableRow className="border-border bg-card font-semibold">
-                  <TableCell className="text-foreground">{tr('total')}</TableCell>
-                  <TableCell className="text-foreground text-end tabular-nums">
+                <tr className="border-border bg-card font-semibold">
+                  <td className="text-foreground">{t('total')}</td>
+                  <td className="text-foreground text-end tabular-nums">
                     {formatMoney(paymentTenders.reduce((s, t) => s + t.collected, 0), language)}
-                  </TableCell>
-                  <TableCell className="text-foreground text-end tabular-nums">
+                  </td>
+                  <td className="text-foreground text-end tabular-nums">
                     {formatMoney(paymentTenders.reduce((s, t) => s + t.refunds, 0), language)}
-                  </TableCell>
-                  <TableCell className="text-foreground text-end tabular-nums">
+                  </td>
+                  <td className="text-foreground text-end tabular-nums">
                     {formatMoney(paymentTenders.reduce((s, t) => s + t.net, 0), language)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-end tabular-nums">
+                  </td>
+                  <td className="text-muted-foreground text-end tabular-nums">
                     {paymentTenders.reduce((s, t) => s + t.count, 0)}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           )}
         </CardContent>
       </Card>
@@ -1064,22 +598,22 @@ export default function ReportsAnalytics() {
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-foreground">{tr('journal_export')}</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">{tr('journal_hint')}</p>
+            <CardTitle className="text-foreground">{t('journal_export')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{t('journal_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button
               onClick={handleExportJournal}
               disabled={exportingJournal || !journal || journal.lines.length === 0}
             >
-              {exportingJournal ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_journal')}
+              {exportingJournal ? <Loader2 className="h-4 w-4 animate-spin" /> : t('download_journal')}
             </Button>
             <Button
               onClick={() => handleExportPdf('journal-export', `journal_${journal?.from_date}_${journal?.to_date}`)}
               disabled={exportingPdf === 'journal-export' || !journal || journal.lines.length === 0}
               variant="outline"
             >
-              {exportingPdf === 'journal-export' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+              {exportingPdf === 'journal-export' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1092,13 +626,13 @@ export default function ReportsAnalytics() {
             </div>
           ) : journalError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <p className="text-danger mb-3">{t('error_loading')}</p>
               <Button variant="outline" onClick={fetchJournal}>
-                {tr('retry')}
+                {t('retry')}
               </Button>
             </div>
           ) : !journal || journal.lines.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
             <>
               <div className="flex items-center justify-between mb-3">
@@ -1107,51 +641,51 @@ export default function ReportsAnalytics() {
                 </span>
                 <span className={journal.balanced ? 'pill-success' : 'pill-danger'}>
                   <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                  {journal.balanced ? tr('journal_balanced') : tr('journal_unbalanced')}
+                  {journal.balanced ? t('journal_balanced') : t('journal_unbalanced')}
                 </span>
               </div>
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-card">
-                    <TableHead className="text-muted-foreground">{tr('account_code')}</TableHead>
-                    <TableHead className="text-muted-foreground">{tr('gl_account')}</TableHead>
-                    <TableHead className="text-muted-foreground">{tr('description')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('debit')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('credit')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <table className="dxr-tbl">
+                <thead>
+                  <tr className="border-border hover:bg-card">
+                    <th className="text-muted-foreground">{t('account_code')}</th>
+                    <th className="text-muted-foreground">{t('gl_account')}</th>
+                    <th className="text-muted-foreground">{t('description')}</th>
+                    <th className="text-muted-foreground text-end">{t('debit')}</th>
+                    <th className="text-muted-foreground text-end">{t('credit')}</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {journal.lines.map((line, idx) => (
-                    <TableRow
+                    <tr
                       key={`${line.account_code}-${idx}`}
                       className="border-border hover:bg-muted"
                     >
-                      <TableCell className="text-muted-foreground font-mono text-xs">
+                      <td className="text-muted-foreground font-mono text-xs">
                         {line.account_code}
-                      </TableCell>
-                      <TableCell className="text-foreground font-medium">{line.account}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">{line.description}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                      </td>
+                      <td className="text-foreground font-medium">{line.account}</td>
+                      <td className="text-muted-foreground text-xs">{line.description}</td>
+                      <td className="text-foreground/90 text-end tabular-nums">
                         {line.debit > 0 ? formatMoney(line.debit, language) : '—'}
-                      </TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                      </td>
+                      <td className="text-foreground/90 text-end tabular-nums">
                         {line.credit > 0 ? formatMoney(line.credit, language) : '—'}
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   ))}
-                  <TableRow className="border-border bg-card font-semibold">
-                    <TableCell className="text-foreground" colSpan={3}>
-                      {tr('total')}
-                    </TableCell>
-                    <TableCell className="text-foreground text-end tabular-nums">
+                  <tr className="border-border bg-card font-semibold">
+                    <td className="text-foreground" colSpan={3}>
+                      {t('total')}
+                    </td>
+                    <td className="text-foreground text-end tabular-nums">
                       {formatMoney(journal.total_debit, language)}
-                    </TableCell>
-                    <TableCell className="text-foreground text-end tabular-nums">
+                    </td>
+                    <td className="text-foreground text-end tabular-nums">
                       {formatMoney(journal.total_credit, language)}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </>
           )}
         </CardContent>
@@ -1161,22 +695,22 @@ export default function ReportsAnalytics() {
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-foreground">{tr('profit_margin')}</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">{tr('profit_margin_hint')}</p>
+            <CardTitle className="text-foreground">{t('profit_margin')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{t('profit_margin_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button
               onClick={handleExportMargin}
               disabled={exportingMargin || !margin || margin.by_item.length === 0}
             >
-              {exportingMargin ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_margin')}
+              {exportingMargin ? <Loader2 className="h-4 w-4 animate-spin" /> : t('download_margin')}
             </Button>
             <Button
               onClick={() => handleExportPdf('profit-margin', `profit_margin_${margin?.from_date}_${margin?.to_date}`)}
               disabled={exportingPdf === 'profit-margin' || !margin || margin.by_item.length === 0}
               variant="outline"
             >
-              {exportingPdf === 'profit-margin' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+              {exportingPdf === 'profit-margin' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1189,37 +723,37 @@ export default function ReportsAnalytics() {
             </div>
           ) : marginError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <p className="text-danger mb-3">{t('error_loading')}</p>
               <Button variant="outline" onClick={fetchMargin}>
-                {tr('retry')}
+                {t('retry')}
               </Button>
             </div>
           ) : !margin || margin.by_item.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
             <>
               {/* Totals strip */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('revenue')}</p>
+                  <p className="text-xs text-muted-foreground">{t('revenue')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">
                     {formatMoney(margin.totals.revenue, language)}
                   </p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('cogs')}</p>
+                  <p className="text-xs text-muted-foreground">{t('cogs')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">
                     {formatMoney(margin.totals.cogs, language)}
                   </p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('gross_profit')}</p>
+                  <p className="text-xs text-muted-foreground">{t('gross_profit')}</p>
                   <p className="text-lg font-bold text-success tabular-nums">
                     {formatMoney(margin.totals.gross_profit, language)}
                   </p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('margin')}</p>
+                  <p className="text-xs text-muted-foreground">{t('margin')}</p>
                   <p className="text-lg font-bold text-success tabular-nums">
                     {margin.totals.margin_pct.toFixed(1)}%
                   </p>
@@ -1227,105 +761,105 @@ export default function ReportsAnalytics() {
               </div>
 
               {/* By item */}
-              <h3 className="text-sm font-semibold text-foreground/90 mb-2">{tr('by_item')}</h3>
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-card">
-                    <TableHead className="text-muted-foreground">{tr('item')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('qty_sold')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('revenue')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('cogs')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('gross_profit')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('margin')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <h3 className="text-sm font-semibold text-foreground/90 mb-2">{t('by_item')}</h3>
+              <table className="dxr-tbl">
+                <thead>
+                  <tr className="border-border hover:bg-card">
+                    <th className="text-muted-foreground">{t('item')}</th>
+                    <th className="text-muted-foreground text-end">{t('qty_sold')}</th>
+                    <th className="text-muted-foreground text-end">{t('revenue')}</th>
+                    <th className="text-muted-foreground text-end">{t('cogs')}</th>
+                    <th className="text-muted-foreground text-end">{t('gross_profit')}</th>
+                    <th className="text-muted-foreground text-end">{t('margin')}</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {margin.by_item.map((row) => (
-                    <TableRow key={row.key} className="border-border hover:bg-muted">
-                      <TableCell className="text-foreground font-medium">{row.name}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">{row.qty_sold}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                    <tr key={row.key} className="border-border hover:bg-muted">
+                      <td className="text-foreground font-medium">{row.name}</td>
+                      <td className="text-foreground/90 text-end tabular-nums">{row.qty_sold}</td>
+                      <td className="text-foreground/90 text-end tabular-nums">
                         {formatMoney(row.revenue, language)}
-                      </TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                      </td>
+                      <td className="text-foreground/90 text-end tabular-nums">
                         {formatMoney(row.cogs, language)}
-                      </TableCell>
-                      <TableCell className="text-success text-end tabular-nums">
+                      </td>
+                      <td className="text-success text-end tabular-nums">
                         {formatMoney(row.gross_profit, language)}
-                      </TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</TableCell>
-                    </TableRow>
+                      </td>
+                      <td className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</td>
+                    </tr>
                   ))}
-                </TableBody>
-              </Table>
+                </tbody>
+              </table>
 
               {/* By category */}
               {margin.by_category.length > 0 && (
                 <>
-                  <h3 className="text-sm font-semibold text-foreground/90 mt-6 mb-2">{tr('by_category')}</h3>
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-border hover:bg-card">
-                        <TableHead className="text-muted-foreground">{tr('category')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('revenue')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('cogs')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('gross_profit')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('margin')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
+                  <h3 className="text-sm font-semibold text-foreground/90 mt-6 mb-2">{t('by_category')}</h3>
+                  <table className="dxr-tbl">
+                    <thead>
+                      <tr className="border-border hover:bg-card">
+                        <th className="text-muted-foreground">{t('category')}</th>
+                        <th className="text-muted-foreground text-end">{t('revenue')}</th>
+                        <th className="text-muted-foreground text-end">{t('cogs')}</th>
+                        <th className="text-muted-foreground text-end">{t('gross_profit')}</th>
+                        <th className="text-muted-foreground text-end">{t('margin')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {margin.by_category.map((row) => (
-                        <TableRow key={row.key} className="border-border hover:bg-muted">
-                          <TableCell className="text-foreground font-medium">{row.name}</TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">
+                        <tr key={row.key} className="border-border hover:bg-muted">
+                          <td className="text-foreground font-medium">{row.name}</td>
+                          <td className="text-foreground/90 text-end tabular-nums">
                             {formatMoney(row.revenue, language)}
-                          </TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">
+                          </td>
+                          <td className="text-foreground/90 text-end tabular-nums">
                             {formatMoney(row.cogs, language)}
-                          </TableCell>
-                          <TableCell className="text-success text-end tabular-nums">
+                          </td>
+                          <td className="text-success text-end tabular-nums">
                             {formatMoney(row.gross_profit, language)}
-                          </TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</TableCell>
-                        </TableRow>
+                          </td>
+                          <td className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</td>
+                        </tr>
                       ))}
-                    </TableBody>
-                  </Table>
+                    </tbody>
+                  </table>
                 </>
               )}
 
               {/* Dead stock */}
-              <h3 className="text-sm font-semibold text-foreground/90 mt-6 mb-1">{tr('dead_stock')}</h3>
-              <p className="text-xs text-muted-foreground mb-2">{tr('dead_stock_hint')}</p>
+              <h3 className="text-sm font-semibold text-foreground/90 mt-6 mb-1">{t('dead_stock')}</h3>
+              <p className="text-xs text-muted-foreground mb-2">{t('dead_stock_hint')}</p>
               {margin.dead_stock.length === 0 ? (
-                <p className="text-muted-foreground text-sm py-3">{tr('no_dead_stock')}</p>
+                <p className="text-muted-foreground text-sm py-3">{t('no_dead_stock')}</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-border hover:bg-card">
-                      <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('category')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('on_hand')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('cost')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('stock_value')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+                <table className="dxr-tbl">
+                  <thead>
+                    <tr className="border-border hover:bg-card">
+                      <th className="text-muted-foreground">{t('product_name')}</th>
+                      <th className="text-muted-foreground">{t('category')}</th>
+                      <th className="text-muted-foreground text-end">{t('on_hand')}</th>
+                      <th className="text-muted-foreground text-end">{t('cost')}</th>
+                      <th className="text-muted-foreground text-end">{t('stock_value')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
                     {margin.dead_stock.map((row) => (
-                      <TableRow key={row.product_id} className="border-border hover:bg-muted">
-                        <TableCell className="text-foreground font-medium">{row.name}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs">{row.category || '—'}</TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">{row.quantity}</TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                      <tr key={row.product_id} className="border-border hover:bg-muted">
+                        <td className="text-foreground font-medium">{row.name}</td>
+                        <td className="text-muted-foreground text-xs">{row.category || '—'}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">{row.quantity}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">
                           {formatMoney(row.cost_price, language)}
-                        </TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                        </td>
+                        <td className="text-foreground/90 text-end tabular-nums">
                           {formatMoney(row.stock_value, language)}
-                        </TableCell>
-                      </TableRow>
+                        </td>
+                      </tr>
                     ))}
-                  </TableBody>
-                </Table>
+                  </tbody>
+                </table>
               )}
             </>
           )}
@@ -1336,19 +870,19 @@ export default function ReportsAnalytics() {
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-foreground">{tr('vat_summary')}</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">{tr('vat_summary_hint')}</p>
+            <CardTitle className="text-foreground">{t('vat_summary')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{t('vat_summary_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button onClick={handleExportVat} disabled={exportingVat || !vat}>
-              {exportingVat ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_vat')}
+              {exportingVat ? <Loader2 className="h-4 w-4 animate-spin" /> : t('download_vat')}
             </Button>
             <Button
               onClick={() => handleExportPdf('vat-summary', `vat_summary_${vat?.from_date}_${vat?.to_date}`)}
               disabled={exportingPdf === 'vat-summary' || !vat}
               variant="outline"
             >
-              {exportingPdf === 'vat-summary' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+              {exportingPdf === 'vat-summary' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1361,31 +895,31 @@ export default function ReportsAnalytics() {
             </div>
           ) : vatError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <p className="text-danger mb-3">{t('error_loading')}</p>
               <Button variant="outline" onClick={fetchVat}>
-                {tr('retry')}
+                {t('retry')}
               </Button>
             </div>
           ) : !vat ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
             <>
               {/* Net-VAT strip */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('vat_collected')}</p>
+                  <p className="text-xs text-muted-foreground">{t('vat_collected')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">
                     {formatMoney(vat.vat_collected, language)}
                   </p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('vat_reversed')}</p>
+                  <p className="text-xs text-muted-foreground">{t('vat_reversed')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">
                     {formatMoney(vat.vat_reversed, language)}
                   </p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('net_vat')}</p>
+                  <p className="text-xs text-muted-foreground">{t('net_vat')}</p>
                   <p className="text-lg font-bold text-success tabular-nums">
                     {formatMoney(vat.net_vat, language)}
                   </p>
@@ -1393,37 +927,37 @@ export default function ReportsAnalytics() {
               </div>
 
               {/* The ZATCA VAT-return boxes */}
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-card">
-                    <TableHead className="text-muted-foreground">{tr('tax_category')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('taxable_base')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('vat_amount')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <table className="dxr-tbl">
+                <thead>
+                  <tr className="border-border hover:bg-card">
+                    <th className="text-muted-foreground">{t('tax_category')}</th>
+                    <th className="text-muted-foreground text-end">{t('taxable_base')}</th>
+                    <th className="text-muted-foreground text-end">{t('vat_amount')}</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {vat.buckets.map((b) => (
-                    <TableRow key={b.key} className="border-border hover:bg-muted">
-                      <TableCell className="text-foreground font-medium">{b.label}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                    <tr key={b.key} className="border-border hover:bg-muted">
+                      <td className="text-foreground font-medium">{b.label}</td>
+                      <td className="text-foreground/90 text-end tabular-nums">
                         {formatMoney(b.taxable_base, language)}
-                      </TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
+                      </td>
+                      <td className="text-foreground/90 text-end tabular-nums">
                         {formatMoney(b.vat_amount, language)}
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   ))}
-                  <TableRow className="border-border bg-muted/40">
-                    <TableCell className="text-foreground font-semibold">{tr('net_vat')}</TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">
+                  <tr className="border-border bg-muted/40">
+                    <td className="text-foreground font-semibold">{t('net_vat')}</td>
+                    <td className="text-foreground/90 text-end tabular-nums">
                       {formatMoney(vat.total_taxable_base, language)}
-                    </TableCell>
-                    <TableCell className="text-success text-end font-semibold tabular-nums">
+                    </td>
+                    <td className="text-success text-end font-semibold tabular-nums">
                       {formatMoney(vat.net_vat, language)}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </>
           )}
         </CardContent>
@@ -1433,19 +967,19 @@ export default function ReportsAnalytics() {
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-foreground">{tr('inventory_report')}</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">{tr('inventory_hint')}</p>
+            <CardTitle className="text-foreground">{t('inventory_report')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{t('inventory_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button onClick={handleExportInventory} disabled={exportingInventory || !inventory}>
-              {exportingInventory ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_inventory')}
+              {exportingInventory ? <Loader2 className="h-4 w-4 animate-spin" /> : t('download_inventory')}
             </Button>
             <Button
               onClick={() => handleExportPdf('inventory', `inventory_${inventory?.from_date}_${inventory?.to_date}`)}
               disabled={exportingPdf === 'inventory' || !inventory}
               variant="outline"
             >
-              {exportingPdf === 'inventory' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+              {exportingPdf === 'inventory' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1458,25 +992,25 @@ export default function ReportsAnalytics() {
             </div>
           ) : inventoryError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <p className="text-danger mb-3">{t('error_loading')}</p>
               <Button variant="outline" onClick={fetchInventory}>
-                {tr('retry')}
+                {t('retry')}
               </Button>
             </div>
           ) : !inventory ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
             <>
               {/* Totals strip */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('total_on_hand')}</p>
+                  <p className="text-xs text-muted-foreground">{t('total_on_hand')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">
                     {formatNumber(inventory.total_quantity, language, 0)}
                   </p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('total_valuation')}</p>
+                  <p className="text-xs text-muted-foreground">{t('total_valuation')}</p>
                   <p className="text-lg font-bold text-success tabular-nums">
                     {formatMoney(inventory.total_valuation, language)}
                   </p>
@@ -1485,97 +1019,97 @@ export default function ReportsAnalytics() {
 
               {/* On-hand valuation at cost, by product */}
               {inventory.by_product.length === 0 ? (
-                <p className="text-muted-foreground text-sm py-3">{tr('no_data')}</p>
+                <p className="text-muted-foreground text-sm py-3">{t('no_data')}</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-border hover:bg-card">
-                      <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('category')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('on_hand')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('cost')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('stock_value')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+                <table className="dxr-tbl">
+                  <thead>
+                    <tr className="border-border hover:bg-card">
+                      <th className="text-muted-foreground">{t('product_name')}</th>
+                      <th className="text-muted-foreground">{t('category')}</th>
+                      <th className="text-muted-foreground text-end">{t('on_hand')}</th>
+                      <th className="text-muted-foreground text-end">{t('cost')}</th>
+                      <th className="text-muted-foreground text-end">{t('stock_value')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
                     {inventory.by_product.map((row) => (
-                      <TableRow key={row.product_id} className="border-border hover:bg-muted">
-                        <TableCell className="text-foreground font-medium">{row.name}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs">{row.category || '—'}</TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">{row.quantity}</TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                      <tr key={row.product_id} className="border-border hover:bg-muted">
+                        <td className="text-foreground font-medium">{row.name}</td>
+                        <td className="text-muted-foreground text-xs">{row.category || '—'}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">{row.quantity}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">
                           {formatMoney(row.cost_price, language)}
-                        </TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                        </td>
+                        <td className="text-foreground/90 text-end tabular-nums">
                           {formatMoney(row.stock_value, language)}
-                        </TableCell>
-                      </TableRow>
+                        </td>
+                      </tr>
                     ))}
-                  </TableBody>
-                </Table>
+                  </tbody>
+                </table>
               )}
 
               {/* Per-branch valuation */}
               {inventory.by_branch.length > 0 && (
                 <div className="mt-6">
-                  <h4 className="text-sm font-semibold text-foreground/90 mb-2">{tr('by_branch')}</h4>
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-border hover:bg-card">
-                        <TableHead className="text-muted-foreground">{tr('branch')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('on_hand')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('stock_value')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
+                  <h4 className="text-sm font-semibold text-foreground/90 mb-2">{t('by_branch')}</h4>
+                  <table className="dxr-tbl">
+                    <thead>
+                      <tr className="border-border hover:bg-card">
+                        <th className="text-muted-foreground">{t('branch')}</th>
+                        <th className="text-muted-foreground text-end">{t('on_hand')}</th>
+                        <th className="text-muted-foreground text-end">{t('stock_value')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {inventory.by_branch.map((b) => (
-                        <TableRow key={b.branch_id} className="border-border hover:bg-muted">
-                          <TableCell className="text-foreground font-medium">
+                        <tr key={b.branch_id} className="border-border hover:bg-muted">
+                          <td className="text-foreground font-medium">
                             {b.branch_name || `#${b.branch_id}`}
-                          </TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">{b.quantity}</TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">
+                          </td>
+                          <td className="text-foreground/90 text-end tabular-nums">{b.quantity}</td>
+                          <td className="text-foreground/90 text-end tabular-nums">
                             {formatMoney(b.stock_value, language)}
-                          </TableCell>
-                        </TableRow>
+                          </td>
+                        </tr>
                       ))}
-                    </TableBody>
-                  </Table>
+                    </tbody>
+                  </table>
                 </div>
               )}
 
               {/* Movement ledger */}
               <div className="mt-6">
-                <h4 className="text-sm font-semibold text-foreground/90 mb-2">{tr('movements')}</h4>
+                <h4 className="text-sm font-semibold text-foreground/90 mb-2">{t('movements')}</h4>
                 {inventory.movements.length === 0 ? (
-                  <p className="text-muted-foreground text-sm py-3">{tr('no_movements')}</p>
+                  <p className="text-muted-foreground text-sm py-3">{t('no_movements')}</p>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-border hover:bg-card">
-                        <TableHead className="text-muted-foreground">{tr('mv_date')}</TableHead>
-                        <TableHead className="text-muted-foreground">{tr('mv_type')}</TableHead>
-                        <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('mv_qty')}</TableHead>
-                        <TableHead className="text-muted-foreground">{tr('mv_reference')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
+                  <table className="dxr-tbl">
+                    <thead>
+                      <tr className="border-border hover:bg-card">
+                        <th className="text-muted-foreground">{t('mv_date')}</th>
+                        <th className="text-muted-foreground">{t('mv_type')}</th>
+                        <th className="text-muted-foreground">{t('product_name')}</th>
+                        <th className="text-muted-foreground text-end">{t('mv_qty')}</th>
+                        <th className="text-muted-foreground">{t('mv_reference')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
                       {inventory.movements.map((m, idx) => (
-                        <TableRow key={idx} className="border-border hover:bg-muted">
-                          <TableCell className="text-muted-foreground text-xs">{m.date}</TableCell>
-                          <TableCell className="text-foreground/90 text-xs">
-                            {tr(`mv_${m.type}`)}
-                          </TableCell>
-                          <TableCell className="text-foreground">
+                        <tr key={idx} className="border-border hover:bg-muted">
+                          <td className="text-muted-foreground text-xs">{m.date}</td>
+                          <td className="text-foreground/90 text-xs">
+                            {t(`mv_${m.type}`)}
+                          </td>
+                          <td className="text-foreground">
                             {m.product_name || (m.product_id ? `#${m.product_id}` : '—')}
-                          </TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">{m.quantity}</TableCell>
-                          <TableCell className="text-muted-foreground text-xs">{m.reference || '—'}</TableCell>
-                        </TableRow>
+                          </td>
+                          <td className="text-foreground/90 text-end tabular-nums">{m.quantity}</td>
+                          <td className="text-muted-foreground text-xs">{m.reference || '—'}</td>
+                        </tr>
                       ))}
-                    </TableBody>
-                  </Table>
+                    </tbody>
+                  </table>
                 )}
               </div>
             </>
@@ -1587,19 +1121,19 @@ export default function ReportsAnalytics() {
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-foreground">{tr('refunds_voids')}</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">{tr('refunds_voids_hint')}</p>
+            <CardTitle className="text-foreground">{t('refunds_voids')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{t('refunds_voids_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button onClick={handleExportRefundsVoids} disabled={exportingRefundsVoids || !refundsVoids}>
-              {exportingRefundsVoids ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_refunds_voids')}
+              {exportingRefundsVoids ? <Loader2 className="h-4 w-4 animate-spin" /> : t('download_refunds_voids')}
             </Button>
             <Button
               onClick={() => handleExportPdf('refunds-voids', `refunds_voids_${refundsVoids?.from_date}_${refundsVoids?.to_date}`)}
               disabled={exportingPdf === 'refunds-voids' || !refundsVoids}
               variant="outline"
             >
-              {exportingPdf === 'refunds-voids' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+              {exportingPdf === 'refunds-voids' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1612,19 +1146,19 @@ export default function ReportsAnalytics() {
             </div>
           ) : refundsVoidsError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <p className="text-danger mb-3">{t('error_loading')}</p>
               <Button variant="outline" onClick={fetchRefundsVoids}>
-                {tr('retry')}
+                {t('retry')}
               </Button>
             </div>
           ) : !refundsVoids ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
             <>
               {/* Totals strip */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('refund_count')}</p>
+                  <p className="text-xs text-muted-foreground">{t('refund_count')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">
                     {refundsVoids.refund_count}
                     <span className="text-sm text-muted-foreground ms-2">
@@ -1633,7 +1167,7 @@ export default function ReportsAnalytics() {
                   </p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('void_count')}</p>
+                  <p className="text-xs text-muted-foreground">{t('void_count')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">
                     {refundsVoids.void_count}
                     <span className="text-sm text-muted-foreground ms-2">
@@ -1644,45 +1178,45 @@ export default function ReportsAnalytics() {
               </div>
 
               {refundsVoids.rows.length === 0 ? (
-                <p className="text-muted-foreground text-center py-6">{tr('no_data')}</p>
+                <p className="text-muted-foreground text-center py-6">{t('no_data')}</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-border hover:bg-card">
-                      <TableHead className="text-muted-foreground">{tr('rv_type')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('invoice')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('actor')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('reason')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('amount')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('when')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+                <table className="dxr-tbl">
+                  <thead>
+                    <tr className="border-border hover:bg-card">
+                      <th className="text-muted-foreground">{t('rv_type')}</th>
+                      <th className="text-muted-foreground">{t('invoice')}</th>
+                      <th className="text-muted-foreground">{t('actor')}</th>
+                      <th className="text-muted-foreground">{t('reason')}</th>
+                      <th className="text-muted-foreground text-end">{t('amount')}</th>
+                      <th className="text-muted-foreground">{t('when')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
                     {refundsVoids.rows.map((r, idx) => (
-                      <TableRow key={idx} className="border-border hover:bg-muted">
-                        <TableCell>
+                      <tr key={idx} className="border-border hover:bg-muted">
+                        <td>
                           <span className={r.type === 'void' ? 'pill-danger' : 'pill-warning'}>
-                            {tr(`rv_${r.type}`)}
+                            {t(`rv_${r.type}`)}
                           </span>
-                        </TableCell>
-                        <TableCell className="text-foreground text-xs">
+                        </td>
+                        <td className="text-foreground text-xs">
                           {r.invoice_number || '—'}
                           {r.original_invoice ? (
                             <span className="text-muted-foreground"> ← {r.original_invoice}</span>
                           ) : null}
-                        </TableCell>
-                        <TableCell className="text-foreground/90 text-xs">{r.actor || '—'}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs">{r.reason || '—'}</TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                        </td>
+                        <td className="text-foreground/90 text-xs">{r.actor || '—'}</td>
+                        <td className="text-muted-foreground text-xs">{r.reason || '—'}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">
                           {formatMoney(r.amount, language)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-xs">
+                        </td>
+                        <td className="text-muted-foreground text-xs">
                           {r.timestamp ? r.timestamp.slice(0, 10) : '—'}
-                        </TableCell>
-                      </TableRow>
+                        </td>
+                      </tr>
                     ))}
-                  </TableBody>
-                </Table>
+                  </tbody>
+                </table>
               )}
             </>
           )}
@@ -1693,19 +1227,19 @@ export default function ReportsAnalytics() {
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div>
-            <CardTitle className="text-foreground">{tr('discounts_report')}</CardTitle>
-            <p className="text-xs text-muted-foreground mt-1">{tr('discounts_hint')}</p>
+            <CardTitle className="text-foreground">{t('discounts_report')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{t('discounts_hint')}</p>
           </div>
           <div className="flex gap-2 shrink-0">
             <Button onClick={handleExportDiscounts} disabled={exportingDiscounts || !discounts}>
-              {exportingDiscounts ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_discounts')}
+              {exportingDiscounts ? <Loader2 className="h-4 w-4 animate-spin" /> : t('download_discounts')}
             </Button>
             <Button
               onClick={() => handleExportPdf('discounts', `discounts_${discounts?.from_date}_${discounts?.to_date}`)}
               disabled={exportingPdf === 'discounts' || !discounts}
               variant="outline"
             >
-              {exportingPdf === 'discounts' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+              {exportingPdf === 'discounts' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
             </Button>
           </div>
         </CardHeader>
@@ -1718,22 +1252,22 @@ export default function ReportsAnalytics() {
             </div>
           ) : discountsError ? (
             <div className="text-center py-8" role="alert">
-              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <p className="text-danger mb-3">{t('error_loading')}</p>
               <Button variant="outline" onClick={fetchDiscounts}>
-                {tr('retry')}
+                {t('retry')}
               </Button>
             </div>
           ) : !discounts ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-5">
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('discount_count')}</p>
+                  <p className="text-xs text-muted-foreground">{t('discount_count')}</p>
                   <p className="text-lg font-bold text-foreground tabular-nums">{discounts.discount_count}</p>
                 </div>
                 <div className="rounded-[14px] bg-muted/40 p-3">
-                  <p className="text-xs text-muted-foreground">{tr('discount_total')}</p>
+                  <p className="text-xs text-muted-foreground">{t('discount_total')}</p>
                   <p className="text-lg font-bold text-success tabular-nums">
                     {formatMoney(discounts.discount_total, language)}
                   </p>
@@ -1741,40 +1275,40 @@ export default function ReportsAnalytics() {
               </div>
 
               {discounts.rows.length === 0 ? (
-                <p className="text-muted-foreground text-center py-6">{tr('no_data')}</p>
+                <p className="text-muted-foreground text-center py-6">{t('no_data')}</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-border hover:bg-card">
-                      <TableHead className="text-muted-foreground">{tr('invoice')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('actor')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('code')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('amount')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('when')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+                <table className="dxr-tbl">
+                  <thead>
+                    <tr className="border-border hover:bg-card">
+                      <th className="text-muted-foreground">{t('invoice')}</th>
+                      <th className="text-muted-foreground">{t('actor')}</th>
+                      <th className="text-muted-foreground">{t('code')}</th>
+                      <th className="text-muted-foreground text-end">{t('amount')}</th>
+                      <th className="text-muted-foreground">{t('when')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
                     {discounts.rows.map((r, idx) => (
-                      <TableRow key={idx} className="border-border hover:bg-muted">
-                        <TableCell className="text-foreground text-xs">{r.invoice_number || '—'}</TableCell>
-                        <TableCell className="text-foreground/90 text-xs">{r.actor || '—'}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs">
+                      <tr key={idx} className="border-border hover:bg-muted">
+                        <td className="text-foreground text-xs">{r.invoice_number || '—'}</td>
+                        <td className="text-foreground/90 text-xs">{r.actor || '—'}</td>
+                        <td className="text-muted-foreground text-xs">
                           {r.is_manual ? (
-                            <span className="italic text-muted-foreground">{tr('manual')}</span>
+                            <span className="italic text-muted-foreground">{t('manual')}</span>
                           ) : (
                             r.code
                           )}
-                        </TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">
+                        </td>
+                        <td className="text-foreground/90 text-end tabular-nums">
                           {formatMoney(r.discount_amount, language)}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-xs">
+                        </td>
+                        <td className="text-muted-foreground text-xs">
                           {r.timestamp ? r.timestamp.slice(0, 10) : '—'}
-                        </TableCell>
-                      </TableRow>
+                        </td>
+                      </tr>
                     ))}
-                  </TableBody>
-                </Table>
+                  </tbody>
+                </table>
               )}
             </>
           )}
@@ -1784,14 +1318,14 @@ export default function ReportsAnalytics() {
       {/* Top Products */}
       <Card className="bg-card border-border">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-foreground">{tr('top_products')}</CardTitle>
+          <CardTitle className="text-foreground">{t('top_products')}</CardTitle>
           <Button
             onClick={() => handleExportPdf('top-products', 'top_products')}
             disabled={exportingPdf === 'top-products' || topProducts.length === 0}
             variant="outline"
             className="shrink-0"
           >
-            {exportingPdf === 'top-products' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+            {exportingPdf === 'top-products' ? <Loader2 className="h-4 w-4 animate-spin" /> : t('export_pdf')}
           </Button>
         </CardHeader>
         <CardContent>
@@ -1802,37 +1336,37 @@ export default function ReportsAnalytics() {
               ))}
             </div>
           ) : productsError ? (
-            <p className="text-danger text-center py-8">{tr('error_loading')}</p>
+            <p className="text-danger text-center py-8">{t('error_loading')}</p>
           ) : topProducts.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+            <p className="text-muted-foreground text-center py-8">{t('no_data')}</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="border-border hover:bg-card">
-                  <TableHead className="text-muted-foreground">{tr('rank')}</TableHead>
-                  <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('qty_sold')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('revenue')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <table className="dxr-tbl">
+              <thead>
+                <tr className="border-border hover:bg-card">
+                  <th className="text-muted-foreground">{t('rank')}</th>
+                  <th className="text-muted-foreground">{t('product_name')}</th>
+                  <th className="text-muted-foreground text-end">{t('qty_sold')}</th>
+                  <th className="text-muted-foreground text-end">{t('revenue')}</th>
+                </tr>
+              </thead>
+              <tbody>
                 {topProducts.map((product, idx) => (
-                  <TableRow
+                  <tr
                     key={product.product_id}
                     className="border-border hover:bg-muted"
                   >
-                    <TableCell>{rankBadge(idx + 1)}</TableCell>
-                    <TableCell className="text-foreground font-medium">{product.name}</TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">
+                    <td>{rankBadge(idx + 1)}</td>
+                    <td className="text-foreground font-medium">{product.name}</td>
+                    <td className="text-foreground/90 text-end tabular-nums">
                       {product.total_quantity_sold}
-                    </TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">
+                    </td>
+                    <td className="text-foreground/90 text-end tabular-nums">
                       {formatMoney(product.total_revenue, language)}
-                    </TableCell>
-                  </TableRow>
+                    </td>
+                  </tr>
                 ))}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           )}
         </CardContent>
       </Card>

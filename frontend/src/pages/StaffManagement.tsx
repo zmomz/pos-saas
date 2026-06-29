@@ -27,7 +27,9 @@ import {
   type StaffPermission,
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import PermissionDenied from '@/components/states/PermissionDenied';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
@@ -293,11 +295,7 @@ export default function StaffManagement() {
   }
 
   if (loading && staff.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   // A 403 lacks access; any other failure is a real error — show the in-page
@@ -316,6 +314,51 @@ export default function StaffManagement() {
       </div>
     );
   }
+
+  const staffColumns: DataTableColumn<(typeof staff)[number]>[] = [
+    {
+      key: 'name',
+      header: t('name'),
+      cell: (member) => <span className="text-foreground font-medium">{member.name}</span>,
+    },
+    { key: 'email', header: t('email'), cell: (member) => member.email || '—' },
+    { key: 'phone', header: t('phone'), cell: (member) => member.phone || '—' },
+    {
+      key: 'role',
+      header: t('role'),
+      cell: (member) => <span className="pill-muted">{t(`role_${member.role}`)}</span>,
+    },
+    {
+      key: 'status',
+      header: t('status'),
+      cell: (member) =>
+        member.is_active !== false ? (
+          <span className="pill-success">{t('active')}</span>
+        ) : (
+          <span className="pill-muted">{t('inactive')}</span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: t('actions'),
+      cell: (member) => (
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => toggleStatus(member)} className="text-xs">
+            {member.is_active !== false ? t('stf_deactivate') : t('stf_activate')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => openPermissions(member)} className="text-xs">
+            {t('permissions')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => openEdit(member)} className="text-xs">
+            {t('edit')}
+          </Button>
+          <Button size="sm" variant="destructive" onClick={() => openDelete(member)} className="text-xs">
+            {t('delete')}
+          </Button>
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div className="animate-fade-up space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>
@@ -351,83 +394,13 @@ export default function StaffManagement() {
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead className="bg-card">
-            <tr className="text-muted-foreground">
-              <th className="p-3 text-start">{t('name')}</th>
-              <th className="p-3 text-start">{t('email')}</th>
-              <th className="p-3 text-start">{t('phone')}</th>
-              <th className="p-3 text-start">{t('role')}</th>
-              <th className="p-3 text-start">{t('status')}</th>
-              <th className="p-3 text-start">{t('actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {staff.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                  {t('stf_none')}
-                </td>
-              </tr>
-            ) : (
-              staff.map((member) => (
-                <tr key={member.id} className="border-t border-border text-foreground/90">
-                  <td className="p-3 text-foreground font-medium">{member.name}</td>
-                  <td className="p-3">{member.email || '—'}</td>
-                  <td className="p-3">{member.phone || '—'}</td>
-                  <td className="p-3">
-                    <span className="pill-muted">{t(`role_${member.role}`)}</span>
-                  </td>
-                  <td className="p-3">
-                    {member.is_active !== false ? (
-                      <span className="pill-success">{t('active')}</span>
-                    ) : (
-                      <span className="pill-muted">{t('inactive')}</span>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => toggleStatus(member)}
-                        className="text-xs"
-                      >
-                        {member.is_active !== false ? t('stf_deactivate') : t('stf_activate')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openPermissions(member)}
-                        className="text-xs"
-                      >
-                        {t('permissions')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEdit(member)}
-                        className="text-xs"
-                      >
-                        {t('edit')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => openDelete(member)}
-                        className="text-xs"
-                      >
-                        {t('delete')}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        className="rounded-lg border border-border"
+        columns={staffColumns}
+        rows={staff}
+        rowKey={(member) => member.id}
+        empty={t('stf_none')}
+      />
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
@@ -478,7 +451,7 @@ export default function StaffManagement() {
           </DialogHeader>
 
           {permsLoading && perms.length === 0 ? (
-            <div className="py-6 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
+            <LoadingState className="py-6" />
           ) : !permsHasLogin ? (
             <p role="alert" className="py-4 text-sm text-warning">
               {t('no_login_permissions')}
