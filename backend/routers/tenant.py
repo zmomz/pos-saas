@@ -1551,6 +1551,15 @@ class SubscriptionResponse(BaseModel):
     subscription_status: str
     next_billing_date: Optional[str] = None
     is_active: bool
+    # Self-serve lifecycle stamps (#206): when the merchant paused / cancelled.
+    subscription_paused_at: Optional[str] = None
+    subscription_cancelled_at: Optional[str] = None
+    # Card-on-file summary (#206): the masked card surfaced so the billing UI can
+    # show the current payment method and a "replace card" affordance without a
+    # separate fetch. Only the last4/brand (never the token) are exposed.
+    has_card: bool = False
+    card_last4: Optional[str] = None
+    card_brand: Optional[str] = None
     # Dunning state (CL-06): the consecutive failed-charge counter and the grace
     # deadline drive the client-facing PRN-09 overdue notice.
     dunning_attempts: int = 0
@@ -1634,6 +1643,11 @@ async def _subscription_payload(db: AsyncSession, merchant: Clients) -> Subscrip
         subscription_status=merchant.subscription_status or "active",
         next_billing_date=merchant.next_billing_date,
         is_active=merchant.is_active if merchant.is_active is not None else True,
+        subscription_paused_at=getattr(merchant, "subscription_paused_at", None),
+        subscription_cancelled_at=getattr(merchant, "subscription_cancelled_at", None),
+        has_card=bool(getattr(merchant, "moyasar_card_token_enc", None)),
+        card_last4=merchant.card_last4,
+        card_brand=merchant.card_brand,
         dunning_attempts=int(merchant.dunning_attempts or 0),
         grace_deadline=merchant.grace_deadline,
         moyasar_publishable_key=agent_publishable_key,
@@ -1890,6 +1904,356 @@ async def get_subscription_invoice_pdf(
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{invoice_number}.pdf"'},
     )
+
+
+# ---------- Subscription lifecycle: pause / resume / cancel (#206) ----------
+# The merchant-managed lifecycle states. 'active'/'past_due'/'dunning'/'trialing'
+# are the billing-engine states; 'paused' and 'cancelled' are self-serve and are
+# excluded from the dunning sweep (services.dunning.ACTIVE_STATES) so a paused or
+# cancelled subscription is never auto-charged or escalated.
+_PAUSABLE_STATES = ("active", "past_due", "dunning", "trialing")
+
+
+def _cycle_days(cycle: Optional[str]) -> int:
+    """Days in one billing cycle: 365 for yearly, 30 otherwise."""
+    return 365 if (cycle or "monthly") == "yearly" else 30
+
+
+@router.post("/client/subscription/pause", response_model=SubscriptionResponse)
+async def pause_client_subscription(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: pause their own subscription (#206 self-serve lifecycle).
+
+    Billing is suspended — the dunning sweep skips ``paused`` subscriptions — while
+    the merchant keeps access (``is_active`` is untouched). The pause date is
+    stamped so :func:`resume_client_subscription` can shift the billing date forward
+    by the paused span, preserving any already-paid days. Only an active / past_due /
+    dunning / trialing subscription can be paused; a cancelled or suspended one is a
+    409 (resolve those first). Owner-scoped via ``_client_for_current_user``.
+    """
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    status = merchant.subscription_status or "active"
+    if status == "paused":
+        return await _subscription_payload(db, merchant)
+    if status not in _PAUSABLE_STATES:
+        raise HTTPException(
+            status_code=409, detail=f"Cannot pause a {status} subscription"
+        )
+    today = datetime.now(timezone.utc).date().isoformat()
+    await db.execute(
+        update(Clients)
+        .where(Clients.id == merchant.id)
+        .values(subscription_status="paused", subscription_paused_at=today)
+    )
+    await db.commit()
+    await db.refresh(merchant)
+    return await _subscription_payload(db, merchant)
+
+
+@router.post("/client/subscription/resume", response_model=SubscriptionResponse)
+async def resume_client_subscription(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: resume a paused (or reactivate a cancelled) subscription (#206).
+
+    A *paused* subscription returns to ``active`` with its billing date shifted
+    forward by the paused span, so the unused paid days are preserved rather than
+    forfeited. A *cancelled* subscription is reactivated with a fresh billing date
+    one cycle out. Anything else (already active, suspended for non-payment) is a
+    409. Clears the pause/cancel stamps. Owner-scoped.
+    """
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    status = merchant.subscription_status or "active"
+    if status not in ("paused", "cancelled"):
+        raise HTTPException(
+            status_code=409, detail=f"Cannot resume a {status} subscription"
+        )
+
+    today = datetime.now(timezone.utc).date()
+    cycle = merchant.billing_cycle or "monthly"
+    next_billing = merchant.next_billing_date
+    if status == "paused":
+        # Preserve paid days: shift the billing date forward by the paused span.
+        paused_at = getattr(merchant, "subscription_paused_at", None)
+        if next_billing and paused_at:
+            try:
+                end = datetime.fromisoformat(next_billing).date()
+                start = datetime.fromisoformat(paused_at).date()
+                paused_days = max((today - start).days, 0)
+                next_billing = (end + timedelta(days=paused_days)).isoformat()
+            except ValueError:
+                next_billing = _advance_billing_date(
+                    datetime.now(timezone.utc), cycle
+                )
+        else:
+            next_billing = _advance_billing_date(datetime.now(timezone.utc), cycle)
+    else:  # cancelled -> reactivate with a fresh cycle
+        next_billing = _advance_billing_date(datetime.now(timezone.utc), cycle)
+
+    await db.execute(
+        update(Clients)
+        .where(Clients.id == merchant.id)
+        .values(
+            subscription_status="active",
+            next_billing_date=next_billing,
+            subscription_paused_at=None,
+            subscription_cancelled_at=None,
+            is_active=True,
+        )
+    )
+    await db.commit()
+    await db.refresh(merchant)
+    return await _subscription_payload(db, merchant)
+
+
+@router.post("/client/subscription/cancel", response_model=SubscriptionResponse)
+async def cancel_client_subscription(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: cancel their own subscription (#206 self-serve lifecycle).
+
+    Cancel-at-period-end: no further charges are taken (the dunning sweep skips
+    ``cancelled`` subscriptions) and the merchant keeps access through the already-
+    paid period (``is_active`` is untouched until the period lapses). The cancel
+    date is stamped for the billing UI. A cancelled subscription can be reactivated
+    via ``resume``. Idempotent. Owner-scoped.
+    """
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    if (merchant.subscription_status or "active") == "cancelled":
+        return await _subscription_payload(db, merchant)
+    today = datetime.now(timezone.utc).date().isoformat()
+    await db.execute(
+        update(Clients)
+        .where(Clients.id == merchant.id)
+        .values(subscription_status="cancelled", subscription_cancelled_at=today)
+    )
+    await db.commit()
+    await db.refresh(merchant)
+    return await _subscription_payload(db, merchant)
+
+
+# ---------- Subscription renewal / proration preview (#206) ----------
+class ProrationPreview(BaseModel):
+    new_fee: float
+    billing_cycle: str
+    days_remaining: int
+    cycle_days: int
+    amount: float  # pro-rated charge (positive) or credit (negative)
+    is_credit: bool
+
+
+class RenewalPreviewResponse(BaseModel):
+    subscription_status: str
+    billing_cycle: str
+    renewal_date: Optional[str] = None
+    currency: str
+    gross_fee: float
+    coupon_active: bool = False
+    coupon_type: Optional[str] = None
+    coupon_value: Optional[float] = None
+    discount_amount: float = 0.0
+    net_amount: float  # what will actually be charged on the next renewal
+    will_charge: bool  # False when paused / cancelled (no auto-charge)
+    in_trial: bool = False
+    proration: Optional[ProrationPreview] = None
+
+
+@router.get("/client/subscription/renewal-preview", response_model=RenewalPreviewResponse)
+async def get_subscription_renewal_preview(
+    new_fee: Optional[float] = None,
+    new_cycle: Optional[str] = None,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: preview the upcoming renewal — and, optionally, an upgrade/downgrade
+    (#206).
+
+    Returns what the next renewal will charge: the gross fee, any active coupon's
+    discount, and the resulting net (coupon math reused from the pay path so the
+    preview matches the charge). ``will_charge`` is false for a paused/cancelled
+    subscription. When ``new_fee`` (and optionally ``new_cycle``) is supplied, also
+    returns the pro-rated amount of changing to that fee mid-cycle — a charge on an
+    upgrade, a credit on a downgrade — using the same ``compute_proration`` math the
+    agent's plan-change endpoint applies, so the merchant can see the cost before
+    requesting the change. Read-only; owner-scoped.
+    """
+    from core.config import settings as _settings
+    from services.subscription_billing import apply_coupon, compute_proration, is_in_trial
+
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    status = merchant.subscription_status or "active"
+    cycle = merchant.billing_cycle or "monthly"
+    gross = float(merchant.subscription_fee or 0)
+    currency = str(getattr(_settings, "subscription_currency", "SAR") or "SAR")
+
+    coupon_active = int(merchant.coupon_duration_remaining or 0) > 0
+    net = (
+        float(apply_coupon(gross, merchant.coupon_type, merchant.coupon_value))
+        if coupon_active
+        else round(gross, 2)
+    )
+    in_trial = is_in_trial(merchant.trial_end, datetime.now(timezone.utc).date())
+    will_charge = gross > 0 and status not in ("paused", "cancelled")
+
+    proration: Optional[ProrationPreview] = None
+    if new_fee is not None:
+        if new_fee < 0:
+            raise HTTPException(status_code=400, detail="new_fee cannot be negative")
+        if new_cycle is not None and new_cycle not in ("monthly", "yearly"):
+            raise HTTPException(status_code=400, detail="new_cycle must be monthly or yearly")
+        target_cycle = new_cycle or cycle
+        cycle_days = _cycle_days(target_cycle)
+        days_remaining = _days_remaining_in_period(merchant.next_billing_date)
+        amount = float(compute_proration(gross, float(new_fee), days_remaining, cycle_days))
+        proration = ProrationPreview(
+            new_fee=round(float(new_fee), 2),
+            billing_cycle=target_cycle,
+            days_remaining=days_remaining,
+            cycle_days=cycle_days,
+            amount=amount,
+            is_credit=amount < 0,
+        )
+
+    return RenewalPreviewResponse(
+        subscription_status=status,
+        billing_cycle=cycle,
+        renewal_date=merchant.next_billing_date,
+        currency=currency,
+        gross_fee=round(gross, 2),
+        coupon_active=coupon_active,
+        coupon_type=merchant.coupon_type,
+        coupon_value=float(merchant.coupon_value) if merchant.coupon_value is not None else None,
+        discount_amount=round(gross - net, 2),
+        net_amount=net,
+        will_charge=will_charge,
+        in_trial=in_trial,
+        proration=proration,
+    )
+
+
+# ---------- Refund a subscription payment (#206) ----------
+class RefundSubscriptionRequest(BaseModel):
+    # Optional partial amount; omitted/None refunds the full remaining amount.
+    amount: Optional[float] = None
+
+
+@router.post(
+    "/client/subscription/payments/{payment_id}/refund",
+    response_model=SubscriptionResponse,
+)
+async def refund_client_subscription_payment(
+    payment_id: int,
+    data: RefundSubscriptionRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Client: refund one of their settled subscription payments (#206).
+
+    Refunds (fully or partially) a real gateway charge back to the card it was
+    taken from, through the owning agent's Moyasar account (Rail 2). The refund is
+    recorded as a negative-amount ``Subscription_payments`` row (method ``refund``)
+    linked to the original payment, so the payment history reconciles and a payment
+    can never be over-refunded. Only an actual gateway charge (a positive payment
+    with a gateway reference) is refundable — proration/manual/reservation rows are
+    not. A declined/failed gateway refund is a 402 with no row recorded. Owner-scoped:
+    a client can only refund their **own** payments (SEC-02); an unknown/foreign id
+    is a 404.
+    """
+    from services.subscription_billing import (
+        SubscriptionRefundError,
+        refund_subscription,
+    )
+
+    merchant = await _client_for_current_user(db, str(current_user.id))
+    payment = (
+        await db.execute(
+            select(Subscription_payments).where(
+                Subscription_payments.id == payment_id,
+                Subscription_payments.client_id == merchant.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Subscription payment not found")
+
+    # Only a real settled gateway charge is refundable. Reservation placeholders,
+    # proration adjustments, manual records and prior refunds are excluded.
+    if payment.method in ("reserving", "proration", "refund") or float(payment.amount or 0) <= 0:
+        raise HTTPException(status_code=400, detail="This payment cannot be refunded")
+    if not payment.reference:
+        raise HTTPException(
+            status_code=400, detail="This payment has no gateway reference to refund"
+        )
+
+    # How much of this payment has already been refunded (sum of the linked refund
+    # rows, which carry the original payment id in ``note`` and a negative amount).
+    link = f"refund:{payment.id}"
+    prior_rows = (
+        await db.execute(
+            select(Subscription_payments).where(
+                Subscription_payments.client_id == merchant.id,
+                Subscription_payments.method == "refund",
+                Subscription_payments.note == link,
+            )
+        )
+    ).scalars().all()
+    already_refunded = sum(abs(float(r.amount or 0)) for r in prior_rows)
+    remaining = round(float(payment.amount or 0) - already_refunded, 2)
+    if remaining <= 0:
+        raise HTTPException(status_code=400, detail="This payment is already fully refunded")
+
+    refund_amount = round(float(data.amount), 2) if data.amount is not None else remaining
+    if refund_amount <= 0:
+        raise HTTPException(status_code=400, detail="Refund amount must be positive")
+    if refund_amount > remaining:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Refund amount exceeds the {remaining:g} refundable on this payment",
+        )
+
+    agent_row = (
+        await db.execute(select(Agents).where(Agents.id == merchant.agent_id))
+    ).scalar_one_or_none()
+    agent_moyasar_key = None
+    if agent_row is not None and getattr(agent_row, "moyasar_secret_key_enc", None):
+        from core.crypto import decrypt_secret
+
+        try:
+            agent_moyasar_key = decrypt_secret(agent_row.moyasar_secret_key_enc)
+        except Exception:
+            agent_moyasar_key = None
+
+    try:
+        refund = await refund_subscription(
+            gateway_ref=payment.reference,
+            amount=refund_amount,
+            agent_moyasar_key=agent_moyasar_key,
+        )
+    except SubscriptionRefundError as exc:
+        raise HTTPException(status_code=402, detail=f"Refund failed: {exc}")
+
+    # Record the refund as a negative payment linked to the original (period_key
+    # NULL so it never collides on the per-period unique constraint).
+    db.add(
+        Subscription_payments(
+            user_id=str(current_user.id),
+            client_id=merchant.id,
+            amount=-refund_amount,
+            billing_cycle=payment.billing_cycle,
+            period_start=payment.period_start,
+            period_end=payment.period_end,
+            method="refund",
+            reference=refund.reference,
+            note=link,
+        )
+    )
+    await db.commit()
+    await db.refresh(merchant)
+    return await _subscription_payload(db, merchant)
 
 
 # ---------- Client self-service profile (CL-02 first-login business type) ----------
