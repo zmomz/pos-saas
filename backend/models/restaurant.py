@@ -91,6 +91,12 @@ class OrderTickets(Base):
     # Only fired courses are recorded; absent courses are still held (RST-02). A
     # held course can be fired later — the all-day view reads from this + items.
     course_state = Column(String, nullable=True, default="{}", server_default="{}")
+    # Serialized JSON map of course -> ISO fire time (coursing / course
+    # scheduling, M6). A server paces the meal by scheduling when each course
+    # fires; the ``fire-due-courses`` sweep fires every course whose time has
+    # come and clears its entry. Cancelling a schedule removes the entry. Empty
+    # map = nothing scheduled (the default).
+    course_schedule = Column(String, nullable=True, default="{}", server_default="{}")
     customer_name = Column(String, nullable=True)
     party_size = Column(Integer, nullable=True)
     # The staff member currently serving this ticket's section (F-045 "transfer

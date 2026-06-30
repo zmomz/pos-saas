@@ -899,6 +899,164 @@ class RestaurantService:
             logger.error(f"Error firing course '{course}' on ticket {ticket_id}: {str(e)}")
             raise
 
+    # ------------------------------------------------------ course scheduling
+    async def schedule_course(
+        self, ticket_id: int, course: str, fire_at: datetime, user_id: str
+    ) -> Optional[OrderTickets]:
+        """Schedule a course to auto-fire at ``fire_at`` (coursing, M6).
+
+        Records ``fire_at`` against the course in the ticket's ``course_schedule``
+        map and marks the course ``scheduled`` in ``course_state`` so the floor
+        shows it is pending. The ``fire_due_courses`` sweep fires it once its time
+        has come. Re-scheduling the same course overwrites the time. Raises
+        ``ValueError`` on a closed ticket or an already-fired course; returns
+        ``None`` if the ticket isn't found.
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        if (ticket.status or "open") in CLOSED_TICKET_STATUSES:
+            raise ValueError("Cannot schedule a course on a settled or voided ticket")
+        cs = self._load_course_state(ticket)
+        if cs.get(course) == "fired":
+            raise ValueError(f"Course '{course}' is already fired")
+        try:
+            sched = self._load_course_schedule(ticket)
+            sched[course] = self._naive(fire_at).isoformat()
+            ticket.course_schedule = json.dumps(sched)
+            cs[course] = "scheduled"
+            ticket.course_state = json.dumps(cs)
+            await self.db.commit()
+            await self.db.refresh(ticket)
+            logger.info(
+                f"Scheduled course '{course}' on ticket {ticket_id} for {sched[course]}"
+            )
+            return ticket
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(
+                f"Error scheduling course '{course}' on ticket {ticket_id}: {str(e)}"
+            )
+            raise
+
+    async def cancel_course_schedule(
+        self, ticket_id: int, course: str, user_id: str
+    ) -> Optional[OrderTickets]:
+        """Drop a scheduled course so the sweep no longer auto-fires it (M6).
+
+        Removes the course's ``course_schedule`` entry and reverts its
+        ``course_state`` back to held (unless it was already fired). Returns the
+        ticket, or ``None`` if the ticket isn't found.
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        try:
+            sched = self._load_course_schedule(ticket)
+            sched.pop(course, None)
+            ticket.course_schedule = json.dumps(sched)
+            cs = self._load_course_state(ticket)
+            if cs.get(course) == "scheduled":
+                cs.pop(course, None)
+                ticket.course_state = json.dumps(cs)
+            await self.db.commit()
+            await self.db.refresh(ticket)
+            return ticket
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(
+                f"Error cancelling course schedule '{course}' on ticket {ticket_id}: {str(e)}"
+            )
+            raise
+
+    async def course_schedule_view(
+        self, user_id: str, at: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """Every scheduled course across the caller's active tickets (M6).
+
+        One row per scheduled course with its ``fire_at`` time, the seconds until
+        it fires against ``at`` (defaults to the live clock; negative is clamped to
+        zero), and ``is_due`` once that time has come. Closed (settled/void)
+        tickets are off the floor. Owner-scoped (SEC-02); soonest-to-fire first.
+        """
+        clock = self._naive(at) or self._naive(datetime.now())
+        tickets = (
+            await self.db.execute(
+                select(OrderTickets).where(
+                    OrderTickets.user_id == user_id,
+                    OrderTickets.status.notin_(CLOSED_TICKET_STATUSES),
+                )
+            )
+        ).scalars().all()
+
+        rows: List[Dict[str, Any]] = []
+        for tk in tickets:
+            sched = self._load_course_schedule(tk)
+            for course, iso in sched.items():
+                fire_at = self._parse_iso(iso)
+                if fire_at is None:
+                    continue
+                remaining = (fire_at - clock).total_seconds()
+                rows.append(
+                    {
+                        "ticket_id": tk.id,
+                        "table_id": tk.table_id,
+                        "course": course,
+                        "state": "scheduled",
+                        "fire_at": fire_at.isoformat(),
+                        "seconds_remaining": int(max(0.0, remaining)),
+                        "is_due": remaining <= 0,
+                    }
+                )
+        rows.sort(key=lambda r: (not r["is_due"], r["seconds_remaining"]))
+        return rows
+
+    async def fire_due_courses(
+        self, user_id: str, at: Optional[datetime] = None
+    ) -> List[Dict[str, Any]]:
+        """Fire every scheduled course whose time has come (the coursing sweep, M6).
+
+        Walks the caller's active tickets, fires each course scheduled at/before
+        ``at`` (defaults to the live clock) via the same path as a manual fire —
+        so lines advance to ``fired`` and KDS cards mint — then clears the drained
+        schedule entry. Owner-scoped (SEC-02). Returns one fire summary per fired
+        course.
+        """
+        clock = self._naive(at) or self._naive(datetime.now())
+        tickets = (
+            await self.db.execute(
+                select(OrderTickets).where(
+                    OrderTickets.user_id == user_id,
+                    OrderTickets.status.notin_(CLOSED_TICKET_STATUSES),
+                )
+            )
+        ).scalars().all()
+
+        # Collect (ticket_id, course) due now without mutating mid-iteration; the
+        # fire path commits per course and reloads the ticket fresh.
+        due: List[tuple] = []
+        for tk in tickets:
+            for course, iso in self._load_course_schedule(tk).items():
+                fire_at = self._parse_iso(iso)
+                if fire_at is not None and (fire_at - clock).total_seconds() <= 0:
+                    due.append((tk.id, course))
+
+        summaries: List[Dict[str, Any]] = []
+        for ticket_id, course in due:
+            result = await self.fire_course(ticket_id, course, user_id)
+            if result is None:
+                continue
+            # Drain the schedule entry now that the course has fired.
+            ticket = await self.get_ticket(ticket_id, user_id)
+            if ticket is not None:
+                sched = self._load_course_schedule(ticket)
+                if course in sched:
+                    sched.pop(course, None)
+                    ticket.course_schedule = json.dumps(sched)
+                    await self.db.commit()
+            summaries.append(result)
+        return summaries
+
     async def transfer_ticket(
         self, ticket_id: int, target_table_id: int, user_id: str
     ) -> Optional[OrderTickets]:
@@ -2692,3 +2850,21 @@ class RestaurantService:
             return json.loads(ticket.course_state) if ticket.course_state else {}
         except (ValueError, TypeError):
             return {}
+
+    @staticmethod
+    def _load_course_schedule(ticket: OrderTickets) -> Dict[str, Any]:
+        """The ticket's ``course -> ISO fire time`` coursing map (M6)."""
+        try:
+            return json.loads(ticket.course_schedule) if ticket.course_schedule else {}
+        except (ValueError, TypeError):
+            return {}
+
+    @classmethod
+    def _parse_iso(cls, value: Optional[str]) -> Optional[datetime]:
+        """Parse a stored ISO fire time back to a naive datetime (M6)."""
+        if not value:
+            return None
+        try:
+            return cls._naive(datetime.fromisoformat(value))
+        except (ValueError, TypeError):
+            return None

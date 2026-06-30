@@ -16,7 +16,7 @@ another's floor (SEC-02).
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -284,6 +284,18 @@ class AssignDriverRequest(BaseModel):
     """Assign the delivery driver carrying a ticket (F-045)."""
 
     driver_id: int
+
+
+class ScheduleCourseRequest(BaseModel):
+    """Schedule a course to auto-fire (coursing / course scheduling, M6).
+
+    Give either an absolute ``fire_at`` (ISO datetime) or a relative
+    ``fire_in_minutes`` from now; ``fire_in_minutes`` wins when both are present.
+    """
+
+    course: str
+    fire_at: Optional[datetime] = None
+    fire_in_minutes: Optional[float] = None
 
 
 class MergeRequest(BaseModel):
@@ -1031,6 +1043,81 @@ async def get_table_timers(
     service = RestaurantService(db)
     timers = await service.table_timers(client.user_id, over_minutes=over_minutes)
     return {"items": timers, "total": len(timers)}
+
+
+@router.get("/order-tickets/course-schedule")
+async def get_course_schedule(
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Every scheduled course across active tickets, soonest-to-fire first (M6).
+
+    Each row carries ``seconds_remaining`` until it fires and ``is_due`` once its
+    time has come. Registered before ``/order-tickets/{ticket_id}`` so the literal
+    path wins. Owner-scoped (SEC-02).
+    """
+    service = RestaurantService(db)
+    rows = await service.course_schedule_view(client.user_id)
+    return {"items": rows, "total": len(rows)}
+
+
+@router.post("/order-tickets/fire-due-courses")
+async def fire_due_courses(
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fire every scheduled course whose time has come — the coursing sweep (M6)."""
+    service = RestaurantService(db)
+    fired = await service.fire_due_courses(client.user_id)
+    return {"items": fired, "total": len(fired)}
+
+
+@router.post("/order-tickets/{ticket_id}/schedule-course", response_model=OrderTicketResponse)
+async def schedule_course(
+    ticket_id: int,
+    data: ScheduleCourseRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Schedule a course to auto-fire at a future time (coursing, M6)."""
+    if data.fire_in_minutes is not None:
+        fire_at = datetime.now() + timedelta(minutes=data.fire_in_minutes)
+    elif data.fire_at is not None:
+        fire_at = data.fire_at
+    else:
+        raise HTTPException(
+            status_code=400, detail="Provide fire_at or fire_in_minutes"
+        )
+    service = RestaurantService(db)
+    try:
+        ticket = await service.schedule_course(
+            ticket_id, data.course, fire_at, user_id=client.user_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return ticket
+
+
+@router.delete(
+    "/order-tickets/{ticket_id}/schedule-course/{course}",
+    response_model=OrderTicketResponse,
+)
+async def cancel_course_schedule(
+    ticket_id: int,
+    course: str,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a scheduled course so the sweep no longer auto-fires it (M6)."""
+    service = RestaurantService(db)
+    ticket = await service.cancel_course_schedule(
+        ticket_id, course, user_id=client.user_id
+    )
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return ticket
 
 
 @router.get("/order-tickets/{ticket_id}", response_model=OrderTicketResponse)
