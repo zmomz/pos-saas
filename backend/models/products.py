@@ -47,6 +47,12 @@ class Products(Base):
     is_weighted = Column(Boolean, nullable=True, default=False, server_default='false')
     is_open_price = Column(Boolean, nullable=True, default=False, server_default='false')
     unit_label = Column(String, nullable=True)
+    # ISSUE-223 (M4 Product): ``is_digital`` flags a product with no physical stock
+    # — an e-voucher, top-up, licence or download. Because there is no on-hand
+    # inventory to deplete, a digital product can never be "low" and is never an
+    # auto-reorder candidate, so it is excluded from the low-stock list and the
+    # reorder-suggestions surface. NULL (legacy rows) is treated as physical.
+    is_digital = Column(Boolean, nullable=True, default=False, server_default='false')
     # ISSUE-065 (P2 catalog): served URL of the product image (catalog + POS tile
     # grid). The file is stored under ``uploads/products/`` and served from
     # ``/uploads``; NULL means "no image" (the tile falls back to its initial).
