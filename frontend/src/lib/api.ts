@@ -2719,6 +2719,41 @@ export async function resolveBranchPrice(branchId: number, productId: number) {
   return response.data as BranchPriceResolution;
 }
 
+// Per-branch VAT rate overrides (#220 multi-branch: branch-level tax). A branch
+// may carry its own VAT rate; absent an override the chain-wide effective rate
+// applies (master global rate, else the statutory default). `resolveBranchTaxRate`
+// returns the effective rate and whether it is a branch override.
+export interface BranchTaxRateResolution {
+  branch_id: number;
+  vat_rate: number;
+  is_override: boolean;
+}
+
+export async function resolveBranchTaxRate(branchId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/tax-rate`,
+    method: 'GET',
+  });
+  return response.data as BranchTaxRateResolution;
+}
+
+export async function setBranchTaxRate(branchId: number, vatRate: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/tax-rate`,
+    method: 'PUT',
+    data: { vat_rate: vatRate },
+  });
+  return response.data as BranchTaxRateResolution;
+}
+
+export async function deleteBranchTaxRate(branchId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/tax-rate`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
 // Cross-branch sales reporting (#220 multi-branch). Rolls each branch's net sales
 // and sale count up side by side for the chain; refunds (credit notes) net out and
 // held/voided rows are excluded. Optional ISO start/end bound the window.

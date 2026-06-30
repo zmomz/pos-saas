@@ -30,6 +30,7 @@ from models.zatca_documents import ZatcaDocuments
 # (services.branch_stock is only imported lazily inside handlers).
 from models.product_branch_stock import Product_branch_stock  # noqa: F401
 from models.product_branch_price import Product_branch_price  # noqa: F401
+from models.branch_tax_rate import Branch_tax_rate  # noqa: F401
 # Imported so the variant table registers on Base.metadata at startup
 # (services.product_variants is only imported lazily inside handlers).
 from models.product_variants import Product_variants  # noqa: F401
@@ -2348,6 +2349,74 @@ async def delete_branch_price_endpoint(
     if not removed:
         raise HTTPException(status_code=404, detail="Branch price override not found")
     return {"branch_id": branch_id, "product_id": product_id, "removed": True}
+
+
+# ---------- Per-branch VAT rate overrides (#220 multi-branch: branch tax) ----------
+class BranchTaxRateSetRequest(BaseModel):
+    vat_rate: float
+
+
+@router.get("/branches/{branch_id}/tax-rate")
+async def get_branch_tax_rate(
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve the effective VAT rate for a branch — the branch override when one
+    exists, else the chain-wide effective rate (master global rate, else statutory
+    default) (#220 branch tax)."""
+    from services.branch_tax import resolve_tax_rate
+
+    client = await get_client_for_user(db, owner_id)
+    return await resolve_tax_rate(db, client.id, branch_id)
+
+
+@router.get("/branches/{branch_id}/tax-rate/resolve")
+async def resolve_branch_tax_rate(
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Alias of GET tax-rate, mirroring the branch-pricing resolve endpoint (#220)."""
+    from services.branch_tax import resolve_tax_rate
+
+    client = await get_client_for_user(db, owner_id)
+    return await resolve_tax_rate(db, client.id, branch_id)
+
+
+@router.put("/branches/{branch_id}/tax-rate")
+async def set_branch_tax_rate_endpoint(
+    branch_id: int,
+    data: BranchTaxRateSetRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set/adjust a branch's VAT-rate override (#220)."""
+    from services.branch_tax import set_branch_tax_rate
+
+    client = await get_client_for_user(db, owner_id)
+    row = await set_branch_tax_rate(db, owner_id, client.id, branch_id, data.vat_rate)
+    return {"branch_id": branch_id, "vat_rate": row.vat_rate, "is_override": True}
+
+
+@router.delete("/branches/{branch_id}/tax-rate")
+async def delete_branch_tax_rate_endpoint(
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a branch's VAT-rate override so it falls back to the chain rate (#220)."""
+    from services.branch_tax import delete_branch_tax_rate
+
+    client = await get_client_for_user(db, owner_id)
+    removed = await delete_branch_tax_rate(db, client.id, branch_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Branch tax-rate override not found")
+    return {"branch_id": branch_id, "removed": True}
 
 
 # ---------- Cross-branch sales reporting (#220 multi-branch) ----------
