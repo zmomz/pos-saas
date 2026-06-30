@@ -15,6 +15,7 @@ from services.production import fire_event_background
 from services.store_credit import StoreCreditError, StoreCreditService
 from services.customer_groups import CustomerGroupsService
 from services.campaigns import CampaignsService
+from services.customer_notes import CustomerNoteError, CustomerNotesService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from models.audit_logs import Audit_logs
@@ -26,6 +27,8 @@ from models.store_credit_ledger import StoreCreditLedger  # noqa: F401
 from models.customer_groups import CustomerGroup  # noqa: F401
 # Eager import so the campaigns table registers on Base.metadata too (#221).
 from models.campaigns import Campaign  # noqa: F401
+# Eager import so the customer_notes table registers on Base.metadata too (#221).
+from models.customer_notes import CustomerNote  # noqa: F401
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -1086,6 +1089,73 @@ async def post_store_credit(
         "balance": float(balance),
         "entry": StoreCreditEntry.model_validate(row),
     }
+
+
+# ---------- M5·CRM (#221) — per-customer notes thread ----------
+class CustomerNoteEntry(BaseModel):
+    """One note in a customer's append-only thread."""
+    id: int
+    body: str
+    author: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CustomerNotesResponse(BaseModel):
+    """A customer's notes thread, newest-first."""
+    customer_id: int
+    items: List[CustomerNoteEntry]
+
+
+class CustomerNoteData(BaseModel):
+    """Body for appending a note. ``body`` is required and non-blank."""
+    body: str
+    author: Optional[str] = None
+
+
+@router.get("/{id}/notes", response_model=CustomerNotesResponse)
+async def get_customer_notes(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """A customer's notes thread, newest-first (CRM, #221).
+
+    Owner-scoped (SEC-02): a foreign/unknown customer id → 404."""
+    await _owned_customer_or_404(CustomersService(db), id, user_id=scope.owner_user_id)
+    rows = await CustomerNotesService(db).list(id, user_id=scope.owner_user_id)
+    return {
+        "customer_id": id,
+        "items": [CustomerNoteEntry.model_validate(r) for r in rows],
+    }
+
+
+@router.post("/{id}/notes", response_model=CustomerNoteEntry, status_code=201)
+async def add_customer_note(
+    id: int,
+    data: CustomerNoteData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Append a note to a customer's thread (CRM, #221).
+
+    Owner-scoped (SEC-02): a foreign/unknown customer id → 404. A blank body → 400."""
+    await _owned_customer_or_404(CustomersService(db), id, user_id=scope.owner_user_id)
+    try:
+        note = await CustomerNotesService(db).add(
+            id,
+            user_id=scope.owner_user_id,
+            client_id=scope.client_id,
+            body=data.body,
+            author=data.author,
+        )
+    except CustomerNoteError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return CustomerNoteEntry.model_validate(note)
 
 
 # ---------- M5·CRM (#221) — customer blacklist ----------
