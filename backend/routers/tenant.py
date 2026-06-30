@@ -851,6 +851,175 @@ async def get_agent_commission_statements(
     return CommissionStatementsResponse(statements=ordered)
 
 
+# ---------- Agent dashboard KPIs (ISSUE-245, M9) -------------------------------
+class MerchantGrowth(BaseModel):
+    """New (non-archived) merchants onboarded this 30-day window vs the prior one.
+    ``delta`` is current − previous so the card can render an up/down trend."""
+
+    new_current: int
+    new_previous: int
+    delta: int
+
+
+class TrialExpiry(BaseModel):
+    """Merchants whose trial ends within the next week. ``next_trial_end`` is the
+    soonest trial-end ISO date, or null when nothing is expiring."""
+
+    expiring_soon: int
+    next_trial_end: Optional[str] = None
+
+
+class RevenueTrendPoint(BaseModel):
+    month: str  # 'YYYY-MM'
+    amount: float
+
+
+class AgentDashboardKpisResponse(BaseModel):
+    """The agent operator's headline KPIs (ISSUE-245). All counts are scoped to the
+    caller's own merchants (SEC-02) and SQL/window-aggregated (OPS-05 — the revenue
+    trend reads only the last ~6 months, never the whole ledger)."""
+
+    active_merchants: int
+    total_merchants: int
+    merchant_growth: MerchantGrowth
+    trial_expiry: TrialExpiry
+    revenue_trend: List[RevenueTrendPoint] = []
+
+
+@router.get("/agent/dashboard-kpis", response_model=AgentDashboardKpisResponse)
+async def get_agent_dashboard_kpis(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: dashboard KPIs — active merchants, merchant growth, trial expiry and a
+    short revenue trend.
+
+    Scoped to the caller's own merchants (a master/client gets 403, SEC-02) and
+    aggregated in SQL (OPS-05). Active = a live (non-archived) merchant whose
+    subscription is neither disabled nor suspended; archived merchants are excluded
+    from every count.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    agent_id = role_info["entity_id"]
+
+    now = datetime.now()
+    d30 = now - timedelta(days=30)
+    d60 = now - timedelta(days=60)
+    today_iso = now.date().isoformat()
+    trial_window_iso = (now + timedelta(days=7)).date().isoformat()
+    trend_cutoff = now - timedelta(days=183)  # ~6 months
+
+    not_archived = Clients.archived_at.is_(None)
+    status_expr = func.coalesce(Clients.subscription_status, "active")
+    active_pred = and_(
+        not_archived, Clients.is_active.isnot(False), status_expr != "suspended"
+    )
+
+    # One pass over the agent's merchants for the count KPIs (no load-everything).
+    counts = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(case((active_pred, 1), else_=0)), 0),
+                func.coalesce(func.sum(case((not_archived, 1), else_=0)), 0),
+                func.coalesce(
+                    func.sum(
+                        case((and_(not_archived, Clients.created_at >= d30), 1), else_=0)
+                    ),
+                    0,
+                ),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                and_(
+                                    not_archived,
+                                    Clients.created_at >= d60,
+                                    Clients.created_at < d30,
+                                ),
+                                1,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ),
+            ).where(Clients.agent_id == agent_id)
+        )
+    ).one()
+    active_merchants = int(counts[0] or 0)
+    total_merchants = int(counts[1] or 0)
+    new_current = int(counts[2] or 0)
+    new_previous = int(counts[3] or 0)
+
+    # Trial expiry: live merchants whose trial ends within the next week (ISO dates
+    # sort lexically, so the window is a plain string range).
+    trial_pred = and_(
+        Clients.agent_id == agent_id,
+        not_archived,
+        Clients.trial_end.isnot(None),
+        Clients.trial_end >= today_iso,
+        Clients.trial_end <= trial_window_iso,
+    )
+    trial_row = (
+        await db.execute(
+            select(func.count(Clients.id), func.min(Clients.trial_end)).where(trial_pred)
+        )
+    ).one()
+
+    # Revenue trend: the agent's merchants' settled subscription payments over the
+    # last ~6 months, bucketed by month (a bounded window — not the whole ledger).
+    client_id_subq = (
+        select(Clients.id).where(Clients.agent_id == agent_id).scalar_subquery()
+    )
+    pay_rows = (
+        await db.execute(
+            select(Subscription_payments.amount, Subscription_payments.created_at).where(
+                and_(
+                    Subscription_payments.client_id.in_(client_id_subq),
+                    Subscription_payments.created_at >= trend_cutoff,
+                )
+            )
+        )
+    ).all()
+    # Seed the last 6 month buckets (oldest → newest) so the trend is contiguous.
+    buckets: dict = {}
+    order: List[str] = []
+    cursor = now
+    for _ in range(6):
+        key = cursor.strftime("%Y-%m")
+        if key not in buckets:
+            buckets[key] = 0.0
+            order.append(key)
+        # step back roughly one month
+        cursor = cursor.replace(day=1) - timedelta(days=1)
+    order.reverse()
+    for amount, created in pay_rows:
+        if created is None:
+            continue
+        key = created.strftime("%Y-%m")
+        if key in buckets:
+            buckets[key] = round(buckets[key] + float(amount or 0.0), 2)
+    revenue_trend = [RevenueTrendPoint(month=k, amount=buckets[k]) for k in order]
+
+    return AgentDashboardKpisResponse(
+        active_merchants=active_merchants,
+        total_merchants=total_merchants,
+        merchant_growth=MerchantGrowth(
+            new_current=new_current,
+            new_previous=new_previous,
+            delta=new_current - new_previous,
+        ),
+        trial_expiry=TrialExpiry(
+            expiring_soon=int(trial_row[0] or 0),
+            next_trial_end=trial_row[1],
+        ),
+        revenue_trend=revenue_trend,
+    )
+
+
 # ---------- Master platform economics (MA-08 / RSL-08 / RPT-09, F-023) ----------
 class AgentEconomics(BaseModel):
     """One agent's row in the master's leaderboard. ``collected`` is the GMV the
@@ -891,6 +1060,17 @@ class MasterEconomicsResponse(BaseModel):
     mrr: float
     arr: float
     churn_rate: float
+    # ISSUE-245: lifetime value of an active merchant — ARPA (mrr / active_clients)
+    # divided by the churn rate. Null when churn is zero (lifetime unbounded) or
+    # there are no active merchants, so the UI shows an honest "—" rather than an
+    # infinity or a fabricated 0 (FE-05 / #204 error honesty).
+    ltv: Optional[float] = None
+    # ISSUE-245: blended customer-acquisition cost. The platform records no
+    # acquisition-spend ledger (merchants are onboarded by agents, who pay us a
+    # wholesale quota — not a cost we incur), so CAC has no honest numerator yet and
+    # is reported as null rather than fabricated. Wired through so a future
+    # acquisition-cost feed populates it without a schema change.
+    cac: Optional[float] = None
     collected: float
     platform_revenue: float
     by_agent: List[AgentEconomics] = []
@@ -967,6 +1147,16 @@ async def get_master_economics(
 
     churn_rate = round(churned_clients / total_clients, 4) if total_clients else 0.0
 
+    # ISSUE-245: LTV = ARPA (monthly revenue per active merchant) / churn. Both
+    # inputs are live aggregates; the value is unbounded when nobody has churned, so
+    # report null instead of dividing by zero. CAC stays null until an
+    # acquisition-spend source exists (no fabrication — FE-05).
+    ltv: Optional[float] = None
+    if churn_rate > 0 and active_clients > 0:
+        arpa = mrr / active_clients
+        ltv = round(arpa / churn_rate, 2)
+    cac: Optional[float] = None
+
     # Per-agent breakdown (leaderboard): client counts/MRR by agent, the agent's
     # merchant GMV (by joining payments to his clients), and his quota paid to us.
     client_rows = (
@@ -1035,6 +1225,8 @@ async def get_master_economics(
         mrr=mrr,
         arr=round(mrr * 12, 2),
         churn_rate=churn_rate,
+        ltv=ltv,
+        cac=cac,
         collected=collected,
         platform_revenue=platform_revenue,
         by_agent=by_agent,

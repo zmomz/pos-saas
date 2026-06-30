@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, getClientFeatures, resetClientPassword, runDunning, getQuotaStatus, payQuota, saveQuotaCard, saveAgentMoyasarKeys, archiveClient, restoreClient, transferClient, exportClientData, deleteClient, type AgentRevenue, type CommissionStatement, type QuotaStatus } from '@/lib/api';
+import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, getAgentDashboardKpis, createNewClient, toggleClient, setClientZatca, setClientFeature, getClientFeatures, resetClientPassword, runDunning, getQuotaStatus, payQuota, saveQuotaCard, saveAgentMoyasarKeys, archiveClient, restoreClient, transferClient, exportClientData, deleteClient, type AgentRevenue, type AgentDashboardKpis, type CommissionStatement, type QuotaStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -81,6 +81,10 @@ export default function AgentDashboard() {
   const [revenue, setRevenue] = useState<AgentRevenue | null>(null);
   const [revenueLoading, setRevenueLoading] = useState(true);
   const [revenueError, setRevenueError] = useState(false);
+  // ISSUE-245: operating KPIs (active merchants, growth, trial expiry) from a
+  // dedicated aggregate. A failure here isolates to the KPI cards (#204).
+  const [kpis, setKpis] = useState<AgentDashboardKpis | null>(null);
+  const [kpisError, setKpisError] = useState(false);
   const [statements, setStatements] = useState<CommissionStatement[]>([]);
   const [statementsLoading, setStatementsLoading] = useState(true);
   const [statementsError, setStatementsError] = useState(false);
@@ -103,7 +107,18 @@ export default function AgentDashboard() {
     loadRevenue();
     loadStatements();
     loadQuota();
+    loadKpis();
   }, []);
+
+  async function loadKpis() {
+    setKpisError(false);
+    try {
+      setKpis(await getAgentDashboardKpis());
+    } catch (err) {
+      console.error('Failed to load KPIs:', err);
+      setKpisError(true);
+    }
+  }
 
   // M8: fetch the archived book the first time the agent opens that view.
   useEffect(() => {
@@ -620,6 +635,55 @@ export default function AgentDashboard() {
           <div className="mt-auto pt-2">
             <Bar pct={slotCapacity > 0 ? Math.round((remainingSlots / slotCapacity) * 100) : 0} barClassName="bg-gradient-to-r from-warning to-gold-600" />
           </div>
+        </section>
+      </div>
+
+      {/* ISSUE-245: operating KPIs. Each card degrades to an honest "—" when the
+          KPI aggregate fails, leaving the rest of the dashboard intact (#204). */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <section className="dxr-tile dxr-hover flex flex-col">
+          <div className="flex items-center justify-between">
+            <div className="text-[12.5px] font-semibold text-muted-foreground">{t('active_merchants') || 'Active Merchants'}</div>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div data-testid="kpi-active-merchants" className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">
+            {kpisError ? '—' : <CountUp value={kpis?.active_merchants ?? 0} />}
+          </div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">{kpisError ? '—' : `${kpis?.total_merchants ?? 0} ${t('total') || 'total'}`}</div>
+        </section>
+        <section className="dxr-tile dxr-hover flex flex-col">
+          <div className="flex items-center justify-between">
+            <div className="text-[12.5px] font-semibold text-muted-foreground">{t('merchant_growth') || 'Merchant Growth'}</div>
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div data-testid="kpi-merchant-growth" className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">
+            {kpisError ? '—' : <CountUp value={kpis?.merchant_growth?.new_current ?? 0} />}
+          </div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">
+            {kpisError ? '—' : `${t('new_this_period') || 'new this 30d'} · ${(kpis?.merchant_growth?.delta ?? 0) >= 0 ? '+' : ''}${kpis?.merchant_growth?.delta ?? 0} ${t('vs_prior') || 'vs prior'}`}
+          </div>
+        </section>
+        <section className="dxr-tile dxr-hover flex flex-col">
+          <div className="flex items-center justify-between">
+            <div className="text-[12.5px] font-semibold text-muted-foreground">{t('trial_expiry') || 'Trial Expiry'}</div>
+            <CreditCard className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div data-testid="kpi-trial-expiry" className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">
+            {kpisError ? '—' : <CountUp value={kpis?.trial_expiry?.expiring_soon ?? 0} />}
+          </div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">
+            {kpisError ? '—' : (kpis?.trial_expiry?.next_trial_end ? `${t('next') || 'next'} ${formatDate(kpis.trial_expiry.next_trial_end, language)}` : (t('no_trials_expiring') || 'none expiring soon'))}
+          </div>
+        </section>
+        <section className="dxr-tile dxr-hover flex flex-col">
+          <div className="flex items-center justify-between">
+            <div className="text-[12.5px] font-semibold text-muted-foreground">{t('revenue_trend') || 'Revenue Trend'}</div>
+            <Wallet className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div data-testid="kpi-revenue-trend" className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums text-success">
+            {kpisError ? '—' : formatMoney((kpis?.revenue_trend ?? []).reduce((s, p) => s + (p.amount || 0), 0), language)}
+          </div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">{kpisError ? '—' : (t('last_6_months') || 'last 6 months')}</div>
         </section>
       </div>
 

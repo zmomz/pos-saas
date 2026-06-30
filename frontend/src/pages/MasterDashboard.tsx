@@ -202,6 +202,11 @@ export default function MasterDashboard() {
   // When economics failed to load, every scalar derived from it is unknown — show
   // an honest dash instead of a fabricated 0 (H4 KPI-error isolation).
   const ecoVal = (node: ReactNode): ReactNode => (ecoError ? '—' : node);
+  // ISSUE-245: LTV/CAC are nullable real aggregates. A null value (zero churn for
+  // LTV; no acquisition-spend feed for CAC) renders an honest "—" — never a
+  // fabricated 0 (FE-05). An economics-load failure also degrades them to "—".
+  const ltvOk = !ecoError && economics?.ltv != null;
+  const cacOk = !ecoError && economics?.cac != null;
 
   const paletteGroups = [
     {
@@ -300,6 +305,8 @@ export default function MasterDashboard() {
         {/* KPI chips */}
         <KpiChip label={tt('total_agents', 'Total Agents')} value={<CountUp value={totalAgents} />} delta={{ dir: 'up', text: `${activeAgents} ${tt('active', 'active')}` }} foot={`${totalSlots} ${tt('slots', 'slots')} total`} />
         <KpiChip label={t('arr')} value={ecoVal(<CountUp value={economics?.arr ?? 0} prefix="⃁ " />)} foot={tt('annual_run_rate', 'annual run-rate')} />
+        <KpiChip label={tt('ltv', 'LTV')} value={<span data-testid="kpi-ltv-value">{ltvOk ? formatMoney(economics?.ltv ?? 0, language) : '—'}</span>} foot={tt('lifetime_value', 'per active merchant')} />
+        <KpiChip label={tt('cac', 'CAC')} value={<span data-testid="kpi-cac-value">{cacOk ? formatMoney(economics?.cac ?? 0, language) : '—'}</span>} foot={cacOk ? tt('acquisition_cost', 'acquisition cost') : tt('cac_untracked', 'not tracked yet')} />
         <KpiChip label={tt('churn_rate', 'Churn Rate')} value={ecoVal(<CountUp value={(economics?.churn_rate ?? 0) * 100} decimals={1} suffix="%" />)} foot={ecoError ? '—' : `${economics?.churned_clients ?? 0} ${tt('churned', 'churned')}`} />
         <KpiChip label={tt('collected', 'Collected')} value={ecoVal(<CountUp value={economics?.collected ?? 0} prefix="⃁ " />)} foot={ecoError ? '—' : `${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
 

@@ -58,6 +58,10 @@ export interface MasterEconomics {
   mrr: number;
   arr: number;
   churn_rate: number;
+  // ISSUE-245: LTV is a real aggregate (ARPA / churn); null when churn is zero.
+  // CAC is null until an acquisition-spend feed exists (honest, never fabricated).
+  ltv?: number | null;
+  cac?: number | null;
   collected: number;
   platform_revenue: number;
   by_agent: AgentEconomics[];
@@ -139,6 +143,42 @@ export interface AgentRevenue {
 export async function getAgentRevenue(): Promise<AgentRevenue> {
   const response = await client.apiCall.invoke<AgentRevenue>({
     url: '/api/v1/tenant/agent/revenue',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// ISSUE-245: agent dashboard KPIs — active merchants, merchant growth (this 30-day
+// window vs the prior), trial expiry, and a short revenue trend. All scoped to the
+// caller's own merchants and SQL/window-aggregated (no load-everything).
+export interface MerchantGrowth {
+  new_current: number;
+  new_previous: number;
+  delta: number;
+}
+
+export interface TrialExpiry {
+  expiring_soon: number;
+  next_trial_end?: string | null;
+}
+
+export interface RevenueTrendPoint {
+  month: string;
+  amount: number;
+}
+
+export interface AgentDashboardKpis {
+  active_merchants: number;
+  total_merchants: number;
+  merchant_growth: MerchantGrowth;
+  trial_expiry: TrialExpiry;
+  revenue_trend: RevenueTrendPoint[];
+}
+
+export async function getAgentDashboardKpis(): Promise<AgentDashboardKpis> {
+  const response = await client.apiCall.invoke<AgentDashboardKpis>({
+    url: '/api/v1/tenant/agent/dashboard-kpis',
     method: 'GET',
     data: {},
   });
