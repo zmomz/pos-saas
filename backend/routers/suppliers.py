@@ -11,9 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core.saudi_vat import validate_saudi_vat
 from services.suppliers import SuppliersService
+from services.supplier_credit import CREDIT_NOTE, SupplierCreditError, SupplierCreditService
 from dependencies.auth import get_admin_user, get_current_user
-from dependencies.tenancy import TenantScope, get_tenant_scope
+from dependencies.tenancy import TenantScope, get_owner_id, get_tenant_scope
 from schemas.auth import UserResponse
+
+# Imported so ``Base.metadata.create_all`` registers the supplier-credit ledger
+# table (the vendor-return credit-note store, #224). noqa: only a registration side
+# effect — the symbol is used via the service layer.
+from models.supplier_credit_ledger import SupplierCreditLedger  # noqa: F401
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -210,6 +216,223 @@ async def get_suppliers(
     except Exception as e:
         logger.error(f"Error fetching suppliers {id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+# ---------- Vendor returns / supplier credit notes (ISSUE-224, M4 Inventory) ----------
+class VendorReturnLine(BaseModel):
+    """One product line being returned to the vendor.
+
+    ``cost`` is the per-unit credit value; it defaults to the product's
+    ``cost_price`` so the credit note reflects real landed cost.
+    """
+    product_id: int
+    quantity: int
+    cost: Optional[float] = None
+
+
+class VendorReturnRequest(BaseModel):
+    """Return received goods to a supplier (#224).
+
+    - ``lines`` — the ``{product_id, quantity, cost?}`` being returned.
+    - ``branch_id`` — draw the stock back out of the per-branch ledger the POS
+      deducts from (omit to fall back to the client-level aggregate ``products.quantity``).
+    - ``purchase_order_id`` — optional link to the PO the goods were received on.
+    """
+    lines: List[VendorReturnLine]
+    branch_id: Optional[int] = None
+    purchase_order_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+class VendorReturnResponse(BaseModel):
+    supplier_id: int
+    credit_note_id: int
+    amount: float
+    balance: float
+    returned_items: int
+    message: str
+
+
+class SupplierCreditEntry(BaseModel):
+    id: int
+    entry_type: str
+    amount: float
+    balance_after: float
+    purchase_order_id: Optional[int] = None
+    note: Optional[str] = None
+
+
+class SupplierCreditResponse(BaseModel):
+    supplier_id: int
+    balance: float
+    history: List[SupplierCreditEntry]
+
+
+async def _load_owned_supplier(db: AsyncSession, owner_id: str, supplier_id: int):
+    """Fetch a supplier the caller owns, or raise 404 (SEC-02 tenancy gate)."""
+    from sqlalchemy import select
+
+    from models.suppliers import Suppliers
+
+    supplier = (
+        await db.execute(
+            select(Suppliers).where(
+                Suppliers.id == supplier_id, Suppliers.user_id == owner_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not supplier:
+        raise HTTPException(status_code=404, detail="Suppliers not found")
+    return supplier
+
+
+@router.post("/{id}/returns", response_model=VendorReturnResponse)
+async def create_vendor_return(
+    id: int,
+    request: VendorReturnRequest = Body(...),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return received goods to a supplier and post a supplier credit note (#224).
+
+    Each line draws its quantity back out of stock — the per-branch ledger
+    (``product_branch_stock``) when ``branch_id`` is given, otherwise the
+    client-level aggregate ``products.quantity`` — and the combined value
+    (``Σ quantity × cost``, cost defaulting to the product's ``cost_price``) is
+    appended to the supplier-credit ledger as a single credit note. Returning more
+    than is on hand at the location, or a non-positive quantity, is rejected (400)
+    so stock can never be driven negative and an empty return cannot raise credit.
+    """
+    from sqlalchemy import select
+
+    from models.products import Products
+
+    supplier = await _load_owned_supplier(db, owner_id, id)
+
+    # Collapse the request to a positive-quantity, per-product map (a product may
+    # legitimately appear on more than one line).
+    want: dict = {}
+    cost_override: dict = {}
+    for line in request.lines:
+        if line.quantity is None or line.quantity <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Return quantity must be a positive number of units",
+            )
+        want[line.product_id] = want.get(line.product_id, 0) + int(line.quantity)
+        if line.cost is not None:
+            cost_override[line.product_id] = line.cost
+    if not want:
+        raise HTTPException(status_code=400, detail="Nothing to return")
+
+    branch_id = request.branch_id
+    client = None
+    if branch_id is not None:
+        from routers.pos import get_client_for_user
+
+        client = await get_client_for_user(db, owner_id)
+
+    # First pass: validate every line (ownership + sufficient on-hand) BEFORE
+    # mutating any stock, so a partly-invalid return books nothing.
+    products: dict = {}
+    rows: dict = {}
+    credit_amount = 0.0
+    for pid, qty in want.items():
+        product = (
+            await db.execute(
+                select(Products).where(
+                    Products.id == pid, Products.user_id == owner_id
+                )
+            )
+        ).scalar_one_or_none()
+        if not product:
+            raise HTTPException(status_code=404, detail=f"Product {pid} not found")
+        products[pid] = product
+
+        if branch_id is not None:
+            from services.branch_stock import get_or_init_row
+
+            row = await get_or_init_row(db, owner_id, client.id, branch_id, product)
+            on_hand = row.quantity or 0
+            rows[pid] = row
+        else:
+            on_hand = product.quantity or 0
+        if qty > on_hand:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot return {qty} unit(s) of product {pid}: only {on_hand} "
+                    f"on hand"
+                ),
+            )
+
+        unit_cost = cost_override.get(pid, product.cost_price)
+        credit_amount += qty * float(unit_cost or 0)
+
+    # Second pass: draw the stock back out.
+    for pid, qty in want.items():
+        if branch_id is not None:
+            rows[pid].quantity = (rows[pid].quantity or 0) - qty
+        else:
+            products[pid].quantity = (products[pid].quantity or 0) - qty
+
+    # Persist the stock decrements before the credit-note post (which commits).
+    await db.flush()
+
+    note = request.note or f"Vendor return ({len(want)} line(s))"
+    service = SupplierCreditService(db)
+    try:
+        row = await service.post(
+            id,
+            user_id=owner_id,
+            client_id=supplier.client_id,
+            entry_type=CREDIT_NOTE,
+            amount=credit_amount,
+            note=note,
+            purchase_order_id=request.purchase_order_id,
+        )
+    except SupplierCreditError as exc:
+        # A zero-value return (all costs unknown/zero) cannot raise a credit note.
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    balance = await service.balance(id, user_id=owner_id)
+    return VendorReturnResponse(
+        supplier_id=id,
+        credit_note_id=row.id,
+        amount=float(row.amount),
+        balance=float(balance),
+        returned_items=len(want),
+        message=note,
+    )
+
+
+@router.get("/{id}/credit", response_model=SupplierCreditResponse)
+async def get_supplier_credit(
+    id: int,
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """The supplier's outstanding credit balance and credit-note history (#224)."""
+    await _load_owned_supplier(db, owner_id, id)
+    service = SupplierCreditService(db)
+    balance = await service.balance(id, user_id=owner_id)
+    history = await service.history(id, user_id=owner_id)
+    return SupplierCreditResponse(
+        supplier_id=id,
+        balance=float(balance),
+        history=[
+            SupplierCreditEntry(
+                id=r.id,
+                entry_type=r.entry_type,
+                amount=float(r.amount),
+                balance_after=float(r.balance_after),
+                purchase_order_id=r.purchase_order_id,
+                note=r.note,
+            )
+            for r in history
+        ],
+    )
 
 
 @router.post("", response_model=SuppliersResponse, status_code=201)
