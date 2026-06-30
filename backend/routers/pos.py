@@ -108,6 +108,10 @@ class CartItem(BaseModel):
     # per component product (component-qty × line-qty) so the component stock is
     # depleted exactly like the restaurant settle path (ISSUE-032).
     combo_id: Optional[int] = None
+    # ISSUE-223 (M4 Product): serial/IMEI captured at the point of sale for a
+    # serial-tracked product (``Products.track_serial``). The sale is rejected when
+    # a tracked line arrives without one (enforced in ``create_transaction``).
+    serial_number: Optional[str] = None
 
 
 class PaymentEntry(BaseModel):
@@ -554,6 +558,36 @@ async def create_transaction(
             raise HTTPException(
                 status_code=403,
                 detail="Customer is blacklisted and cannot transact.",
+            )
+
+    # ---- Serial/IMEI tracking (#223): require a serial at sale ----
+    # A product flagged ``track_serial`` (a serialised good — phone/IMEI, appliance
+    # or warranty-tracked item) cannot be rung up without capturing its serial
+    # number at the point of sale. The server is authoritative: any owned tracked
+    # line missing a non-empty ``serial_number`` is rejected (400) before anything
+    # is booked. (Capturing one serial per unit for qty>1 is a later slice; here a
+    # single serial is required on the line.)
+    serial_pids = {it.product_id for it in data.items if it.product_id}
+    if serial_pids:
+        tracked_pids = {
+            row.id
+            for row in (
+                await db.execute(
+                    select(Products.id).where(
+                        Products.id.in_(serial_pids),
+                        Products.client_id == client.id,
+                        Products.track_serial.is_(True),
+                    )
+                )
+            ).all()
+        }
+        if tracked_pids and any(
+            it.product_id in tracked_pids and not (it.serial_number or "").strip()
+            for it in data.items
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="A serial number is required to sell this product.",
             )
 
     # ---- Branch-level pricing (#220): enforce the branch price at sale time ----

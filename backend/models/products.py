@@ -53,6 +53,12 @@ class Products(Base):
     # auto-reorder candidate, so it is excluded from the low-stock list and the
     # reorder-suggestions surface. NULL (legacy rows) is treated as physical.
     is_digital = Column(Boolean, nullable=True, default=False, server_default='false')
+    # ISSUE-223 (M4 Product): ``track_serial`` flags a serialised good — a phone
+    # (IMEI), appliance or any warranty-tracked item whose individual unit must be
+    # identified at the point of sale. When set, a sale line for this product is
+    # rejected unless it carries a serial number (enforced in the POS sale path).
+    # NULL (legacy rows) is treated as untracked.
+    track_serial = Column(Boolean, nullable=True, default=False, server_default='false')
     # ISSUE-065 (P2 catalog): served URL of the product image (catalog + POS tile
     # grid). The file is stored under ``uploads/products/`` and served from
     # ``/uploads``; NULL means "no image" (the tile falls back to its initial).
