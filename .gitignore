@@ -14,6 +14,10 @@ venv/
 # SQLite backups, e.g. seed_demo.py --rebuild writes app.db.bak (ARC-01)
 *.bak
 *.db.bak
+# Postgres PITR archives written by `python -m services.backup` (M10 Ops / #211)
+*.dump
+backups/
+backend/backups/
 backend/app.db
 backend/tests/_test_app.db
 backend/_alembic_baseline.db
