@@ -518,6 +518,40 @@ class PrepStationResponse(BaseModel):
         from_attributes = True
 
 
+# ---------- Happy-hour pricing schemas (M6) ----------
+class HappyHourData(BaseModel):
+    name: str
+    discount_percent: float
+    start_minute: int = 0
+    end_minute: int = 1439
+    days_of_week: Optional[str] = None
+    is_active: bool = True
+
+
+class HappyHourUpdateData(BaseModel):
+    name: Optional[str] = None
+    discount_percent: Optional[float] = None
+    start_minute: Optional[int] = None
+    end_minute: Optional[int] = None
+    days_of_week: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class HappyHourResponse(BaseModel):
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    name: str
+    discount_percent: float
+    start_minute: int
+    end_minute: int
+    days_of_week: Optional[str] = None
+    is_active: Optional[bool] = None
+
+    class Config:
+        from_attributes = True
+
+
 # ---------- Reservation schemas (ISSUE-069) ----------
 class ReservationData(BaseModel):
     table_id: Optional[int] = None
@@ -1989,6 +2023,69 @@ async def delete_prep_station(
     if not ok:
         raise HTTPException(status_code=404, detail="Prep station not found")
     return {"message": "Prep station deleted successfully", "id": station_id}
+
+
+# ---------- Happy-hour pricing (M6) ----------
+@router.get("/happy-hours", response_model=List[HappyHourResponse])
+async def list_happy_hours(
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the caller's happy-hour windows (M6)."""
+    service = RestaurantService(db)
+    return await service.list_happy_hours(user_id=client.user_id)
+
+
+@router.post("/happy-hours", response_model=HappyHourResponse, status_code=201)
+async def create_happy_hour(
+    data: HappyHourData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Define a time-of-day price-reduction window (M6)."""
+    service = RestaurantService(db)
+    try:
+        return await service.create_happy_hour(
+            data.model_dump(), user_id=client.user_id, client_id=client.id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating happy-hour: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.put("/happy-hours/{window_id}", response_model=HappyHourResponse)
+async def update_happy_hour(
+    window_id: int,
+    data: HappyHourUpdateData,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a happy-hour window (requires ownership, M6)."""
+    service = RestaurantService(db)
+    updates = {k: v for k, v in data.model_dump().items() if v is not None}
+    try:
+        result = await service.update_happy_hour(window_id, updates, user_id=client.user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not result:
+        raise HTTPException(status_code=404, detail="Happy-hour window not found")
+    return result
+
+
+@router.delete("/happy-hours/{window_id}")
+async def delete_happy_hour(
+    window_id: int,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a happy-hour window (requires ownership, M6)."""
+    service = RestaurantService(db)
+    ok = await service.delete_happy_hour(window_id, user_id=client.user_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Happy-hour window not found")
+    return {"message": "Happy-hour window deleted successfully", "id": window_id}
 
 
 # ---------- Kitchen Display (KDS) routes (F-057) ----------

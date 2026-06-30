@@ -20,6 +20,7 @@ from models.restaurant import (
     BillOfMaterials,
     Combos,
     FloorZones,
+    HappyHours,
     KdsTickets,
     Modifiers,
     ModifierGroups,
@@ -675,7 +676,10 @@ class RestaurantService:
             if combo is not None:
                 unit_price = float(combo.bundle_price)
             elif product is not None:
-                unit_price = float(product.price)
+                # A catalog-priced product line is reduced by any active happy-hour
+                # window — an explicit override price (above) is left untouched.
+                discount = await self.active_happy_hour_discount(user_id)
+                unit_price = float(product.price) * (1 - discount / 100.0)
             else:
                 unit_price = 0.0
         unit_price = round(float(unit_price), 2)
@@ -1666,6 +1670,142 @@ class RestaurantService:
             await self.db.rollback()
             logger.error(f"Error deleting prep station {station_id}: {str(e)}")
             raise
+
+    # ------------------------------------------------------ happy-hour pricing (M6)
+    async def list_happy_hours(self, user_id: str) -> List[HappyHours]:
+        result = await self.db.execute(
+            select(HappyHours)
+            .where(HappyHours.user_id == user_id)
+            .order_by(HappyHours.start_minute.asc(), HappyHours.id.asc())
+        )
+        return result.scalars().all()
+
+    async def get_happy_hour(self, window_id: int, user_id: str) -> Optional[HappyHours]:
+        result = await self.db.execute(
+            select(HappyHours).where(
+                HappyHours.id == window_id, HappyHours.user_id == user_id
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    def _validate_happy_hour(discount: float, start: int, end: int) -> None:
+        """Reject a window that can't price correctly (caller maps to 400)."""
+        if not (0 < discount <= 100):
+            raise ValueError("discount_percent must be between 0 and 100")
+        for minute in (start, end):
+            if not (0 <= minute <= 1439):
+                raise ValueError("start_minute/end_minute must be within 0..1439")
+
+    async def create_happy_hour(
+        self, data: Dict[str, Any], user_id: str, client_id: Optional[int]
+    ) -> HappyHours:
+        discount = round(float(data.get("discount_percent") or 0), 2)
+        start = int(data.get("start_minute") or 0)
+        end = data.get("end_minute")
+        end = 1439 if end is None else int(end)
+        self._validate_happy_hour(discount, start, end)
+        try:
+            window = HappyHours(
+                user_id=user_id,
+                client_id=client_id,
+                name=data["name"],
+                discount_percent=discount,
+                start_minute=start,
+                end_minute=end,
+                days_of_week=(data.get("days_of_week") or None),
+                is_active=data.get("is_active", True),
+            )
+            self.db.add(window)
+            await self.db.commit()
+            await self.db.refresh(window)
+            logger.info(f"Created happy-hour {window.id} for user {user_id}")
+            return window
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error creating happy-hour: {str(e)}")
+            raise
+
+    async def update_happy_hour(
+        self, window_id: int, updates: Dict[str, Any], user_id: str
+    ) -> Optional[HappyHours]:
+        window = await self.get_happy_hour(window_id, user_id)
+        if not window:
+            return None
+        discount = float(
+            updates.get("discount_percent", window.discount_percent) or 0
+        )
+        start = int(updates.get("start_minute", window.start_minute) or 0)
+        end = int(updates.get("end_minute", window.end_minute) or 0)
+        self._validate_happy_hour(discount, start, end)
+        try:
+            editable = (
+                "name",
+                "discount_percent",
+                "start_minute",
+                "end_minute",
+                "days_of_week",
+                "is_active",
+            )
+            for key, value in updates.items():
+                if key in editable and hasattr(window, key):
+                    setattr(window, key, value)
+            await self.db.commit()
+            await self.db.refresh(window)
+            return window
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error updating happy-hour {window_id}: {str(e)}")
+            raise
+
+    async def delete_happy_hour(self, window_id: int, user_id: str) -> bool:
+        window = await self.get_happy_hour(window_id, user_id)
+        if not window:
+            return False
+        try:
+            await self.db.delete(window)
+            await self.db.commit()
+            return True
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error deleting happy-hour {window_id}: {str(e)}")
+            raise
+
+    @staticmethod
+    def _window_active_at(window: HappyHours, at: datetime) -> bool:
+        """True if ``window`` is in effect at ``at`` — day-of-week then time-of-day."""
+        if not (window.is_active if window.is_active is not None else True):
+            return False
+        days = (window.days_of_week or "").strip()
+        if days:
+            try:
+                allowed = {int(d) for d in days.split(",") if d.strip() != ""}
+            except ValueError:
+                allowed = set()
+            if at.weekday() not in allowed:
+                return False
+        minute = at.hour * 60 + at.minute
+        start = window.start_minute or 0
+        end = window.end_minute if window.end_minute is not None else 1439
+        if start <= end:
+            return start <= minute <= end
+        # Overnight window (e.g. 22:00–02:00): active past midnight on either side.
+        return minute >= start or minute <= end
+
+    async def active_happy_hour_discount(
+        self, user_id: str, at: Optional[datetime] = None
+    ) -> float:
+        """The best (largest) happy-hour discount in effect for ``user_id`` at ``at``.
+
+        Returns ``0.0`` when no owner-scoped window is active (SEC-02). ``at``
+        defaults to now, so the add-item flow prices against the live clock.
+        """
+        at = at or datetime.now()
+        best = 0.0
+        for window in await self.list_happy_hours(user_id):
+            if self._window_active_at(window, at):
+                best = max(best, float(window.discount_percent or 0))
+        return best
 
     # ------------------------------------------------------ kitchen display (F-057)
     @staticmethod

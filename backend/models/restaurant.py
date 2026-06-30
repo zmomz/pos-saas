@@ -303,6 +303,40 @@ class PrepStations(Base):
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 
 
+class HappyHours(Base):
+    """A time-of-day price reduction window — happy-hour pricing (F-045, M6).
+
+    A merchant defines windows that knock ``discount_percent`` off the menu price
+    during part of the day. The time-of-day bounds are stored as minutes since
+    midnight (``start_minute``/``end_minute``, 0..1439) — portable across SQLite
+    and Postgres with no DB-specific time extraction; an overnight window wraps
+    when ``end_minute`` < ``start_minute``. ``days_of_week`` is an optional CSV of
+    Python weekday ints (Mon=0..Sun=6); null/empty means every day.
+
+    When a server adds a line to an open ticket inside an active window the line's
+    catalog ``unit_price`` is discounted server-side (an explicit override price is
+    left alone). Owner-scoped like every other entity (SEC-02).
+    """
+
+    __tablename__ = "happy_hours"
+    __table_args__ = {"extend_existing": True}
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    user_id = Column(String, nullable=False, index=True)
+    client_id = Column(Integer, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    # Percentage off the catalog price (0 < discount_percent <= 100).
+    discount_percent = Column(Float, nullable=False, default=0, server_default="0")
+    # Minutes since midnight, 0..1439. end < start => the window wraps past midnight.
+    start_minute = Column(Integer, nullable=False, default=0, server_default="0")
+    end_minute = Column(Integer, nullable=False, default=1439, server_default="1439")
+    # CSV of Python weekday ints (Mon=0..Sun=6); null/empty = every day.
+    days_of_week = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=True, default=True, server_default="1")
+    created_at = Column(DateTime(timezone=True), default=datetime.now)
+    updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+
 class KdsTickets(Base):
     """A materialized kitchen card — the fired items of one course routed to one
     station — F-057 (RST).
