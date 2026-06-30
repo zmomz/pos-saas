@@ -696,6 +696,106 @@ async def get_customer_insights(
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+# ---------- M5·CRM (#221) — per-customer purchase timeline ----------
+class PurchaseTimelineEvent(BaseModel):
+    """One money-moving event in a customer's purchase history."""
+    id: int
+    invoice_number: Optional[str] = None
+    total_amount: Optional[float] = None
+    status: Optional[str] = None
+    # "sale" for a settled purchase, "refund" for a credit note routed back.
+    kind: str
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PurchaseTimelineResponse(BaseModel):
+    """A customer's purchase history as a chronological timeline + a summary."""
+    customer_id: int
+    events: List[PurchaseTimelineEvent]   # newest-first
+    purchase_count: int                   # settled sales only (refunds excluded)
+    total_spent: float                    # net = gross settled sales - refunds
+    first_purchase_at: Optional[datetime] = None
+    last_purchase_at: Optional[datetime] = None
+
+
+@router.get("/{id}/timeline", response_model=PurchaseTimelineResponse)
+async def get_customer_timeline(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """CRM (#221): a customer's purchase history as a chronological timeline.
+
+    Each settled sale and each refund (credit note) becomes a timeline event,
+    newest-first, alongside a summary — how many purchases, net total spent, and the
+    first/last purchase dates. Voided/held rows are not purchases and are excluded.
+    Transactions carry no customer FK, so events are matched by the PII denormalized
+    onto the sale (phone, then name) — the same join the PDPL export and the RFM
+    insights endpoint use.
+
+    Owner-scoped (SEC-02): a foreign/unknown customer id → 404; another tenant's
+    sales never bleed in, and an erased customer (PII cleared) has no link key and
+    returns an empty timeline.
+    """
+    logger.debug(f"Building purchase timeline for customer {id}")
+    service = CustomersService(db)
+    try:
+        customer = await service.get_by_id(id, user_id=scope.owner_user_id)
+        if not customer:
+            raise HTTPException(status_code=404, detail="Customers not found")
+
+        events: List[dict] = []
+        conditions = _linked_transactions_filter(customer)
+        if conditions:
+            status_col = func.coalesce(Transactions.status, "completed")
+            rows = (
+                await db.execute(
+                    select(Transactions)
+                    .where(
+                        Transactions.user_id == scope.owner_user_id,
+                        or_(*conditions),
+                        status_col.notin_(("voided", "held")),
+                    )
+                    .order_by(Transactions.created_at.desc(), Transactions.id.desc())
+                )
+            ).scalars().all()
+            for t in rows:
+                kind = "refund" if (t.status or "completed") == "credit_note" else "sale"
+                events.append(
+                    {
+                        "id": t.id,
+                        "invoice_number": t.invoice_number,
+                        "total_amount": t.total_amount,
+                        "status": t.status,
+                        "kind": kind,
+                        "created_at": t.created_at,
+                    }
+                )
+
+        sales = [e for e in events if e["kind"] == "sale"]
+        gross = sum(e["total_amount"] or 0.0 for e in sales)
+        refunds = sum(e["total_amount"] or 0.0 for e in events if e["kind"] == "refund")
+        sale_dates = [e["created_at"] for e in sales if e["created_at"] is not None]
+
+        return {
+            "customer_id": customer.id,
+            "events": events,
+            "purchase_count": len(sales),
+            "total_spent": round(gross - refunds, 2),
+            "first_purchase_at": min(sale_dates) if sale_dates else None,
+            "last_purchase_at": max(sale_dates) if sale_dates else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error building timeline for customer {id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @router.post("", response_model=CustomersResponse, status_code=201)
 async def create_customers(
     data: CustomersData,
