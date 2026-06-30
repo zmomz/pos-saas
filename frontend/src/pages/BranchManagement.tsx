@@ -17,12 +17,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { client, createStockAdjustment, getBranchTransfers, setMainBranch, type BranchTransfer, type StockAdjustment, type StockAdjustmentReason } from '@/lib/api';
+import { client, createStockAdjustment, getBranchTransfers, setMainBranch, getProductVariants, getBranchVariantStock, setBranchVariantStock, type BranchTransfer, type StockAdjustment, type StockAdjustmentReason, type ProductVariant } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatDate } from '@/lib/format';
+import { toast } from 'sonner';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
-import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star, History } from 'lucide-react';
+import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star, History, Layers } from 'lucide-react';
 
 const ADJUSTMENT_REASONS: StockAdjustmentReason[] = [
   'count',
@@ -101,6 +102,15 @@ export default function BranchManagement() {
   const [transfersLoading, setTransfersLoading] = useState(false);
   const [transfersError, setTransfersError] = useState<string | null>(null);
   const [historyFilter, setHistoryFilter] = useState('');
+  // Per-branch variant stock (parity #5).
+  const [variantStockOpen, setVariantStockOpen] = useState(false);
+  const [variantProductId, setVariantProductId] = useState('');
+  const [variants, setVariants] = useState<ProductVariant[]>([]);
+  const [variantLedger, setVariantLedger] = useState<Record<number, number>>({});
+  const [variantDraft, setVariantDraft] = useState<Record<number, string>>({});
+  const [variantLoading, setVariantLoading] = useState(false);
+  const [variantError, setVariantError] = useState(false);
+  const [savingVariantId, setSavingVariantId] = useState<number | null>(null);
 
   const { t, tt, isRTL, language } = useLanguage();
 
@@ -322,6 +332,63 @@ export default function BranchManagement() {
     setInventoryOpen(true);
   }
 
+  function openVariantStock(branch: Branch) {
+    setSelectedBranch(branch);
+    setVariantProductId('');
+    setVariants([]);
+    setVariantLedger({});
+    setVariantDraft({});
+    setVariantError(false);
+    setVariantStockOpen(true);
+  }
+
+  // Load the picked product's variants plus this branch's per-variant ledger,
+  // then seed each row's editable quantity (variants with no row default to 0).
+  async function loadVariantStock(branch: Branch, productId: string) {
+    setVariantLoading(true);
+    setVariantError(false);
+    try {
+      const [vs, ledger] = await Promise.all([
+        getProductVariants(Number(productId)),
+        getBranchVariantStock(Number(branch.id)),
+      ]);
+      const byId: Record<number, number> = {};
+      for (const it of ledger.items || []) byId[it.variant_id] = it.quantity;
+      setVariants(vs);
+      setVariantLedger(byId);
+      setVariantDraft(Object.fromEntries(vs.map((v) => [v.id, String(byId[v.id] ?? 0)])));
+    } catch (err) {
+      console.error('Failed to load variant stock:', err);
+      setVariantError(true);
+      setVariants([]);
+    } finally {
+      setVariantLoading(false);
+    }
+  }
+
+  function handleVariantProductChange(productId: string) {
+    setVariantProductId(productId);
+    if (selectedBranch && productId) loadVariantStock(selectedBranch, productId);
+  }
+
+  async function handleSaveVariantStock(variant: ProductVariant) {
+    if (!selectedBranch) return;
+    const raw = variantDraft[variant.id];
+    const quantity = parseInt(raw, 10);
+    if (Number.isNaN(quantity) || quantity < 0) return;
+    setSavingVariantId(variant.id);
+    try {
+      await setBranchVariantStock(Number(selectedBranch.id), variant.id, quantity);
+      setVariantLedger((m) => ({ ...m, [variant.id]: quantity }));
+      toast.success(t('stock_saved'));
+    } catch (err) {
+      console.error('Failed to save variant stock:', err);
+      toast.error(t('action_failed'));
+    } finally {
+      setSavingVariantId(null);
+    }
+  }
+
   function renderForm(onSubmit: () => void, submitLabel: string) {
     return (
       <div className="space-y-4">
@@ -432,10 +499,15 @@ export default function BranchManagement() {
                   <Button size="sm" variant="outline" onClick={() => openInventory(branch)} className="border-input text-foreground/90 hover:bg-muted text-xs flex-1">
                     <Package className="h-3 w-3 me-1" /> {tt('inventory', 'Inventory')}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => openEdit(branch)} className="border-input text-foreground/90 hover:bg-muted text-xs">
+                  <Button size="sm" variant="outline" onClick={() => openVariantStock(branch)} className="border-input text-foreground/90 hover:bg-muted text-xs flex-1">
+                    <Layers className="h-3 w-3 me-1" /> {t('variant_stock')}
+                  </Button>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => openEdit(branch)} className="border-input text-foreground/90 hover:bg-muted text-xs flex-1">
                     {tt('edit', 'Edit')}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => handleToggleBranch(branch)} className={branch.is_active ? 'border-danger/50 text-danger hover:bg-danger/10 text-xs' : 'border-success/50 text-success hover:bg-success/10 text-xs'}>
+                  <Button size="sm" variant="outline" onClick={() => handleToggleBranch(branch)} className={branch.is_active ? 'border-danger/50 text-danger hover:bg-danger/10 text-xs flex-1' : 'border-success/50 text-success hover:bg-success/10 text-xs flex-1'}>
                     {branch.is_active ? tt('disable', 'Disable') : tt('enable', 'Enable')}
                   </Button>
                 </div>
@@ -495,6 +567,95 @@ export default function BranchManagement() {
               />
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Variant Stock Dialog (parity #5) */}
+      <Dialog open={variantStockOpen} onOpenChange={setVariantStockOpen}>
+        <DialogContent className="bg-card border-border text-foreground max-h-[90vh] overflow-y-auto max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">{t('variant_stock')} - {selectedBranch?.name}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{t('variant_stock_desc')}</p>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm text-muted-foreground mb-1 block">{t('product')}</label>
+              <Select value={variantProductId} onValueChange={handleVariantProductChange}>
+                <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectValue placeholder={t('select_product')} />
+                </SelectTrigger>
+                <SelectContent className="bg-card border-input">
+                  {products.map((p) => (
+                    <SelectItem key={p.id} value={p.id} className="text-foreground hover:bg-muted">{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {!variantProductId ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">{t('select_product_first')}</div>
+            ) : variantLoading ? (
+              <div className="text-center py-8 text-muted-foreground animate-pulse">{t('loading')}</div>
+            ) : variantError ? (
+              <div className="text-center py-8">
+                <p className="text-foreground/90 mb-3">{t('variant_stock_load_error')}</p>
+                <Button variant="outline" onClick={() => selectedBranch && loadVariantStock(selectedBranch, variantProductId)} className="border-input text-foreground/90 hover:bg-muted">
+                  {t('retry')}
+                </Button>
+              </div>
+            ) : variants.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground text-sm">{t('no_variants_for_product')}</div>
+            ) : (
+              <div className="rounded-lg border border-border">
+                <DataTable
+                  className="text-sm"
+                  columns={[
+                    {
+                      key: 'variant',
+                      header: t('variant'),
+                      cell: (v) => (
+                        <div>
+                          <span className="text-foreground">{v.name}</span>
+                          {v.sku && <span className="block text-xs text-muted-foreground">{v.sku}</span>}
+                        </div>
+                      ),
+                    },
+                    {
+                      key: 'stock',
+                      header: t('branch_quantity'),
+                      align: 'end',
+                      cell: (v) => {
+                        const draft = variantDraft[v.id] ?? '';
+                        const dirty = draft.trim() !== '' && parseInt(draft, 10) !== (variantLedger[v.id] ?? 0);
+                        return (
+                          <div className="flex items-center justify-end gap-2">
+                            <Input
+                              type="number"
+                              min={0}
+                              value={draft}
+                              onChange={(e) => setVariantDraft((m) => ({ ...m, [v.id]: e.target.value }))}
+                              className="bg-muted border-input text-foreground w-24 text-end"
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleSaveVariantStock(v)}
+                              disabled={!dirty || savingVariantId === v.id}
+                              className="border-input text-foreground/90 hover:bg-muted shrink-0"
+                            >
+                              {savingVariantId === v.id ? t('loading') : t('save')}
+                            </Button>
+                          </div>
+                        );
+                      },
+                    },
+                  ] satisfies DataTableColumn<ProductVariant>[]}
+                  rows={variants}
+                  rowKey={(v) => v.id}
+                />
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
