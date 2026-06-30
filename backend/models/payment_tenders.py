@@ -19,14 +19,21 @@ PAY-10, future).
 """
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String
+from sqlalchemy import Column, DateTime, Float, Index, Integer, String
 
 from core.database import Base
 
 
 class PaymentTenders(Base):
     __tablename__ = "payment_tenders"
-    __table_args__ = {"extend_existing": True}
+    # M9 reporting hot-path: the payment-breakdown and cash-flow reports group the
+    # tenders for a client over a trailing window
+    # (``client_id == X AND created_at >= start``); this composite serves that
+    # tenant+window range directly instead of scanning the client's whole history.
+    __table_args__ = (
+        Index("ix_payment_tenders_client_created", "client_id", "created_at"),
+        {"extend_existing": True},
+    )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
     user_id = Column(String, nullable=False, index=True)

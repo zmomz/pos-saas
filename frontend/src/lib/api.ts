@@ -1640,6 +1640,88 @@ export async function getDiscountReport(days = 30): Promise<DiscountReport> {
   return response.data;
 }
 
+// M9 (F-068): Profit & Loss statement — net revenue (ex-VAT) − COGS (rolled up
+// from the bill of materials) − operating expenses = net profit, for the window.
+export interface PnlExpenseRow {
+  category: string;
+  amount: number;
+}
+
+export interface PnlReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  gross_sales: number;
+  discounts: number;
+  net_revenue: number;
+  vat: number;
+  cogs: number;
+  gross_profit: number;
+  gross_margin_pct: number;
+  expenses: PnlExpenseRow[];
+  total_expenses: number;
+  net_profit: number;
+  net_margin_pct: number;
+  csv_content: string;
+}
+
+export async function getPnlReport(days = 30): Promise<PnlReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/pnl?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// M9 (F-068): Cash Flow statement — cash-basis receipts (net of refunds) − cash
+// operating expenses = net operating cash flow, with a receipts-by-tender split
+// and the drawer movement totals (pay-in/pay-out/cash-drop) for traceability.
+export interface CashFlowLine {
+  label: string;
+  amount: number;
+}
+
+export interface CashFlowTender {
+  tender_type: string;
+  collected: number;
+  refunds: number;
+  net: number;
+}
+
+export interface CashFlowDrawer {
+  pay_in: number;
+  pay_out: number;
+  cash_drop: number;
+  net_drawer: number;
+}
+
+export interface CashFlowReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  receipts_collected: number;
+  receipts_refunds: number;
+  receipts_net: number;
+  by_tender: CashFlowTender[];
+  expenses: PnlExpenseRow[];
+  total_expenses: number;
+  inflows: CashFlowLine[];
+  outflows: CashFlowLine[];
+  net_cash_flow: number;
+  drawer_movements: CashFlowDrawer;
+  csv_content: string;
+}
+
+export async function getCashFlowReport(days = 30): Promise<CashFlowReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/cash-flow?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.
