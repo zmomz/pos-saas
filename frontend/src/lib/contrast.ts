@@ -23,6 +23,19 @@ export function luminance(hex: string): number | null {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b;
 }
 
+/**
+ * Validate and normalize a hex color: trims whitespace, repairs a missing `#`,
+ * expands a 3-digit shorthand, and lowercases. Returns `#rrggbb` for any valid
+ * input or `null` when it can't be parsed — the BrandingEditor uses the null to
+ * reject an invalid color before it can be saved.
+ */
+export function normalizeHex(hex: string): string | null {
+  let h = (hex ?? '').trim().replace(/^#/, '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return null;
+  return `#${h.toLowerCase()}`;
+}
+
 /** Near-black ink used when a pale background can't carry white text. */
 export const DARK_INK = '#0a0a0a';
 

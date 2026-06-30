@@ -5,7 +5,7 @@ vi.mock('../lib/config', () => ({
   getAPIBaseURL: vi.fn(() => ''),
 }));
 
-import { isCustomHost } from './BrandingContext';
+import { isCustomHost, applyBranding } from './BrandingContext';
 import { getAPIBaseURL } from '../lib/config';
 
 describe('isCustomHost', () => {
@@ -42,5 +42,26 @@ describe('isCustomHost', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'not a url');
     // platformHost() returns '' → platform exclusion is skipped, normal rules apply.
     expect(isCustomHost('pos.myrestaurant.com')).toBe(true);
+  });
+});
+
+// ISSUE-233 (B5) — secondary_color must be applied at runtime (not merely stored)
+// so the BrandingEditor's secondary swatch/button reflects the live theme. It
+// drives the `--accent` token consumed by `hsl(var(--accent))` chrome.
+describe('applyBranding — secondary_color is applied to --accent', () => {
+  afterEach(() => {
+    document.documentElement.style.removeProperty('--accent');
+    document.documentElement.style.removeProperty('--primary');
+  });
+
+  it('sets the --accent CSS variable from secondary_color', () => {
+    applyBranding({
+      primary_color: '#1488a6',
+      secondary_color: '#00ff00',
+      font_family: 'Inter',
+      button_radius: '8px',
+    });
+    // #00ff00 → HSL "120 100% 50%".
+    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('120 100% 50%');
   });
 });
