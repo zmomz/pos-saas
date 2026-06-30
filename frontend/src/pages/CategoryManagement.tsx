@@ -311,7 +311,9 @@ export default function CategoryManagement() {
       <PageHeading
         icon={<span className="dxr-sw dxr-sw-brand h-10 w-10"><FolderTree className="h-[18px] w-[18px]" /></span>}
         title={tt('categories', 'Categories')}
-        subtitle={tt('categories_subtitle', `${parentCategories.length} top-level, ${categories.length} total`)}
+        subtitle={t('categories_subtitle')
+          .replace('{top}', String(parentCategories.length))
+          .replace('{total}', String(categories.length))}
       >
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
           <DialogTrigger asChild>
