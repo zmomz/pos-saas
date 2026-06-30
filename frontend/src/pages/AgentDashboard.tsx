@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, getQuotaStatus, payQuota, saveQuotaCard, saveAgentMoyasarKeys, archiveClient, restoreClient, transferClient, exportClientData, deleteClient, type AgentRevenue, type CommissionStatement, type QuotaStatus } from '@/lib/api';
+import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, getClientFeatures, resetClientPassword, runDunning, getQuotaStatus, payQuota, saveQuotaCard, saveAgentMoyasarKeys, archiveClient, restoreClient, transferClient, exportClientData, deleteClient, type AgentRevenue, type CommissionStatement, type QuotaStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -61,7 +61,11 @@ export default function AgentDashboard() {
   const [featureClient, setFeatureClient] = useState<ClientItem | null>(null);
   const [featureBusy, setFeatureBusy] = useState(false);
   const [panelClientId, setPanelClientId] = useState<number | null>(null);
-  const [featureState, setFeatureState] = useState<Record<string, boolean>>({});
+  // Real per-client feature flags, keyed by client id. Hydrated from the backend
+  // so the right-rail switches reflect actual state instead of assuming "all on".
+  const [featureState, setFeatureState] = useState<Record<number, Record<string, boolean>>>({});
+  const [featureLoadingId, setFeatureLoadingId] = useState<number | null>(null);
+  const [featureLoadError, setFeatureLoadError] = useState<number | null>(null);
   const [createdCreds, setCreatedCreds] = useState<
     { email: string; temp_password: string; email_delivered: boolean; reset?: boolean } | null
   >(null);
@@ -391,25 +395,46 @@ export default function AgentDashboard() {
     }
   }
 
+  async function loadClientFeatures(clientId: number) {
+    setFeatureLoadingId(clientId);
+    setFeatureLoadError((prev) => (prev === clientId ? null : prev));
+    try {
+      const data = await getClientFeatures(clientId);
+      setFeatureState((prev) => ({ ...prev, [clientId]: data.features }));
+    } catch (err) {
+      console.error('Failed to load client features:', err);
+      setFeatureLoadError(clientId);
+    } finally {
+      setFeatureLoadingId((prev) => (prev === clientId ? null : prev));
+    }
+  }
+
   async function handleSetFeature(featureName: string, isEnabled: boolean) {
     if (!featureClient) return;
+    const clientId = featureClient.id;
     setFeatureBusy(true);
     try {
-      await setClientFeature(featureClient.id, featureName, isEnabled);
+      await setClientFeature(clientId, featureName, isEnabled);
+      // Keep the right-rail panel in sync if this client's flags are cached.
+      setFeatureState((prev) =>
+        prev[clientId] ? { ...prev, [clientId]: { ...prev[clientId], [featureName]: isEnabled } } : prev
+      );
     } catch (err) {
       console.error('Set feature failed:', err);
+      toast.error(t('feature_toggle_failed') || 'Could not change the feature. Please try again.');
     } finally {
       setFeatureBusy(false);
     }
   }
 
   async function handleToggleFeatureInline(client: ClientItem, featureName: string, next: boolean) {
-    setFeatureState((prev) => ({ ...prev, [featureName]: next }));
+    setFeatureState((prev) => ({ ...prev, [client.id]: { ...prev[client.id], [featureName]: next } }));
     try {
       await setClientFeature(client.id, featureName, next);
     } catch (err) {
       console.error('Set feature failed:', err);
-      setFeatureState((prev) => ({ ...prev, [featureName]: !next }));
+      setFeatureState((prev) => ({ ...prev, [client.id]: { ...prev[client.id], [featureName]: !next } }));
+      toast.error(t('feature_toggle_failed') || 'Could not change the feature. Please try again.');
     }
   }
 
@@ -431,6 +456,17 @@ export default function AgentDashboard() {
   const tableClients = archivedView ? archivedClients : clients;
   const panelClient = clients.find((c) => c.id === panelClientId) || clients[0] || null;
   const brandColor = branding?.primary_color || '#1488a6';
+
+  // Hydrate the selected client's real feature flags the first time its panel is
+  // shown. Without this the switches would fabricate an all-on state per client.
+  const panelClientFeatureId = panelClient?.id ?? null;
+  useEffect(() => {
+    if (panelClientFeatureId == null) return;
+    if (featureState[panelClientFeatureId]) return;
+    if (featureLoadingId === panelClientFeatureId) return;
+    loadClientFeatures(panelClientFeatureId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelClientFeatureId]);
 
   // The agent keeps 100% of his merchants' subscription revenue (no platform cut
   // here — the platform's cut is the agent's quota, Rail 1). So there is no
@@ -691,23 +727,33 @@ export default function AgentDashboard() {
                   <Avatar name={panelClient.business_name} size={26} />
                   <b className="text-[13px] font-semibold text-foreground">{panelClient.business_name}</b>
                 </div>
-                {TOGGLEABLE_FEATURES.map((f) => {
-                  const meta = FEATURE_META[f];
-                  const Icon = meta?.icon || Box;
-                  const checked = featureState[f] ?? true;
-                  return (
-                    <div key={f} className="flex items-center justify-between gap-3 border-b border-dashed border-border py-3 last:border-b-0">
-                      <div className="flex items-center gap-2.5">
-                        <span className={cn('dxr-sw h-8 w-8', meta?.tone || 'bg-muted text-muted-foreground')}><Icon className="h-4 w-4" /></span>
-                        <div>
-                          <b className="block text-[13.5px] font-semibold text-foreground">{meta?.label || (t(f) || f)}</b>
-                          <span className="block text-[11.5px] text-muted-foreground">{meta?.desc}</span>
+                {!featureState[panelClient.id] && featureLoadError === panelClient.id ? (
+                  <div role="alert" className="flex flex-col items-start gap-2 py-3">
+                    <p className="text-sm text-danger">{t('feature_load_error')}</p>
+                    <Button variant="outline" size="sm" onClick={() => loadClientFeatures(panelClient.id)}>{t('retry')}</Button>
+                  </div>
+                ) : !featureState[panelClient.id] ? (
+                  <p className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</p>
+                ) : (
+                  TOGGLEABLE_FEATURES.map((f) => {
+                    const meta = FEATURE_META[f];
+                    const Icon = meta?.icon || Box;
+                    const flags = featureState[panelClient.id];
+                    const checked = flags?.[f] ?? true;
+                    return (
+                      <div key={f} className="flex items-center justify-between gap-3 border-b border-dashed border-border py-3 last:border-b-0">
+                        <div className="flex items-center gap-2.5">
+                          <span className={cn('dxr-sw h-8 w-8', meta?.tone || 'bg-muted text-muted-foreground')}><Icon className="h-4 w-4" /></span>
+                          <div>
+                            <b className="block text-[13.5px] font-semibold text-foreground">{meta?.label || (t(f) || f)}</b>
+                            <span className="block text-[11.5px] text-muted-foreground">{meta?.desc}</span>
+                          </div>
                         </div>
+                        <Switch checked={checked} disabled={!flags} onCheckedChange={(v) => handleToggleFeatureInline(panelClient, f, v)} />
                       </div>
-                      <Switch checked={checked} onCheckedChange={(v) => handleToggleFeatureInline(panelClient, f, v)} />
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </>
             ) : (
               <p className="py-4 text-sm text-muted-foreground">{t('select_client_features') || 'Select a client to manage features.'}</p>

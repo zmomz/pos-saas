@@ -15,6 +15,8 @@ import {
 import {
   getFloorZones,
   createFloorZone,
+  updateFloorZone,
+  deleteFloorZone,
   getRestaurantTables,
   createRestaurantTable,
   openTableOrder,
@@ -25,7 +27,7 @@ import {
 import { toast } from 'sonner';
 import { useLanguage } from '@/lib/i18n';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
-import { UtensilsCrossed, Plus, Users, AlertTriangle, Lock, ShoppingBag } from 'lucide-react';
+import { UtensilsCrossed, Plus, Users, AlertTriangle, Lock, ShoppingBag, Pencil, Trash2 } from 'lucide-react';
 
 // free | occupied | bill_printed — tile colours mirror the state machine.
 const STATE_STYLES: Record<string, string> = {
@@ -58,6 +60,11 @@ export default function FloorMap() {
 
   const [addTableOpen, setAddTableOpen] = useState(false);
   const [addZoneOpen, setAddZoneOpen] = useState(false);
+  const [manageZonesOpen, setManageZonesOpen] = useState(false);
+  // Pending rename text keyed by zone id (parity #7).
+  const [zoneEdits, setZoneEdits] = useState<Record<number, string>>({});
+  const [savingZoneId, setSavingZoneId] = useState<number | null>(null);
+  const [zoneToDelete, setZoneToDelete] = useState<FloorZone | null>(null);
   const [orderTable, setOrderTable] = useState<RestaurantTable | null>(null);
   const [newOrderOpen, setNewOrderOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -135,6 +142,46 @@ export default function FloorMap() {
       toast.error(t('action_failed'));
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function openManageZones() {
+    // Seed each row's editable name from the current zones.
+    setZoneEdits(Object.fromEntries(zones.map((z) => [z.id, z.name])));
+    setManageZonesOpen(true);
+  }
+
+  async function handleRenameZone(zone: FloorZone) {
+    const name = (zoneEdits[zone.id] ?? '').trim();
+    if (!name || name === zone.name) return;
+    setSavingZoneId(zone.id);
+    try {
+      await updateFloorZone(zone.id, { name });
+      toast.success(t('zone_updated'));
+      await load();
+    } catch (err) {
+      console.error('Failed to rename zone:', err);
+      toast.error(t('action_failed'));
+    } finally {
+      setSavingZoneId(null);
+    }
+  }
+
+  async function handleDeleteZone() {
+    if (!zoneToDelete) return;
+    setSavingZoneId(zoneToDelete.id);
+    try {
+      await deleteFloorZone(zoneToDelete.id);
+      toast.success(t('zone_deleted'));
+      // Drop back to "all" if we were viewing the zone we just removed.
+      if (activeZone === zoneToDelete.id) setActiveZone('all');
+      setZoneToDelete(null);
+      await load();
+    } catch (err) {
+      console.error('Failed to delete zone:', err);
+      toast.error(t('action_failed'));
+    } finally {
+      setSavingZoneId(null);
     }
   }
 
@@ -356,22 +403,34 @@ export default function FloorMap() {
 
       {/* Zone tabs */}
       {zones.length > 0 && (
-        <div className="dxr-seg">
-          <button
-            onClick={() => setActiveZone('all')}
-            data-active={activeZone === 'all'}
-          >
-            {t('all_zones')}
-          </button>
-          {zones.map((z) => (
+        <div className="flex items-center gap-2">
+          <div className="dxr-seg">
             <button
-              key={z.id}
-              onClick={() => setActiveZone(z.id)}
-              data-active={activeZone === z.id}
+              onClick={() => setActiveZone('all')}
+              data-active={activeZone === 'all'}
             >
-              {z.name}
+              {t('all_zones')}
             </button>
-          ))}
+            {zones.map((z) => (
+              <button
+                key={z.id}
+                onClick={() => setActiveZone(z.id)}
+                data-active={activeZone === z.id}
+              >
+                {z.name}
+              </button>
+            ))}
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={openManageZones}
+            aria-label={t('manage_zones')}
+            title={t('manage_zones')}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Pencil className="h-4 w-4" />
+          </Button>
         </div>
       )}
 
@@ -521,6 +580,77 @@ export default function FloorMap() {
               className="w-full"
             >
               {submitting ? t('loading') : t('start_order')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Manage zones — rename / delete (parity #7) */}
+      <Dialog open={manageZonesOpen} onOpenChange={setManageZonesOpen}>
+        <DialogContent className="bg-card border-border text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">{t('manage_zones')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-muted-foreground text-sm">{t('manage_zones_desc')}</p>
+          <div className="mt-2 space-y-3">
+            {zones.map((z) => {
+              const draft = zoneEdits[z.id] ?? '';
+              const dirty = draft.trim() !== '' && draft.trim() !== z.name;
+              return (
+                <div key={z.id} className="flex items-center gap-2">
+                  <Input
+                    value={draft}
+                    onChange={(e) => setZoneEdits((m) => ({ ...m, [z.id]: e.target.value }))}
+                    className="bg-muted border-input text-foreground"
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={() => handleRenameZone(z)}
+                    disabled={!dirty || savingZoneId === z.id}
+                    className="border-input text-foreground/90 hover:bg-muted shrink-0"
+                  >
+                    {savingZoneId === z.id ? t('loading') : t('save')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setZoneToDelete(z)}
+                    aria-label={t('delete_zone')}
+                    title={t('delete_zone')}
+                    className="text-danger hover:bg-danger/10 shrink-0"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete-zone confirmation (parity #7) */}
+      <Dialog open={!!zoneToDelete} onOpenChange={(o) => !o && setZoneToDelete(null)}>
+        <DialogContent className="bg-card border-border text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">{t('confirm_delete')}</DialogTitle>
+          </DialogHeader>
+          <p className="text-foreground/90">
+            {t('delete_zone_confirm_prefix')} <strong>{zoneToDelete?.name}</strong>? {t('action_cannot_be_undone')}
+          </p>
+          {zoneToDelete && tables.some((tb) => tb.zone_id === zoneToDelete.id) && (
+            <p className="text-warning text-sm">{t('delete_zone_tables_warn')}</p>
+          )}
+          <div className="flex gap-3 pt-2">
+            <Button variant="outline" onClick={() => setZoneToDelete(null)} className="flex-1">
+              {t('cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteZone}
+              disabled={savingZoneId === zoneToDelete?.id}
+              className="flex-1"
+            >
+              {savingZoneId === zoneToDelete?.id ? t('loading') : t('delete_zone')}
             </Button>
           </div>
         </DialogContent>

@@ -52,3 +52,6 @@ sandcastle-playground/
 .idea/
 .DS_Store
 Thumbs.db
+
+# pnpm content-addressable store (created when installing in-sandbox)
+.pnpm-store/

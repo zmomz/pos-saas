@@ -89,10 +89,27 @@ async def _assert_account_active(db: AsyncSession, user_id: str) -> None:
     from dependencies.tenancy import resolve_tenant_scope
     from models.agents import Agents
     from models.clients import Clients
+    from models.staff_members import Staff_members
 
     scope = await resolve_tenant_scope(
         db, UserResponse(id=str(user_id), email="", role="user")
     )
+
+    # Issue #216 — staff lifecycle: a suspended or terminated staff member is
+    # blocked on their *own* login regardless of the owning merchant's state.
+    # Keyed on the immutable login FK (SEC-11), never the mutable email. Bumping
+    # the login's security stamp already kills live tokens on suspend/terminate;
+    # this is the durable, replay-proof backstop checked on every request.
+    staff_status = (
+        await db.execute(
+            select(Staff_members.status).where(Staff_members.login_user_id == str(user_id))
+        )
+    ).scalars().first()
+    if staff_status in ("suspended", "terminated"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your staff access has been revoked. Contact your manager.",
+        )
 
     # SEC-06: the owning merchant's row (``None`` for an agent/master => no merchant
     # to suspend). An is_active that is explicitly False => suspended; NULL/True pass.

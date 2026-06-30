@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { getNotifications } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBusinessProfile } from '@/contexts/BusinessProfileContext';
+import { isPathAllowed } from '@/lib/businessType';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useLanguage, languageOptions, Language } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -156,8 +158,19 @@ const Shell: React.FC = () => {
     };
   }, []);
 
+  const { businessType } = useBusinessProfile();
   const userRole = (user?.role as UserRole) || 'client';
-  const navItems = navConfig[userRole] || navConfig.client;
+  // Type-aware navigation (issue #201): a merchant only sees the rail items that
+  // belong to their business_type. Retail hides Floor/Tables/KDS/Menu-builder/
+  // Reservations; restaurant hides Products/Categories/Suppliers/PO; `both`
+  // shows everything. While the type is still loading (null) we show the full
+  // rail rather than briefly hiding the wrong items — the route guards still
+  // protect any vertical page reached early.
+  const navItems = useMemo(() => {
+    const base = navConfig[userRole] || navConfig.client;
+    if (userRole !== 'client' || !businessType) return base;
+    return base.filter((item) => isPathAllowed(item.path, businessType));
+  }, [userRole, businessType]);
 
   const displayName = (user?.name || user?.email?.split('@')[0] || '').trim();
   const greeting = t(greetingKey());

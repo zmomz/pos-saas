@@ -242,6 +242,15 @@ class FeatureToggleResponse(BaseModel):
     is_enabled: bool
 
 
+class ClientFeaturesResponse(BaseModel):
+    """Resolved feature flags for one client — every canonical key with its
+    effective on/off state (default-on unless an explicit row disables it). Lets
+    the agent UI render real toggle state instead of fabricating one."""
+
+    client_id: int
+    features: dict[str, bool]
+
+
 # ---------- Helper: Determine user role ----------
 async def get_user_role(db: AsyncSession, user_id: str) -> dict:
     """Determine user role based on database records"""
@@ -1260,6 +1269,13 @@ async def create_client_for_agent(
                 )
             await db.commit()
 
+    # Type-driven seed (issue #201): align the restaurant feature flag with the
+    # chosen business type so a restaurant/both merchant is provisioned with the
+    # vertical unlocked and a retail merchant has it explicitly off, regardless
+    # of the package tier. Runs after the tier/explicit seeding above so it wins.
+    await _sync_type_features(db, new_user.id, new_client.id, business_type)
+    await db.commit()
+
     # Hand over the credential: email it when SMTP is configured, otherwise the
     # agent surfaces it from the response (dev/no-SMTP). AG-06: the email carries
     # the agent's brand + login URL (their custom domain when set), not the
@@ -1961,6 +1977,43 @@ async def set_client_feature(
     )
 
 
+@router.get("/agent/clients/{client_id}/features", response_model=ClientFeaturesResponse)
+async def get_client_features(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: read the resolved feature flags for one of their clients (AG-03).
+
+    Returns every canonical key with its effective state — default-on unless an
+    explicit ``client_features`` row disables it — so the dashboard hydrates real
+    toggle state per client instead of assuming every switch is on.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    result = await db.execute(
+        select(Clients).where(
+            Clients.id == client_id, Clients.agent_id == role_info["entity_id"]
+        )
+    )
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    rows = await db.execute(
+        select(Client_features.feature_name, Client_features.is_enabled).where(
+            Client_features.client_id == client_id
+        )
+    )
+    stored = {name: bool(enabled) for name, enabled in rows.all()}
+    # Default-on: a key with no explicit row is enabled (mirrors is_feature_enabled).
+    features = {key: stored.get(key, True) for key in sorted(FEATURE_KEYS)}
+
+    return ClientFeaturesResponse(client_id=client_id, features=features)
+
+
 # ---------- Client Endpoints ----------
 @router.get("/client/branding", response_model=BrandingResponse)
 async def get_client_branding(
@@ -2359,6 +2412,44 @@ async def get_subscription_invoice_pdf(
 # default by the agent at provisioning and the client confirms/changes it during
 # the first-login setup flow (CL-02).
 _VALID_BUSINESS_TYPES = ("retail", "restaurant", "both")
+# Business types that unlock the restaurant vertical (floor/tables/KDS/menu).
+_RESTAURANT_BUSINESS_TYPES = ("restaurant", "both")
+
+
+async def _sync_type_features(
+    db: AsyncSession, client_user_id: str, client_id: int, business_type: str
+) -> None:
+    """Type-driven feature seeding / recompute (the #201 business-type spine).
+
+    The restaurant vertical is double-gated: ``business_type`` first, then the
+    per-merchant ``restaurant`` feature flag (see routers/restaurant.py). The
+    type is the source of truth, so we keep the flag aligned with it — enabled
+    for restaurant/both, explicitly disabled for retail. This makes the guard
+    *derive from type before* any per-merchant feature override, and is what the
+    change-type flow calls to recompute permissions.
+
+    Reversible by design: it only toggles a single feature flag, never deletes
+    catalog, sales or restaurant data — switching the type back re-enables it.
+    """
+    wants_restaurant = business_type in _RESTAURANT_BUSINESS_TYPES
+    result = await db.execute(
+        select(Client_features).where(
+            Client_features.client_id == client_id,
+            Client_features.feature_name == "restaurant",
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        db.add(
+            Client_features(
+                user_id=client_user_id,
+                client_id=client_id,
+                feature_name="restaurant",
+                is_enabled=wants_restaurant,
+            )
+        )
+    else:
+        row.is_enabled = wants_restaurant
 
 
 class ClientProfileResponse(BaseModel):
@@ -2418,6 +2509,11 @@ async def set_client_business_type(
     await db.execute(
         update(Clients).where(Clients.id == merchant.id).values(business_type=business_type)
     )
+    # Recompute type-driven permissions in the same transaction (issue #201
+    # change-type flow): align the restaurant feature flag with the new type so
+    # nav/guards/dashboard recompute consistently. No data is deleted — only the
+    # flag is toggled, so switching back restores the hidden tools.
+    await _sync_type_features(db, merchant.user_id, merchant.id, business_type)
     await db.commit()
     await db.refresh(merchant)
     return ClientProfileResponse(

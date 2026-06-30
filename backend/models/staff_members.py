@@ -23,5 +23,18 @@ class Staff_members(Base):
     phone = Column(String, nullable=True)
     role = Column(String, nullable=False)
     is_active = Column(Boolean, nullable=True)
+    # Issue #216 — employee lifecycle state. ``is_active`` is the legacy
+    # active/inactive toggle (kept for back-compat); ``status`` is the richer
+    # workforce state the lifecycle endpoints drive:
+    #   active     — working; full access.
+    #   suspended  — access revoked, reversible (e.g. pending investigation).
+    #   terminated — access revoked, permanent (off-boarded).
+    # A staff member whose status is suspended/terminated is blocked at the auth
+    # layer on their *own* login (see ``dependencies.auth._assert_account_active``),
+    # so revocation is immediate and survives token replay.
+    status = Column(String, nullable=False, default="active", server_default="active")
+    # SEC: bcrypt hash of the staff member's numeric PIN, used for fast on-terminal
+    # PIN login (``POST /auth/login/pin``). Null when no PIN is set. Never returned.
+    pin_hash = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)

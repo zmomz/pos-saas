@@ -38,4 +38,9 @@ greenlet
 # auth module dependencies
 python-jose[cryptography]>=3.3.0
 
+# KDS real-time channel — Redis pub/sub backend (M6, #212). Optional at runtime:
+# only imported when REDIS_URL/KDS_REDIS_URL is set; the in-process backend (the
+# single-worker default) needs no Redis. redis.asyncio ships in this package.
+redis>=5.0.0
+
 # payment module dependencies
