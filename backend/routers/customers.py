@@ -13,6 +13,7 @@ from core.database import get_db
 from services.customers import CustomersService
 from services.production import fire_event_background
 from services.store_credit import StoreCreditError, StoreCreditService
+from services.birthday_rewards import BirthdayRewardsService
 from services.customer_groups import CustomerGroupsService
 from services.campaigns import CampaignsService
 from services.customer_notes import CustomerNoteError, CustomerNotesService
@@ -49,6 +50,7 @@ class CustomersData(BaseModel):
     visit_count: int = None
     marketing_consent: Optional[bool] = None  # PDPL opt-in (SEC-05 / CRM-05)
     tags: Optional[List[str]] = None  # segmentation labels (CRM-04 / F-039)
+    date_of_birth: Optional[date] = None  # CRM birthday rewards (#221)
 
 
 class CustomersUpdateData(BaseModel):
@@ -62,6 +64,7 @@ class CustomersUpdateData(BaseModel):
     visit_count: Optional[int] = None
     marketing_consent: Optional[bool] = None  # PDPL opt-in (SEC-05 / CRM-05)
     tags: Optional[List[str]] = None  # segmentation labels (CRM-04 / F-039)
+    date_of_birth: Optional[date] = None  # CRM birthday rewards (#221)
 
 
 class CustomersResponse(BaseModel):
@@ -87,6 +90,8 @@ class CustomersResponse(BaseModel):
     blacklist_reason: Optional[str] = None
     # CRM groups & tiers (#221): the named group this customer belongs to, or null.
     group_id: Optional[int] = None
+    # CRM birthday rewards (#221): the customer's date of birth, or null when unknown.
+    date_of_birth: Optional[date] = None
     # Segmentation labels (CRM-04 / F-039). Stored as a JSON string on the ORM
     # row; the validator below parses it back into a list for the API so the
     # client always sees ``tags`` as a real array (or null when untagged).
@@ -392,6 +397,64 @@ async def create_campaign(
     resp = CampaignResponse.model_validate(campaign)
     resp.audience_count = await service.audience_count(campaign, user_id=owner)
     return resp
+
+
+# ---------- M5·CRM (#221) — birthday rewards ----------
+# Declared BEFORE the `/{id}` routes so the literal `/birthday-rewards` collection
+# path is matched ahead of the int path-param (which would 422 on the literal).
+class BirthdayRewardRunData(BaseModel):
+    """Body for running the birthday-reward batch.
+
+    ``amount`` is the store credit (positive magnitude) granted to each matching
+    customer. ``on_date`` is the day to reward for (month/day match); it defaults to
+    today when omitted so the merchant can simply "run today's birthdays"."""
+    amount: float
+    on_date: Optional[date] = None
+
+
+class BirthdayRewardRow(BaseModel):
+    """One customer rewarded by a birthday-reward run."""
+    customer_id: int
+    name: str
+    balance: float
+
+
+class BirthdayRewardRunResponse(BaseModel):
+    """The outcome of a birthday-reward run: who was rewarded and with how much."""
+    on_date: date
+    amount: float
+    count: int
+    rewarded: List[BirthdayRewardRow]
+
+
+@router.post("/birthday-rewards", response_model=BirthdayRewardRunResponse)
+async def run_birthday_rewards(
+    data: BirthdayRewardRunData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Grant store credit to every own customer whose birthday is ``on_date`` (#221).
+
+    Owner-scoped (SEC-02): only the caller's own customers are touched. Idempotent
+    per birthday year (re-running the same day never double-grants); blacklisted and
+    erased customers are skipped. A non-positive ``amount`` → 400."""
+    on_date = data.on_date or date.today()
+    try:
+        rewarded = await BirthdayRewardsService(db).run(
+            user_id=scope.owner_user_id,
+            client_id=scope.client_id,
+            on_date=on_date,
+            amount=data.amount,
+        )
+    except StoreCreditError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {
+        "on_date": on_date,
+        "amount": data.amount,
+        "count": len(rewarded),
+        "rewarded": rewarded,
+    }
 
 
 @router.get("/{id}", response_model=CustomersResponse)

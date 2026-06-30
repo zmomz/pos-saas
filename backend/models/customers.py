@@ -1,6 +1,6 @@
 from core.database import Base
 from datetime import datetime
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, String
 
 
 class Customers(Base):
@@ -54,6 +54,11 @@ class Customers(Base):
     # belongs to (Wholesale/VIP/…), or null when ungrouped. Drives tiered pricing
     # and targeted campaigns; the group carries the tier label and default discount.
     group_id = Column(Integer, nullable=True, index=True)
+    # CRM birthday rewards (#221). The customer's date of birth, used by the
+    # birthday-reward batch to grant store credit on their birthday (month/day
+    # match). Null ⇒ unknown DOB ⇒ never rewarded. Year is retained for the record
+    # but the match ignores it (a birthday recurs every year).
+    date_of_birth = Column(Date, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 
