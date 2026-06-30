@@ -533,11 +533,44 @@ async def create_transaction(
     """Create a new POS transaction, ECDSA-signed and ZATCA-reported (C-3/C-4)."""
     client = await get_client_for_user(db, owner_id)
 
+    # ---- Branch-level pricing (#220): enforce the branch price at sale time ----
+    # A catalog line rung up at a branch is charged that branch's effective price:
+    # the branch override when one exists, else the chain-wide base. Mirrors the
+    # branch-tax slice (the server is authoritative, regardless of the submitted
+    # unit price). Variant lines (INV-04: own price by design) and open-price
+    # products (POS-11: sale-time price by design) keep their submitted price.
+    branch_prices: dict = {}
+    if data.branch_id:
+        from services.branch_pricing import resolve_price
+
+        branch_pids = {
+            it.product_id for it in data.items if it.product_id and not it.variant_id
+        }
+        open_price_pids = set()
+        if branch_pids:
+            open_price_pids = {
+                row.id
+                for row in (
+                    await db.execute(
+                        select(Products.id).where(
+                            Products.id.in_(branch_pids),
+                            Products.client_id == client.id,
+                            Products.is_open_price.is_(True),
+                        )
+                    )
+                ).all()
+            }
+        for pid in branch_pids - open_price_pids:
+            resolved = await resolve_price(db, client.id, int(data.branch_id), pid)
+            if resolved is not None:
+                branch_prices[pid] = resolved["price"]
+
     # Calculate totals (FIN-02: Decimal money math — penny-exact, no float drift).
     subtotal = Decimal("0")
     for item in data.items:
+        unit_price = branch_prices.get(item.product_id, item.price)
         item_total = (
-            to_decimal(item.price) * to_decimal(item.quantity)
+            to_decimal(unit_price) * to_decimal(item.quantity)
             - to_decimal(item.discount or 0)
         )
         subtotal += item_total
@@ -571,7 +604,13 @@ async def create_transaction(
             not it.variant_id
             and it.product_id in catalog
             and not catalog[it.product_id][1]  # open-price: sale-time price is expected
-            and abs(float(it.price) - catalog[it.product_id][0]) > 0.001
+            # at a branch the effective baseline is the branch price (#220), so a
+            # cashier submitting the branch price is not a manual override.
+            and abs(
+                float(it.price)
+                - branch_prices.get(it.product_id, catalog[it.product_id][0])
+            )
+            > 0.001
             for it in data.items
         )
         if has_override and not await has_permission(
