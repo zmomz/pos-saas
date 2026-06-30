@@ -13,6 +13,7 @@ from core.database import get_db
 from services.customers import CustomersService
 from services.production import fire_event_background
 from services.store_credit import StoreCreditError, StoreCreditService
+from services.customer_groups import CustomerGroupsService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from models.audit_logs import Audit_logs
@@ -20,6 +21,8 @@ from models.transactions import Transactions
 # Eager import so the store-credit ledger table registers on Base.metadata at
 # startup (mirrors the gift-card ledger / branch-table pattern), #221.
 from models.store_credit_ledger import StoreCreditLedger  # noqa: F401
+# Eager import so the customer_groups table registers on Base.metadata too (#221).
+from models.customer_groups import CustomerGroup  # noqa: F401
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -76,6 +79,8 @@ class CustomersResponse(BaseModel):
     blacklisted: Optional[bool] = None
     blacklisted_at: Optional[datetime] = None
     blacklist_reason: Optional[str] = None
+    # CRM groups & tiers (#221): the named group this customer belongs to, or null.
+    group_id: Optional[int] = None
     # Segmentation labels (CRM-04 / F-039). Stored as a JSON string on the ORM
     # row; the validator below parses it back into a list for the API so the
     # client always sees ``tags`` as a real array (or null when untagged).
@@ -230,6 +235,76 @@ async def query_customerss_all(
     except Exception as e:
         logger.error(f"Error querying customerss: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+# ---------- M5·CRM (#221) — customer groups & membership tiers ----------
+# Declared BEFORE the `/{id}` routes so the literal `/groups` collection path is
+# matched ahead of the int path-param (which would otherwise 422 on "groups").
+class CustomerGroupData(BaseModel):
+    """Body for creating a customer group."""
+    name: str
+    tier: Optional[str] = None
+    discount_percent: Optional[float] = None
+
+
+class CustomerGroupResponse(BaseModel):
+    """A named customer group (segment) with its tier and default discount."""
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    name: str
+    tier: Optional[str] = None
+    discount_percent: Optional[float] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CustomerGroupListResponse(BaseModel):
+    """List of the owner's customer groups."""
+    items: List[CustomerGroupResponse]
+    total: int
+
+
+class CustomerGroupAssignData(BaseModel):
+    """Body for assigning a customer to a group."""
+    group_id: int
+
+
+@router.get("/groups", response_model=CustomerGroupListResponse)
+async def list_customer_groups(
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """List this merchant's customer groups (CRM, #221). Owner-scoped (SEC-02)."""
+    groups = await CustomerGroupsService(db).get_list(user_id=scope.owner_user_id)
+    return {
+        "items": [CustomerGroupResponse.model_validate(g) for g in groups],
+        "total": len(groups),
+    }
+
+
+@router.post("/groups", response_model=CustomerGroupResponse, status_code=201)
+async def create_customer_group(
+    data: CustomerGroupData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a named customer group with a tier + optional discount (CRM, #221)."""
+    if not (data.name or "").strip():
+        raise HTTPException(status_code=400, detail="Group name is required")
+    group = await CustomerGroupsService(db).create(
+        user_id=scope.owner_user_id or str(current_user.id),
+        client_id=scope.client_id,
+        name=data.name,
+        tier=data.tier,
+        discount_percent=data.discount_percent,
+    )
+    return CustomerGroupResponse.model_validate(group)
 
 
 @router.get("/{id}", response_model=CustomersResponse)
@@ -864,6 +939,39 @@ async def unblacklist_customer(
 ):
     """Lift a customer's blacklist (CRM, #221). Owner-scoped (SEC-02): foreign → 404."""
     customer = await CustomersService(db).clear_blacklist(id, user_id=scope.owner_user_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customers not found")
+    return CustomersResponse.model_validate(customer)
+
+
+@router.post("/{id}/group", response_model=CustomersResponse)
+async def assign_customer_group(
+    id: int,
+    data: CustomerGroupAssignData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign a customer to one of the merchant's groups (CRM, #221).
+
+    Owner-scoped (SEC-02): a foreign/unknown customer **or** group id → 404."""
+    customer = await CustomerGroupsService(db).assign(
+        id, data.group_id, user_id=scope.owner_user_id
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer or group not found")
+    return CustomersResponse.model_validate(customer)
+
+
+@router.delete("/{id}/group", response_model=CustomersResponse)
+async def unassign_customer_group(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a customer from their group (CRM, #221). Owner-scoped (SEC-02): foreign → 404."""
+    customer = await CustomerGroupsService(db).assign(id, None, user_id=scope.owner_user_id)
     if not customer:
         raise HTTPException(status_code=404, detail="Customers not found")
     return CustomersResponse.model_validate(customer)

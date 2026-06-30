@@ -50,6 +50,10 @@ class Customers(Base):
     # sale time (POS) rather than merely hidden in the UI.
     blacklisted_at = Column(DateTime(timezone=True), nullable=True)
     blacklist_reason = Column(String, nullable=True)
+    # CRM groups & tiers (#221). The named customer_groups segment this customer
+    # belongs to (Wholesale/VIP/…), or null when ungrouped. Drives tiered pricing
+    # and targeted campaigns; the group carries the tier label and default discount.
+    group_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
 
