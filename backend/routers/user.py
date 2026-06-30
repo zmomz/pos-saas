@@ -52,6 +52,8 @@ def _to_preferences_response(profile) -> UserPreferencesResponse:
         display_name=profile.display_name,
         notification_prefs=NotificationPrefs(
             email_alerts=profile.email_alerts,
+            whatsapp_alerts=profile.whatsapp_alerts,
+            push_alerts=profile.push_alerts,
             low_stock_alerts=profile.low_stock_alerts,
             daily_summary=profile.daily_summary,
             transaction_alerts=profile.transaction_alerts,

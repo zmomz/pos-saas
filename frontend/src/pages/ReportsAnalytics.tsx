@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { BarChart3, DollarSign, Receipt, TrendingUp, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatNumber } from '@/lib/format';
-import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, downloadReportPdf, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport } from '@/lib/api';
+import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, getPnlReport, getCashFlowReport, downloadReportPdf, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport, type PnlReport, type CashFlowReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -150,6 +150,31 @@ const reportTranslations: Record<string, Record<string, string>> = {
     void_count: 'Voids',
     discount_count: 'Discounts',
     discount_total: 'Total Discount',
+    // P&L statement (M9)
+    pnl: 'Profit & Loss',
+    pnl_hint: 'Income statement for the last 30 days — net revenue less COGS and operating expenses. VAT is excluded; COGS rolls up from the bill of materials.',
+    download_pnl: 'Download P&L CSV',
+    gross_sales: 'Gross Sales',
+    discounts: 'Discounts',
+    net_revenue: 'Net Revenue',
+    net_profit: 'Net Profit',
+    net_margin: 'Net Margin %',
+    operating_expenses: 'Operating Expenses',
+    total_expenses: 'Total Expenses',
+    line: 'Line',
+    // Cash flow statement (M9)
+    cash_flow: 'Cash Flow',
+    cash_flow_hint: 'Cash-basis money movement for the last 30 days — customer receipts net of refunds, less cash operating expenses. Drawer movements are shown separately.',
+    download_cash_flow: 'Download Cash Flow CSV',
+    operating_cash_flow: 'Operating Cash Flow',
+    net_cash_flow: 'Net Cash Flow',
+    receipts_net: 'Receipts (net)',
+    receipts_by_tender: 'Receipts by Tender',
+    drawer_movements: 'Cash-Drawer Movements',
+    cash_pay_in: 'Cash Pay-In',
+    cash_pay_out: 'Cash Pay-Out',
+    cash_drop: 'Cash Drop',
+    net_drawer: 'Net Drawer Change',
   },
   ar: {
     reports_analytics: 'التقارير والتحليلات',
@@ -262,6 +287,31 @@ const reportTranslations: Record<string, Record<string, string>> = {
     void_count: 'الملغاة',
     discount_count: 'الخصومات',
     discount_total: 'إجمالي الخصم',
+    // P&L statement (M9)
+    pnl: 'الأرباح والخسائر',
+    pnl_hint: 'قائمة الدخل لآخر 30 يومًا — صافي الإيراد ناقص تكلفة البضاعة والمصروفات التشغيلية. لا تشمل ضريبة القيمة المضافة؛ تكلفة البضاعة تُحتسب من قائمة المكوّنات.',
+    download_pnl: 'تنزيل الأرباح والخسائر CSV',
+    gross_sales: 'إجمالي المبيعات',
+    discounts: 'الخصومات',
+    net_revenue: 'صافي الإيراد',
+    net_profit: 'صافي الربح',
+    net_margin: 'هامش صافي الربح %',
+    operating_expenses: 'المصروفات التشغيلية',
+    total_expenses: 'إجمالي المصروفات',
+    line: 'البند',
+    // Cash flow statement (M9)
+    cash_flow: 'التدفقات النقدية',
+    cash_flow_hint: 'حركة النقد على أساس نقدي لآخر 30 يومًا — مقبوضات العملاء بعد خصم المرتجعات، ناقص المصروفات التشغيلية النقدية. تُعرض حركات الدرج بشكل منفصل.',
+    download_cash_flow: 'تنزيل التدفقات النقدية CSV',
+    operating_cash_flow: 'التدفق النقدي التشغيلي',
+    net_cash_flow: 'صافي التدفق النقدي',
+    receipts_net: 'المقبوضات (الصافي)',
+    receipts_by_tender: 'المقبوضات حسب طريقة الدفع',
+    drawer_movements: 'حركات درج النقد',
+    cash_pay_in: 'إيداع نقدي',
+    cash_pay_out: 'سحب نقدي',
+    cash_drop: 'ترحيل نقدي',
+    net_drawer: 'صافي حركة الدرج',
   },
   hi: {
     reports_analytics: 'रिपोर्ट और विश्लेषण',
@@ -374,6 +424,31 @@ const reportTranslations: Record<string, Record<string, string>> = {
     void_count: 'रद्दीकरण',
     discount_count: 'छूट',
     discount_total: 'कुल छूट',
+    // P&L statement (M9)
+    pnl: 'लाभ और हानि',
+    pnl_hint: 'पिछले 30 दिनों का आय विवरण — शुद्ध राजस्व में से COGS और परिचालन व्यय घटाकर। VAT शामिल नहीं; COGS बिल ऑफ मटेरियल्स से जुड़ता है।',
+    download_pnl: 'लाभ-हानि CSV डाउनलोड करें',
+    gross_sales: 'सकल बिक्री',
+    discounts: 'छूट',
+    net_revenue: 'शुद्ध राजस्व',
+    net_profit: 'शुद्ध लाभ',
+    net_margin: 'शुद्ध मार्जिन %',
+    operating_expenses: 'परिचालन व्यय',
+    total_expenses: 'कुल व्यय',
+    line: 'मद',
+    // Cash flow statement (M9)
+    cash_flow: 'नकदी प्रवाह',
+    cash_flow_hint: 'पिछले 30 दिनों का नकद-आधारित धन प्रवाह — रिफंड घटाकर ग्राहक प्राप्तियाँ, नकद परिचालन व्यय घटाकर। दराज़ की गतिविधियाँ अलग दिखाई जाती हैं।',
+    download_cash_flow: 'नकदी प्रवाह CSV डाउनलोड करें',
+    operating_cash_flow: 'परिचालन नकदी प्रवाह',
+    net_cash_flow: 'शुद्ध नकदी प्रवाह',
+    receipts_net: 'प्राप्तियाँ (शुद्ध)',
+    receipts_by_tender: 'भुगतान विधि अनुसार प्राप्तियाँ',
+    drawer_movements: 'नकद-दराज़ गतिविधियाँ',
+    cash_pay_in: 'नकद जमा',
+    cash_pay_out: 'नकद निकासी',
+    cash_drop: 'कैश ड्रॉप',
+    net_drawer: 'शुद्ध दराज़ परिवर्तन',
   },
   ur: {
     reports_analytics: 'رپورٹس اور تجزیات',
@@ -486,6 +561,31 @@ const reportTranslations: Record<string, Record<string, string>> = {
     void_count: 'منسوخیاں',
     discount_count: 'رعایتیں',
     discount_total: 'کل رعایت',
+    // P&L statement (M9)
+    pnl: 'نفع و نقصان',
+    pnl_hint: 'پچھلے 30 دنوں کا گوشوارہ آمدنی — خالص آمدنی میں سے COGS اور آپریٹنگ اخراجات منہا۔ VAT شامل نہیں؛ COGS بل آف میٹیریلز سے جُڑتا ہے۔',
+    download_pnl: 'نفع و نقصان CSV ڈاؤن لوڈ کریں',
+    gross_sales: 'مجموعی فروخت',
+    discounts: 'رعایتیں',
+    net_revenue: 'خالص آمدنی',
+    net_profit: 'خالص نفع',
+    net_margin: 'خالص مارجن %',
+    operating_expenses: 'آپریٹنگ اخراجات',
+    total_expenses: 'کل اخراجات',
+    line: 'مد',
+    // Cash flow statement (M9)
+    cash_flow: 'نقدی بہاؤ',
+    cash_flow_hint: 'پچھلے 30 دنوں کا نقد بنیاد پر رقم کا بہاؤ — ریفنڈ منہا کر کے گاہک کی وصولیاں، نقد آپریٹنگ اخراجات منہا۔ دراز کی حرکات الگ دکھائی جاتی ہیں۔',
+    download_cash_flow: 'نقدی بہاؤ CSV ڈاؤن لوڈ کریں',
+    operating_cash_flow: 'آپریٹنگ نقدی بہاؤ',
+    net_cash_flow: 'خالص نقدی بہاؤ',
+    receipts_net: 'وصولیاں (خالص)',
+    receipts_by_tender: 'ادائیگی کے طریقے کے مطابق وصولیاں',
+    drawer_movements: 'نقد دراز کی حرکات',
+    cash_pay_in: 'نقد جمع',
+    cash_pay_out: 'نقد ادائیگی',
+    cash_drop: 'کیش ڈراپ',
+    net_drawer: 'دراز میں خالص تبدیلی',
   },
 };
 
@@ -501,6 +601,8 @@ export default function ReportsAnalytics() {
   const [inventory, setInventory] = useState<InventoryReport | null>(null);
   const [refundsVoids, setRefundsVoids] = useState<RefundVoidReport | null>(null);
   const [discounts, setDiscounts] = useState<DiscountReport | null>(null);
+  const [pnl, setPnl] = useState<PnlReport | null>(null);
+  const [cashFlow, setCashFlow] = useState<CashFlowReport | null>(null);
   const [loadingSales, setLoadingSales] = useState(true);
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [loadingPayments, setLoadingPayments] = useState(true);
@@ -510,6 +612,8 @@ export default function ReportsAnalytics() {
   const [loadingInventory, setLoadingInventory] = useState(true);
   const [loadingRefundsVoids, setLoadingRefundsVoids] = useState(true);
   const [loadingDiscounts, setLoadingDiscounts] = useState(true);
+  const [loadingPnl, setLoadingPnl] = useState(true);
+  const [loadingCashFlow, setLoadingCashFlow] = useState(true);
   // UX-02 (F-051): a failed fetch on any panel must surface a real error state
   // distinct from "no data" — generalizing the RPT-03 payment-panel pattern.
   const [salesError, setSalesError] = useState(false);
@@ -521,6 +625,8 @@ export default function ReportsAnalytics() {
   const [inventoryError, setInventoryError] = useState(false);
   const [refundsVoidsError, setRefundsVoidsError] = useState(false);
   const [discountsError, setDiscountsError] = useState(false);
+  const [pnlError, setPnlError] = useState(false);
+  const [cashFlowError, setCashFlowError] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingJournal, setExportingJournal] = useState(false);
   const [exportingMargin, setExportingMargin] = useState(false);
@@ -528,6 +634,8 @@ export default function ReportsAnalytics() {
   const [exportingInventory, setExportingInventory] = useState(false);
   const [exportingRefundsVoids, setExportingRefundsVoids] = useState(false);
   const [exportingDiscounts, setExportingDiscounts] = useState(false);
+  const [exportingPnl, setExportingPnl] = useState(false);
+  const [exportingCashFlow, setExportingCashFlow] = useState(false);
   // F-072: which report's PDF is currently downloading (its path), else null.
   const [exportingPdf, setExportingPdf] = useState<string | null>(null);
 
@@ -551,6 +659,8 @@ export default function ReportsAnalytics() {
     fetchInventory();
     fetchRefundsVoids();
     fetchDiscounts();
+    fetchPnl();
+    fetchCashFlow();
   }, []);
 
   async function fetchSalesData() {
@@ -801,6 +911,72 @@ export default function ReportsAnalytics() {
       URL.revokeObjectURL(url);
     } finally {
       setExportingDiscounts(false);
+    }
+  }
+
+  async function fetchPnl() {
+    setLoadingPnl(true);
+    setPnlError(false);
+    try {
+      const result = await getPnlReport(30);
+      setPnl(result || null);
+    } catch {
+      // A failed fetch must surface a real error, never an empty P&L (UX-02).
+      setPnlError(true);
+      setPnl(null);
+    } finally {
+      setLoadingPnl(false);
+    }
+  }
+
+  async function handleExportPnl() {
+    if (!pnl?.csv_content) return;
+    setExportingPnl(true);
+    try {
+      const blob = new Blob([pnl.csv_content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `pnl_${pnl.from_date}_${pnl.to_date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingPnl(false);
+    }
+  }
+
+  async function fetchCashFlow() {
+    setLoadingCashFlow(true);
+    setCashFlowError(false);
+    try {
+      const result = await getCashFlowReport(30);
+      setCashFlow(result || null);
+    } catch {
+      // A failed fetch must surface a real error, never an empty statement (UX-02).
+      setCashFlowError(true);
+      setCashFlow(null);
+    } finally {
+      setLoadingCashFlow(false);
+    }
+  }
+
+  async function handleExportCashFlow() {
+    if (!cashFlow?.csv_content) return;
+    setExportingCashFlow(true);
+    try {
+      const blob = new Blob([cashFlow.csv_content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `cash_flow_${cashFlow.from_date}_${cashFlow.to_date}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingCashFlow(false);
     }
   }
 
@@ -1056,6 +1232,281 @@ export default function ReportsAnalytics() {
                 </TableRow>
               </TableBody>
             </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Profit & Loss statement (M9 / F-068) */}
+      <Card className="bg-card border-border">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-foreground">{tr('pnl')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{tr('pnl_hint')}</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button onClick={handleExportPnl} disabled={exportingPnl || !pnl}>
+              {exportingPnl ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_pnl')}
+            </Button>
+            <Button
+              onClick={() => handleExportPdf('pnl', `pnl_${pnl?.from_date}_${pnl?.to_date}`)}
+              disabled={exportingPdf === 'pnl' || !pnl}
+              variant="outline"
+            >
+              {exportingPdf === 'pnl' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loadingPnl ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+              ))}
+            </div>
+          ) : pnlError ? (
+            <div className="text-center py-8" role="alert">
+              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <Button variant="outline" onClick={fetchPnl}>
+                {tr('retry')}
+              </Button>
+            </div>
+          ) : !pnl ? (
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <>
+              {/* Headline figures */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('net_revenue')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
+                    {formatMoney(pnl.net_revenue, language)}
+                  </p>
+                </div>
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('gross_profit')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
+                    {formatMoney(pnl.gross_profit, language)}
+                  </p>
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    {tr('margin')}: {formatNumber(pnl.gross_margin_pct, language)}%
+                  </p>
+                </div>
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('net_profit')}</p>
+                  <p className={`text-lg font-bold tabular-nums ${pnl.net_profit >= 0 ? 'text-success' : 'text-danger'}`}>
+                    {formatMoney(pnl.net_profit, language)}
+                  </p>
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    {tr('net_margin')}: {formatNumber(pnl.net_margin_pct, language)}%
+                  </p>
+                </div>
+              </div>
+
+              {/* The income statement, top to bottom */}
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border hover:bg-card">
+                    <TableHead className="text-muted-foreground">{tr('line')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('amount')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow className="border-border hover:bg-muted">
+                    <TableCell className="text-foreground">{tr('gross_sales')}</TableCell>
+                    <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(pnl.gross_sales, language)}</TableCell>
+                  </TableRow>
+                  <TableRow className="border-border hover:bg-muted">
+                    <TableCell className="text-foreground">{tr('discounts')}</TableCell>
+                    <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(-pnl.discounts, language)}</TableCell>
+                  </TableRow>
+                  <TableRow className="border-border bg-muted/40">
+                    <TableCell className="text-foreground font-semibold">{tr('net_revenue')}</TableCell>
+                    <TableCell className="text-foreground text-end font-semibold tabular-nums">{formatMoney(pnl.net_revenue, language)}</TableCell>
+                  </TableRow>
+                  <TableRow className="border-border hover:bg-muted">
+                    <TableCell className="text-foreground">{tr('cogs')}</TableCell>
+                    <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(-pnl.cogs, language)}</TableCell>
+                  </TableRow>
+                  <TableRow className="border-border bg-muted/40">
+                    <TableCell className="text-foreground font-semibold">{tr('gross_profit')}</TableCell>
+                    <TableCell className="text-foreground text-end font-semibold tabular-nums">{formatMoney(pnl.gross_profit, language)}</TableCell>
+                  </TableRow>
+                  <TableRow className="border-border hover:bg-card">
+                    <TableCell className="text-muted-foreground text-xs uppercase tracking-wide pt-4" colSpan={2}>
+                      {tr('operating_expenses')}
+                    </TableCell>
+                  </TableRow>
+                  {pnl.expenses.length === 0 ? (
+                    <TableRow className="border-border hover:bg-muted">
+                      <TableCell className="text-muted-foreground" colSpan={2}>{tr('no_data')}</TableCell>
+                    </TableRow>
+                  ) : (
+                    pnl.expenses.map((e) => (
+                      <TableRow key={e.category} className="border-border hover:bg-muted">
+                        <TableCell className="text-foreground ps-6">{e.category}</TableCell>
+                        <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(-e.amount, language)}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                  <TableRow className="border-border bg-muted/40">
+                    <TableCell className="text-foreground font-semibold">{tr('total_expenses')}</TableCell>
+                    <TableCell className="text-foreground text-end font-semibold tabular-nums">{formatMoney(-pnl.total_expenses, language)}</TableCell>
+                  </TableRow>
+                  <TableRow className="border-border bg-muted/60">
+                    <TableCell className="text-foreground font-bold">{tr('net_profit')}</TableCell>
+                    <TableCell className={`text-end font-bold tabular-nums ${pnl.net_profit >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {formatMoney(pnl.net_profit, language)}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Cash Flow statement (M9 / F-068) */}
+      <Card className="bg-card border-border">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
+          <div>
+            <CardTitle className="text-foreground">{tr('cash_flow')}</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">{tr('cash_flow_hint')}</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <Button onClick={handleExportCashFlow} disabled={exportingCashFlow || !cashFlow}>
+              {exportingCashFlow ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('download_cash_flow')}
+            </Button>
+            <Button
+              onClick={() => handleExportPdf('cash-flow', `cash_flow_${cashFlow?.from_date}_${cashFlow?.to_date}`)}
+              disabled={exportingPdf === 'cash-flow' || !cashFlow}
+              variant="outline"
+            >
+              {exportingPdf === 'cash-flow' ? <Loader2 className="h-4 w-4 animate-spin" /> : tr('export_pdf')}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loadingCashFlow ? (
+            <div className="space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+              ))}
+            </div>
+          ) : cashFlowError ? (
+            <div className="text-center py-8" role="alert">
+              <p className="text-danger mb-3">{tr('error_loading')}</p>
+              <Button variant="outline" onClick={fetchCashFlow}>
+                {tr('retry')}
+              </Button>
+            </div>
+          ) : !cashFlow ? (
+            <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
+          ) : (
+            <>
+              {/* Headline figures */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('receipts_net')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
+                    {formatMoney(cashFlow.receipts_net, language)}
+                  </p>
+                </div>
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('total_expenses')}</p>
+                  <p className="text-lg font-bold text-foreground tabular-nums">
+                    {formatMoney(cashFlow.total_expenses, language)}
+                  </p>
+                </div>
+                <div className="rounded-[14px] bg-muted/40 p-3">
+                  <p className="text-xs text-muted-foreground">{tr('net_cash_flow')}</p>
+                  <p className={`text-lg font-bold tabular-nums ${cashFlow.net_cash_flow >= 0 ? 'text-success' : 'text-danger'}`}>
+                    {formatMoney(cashFlow.net_cash_flow, language)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Operating cash flow: inflows − outflows = net */}
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border hover:bg-card">
+                    <TableHead className="text-muted-foreground">{tr('operating_cash_flow')}</TableHead>
+                    <TableHead className="text-muted-foreground text-end">{tr('amount')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {cashFlow.inflows.map((i) => (
+                    <TableRow key={i.label} className="border-border hover:bg-muted">
+                      <TableCell className="text-foreground">{i.label}</TableCell>
+                      <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(i.amount, language)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {cashFlow.outflows.map((o) => (
+                    <TableRow key={o.label} className="border-border hover:bg-muted">
+                      <TableCell className="text-foreground">{o.label}</TableCell>
+                      <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(-o.amount, language)}</TableCell>
+                    </TableRow>
+                  ))}
+                  <TableRow className="border-border bg-muted/60">
+                    <TableCell className="text-foreground font-bold">{tr('net_cash_flow')}</TableCell>
+                    <TableCell className={`text-end font-bold tabular-nums ${cashFlow.net_cash_flow >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {formatMoney(cashFlow.net_cash_flow, language)}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+
+              {/* Receipts by tender */}
+              {cashFlow.by_tender.length > 0 && (
+                <div className="mt-6">
+                  <p className="text-sm font-medium text-foreground mb-2">{tr('receipts_by_tender')}</p>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-border hover:bg-card">
+                        <TableHead className="text-muted-foreground">{tr('method')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('collected')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('refunds')}</TableHead>
+                        <TableHead className="text-muted-foreground text-end">{tr('net')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {cashFlow.by_tender.map((t) => (
+                        <TableRow key={t.tender_type} className="border-border hover:bg-muted">
+                          <TableCell className="text-foreground font-medium">{tenderLabel(t.tender_type)}</TableCell>
+                          <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(t.collected, language)}</TableCell>
+                          <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(t.refunds, language)}</TableCell>
+                          <TableCell className="text-foreground text-end font-medium tabular-nums">{formatMoney(t.net, language)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {/* Cash-drawer movements (drawer float management, shown separately) */}
+              <div className="mt-6">
+                <p className="text-sm font-medium text-foreground mb-2">{tr('drawer_movements')}</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="rounded-[14px] bg-muted/40 p-3">
+                    <p className="text-xs text-muted-foreground">{tr('cash_pay_in')}</p>
+                    <p className="text-base font-semibold text-foreground tabular-nums">{formatMoney(cashFlow.drawer_movements.pay_in, language)}</p>
+                  </div>
+                  <div className="rounded-[14px] bg-muted/40 p-3">
+                    <p className="text-xs text-muted-foreground">{tr('cash_pay_out')}</p>
+                    <p className="text-base font-semibold text-foreground tabular-nums">{formatMoney(cashFlow.drawer_movements.pay_out, language)}</p>
+                  </div>
+                  <div className="rounded-[14px] bg-muted/40 p-3">
+                    <p className="text-xs text-muted-foreground">{tr('cash_drop')}</p>
+                    <p className="text-base font-semibold text-foreground tabular-nums">{formatMoney(cashFlow.drawer_movements.cash_drop, language)}</p>
+                  </div>
+                  <div className="rounded-[14px] bg-muted/40 p-3">
+                    <p className="text-xs text-muted-foreground">{tr('net_drawer')}</p>
+                    <p className={`text-base font-semibold tabular-nums ${cashFlow.drawer_movements.net_drawer >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {formatMoney(cashFlow.drawer_movements.net_drawer, language)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

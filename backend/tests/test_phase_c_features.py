@@ -52,6 +52,48 @@ async def test_agent_can_disable_client_feature(client):
     assert blocked.status_code == 403
 
 
+async def test_agent_reads_resolved_client_features(client):
+    """The dashboard hydrates real toggle state from this GET (AG-03)."""
+    agent_user, agent_token, agent_id = await make_agent_account(client)
+    client_user, client_token, client_id = await make_client_under_agent(client, agent_id)
+
+    # Every canonical key reports default-on when no explicit row exists.
+    resp = await client.get(
+        f"/api/v1/tenant/agent/clients/{client_id}/features",
+        headers=auth_headers(agent_token),
+    )
+    assert resp.status_code == 200, resp.text
+    features = resp.json()["features"]
+    assert features, "expected the canonical feature keys"
+    assert all(v is True for v in features.values())
+
+    # Disabling one flag is reflected on the next read, the rest stay on.
+    await client.post(
+        f"/api/v1/tenant/agent/clients/{client_id}/features",
+        json={"feature_name": "loyalty", "is_enabled": False},
+        headers=auth_headers(agent_token),
+    )
+    resp2 = await client.get(
+        f"/api/v1/tenant/agent/clients/{client_id}/features",
+        headers=auth_headers(agent_token),
+    )
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json()["features"]["loyalty"] is False
+    assert resp2.json()["features"]["inventory"] is True
+
+
+async def test_agent_cannot_read_other_agents_client_features(client):
+    _, _, agent_a = await make_agent_account(client)
+    _, other_token, _ = await make_agent_account(client)
+    _, _, client_id = await make_client_under_agent(client, agent_a)
+
+    resp = await client.get(
+        f"/api/v1/tenant/agent/clients/{client_id}/features",
+        headers=auth_headers(other_token),
+    )
+    assert resp.status_code == 404
+
+
 async def test_agent_cannot_toggle_other_agents_client(client):
     _, _, agent_a = await make_agent_account(client)
     _, other_token, _ = await make_agent_account(client)

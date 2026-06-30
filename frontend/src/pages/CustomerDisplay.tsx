@@ -67,8 +67,12 @@ export default function CustomerDisplay() {
     );
   }
 
+  // H2 (height chain): a passive second screen is never scrolled, so the page is
+  // locked to the viewport (`h-screen` + `overflow-hidden`). The header and the
+  // big TOTAL footer stay pinned while only the middle items list scrolls — under
+  // a long cart the amount due can never slide off-screen.
   return (
-    <div dir={isRTL ? 'rtl' : 'ltr'} className="min-h-screen bg-background flex flex-col">
+    <div dir={isRTL ? 'rtl' : 'ltr'} className="h-screen overflow-hidden bg-background flex flex-col">
       {/* Header */}
       <div className="bg-card/80 border-b border-border p-6 text-center">
         <h1 className="text-3xl font-bold text-foreground">{display.businessName}</h1>
@@ -76,7 +80,7 @@ export default function CustomerDisplay() {
       </div>
 
       {/* Cart Items */}
-      <div className="flex-1 p-6 overflow-y-auto">
+      <div className="flex-1 min-h-0 p-6 overflow-y-auto">
         {display.items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <ShoppingCart className="h-20 w-20 text-muted-foreground mb-4" />

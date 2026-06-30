@@ -23,6 +23,7 @@ import { formatDate } from '@/lib/format';
 import { toast } from 'sonner';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
+import ErrorState from '@/components/states/ErrorState';
 import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star, History, Layers } from 'lucide-react';
 
 const ADJUSTMENT_REASONS: StockAdjustmentReason[] = [
@@ -81,6 +82,7 @@ const emptyForm: BranchFormData = {
 export default function BranchManagement() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
@@ -133,6 +135,7 @@ export default function BranchManagement() {
 
   async function loadBranches() {
     setLoading(true);
+    setLoadError(false);
     try {
       const res = await client.entities.branches.query({ query: {}, limit: 100 });
       const data = res.data;
@@ -140,6 +143,7 @@ export default function BranchManagement() {
     } catch (err) {
       console.error('Failed to load branches:', err);
       setBranches([]);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -455,7 +459,10 @@ export default function BranchManagement() {
         </Dialog>
       </PageHeading>
 
-      {/* Branch Cards */}
+      {/* Branch Cards — a failed load shows an error+retry, never "no branches" */}
+      {loadError ? (
+        <ErrorState message={t('branches_load_error')} onRetry={loadBranches} />
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {branches.length === 0 ? (
           <Card className="bg-card border-border col-span-full">
@@ -521,6 +528,7 @@ export default function BranchManagement() {
           ))
         )}
       </div>
+      )}
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>

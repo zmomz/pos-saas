@@ -1,6 +1,6 @@
 from core.database import Base
 from datetime import datetime
-from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import Column, DateTime, Index, Integer, String, UniqueConstraint
 
 from core.money import Money
 
@@ -14,6 +14,13 @@ class Transactions(Base):
         UniqueConstraint(
             "client_id", "invoice_number", name="uq_transaction_client_invoice"
         ),
+        # M9 reporting hot-path: every financial/sales report filters
+        # ``client_id == X AND created_at >= start`` (P&L, COGS, VAT summary,
+        # profit/margin, sales summary, …). Without a composite index those scan
+        # the whole table per client; this composite serves the tenant+window
+        # range directly so analytics stays flat as volume grows (and never
+        # degrades into a sequential scan that competes with the sale path).
+        Index("ix_transactions_client_created", "client_id", "created_at"),
         # DAT-06: an offline-queued sale's client-generated offline_id must be
         # unique per client, so re-syncing the same queue can never double-book a
         # sale. NULL offline_id (live sales, held tickets, credit notes) is exempt

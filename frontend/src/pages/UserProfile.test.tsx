@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -27,6 +27,10 @@ function renderPage() {
 }
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+// The security section reads the real current session on mount.
+beforeEach(() =>
+  server.use(http.get(`${BASE}/auth/sessions`, () => HttpResponse.json({ sessions: [] })))
+);
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 

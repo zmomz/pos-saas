@@ -12,7 +12,8 @@ import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
-import { getPackagesList, createPackage, updatePackage, deletePackage } from '@/lib/api';
+import { toast } from 'sonner';
+import { getPackagesList, createPackage, updatePackage } from '@/lib/api';
 
 const FEATURE_KEYS = [
   'email_receipts', 'sms_receipts', 'loyalty', 'restaurant', 'inventory', 'discounts', 'zatca', 'omnichannel',
@@ -119,13 +120,18 @@ export default function PackageManagement() {
     }
   }
 
-  async function handleDelete(id: number) {
+  // The button is labelled "Deactivate", so deactivate it — flip is_active via the
+  // update endpoint and report the real result. Inactive packages can be
+  // reactivated the same way, so the toggle never strands a package off.
+  async function handleSetActive(id: number, isActive: boolean) {
     try {
-      await deletePackage(id);
+      await updatePackage(id, { is_active: isActive });
       setConfirmDeleteId(null);
+      toast.success(isActive ? t('package_activated') : t('package_deactivated'));
       await fetchPackages();
     } catch (err) {
-      console.error('Failed to delete package:', err);
+      console.error('Failed to change package status:', err);
+      toast.error(err instanceof Error ? err.message : t('package_status_failed'));
     }
   }
 
@@ -195,9 +201,13 @@ export default function PackageManagement() {
                   <Edit2 className="h-3.5 w-3.5" />
                   {t('edit')}
                 </Button>
-                {confirmDeleteId === pkg.id ? (
+                {!pkg.is_active ? (
+                  <Button variant="outline" size="sm" onClick={() => handleSetActive(pkg.id, true)} className="flex-1 border-success/40 text-success hover:bg-success/10">
+                    {t('activate')}
+                  </Button>
+                ) : confirmDeleteId === pkg.id ? (
                   <div className="flex flex-1 gap-1">
-                    <Button size="sm" variant="danger" onClick={() => handleDelete(pkg.id)} className="flex-1">{t('yes')}</Button>
+                    <Button size="sm" variant="danger" onClick={() => handleSetActive(pkg.id, false)} className="flex-1">{t('yes')}</Button>
                     <Button size="sm" variant="outline" onClick={() => setConfirmDeleteId(null)} className="flex-1">{t('no')}</Button>
                   </div>
                 ) : (

@@ -42,6 +42,7 @@ from models.loyalty_transactions import Loyalty_transactions  # noqa: F401
 from models.webhook_deliveries import Webhook_deliveries  # noqa: F401
 from models.customers import Customers  # noqa: F401
 from services.production import (
+    NOTIFY_CHANNELS,
     BulkImportService,
     EmailService,
     LowStockChecker,
@@ -50,6 +51,7 @@ from services.production import (
     SearchService,
     WebhookDispatcher,
     compute_shift_cash_reconciliation,
+    deliver_composed_notification,
     fire_event_background,
     performance_monitor,
     rate_limiter,
@@ -93,11 +95,24 @@ class InvoicePDFRequest(BaseModel):
     transaction_id: int
 
 
-class EmailNotificationRequest(BaseModel):
-    to_email: str
-    subject: str
+class NotificationComposeRequest(BaseModel):
+    """An operator-composed notification (M10 / parity #8, ISSUE-214).
+
+    ``channel`` picks the delivery path (email / whatsapp / push); ``to`` is the
+    destination for that channel (email address / phone / device token) and falls
+    back to the legacy ``to_email`` so existing email callers keep working.
+    ``scheduled_at``, when set to a future instant, defers delivery — the endpoint
+    acknowledges it as ``scheduled`` rather than sending now.
+    """
+
+    channel: str = Field(default="email", description="email | whatsapp | push")
+    to: Optional[str] = Field(default=None, description="Recipient for the channel")
+    # Backwards-compatible email destination (pre-composer callers send this).
+    to_email: Optional[str] = None
+    subject: Optional[str] = None
     body: str
     html_body: Optional[str] = None
+    scheduled_at: Optional[datetime] = None
 
 
 class WebhookTestRequest(BaseModel):
@@ -611,17 +626,36 @@ async def generate_pdf_invoice(
 # =============================================================================
 @router.post("/notifications/send")
 async def send_notification(
-    data: EmailNotificationRequest,
+    data: NotificationComposeRequest,
     current_user: UserResponse = Depends(get_current_user),
 ):
-    """Send an email notification."""
-    result = await EmailService.send_email(
-        to_email=data.to_email,
-        subject=data.subject,
+    """Compose and send a notification over the chosen channel (M10 / parity #8).
+
+    Supports email / WhatsApp / push and optional scheduling. The destination
+    comes from ``to`` (or the legacy ``to_email``); a future ``scheduled_at``
+    defers delivery and is acknowledged as ``scheduled`` rather than sent now.
+    """
+    channel = (data.channel or "email").lower()
+    if channel not in NOTIFY_CHANNELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"channel must be one of {', '.join(NOTIFY_CHANNELS)}",
+        )
+
+    destination = (data.to or data.to_email or "").strip()
+    if not destination:
+        raise HTTPException(status_code=400, detail="A recipient is required")
+    if not (data.body or "").strip():
+        raise HTTPException(status_code=400, detail="A message is required")
+
+    return await deliver_composed_notification(
+        channel=channel,
+        to=destination,
+        subject=(data.subject or "Notification").strip() or "Notification",
         body=data.body,
         html_body=data.html_body,
+        scheduled_at=data.scheduled_at,
     )
-    return result
 
 
 # =============================================================================
