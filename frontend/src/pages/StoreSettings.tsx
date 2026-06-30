@@ -2,14 +2,25 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
-import { Store, FileText, MapPin, Clock } from 'lucide-react';
+import { useBusinessProfile } from '@/contexts/BusinessProfileContext';
+import { notifyError } from '@/lib/notify';
+import { Store, FileText, MapPin, Clock, Layers } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   getStoreSettings,
   saveStoreSettings,
+  setBusinessType,
   type BusinessHours,
+  type BusinessType,
 } from '@/lib/api';
 
 // ISSUE-079 — one screen for the store-level identity and operating defaults that
@@ -34,6 +45,40 @@ export default function StoreSettings() {
   const [phone, setPhone] = useState('');
   const [hours, setHours] = useState<BusinessHours[]>(defaultHours());
   const [saving, setSaving] = useState(false);
+
+  // Change-business-type flow (issue #201). Switching the type recomputes the
+  // navigation, dashboard, onboarding and restaurant permissions — no data is
+  // deleted, so switching back restores everything.
+  const { businessType, refresh } = useBusinessProfile();
+  const currentType: BusinessType = businessType ?? 'retail';
+  const [pendingType, setPendingType] = useState<BusinessType | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [changingType, setChangingType] = useState(false);
+
+  function requestTypeChange(next: BusinessType) {
+    if (next === currentType) return;
+    setPendingType(next);
+    setConfirmOpen(true);
+  }
+
+  async function confirmTypeChange() {
+    if (!pendingType) return;
+    setChangingType(true);
+    try {
+      await setBusinessType(pendingType);
+      await refresh();
+      toast.success(t('bt_changed'));
+      setConfirmOpen(false);
+      setPendingType(null);
+    } catch (err) {
+      notifyError(err, t('bt_change_failed') || 'Could not update business type. Please try again.');
+    } finally {
+      setChangingType(false);
+    }
+  }
+
+  const typeLabel = (bt: BusinessType) =>
+    bt === 'restaurant' ? t('business_type_restaurant') : bt === 'both' ? t('business_type_both') : t('business_type_retail');
 
   useEffect(() => {
     let cancelled = false;
@@ -133,6 +178,31 @@ export default function StoreSettings() {
         </div>
       </div>
 
+      {/* Business type (issue #201) — drives nav, dashboard, onboarding & POS mode */}
+      <div className="dxr-tile">
+        <h2 className="mb-1 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
+          <Layers className="h-5 w-5 text-brand-600" />
+          {t('business_type')}
+        </h2>
+        <p className="mb-4 text-sm text-muted-foreground">{t('bt_section_desc')}</p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:items-end">
+          <div>
+            <Label className={labelCls}>{t('choose_business_type')}</Label>
+            <Select value={currentType} onValueChange={(v) => requestTypeChange(v as BusinessType)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="retail">{t('business_type_retail')}</SelectItem>
+                <SelectItem value="restaurant">{t('business_type_restaurant')}</SelectItem>
+                <SelectItem value="both">{t('business_type_both')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="text-xs text-muted-foreground">{t('business_type_hint')}</p>
+        </div>
+      </div>
+
       {/* Receipt footer */}
       <div className="dxr-tile">
         <h2 className="mb-4 flex items-center gap-2 text-[16px] font-extrabold tracking-tight">
@@ -219,6 +289,32 @@ export default function StoreSettings() {
           ))}
         </div>
       </div>
+
+      {/* Change-type warning — recompute, never delete */}
+      <AlertDialog open={confirmOpen} onOpenChange={(open) => { if (!changingType) setConfirmOpen(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('bt_change_warning_title')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('bt_change_warning_desc')}
+              {pendingType && (
+                <span className="mt-2 block font-semibold text-foreground">
+                  {typeLabel(currentType)} → {typeLabel(pendingType)}
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={changingType}>{t('cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); confirmTypeChange(); }}
+              disabled={changingType}
+            >
+              {changingType ? t('loading') : t('bt_confirm_change')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

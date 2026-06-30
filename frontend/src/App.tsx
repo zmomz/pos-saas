@@ -8,6 +8,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { BrandingProvider } from '@/contexts/BrandingContext';
+import { BusinessProfileProvider } from '@/contexts/BusinessProfileContext';
 import { LanguageProvider, useLanguage } from '@/lib/i18n';
 import LandingPage from './pages/LandingPage';
 import Index from './pages/Index';
@@ -51,6 +52,7 @@ import CustomerDisplay from './pages/CustomerDisplay';
 import ForceResetPassword from './pages/ForceResetPassword';
 import NotFound from './pages/NotFound';
 import ProtectedRoute from './components/ProtectedRoute';
+import BusinessTypeRoute from './components/BusinessTypeRoute';
 import DashboardLayout from './components/DashboardLayout';
 
 const queryClient = new QueryClient();
@@ -118,7 +120,11 @@ const AppRoutes = () => (
       <Route path="/branding" element={<BrandingEditor />} />
     </Route>
 
-    {/* Client routes */}
+    {/* Client (merchant) routes. These pages read client-scoped endpoints that
+        403 for an agent, so they are not shared with the agent reseller role.
+        Vertical-specific pages are further gated by business_type via
+        BusinessTypeRoute (issue #201): the guard derives from the type before
+        any per-merchant feature override, mirroring the backend. */}
     <Route
       element={
         <ProtectedRoute allowedRoles={['client']}>
@@ -126,17 +132,13 @@ const AppRoutes = () => (
         </ProtectedRoute>
       }
     >
+      {/* Shared across every business type */}
       <Route path="/client" element={<ClientDashboard />} />
       <Route path="/pos" element={<POSTerminal />} />
       <Route path="/shifts" element={<ShiftManagement />} />
       <Route path="/loyalty" element={<LoyaltyProgram />} />
       <Route path="/branches" element={<BranchManagement />} />
-      <Route path="/floor" element={<FloorMap />} />
-      <Route path="/reservations" element={<Reservations />} />
-      <Route path="/floor/ticket/:ticketId" element={<OrderTicket />} />
-      <Route path="/menu-builder" element={<MenuBuilder />} />
       <Route path="/catalog-modifiers" element={<CatalogModifiers />} />
-      <Route path="/kds" element={<KDS />} />
       <Route path="/channels" element={<ChannelOrders />} />
       <Route path="/zatca" element={<ZatcaStatus />} />
       <Route path="/gift-cards" element={<GiftCardManagement />} />
@@ -144,28 +146,29 @@ const AppRoutes = () => (
       <Route path="/devices" element={<DevicesSettings />} />
       <Route path="/receipt-template" element={<ReceiptTemplateDesigner />} />
       <Route path="/store-settings" element={<StoreSettings />} />
-    </Route>
-
-    {/* Merchant-data routes (client only). These pages read client-scoped
-        endpoints (products/reports/customers/…) that 403 for an agent, so they
-        are not shared with the agent reseller role. */}
-    <Route
-      element={
-        <ProtectedRoute allowedRoles={['client']}>
-          <DashboardLayout />
-        </ProtectedRoute>
-      }
-    >
-      <Route path="/products" element={<ProductManagement />} />
       <Route path="/reports" element={<ReportsAnalytics />} />
       <Route path="/customers" element={<CustomerManagement />} />
       <Route path="/staff" element={<StaffManagement />} />
       <Route path="/expenses" element={<ExpenseTracking />} />
-      <Route path="/categories" element={<CategoryManagement />} />
       <Route path="/discounts" element={<DiscountManagement />} />
-      <Route path="/quotations" element={<QuotationManagement />} />
-      <Route path="/suppliers" element={<SupplierManagement />} />
       <Route path="/webhooks" element={<WebhookManagement />} />
+
+      {/* Restaurant vertical — floor/tables/KDS/menu/reservations */}
+      <Route element={<BusinessTypeRoute vertical="restaurant" />}>
+        <Route path="/floor" element={<FloorMap />} />
+        <Route path="/reservations" element={<Reservations />} />
+        <Route path="/floor/ticket/:ticketId" element={<OrderTicket />} />
+        <Route path="/menu-builder" element={<MenuBuilder />} />
+        <Route path="/kds" element={<KDS />} />
+      </Route>
+
+      {/* Retail vertical — catalog + procurement */}
+      <Route element={<BusinessTypeRoute vertical="retail" />}>
+        <Route path="/products" element={<ProductManagement />} />
+        <Route path="/categories" element={<CategoryManagement />} />
+        <Route path="/suppliers" element={<SupplierManagement />} />
+        <Route path="/quotations" element={<QuotationManagement />} />
+      </Route>
     </Route>
 
     {/* Shared routes (all authenticated roles) */}
@@ -210,7 +213,9 @@ const App = () => (
             <BrowserRouter>
               <AuthProvider>
                 <BrandingProvider>
-                  <AppRoutes />
+                  <BusinessProfileProvider>
+                    <AppRoutes />
+                  </BusinessProfileProvider>
                 </BrandingProvider>
               </AuthProvider>
             </BrowserRouter>
