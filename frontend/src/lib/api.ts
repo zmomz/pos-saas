@@ -4613,6 +4613,151 @@ export async function onboardProductionCsid(): Promise<ZatcaOnboardResult> {
   return res.data;
 }
 
+// ---------- ZATCA hash-chain integrity (ZA-04, parity #13) ----------
+// Walks the archived documents in counter (icv) order, asserting each one chains
+// onto the prior invoice_hash and that every ECDSA stamp verifies. Reports the
+// first icv that breaks the chain or fails its signature.
+
+export interface ZatcaIntegrityResult {
+  ok: boolean;
+  total: number;
+  chain_ok: boolean;
+  signatures_ok: boolean;
+  broken_at?: number | null;
+  detail?: string | null;
+}
+
+export async function getZatcaIntegrity(): Promise<ZatcaIntegrityResult> {
+  const res = await client.apiCall.invoke<ZatcaIntegrityResult>({
+    url: '/api/v1/zatca/integrity',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+// ---------- Operations / observability (parity #10) ----------
+// Surfaces the production telemetry endpoints into an ops console: detailed
+// health, owner-scoped API-usage metering, the platform-admin performance
+// monitor, and the cross-entity global search.
+
+export interface OpsHealth {
+  status: string; // "healthy" | "degraded"
+  checks: {
+    database: string;
+    rate_limiter: string;
+    performance_monitor: string;
+    timestamp: string;
+  } & Record<string, string>;
+}
+
+export interface ApiUsageEndpoint {
+  endpoint: string;
+  request_count: number;
+  avg_response_time_ms: number;
+}
+
+export interface ApiUsageStats {
+  user_id: string;
+  total_requests: number;
+  endpoints: ApiUsageEndpoint[];
+  rate_limit: {
+    remaining_tokens: number;
+    max_tokens: number;
+    refill_rate_per_second: number;
+  };
+}
+
+export interface OpsMetricsSummary {
+  total_requests: number;
+  total_errors: number;
+  error_rate: number;
+  avg_response_ms: number;
+  endpoints_tracked: number;
+}
+
+export interface OpsMetricsEndpoint {
+  avg_ms: number;
+  min_ms: number;
+  max_ms: number;
+  p95_ms: number;
+  total_requests: number;
+  error_count: number;
+}
+
+export interface OpsMetrics {
+  summary: OpsMetricsSummary;
+  endpoints: Record<string, OpsMetricsEndpoint>;
+  rate_limiter: { remaining_tokens: number };
+}
+
+export interface GlobalSearchResults {
+  query: string;
+  total_results: number;
+  results: {
+    products: Array<{
+      id: number;
+      name: string;
+      name_ar?: string | null;
+      barcode?: string | null;
+      price?: number | null;
+      category?: string | null;
+    }>;
+    customers: Array<{
+      id: number;
+      name: string;
+      phone?: string | null;
+      email?: string | null;
+    }>;
+    transactions: Array<{
+      id: number;
+      invoice_number?: string | null;
+      total_amount?: number | null;
+      customer_name?: string | null;
+      status?: string | null;
+      created_at?: string | null;
+    }>;
+  };
+}
+
+export async function getOpsHealth(): Promise<OpsHealth> {
+  const res = await client.apiCall.invoke<OpsHealth>({
+    url: '/api/v1/production/health/detailed',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function getApiUsageStats(): Promise<ApiUsageStats> {
+  const res = await client.apiCall.invoke<ApiUsageStats>({
+    url: '/api/v1/production/api-usage/stats',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+// Platform-admin scoped: 403s for a standard merchant (role "user"). Callers
+// must treat a 403 as "not authorized", distinct from a real load failure.
+export async function getOpsMetrics(): Promise<OpsMetrics> {
+  const res = await client.apiCall.invoke<OpsMetrics>({
+    url: '/api/v1/production/metrics',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
+export async function globalSearch(q: string, limit = 20): Promise<GlobalSearchResults> {
+  const res = await client.apiCall.invoke<GlobalSearchResults>({
+    url: '/api/v1/production/search',
+    method: 'GET',
+    data: { q, limit },
+  });
+  return res.data;
+}
+
 // ---------- Omnichannel — Salla connector (OMN-01..03, F-046) ----------
 // Connect the merchant's Salla store, read the connection status, and list the
 // online orders that were imported as POS sales (decrementing the shared stock).
