@@ -14,7 +14,7 @@ import { notifyError } from '@/lib/notify';
 import { toast } from 'sonner';
 import ErrorState from '@/components/states/ErrorState';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Mail, MessageSquare, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon } from 'lucide-react';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Mail, MessageSquare, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon, Minus, Plus } from 'lucide-react';
 
 export interface Product {
   id: number;
@@ -1620,10 +1620,16 @@ export default function POSTerminal() {
   }
 
   // Sale Mode View (default)
+  //
+  // H2 (height chain): the screen is locked to the viewport (`h-screen` +
+  // `overflow-hidden`) so the product grid and the cart each own their own
+  // scroll. The cart's TOTAL/checkout block stays pinned at the bottom while the
+  // line items scroll, instead of the whole page growing past the viewport and
+  // pushing checkout off-screen under a heavy cart.
   return (
-    <div className="min-h-screen bg-background flex flex-col lg:flex-row">
+    <div className="flex h-screen flex-col overflow-hidden bg-background lg:flex-row">
       {/* Product Grid */}
-      <div className="flex-1 p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-bold text-foreground">{t('products')}</h2>
@@ -1844,8 +1850,11 @@ export default function POSTerminal() {
         )}
       </div>
 
-      {/* Cart Sidebar */}
-      <div className="flex w-full flex-col border-t border-border bg-card p-4 lg:w-[400px] lg:border-s lg:border-t-0">
+      {/* Cart Sidebar — H2: bounded height so the items list scrolls and the
+          TOTAL/checkout block below stays pinned. On a stacked phone layout the
+          cart shares the viewport with the grid (flex-1); on the counter it is a
+          fixed-width full-height column. */}
+      <div className="flex w-full flex-1 min-h-0 flex-col border-t border-border bg-card p-4 lg:w-[400px] lg:flex-none lg:border-s lg:border-t-0">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <ShoppingCart className="h-[18px] w-[18px]" /> {t('current_sale') || 'Current Sale'}
@@ -1872,7 +1881,7 @@ export default function POSTerminal() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
           {cart.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-12 text-center text-muted-foreground">
               <ShoppingCart className="h-10 w-10 opacity-30" />
@@ -1907,12 +1916,14 @@ export default function POSTerminal() {
                         <span className="text-muted-foreground text-xs">{t('unit_price')}</span>
                         <Input
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           step="0.01"
                           value={lineUnitPrice(item)}
                           onChange={(e) => setLineUnitPrice(item.key, e.target.value)}
                           dir="ltr"
-                          className="h-6 w-20 bg-card border-border text-foreground text-xs"
+                          aria-label={`${t('unit_price')} — ${item.product.name}`}
+                          className="h-11 w-24 bg-card border-border text-foreground text-base"
                         />
                       </div>
                     ) : (
@@ -1924,13 +1935,15 @@ export default function POSTerminal() {
                       </p>
                     )}
                   </div>
+                  {/* H5: 44px labelled remove control (was a 24px raw glyph). */}
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() => removeFromCart(item.key)}
-                    className="text-destructive hover:text-destructive hover:bg-muted h-6 w-6 p-0"
+                    className="h-11 w-11 shrink-0 p-0 text-destructive hover:bg-muted hover:text-destructive"
+                    aria-label={`${t('remove')} ${item.product.name}`}
                   >
-                    ✕
+                    <Trash2 className="h-5 w-5" />
                   </Button>
                 </div>
                 <div className="flex items-center gap-2 mt-2">
@@ -1939,12 +1952,14 @@ export default function POSTerminal() {
                     <div className="flex items-center gap-1">
                       <Input
                         type="number"
+                        inputMode="decimal"
                         min="0"
                         step="0.001"
                         value={item.quantity}
                         onChange={(e) => setLineQuantity(item.key, e.target.value)}
                         dir="ltr"
-                        className="h-7 w-24 bg-card border-border text-foreground text-xs"
+                        aria-label={`${t('quantity')} — ${item.product.name}`}
+                        className="h-11 w-24 bg-card border-border text-foreground text-base"
                       />
                       {item.product.unit_label && (
                         <span className="text-muted-foreground text-xs">{item.product.unit_label}</span>
@@ -1952,22 +1967,25 @@ export default function POSTerminal() {
                     </div>
                   ) : (
                     <>
+                      {/* H5: 44px labelled steppers with lucide glyphs. */}
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => updateQuantity(item.key, -1)}
-                        className="h-9 w-9 p-0 border-border text-foreground hover:bg-muted"
+                        className="h-11 w-11 shrink-0 border-border p-0 text-foreground hover:bg-muted"
+                        aria-label={`${t('decrease_quantity')} — ${item.product.name}`}
                       >
-                        -
+                        <Minus className="h-4 w-4" />
                       </Button>
-                      <span className="text-foreground text-sm w-8 text-center">{item.quantity}</span>
+                      <span className="w-8 text-center text-base font-semibold text-foreground tabular-nums">{item.quantity}</span>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => updateQuantity(item.key, 1)}
-                        className="h-9 w-9 p-0 border-border text-foreground hover:bg-muted"
+                        className="h-11 w-11 shrink-0 border-border p-0 text-foreground hover:bg-muted"
+                        aria-label={`${t('increase_quantity')} — ${item.product.name}`}
                       >
-                        +
+                        <Plus className="h-4 w-4" />
                       </Button>
                     </>
                   )}
@@ -2105,7 +2123,7 @@ export default function POSTerminal() {
                 onClick={() => setSplitMode((v) => !v)}
                 className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
                   splitMode
-                    ? 'border-brand bg-brand text-white'
+                    ? 'border-primary bg-primary text-primary-foreground'
                     : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
                 }`}
               >
@@ -2133,7 +2151,7 @@ export default function POSTerminal() {
                         key={m.v}
                         type="button"
                         onClick={() => setPaymentMethod(m.v)}
-                        className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[13px] font-semibold transition-colors ${
+                        className={`inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[13px] font-semibold transition-colors ${
                           active
                             ? 'border-brand bg-brand-50 text-brand-700'
                             : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
@@ -2196,7 +2214,7 @@ export default function POSTerminal() {
                       <button
                         type="button"
                         onClick={() => setSelectedTerminalId('')}
-                        className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                        className={`inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
                           selectedTerminalId === ''
                             ? 'border-brand bg-brand-50 text-brand-700'
                             : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
@@ -2211,7 +2229,7 @@ export default function POSTerminal() {
                             key={tm.id}
                             type="button"
                             onClick={() => setSelectedTerminalId(String(tm.id))}
-                            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                            className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
                               active
                                 ? 'border-brand bg-brand-50 text-brand-700'
                                 : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
@@ -2274,10 +2292,14 @@ export default function POSTerminal() {
             )}
           </div>
 
+          {/* H1: the checkout CTA is white-labelled — it rides the tenant's
+              primary and pairs it with `text-primary-foreground`, which
+              BrandingContext flips to dark ink for pale brands so the amount due
+              stays legible (was a fixed `bg-brand text-white`). */}
           <button
             onClick={handleCheckout}
             disabled={cart.length === 0 || processing || (splitMode && !splitBalanced)}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-4 text-base font-bold text-white shadow-brand transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-base font-bold text-primary-foreground shadow-brand transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {cart.length === 0 ? (
               <>
