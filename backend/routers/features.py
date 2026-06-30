@@ -92,6 +92,8 @@ class ProductCreateRequest(BaseModel):
     is_digital: Optional[bool] = False
     # ISSUE-223 (M4 Product): serialised good — require a serial/IMEI at sale.
     track_serial: Optional[bool] = False
+    # ISSUE-223 (M4 Product): lot-controlled good — require a batch number at sale.
+    track_batch: Optional[bool] = False
 
 
 class ProductUpdateRequest(BaseModel):
@@ -119,6 +121,8 @@ class ProductUpdateRequest(BaseModel):
     is_digital: Optional[bool] = None
     # ISSUE-223 (M4 Product): serialised good — require a serial/IMEI at sale.
     track_serial: Optional[bool] = None
+    # ISSUE-223 (M4 Product): lot-controlled good — require a batch number at sale.
+    track_batch: Optional[bool] = None
 
 
 class ProductResponse(BaseModel):
@@ -148,6 +152,8 @@ class ProductResponse(BaseModel):
     is_digital: bool = False
     # ISSUE-223 (M4 Product): serialised good — require a serial/IMEI at sale.
     track_serial: bool = False
+    # ISSUE-223 (M4 Product): lot-controlled good — require a batch number at sale.
+    track_batch: bool = False
     # ISSUE-065 (P2 catalog): served URL of the product image (None when unset).
     image_url: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -272,6 +278,7 @@ async def list_products(
             is_open_price=bool(p.is_open_price),
             is_digital=bool(p.is_digital),
             track_serial=bool(p.track_serial),
+            track_batch=bool(p.track_batch),
             unit_label=p.unit_label,
             image_url=p.image_url,
             created_at=p.created_at,
@@ -323,6 +330,7 @@ async def create_product(
         is_open_price=bool(data.is_open_price),
         is_digital=bool(data.is_digital),
         track_serial=bool(data.track_serial),
+        track_batch=bool(data.track_batch),
         unit_label=data.unit_label,
     )
     db.add(product)
@@ -350,6 +358,7 @@ async def create_product(
         is_open_price=bool(product.is_open_price),
         is_digital=bool(product.is_digital),
         track_serial=bool(product.track_serial),
+        track_batch=bool(product.track_batch),
         unit_label=product.unit_label,
         image_url=product.image_url,
         created_at=product.created_at,
@@ -418,6 +427,7 @@ async def update_product(
         is_open_price=bool(product.is_open_price),
         is_digital=bool(product.is_digital),
         track_serial=bool(product.track_serial),
+        track_batch=bool(product.track_batch),
         unit_label=product.unit_label,
         image_url=product.image_url,
         created_at=product.created_at,
@@ -519,6 +529,7 @@ async def upload_product_image(
         is_open_price=bool(product.is_open_price),
         is_digital=bool(product.is_digital),
         track_serial=bool(product.track_serial),
+        track_batch=bool(product.track_batch),
         unit_label=product.unit_label,
         image_url=product.image_url,
         created_at=product.created_at,
@@ -616,6 +627,7 @@ async def restore_product(
         is_open_price=bool(product.is_open_price),
         is_digital=bool(product.is_digital),
         track_serial=bool(product.track_serial),
+        track_batch=bool(product.track_batch),
         unit_label=product.unit_label,
         image_url=product.image_url,
         created_at=product.created_at,
@@ -677,6 +689,7 @@ async def duplicate_product(
         is_open_price=bool(original.is_open_price),
         is_digital=bool(original.is_digital),
         track_serial=bool(original.track_serial),
+        track_batch=bool(original.track_batch),
         unit_label=original.unit_label,
         image_url=original.image_url,
     )
@@ -705,6 +718,7 @@ async def duplicate_product(
         is_open_price=bool(copy.is_open_price),
         is_digital=bool(copy.is_digital),
         track_serial=bool(copy.track_serial),
+        track_batch=bool(copy.track_batch),
         unit_label=copy.unit_label,
         image_url=copy.image_url,
         created_at=copy.created_at,

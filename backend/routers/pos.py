@@ -112,6 +112,10 @@ class CartItem(BaseModel):
     # serial-tracked product (``Products.track_serial``). The sale is rejected when
     # a tracked line arrives without one (enforced in ``create_transaction``).
     serial_number: Optional[str] = None
+    # ISSUE-223 (M4 Product): batch/lot number captured at the point of sale for a
+    # batch-tracked product (``Products.track_batch``). The sale is rejected when a
+    # tracked line arrives without one (enforced in ``create_transaction``).
+    batch_number: Optional[str] = None
 
 
 class PaymentEntry(BaseModel):
@@ -588,6 +592,35 @@ async def create_transaction(
             raise HTTPException(
                 status_code=400,
                 detail="A serial number is required to sell this product.",
+            )
+
+    # ---- Batch/expiry tracking (#223): require a batch number at sale ----
+    # A product flagged ``track_batch`` (a lot-controlled good — medicine, food or
+    # any perishable whose dispensed batch/lot and its expiry must be recorded)
+    # cannot be rung up without capturing its batch number at the point of sale. The
+    # server is authoritative: any owned tracked line missing a non-empty
+    # ``batch_number`` is rejected (400) before anything is booked.
+    batch_pids = {it.product_id for it in data.items if it.product_id}
+    if batch_pids:
+        batch_tracked_pids = {
+            row.id
+            for row in (
+                await db.execute(
+                    select(Products.id).where(
+                        Products.id.in_(batch_pids),
+                        Products.client_id == client.id,
+                        Products.track_batch.is_(True),
+                    )
+                )
+            ).all()
+        }
+        if batch_tracked_pids and any(
+            it.product_id in batch_tracked_pids and not (it.batch_number or "").strip()
+            for it in data.items
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="A batch number is required to sell this product.",
             )
 
     # ---- Branch-level pricing (#220): enforce the branch price at sale time ----
