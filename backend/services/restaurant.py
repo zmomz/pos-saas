@@ -971,6 +971,41 @@ class RestaurantService:
             logger.error(f"Error transferring waiter on ticket {ticket_id}: {str(e)}")
             raise
 
+    async def assign_driver(
+        self, ticket_id: int, driver_id: int, user_id: str
+    ) -> Optional[OrderTickets]:
+        """Assign the delivery driver carrying a ticket (F-045).
+
+        A driver only makes sense for a ``delivery`` order, so a dine-in / takeaway
+        ticket is rejected (``ValueError`` -> 400). The driver must be one of the
+        caller's own staff members (SEC-02 -> ``ValueError`` -> 400); the ticket's
+        ``driver_id`` is set and ``driver_name`` snapshots the staff member's name
+        so dispatch renders who has the bag without a join. A settled/void ticket is
+        rejected (a closed bill has nothing left to dispatch -> ``ValueError`` ->
+        409). Returns ``None`` if the ticket isn't found (caller maps to 404).
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        if (ticket.status or "open") in CLOSED_TICKET_STATUSES:
+            raise ValueError("Cannot assign a driver to a settled or voided ticket")
+        if (ticket.order_type or "dine_in") != "delivery":
+            raise ValueError("Only a delivery order can have a driver")
+        member = await self._owned_staff(driver_id, user_id)
+        if member is None:
+            raise ValueError("Driver not found")
+        try:
+            ticket.driver_id = member.id
+            ticket.driver_name = member.name
+            await self.db.commit()
+            await self.db.refresh(ticket)
+            logger.info(f"Assigned driver {member.id} to ticket {ticket_id}")
+            return ticket
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error assigning driver on ticket {ticket_id}: {str(e)}")
+            raise
+
     async def merge_tickets(
         self, target_ticket_id: int, source_ticket_id: int, user_id: str
     ) -> Optional[OrderTickets]:

@@ -99,6 +99,12 @@ class OrderTickets(Base):
     # is responsible without a join. Both null until a waiter is assigned.
     server_id = Column(Integer, nullable=True, index=True)
     server_name = Column(String, nullable=True)
+    # The staff member carrying a *delivery* order (F-045 "delivery-driver
+    # assignment"). ``driver_id`` references the owner's own ``staff_members``
+    # row; ``driver_name`` snapshots the name so dispatch renders who has the bag
+    # without a join. Both null until a driver is assigned (delivery tickets only).
+    driver_id = Column(Integer, nullable=True, index=True)
+    driver_name = Column(String, nullable=True)
     notes = Column(String, nullable=True)
     opened_at = Column(DateTime(timezone=True), default=datetime.now)
     created_at = Column(DateTime(timezone=True), default=datetime.now)

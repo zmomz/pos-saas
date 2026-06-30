@@ -197,6 +197,10 @@ class OrderTicketResponse(BaseModel):
     # waiter"); both null until a waiter is assigned.
     server_id: Optional[int] = None
     server_name: Optional[str] = None
+    # The staff member carrying a delivery order (F-045 "delivery-driver
+    # assignment"); both null until a driver is assigned (delivery tickets only).
+    driver_id: Optional[int] = None
+    driver_name: Optional[str] = None
     # Optional service-charge % applied to the bill, outside the VAT base (F-061).
     service_charge_pct: Optional[float] = None
 
@@ -274,6 +278,12 @@ class TransferWaiterRequest(BaseModel):
     """Reassign the waiter (server) responsible for a ticket (F-045)."""
 
     server_id: int
+
+
+class AssignDriverRequest(BaseModel):
+    """Assign the delivery driver carrying a ticket (F-045)."""
+
+    driver_id: int
 
 
 class MergeRequest(BaseModel):
@@ -1182,6 +1192,30 @@ async def transfer_waiter(
     service = RestaurantService(db)
     try:
         ticket = await service.transfer_waiter(ticket_id, data.server_id, user_id=client.user_id)
+    except ValueError as e:
+        status = 409 if "settled or voided" in str(e) else 400
+        raise HTTPException(status_code=status, detail=str(e))
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return ticket
+
+
+@router.post("/order-tickets/{ticket_id}/assign-driver", response_model=OrderTicketResponse)
+async def assign_driver(
+    ticket_id: int,
+    data: AssignDriverRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign the delivery driver carrying a ticket (F-045).
+
+    Only a delivery order can have a driver, and the driver must be one of the
+    caller's own staff members (both bad requests, 400). Rejected once the ticket
+    is settled/void (409); an unknown ticket is a 404.
+    """
+    service = RestaurantService(db)
+    try:
+        ticket = await service.assign_driver(ticket_id, data.driver_id, user_id=client.user_id)
     except ValueError as e:
         status = 409 if "settled or voided" in str(e) else 400
         raise HTTPException(status_code=status, detail=str(e))
