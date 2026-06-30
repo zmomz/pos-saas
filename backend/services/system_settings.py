@@ -11,6 +11,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cache import TTL_TAX, cache, tax_global_key
 from models.system_settings import System_settings
 
 logger = logging.getLogger(__name__)
@@ -47,15 +48,27 @@ async def get_global_tax_rate(db: AsyncSession) -> Optional[float]:
     ``None`` means "no global rate configured" — callers should then fall back to
     their own default (``DEFAULT_TAX_RATE``) so behaviour is unchanged for fresh
     installs.
+
+    Cached (M10 / #219): this resolves on every priced sale but the master sets it
+    rarely, so the answer is fronted by the tenant-scoped cache and invalidated by
+    ``invalidate_tax`` when the master writes a new rate. The "not set" state is
+    cached too (as ``{"rate": None}``) so a fresh install doesn't hit the DB on
+    every sale; ``None`` itself is never stored, since it reads as a cache miss.
     """
-    raw = await get_setting(db, GLOBAL_TAX_RATE_KEY)
-    if raw is None or raw == "":
-        return None
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        logger.warning("Stored global_tax_rate %r is not numeric; ignoring", raw)
-        return None
+
+    async def _load() -> dict:
+        raw = await get_setting(db, GLOBAL_TAX_RATE_KEY)
+        if raw is None or raw == "":
+            return {"rate": None}
+        try:
+            return {"rate": float(raw)}
+        except (TypeError, ValueError):
+            logger.warning("Stored global_tax_rate %r is not numeric; ignoring", raw)
+            return {"rate": None}
+
+    payload = await cache.get_or_load(tax_global_key(), TTL_TAX, _load)
+    rate = payload.get("rate") if isinstance(payload, dict) else None
+    return float(rate) if rate is not None else None
 
 
 async def get_effective_tax_rate(db: AsyncSession, requested: Optional[float] = None) -> float:

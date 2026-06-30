@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, update, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cache import invalidate_brand
 from core.database import get_db, db_manager
 from dependencies.auth import get_current_user
 from dependencies.tenancy import get_owner_id
@@ -865,6 +866,12 @@ async def update_agent_branding(
 
     update_data = data.model_dump(exclude_unset=True)
 
+    # M10/#219: capture the domain the brand cache may currently be keyed under, so
+    # we can clear the *old* domain key even when this edit changes the domain.
+    old_domain = (
+        await db.execute(select(Agents.custom_domain).where(Agents.id == agent_id))
+    ).scalar_one_or_none()
+
     # AG-05: a custom domain is normalized (lowercase, no scheme/port/www) and must
     # be unique across agents — two resellers can't claim the same host. An empty
     # value clears it. Imported here to avoid a circular import at module load.
@@ -890,6 +897,10 @@ async def update_agent_branding(
             update(Agents).where(Agents.id == agent_id).values(**update_data)
         )
         await db.commit()
+        # M10/#219: clear the agent's cached brand for the by-agent read and for
+        # both the old and (possibly new) custom-domain keys.
+        new_domain = update_data.get("custom_domain", old_domain)
+        await invalidate_brand(agent_id, old_domain, new_domain)
 
     # Fetch updated agent
     result = await db.execute(select(Agents).where(Agents.id == agent_id))
