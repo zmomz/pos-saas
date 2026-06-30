@@ -20,6 +20,7 @@ import ErrorState from '@/components/states/ErrorState';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
+import AgentMoyasarBanner from '@/components/billing/AgentMoyasarBanner';
 import { Users, CreditCard, UserPlus, Palette, ShoppingBag, BarChart3, Box, Percent, Star, QrCode, Mail, Sliders, KeyRound, Store, BadgeCheck, Wallet, Link2, Archive, ArchiveRestore, ArrowRightLeft, Download, Trash2, MoreVertical } from 'lucide-react';
 
 interface ClientItem {
@@ -535,6 +536,10 @@ export default function AgentDashboard() {
         </Button>
       </div>
       {dunningResult && <p role="status" className="text-sm text-muted-foreground">{dunningResult}</p>}
+
+      {/* Fail-closed (#235): an unconnected Moyasar stalls the whole merchant book.
+          Gated on a successful quota load so a load error never fakes the state. */}
+      {quota && <AgentMoyasarBanner connected={quota.has_moyasar_account} audience="agent" />}
 
       {/* Top bento — revenue spotlight + gauge + KPI chips */}
       <div data-tour="stats-section" className="grid gap-4 lg:auto-rows-[116px] lg:grid-cols-12">

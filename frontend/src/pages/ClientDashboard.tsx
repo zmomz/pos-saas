@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -18,6 +19,7 @@ import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import ErrorState from '@/components/states/ErrorState';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
+import AgentMoyasarBanner from '@/components/billing/AgentMoyasarBanner';
 import {
   DollarSign, TrendingUp, Monitor, ShoppingBag,
   BarChart3, Users, Download, AlertTriangle, ArrowRight, CreditCard,
@@ -175,6 +177,11 @@ export default function ClientDashboard() {
   }
 
   async function handlePaySubscription() {
+    // Pre-flight (#235): block the charge when the agent hasn't connected Moyasar.
+    if (!subscription?.moyasar_publishable_key) {
+      toast.error(t('moyasar_preflight_blocked') || 'Payment is unavailable until your provider connects Moyasar.');
+      return;
+    }
     setPaying(true);
     try {
       const updated = await payClientSubscription();
@@ -279,10 +286,15 @@ export default function ClientDashboard() {
               {subscription.grace_deadline ? ` · ${t('pay_before') || 'pay before'} ${subscription.grace_deadline}` : ''}
             </div>
           </div>
-          <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="bg-gradient-to-b from-gold to-gold-600 text-warning-foreground hover:opacity-90">
+          <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0 || !subscription.moyasar_publishable_key} className="bg-gradient-to-b from-gold to-gold-600 text-warning-foreground hover:opacity-90">
             {paying ? t('loading') : (t('pay_now') || 'Pay now')}
           </Button>
         </div>
+      )}
+
+      {/* Fail-closed: the owning agent hasn't connected Moyasar (#235). */}
+      {subscription && (subscription.subscription_fee > 0 || subscription.payments.length > 0) && (
+        <AgentMoyasarBanner connected={!!subscription.moyasar_publishable_key} audience="merchant" />
       )}
 
       {/* Bento KPIs */}
@@ -473,7 +485,7 @@ export default function ClientDashboard() {
                 {savedCard ? (t('update') || 'Update') : (t('add_card') || 'Add card')}
               </Button>
             </div>
-            <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0} className="mt-3 w-full shadow-brand">
+            <Button onClick={handlePaySubscription} disabled={paying || subscription.subscription_fee <= 0 || !subscription.moyasar_publishable_key} className="mt-3 w-full shadow-brand">
               {paying ? t('loading') : (t('pay_now') || 'Pay now')}
             </Button>
             {subscription.payments.length > 0 && (

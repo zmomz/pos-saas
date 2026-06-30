@@ -17,7 +17,7 @@ function secondaryHandlers() {
     http.get(`${BASE}/api/v1/tenant/agent/branding`, () => HttpResponse.json({})),
     http.get(`${BASE}/api/v1/tenant/agent/revenue`, () => HttpResponse.json({ collected: 0, payments: 0, by_client: [] })),
     http.get(`${BASE}/api/v1/tenant/agent/quota`, () =>
-      HttpResponse.json({ quota_price: 80, quota_cycle: 'monthly', quota_status: 'active', has_card: false, has_moyasar_account: false, payments: [] })
+      HttpResponse.json({ quota_price: 80, quota_cycle: 'monthly', quota_status: 'active', has_card: false, has_moyasar_account: true, payments: [] })
     ),
     http.get(`${BASE}/api/v1/tenant/agent/commission/statements`, () => HttpResponse.json({ statements: [] })),
   ];

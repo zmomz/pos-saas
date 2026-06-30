@@ -15,6 +15,7 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import LoadingState from '@/components/states/LoadingState';
 import ErrorState from '@/components/states/ErrorState';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
+import AgentMoyasarBanner from '@/components/billing/AgentMoyasarBanner';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import { useLanguage } from '@/lib/i18n';
 import { notifyError } from '@/lib/notify';
@@ -101,6 +102,12 @@ export default function SubscriptionManagement() {
   }
 
   async function handlePay() {
+    // Pre-flight (#235): never fire a charge the provider can't settle. Without
+    // the agent's Moyasar key every attempt 402s, so block + explain instead.
+    if (!sub?.moyasar_publishable_key) {
+      toast.error(t('moyasar_preflight_blocked') || 'Payment is unavailable until your provider connects Moyasar.');
+      return;
+    }
     setPaying(true);
     try {
       await refresh(await payClientSubscription());
@@ -148,13 +155,15 @@ export default function SubscriptionManagement() {
   usePageChrome(
     {
       subtitle: t('billing_subtitle'),
-      primaryAction: preview?.will_charge ? (
+      // Hide the charge CTA when the provider hasn't connected Moyasar — the
+      // fail-closed banner takes over and a 402 cascade is pre-empted (#235).
+      primaryAction: preview?.will_charge && sub?.moyasar_publishable_key ? (
         <Button onClick={handlePay} disabled={paying} className="h-11 rounded-[10px] shadow-brand">
           <Wallet className="h-4 w-4" /> {t('pay_now') || 'Pay now'}
         </Button>
       ) : undefined,
     },
-    [preview?.will_charge, paying, language]
+    [preview?.will_charge, sub?.moyasar_publishable_key, paying, language]
   );
 
   if (loading) return <LoadingState message={t('loading')} />;
@@ -176,6 +185,9 @@ export default function SubscriptionManagement() {
         title={t('billing')}
         subtitle={t('billing_subtitle')}
       />
+
+      {/* Fail-closed: the owning agent hasn't connected Moyasar (#235). */}
+      <AgentMoyasarBanner connected={!!sub.moyasar_publishable_key} audience="merchant" />
 
       {/* Renewal hero — the next charge framed as the focal moment (dark ink tile). */}
       <div className="dxr-ink relative grid gap-6 rounded-[20px] p-6 sm:grid-cols-[1.4fr_1fr]">

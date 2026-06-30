@@ -30,6 +30,7 @@ function baseHandlers() {
         billing_cycle: 'monthly',
         subscription_status: 'past_due',
         is_active: true,
+        moyasar_publishable_key: 'pk_test',
         payments: [],
       })
     ),
