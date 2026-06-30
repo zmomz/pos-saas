@@ -22,7 +22,7 @@ import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDate } from '@/lib/format';
-import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle, RotateCcw } from 'lucide-react';
+import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle, RotateCcw, CalendarCheck } from 'lucide-react';
 
 interface Shift {
   id: string;
@@ -81,6 +81,25 @@ interface EodChecklist {
   items: EodChecklistItem[];
 }
 
+// Issue #210: the month-end / year-end period roll-up returned by
+// GET /shifts/period-summary (and POST /shifts/period-close). It sums the closed
+// shifts in a calendar period and flags whether it is already locked or a drawer
+// is still open.
+interface PeriodSummary {
+  period_type: string;
+  period_key: string;
+  shifts_count: number;
+  opening_cash: number;
+  closing_cash: number;
+  expected_cash: number;
+  cash_difference: number;
+  total_sales: number;
+  total_transactions: number;
+  reconciliation: string;
+  already_closed: boolean;
+  has_open_shift: boolean;
+}
+
 export default function ShiftManagement() {
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
   const [shiftHistory, setShiftHistory] = useState<Shift[]>([]);
@@ -111,6 +130,11 @@ export default function ShiftManagement() {
   const [eodChecklist, setEodChecklist] = useState<EodChecklist | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
   const [closeError, setCloseError] = useState<string | null>(null);
+  // Issue #210: month-end / year-end period close — roll the period's closed
+  // shifts into one reconciled summary and lock it.
+  const [periodDialog, setPeriodDialog] = useState(false);
+  const [periodSummary, setPeriodSummary] = useState<PeriodSummary | null>(null);
+  const [periodError, setPeriodError] = useState<string | null>(null);
 
   const { t, tt, isRTL, language } = useLanguage();
 
@@ -336,6 +360,54 @@ export default function ShiftManagement() {
     }
   }
 
+  // Issue #210: the period being closed is the current calendar month. The
+  // backend keys/locks the period on (year, month); this is the operator's
+  // month-end roll-up.
+  function currentPeriod() {
+    const now = new Date();
+    return { period_type: 'month' as const, year: now.getFullYear(), month: now.getMonth() + 1 };
+  }
+
+  async function openPeriodDialog() {
+    setPeriodError(null);
+    setPeriodSummary(null);
+    setPeriodDialog(true);
+    const { period_type, year, month } = currentPeriod();
+    try {
+      const res = await client.apiCall.invoke<PeriodSummary>({
+        url: '/api/v1/production/shifts/period-summary',
+        method: 'GET',
+        data: { period_type, year, month },
+      });
+      if (res.data) setPeriodSummary(res.data);
+    } catch (err) {
+      console.error('Failed to load period summary:', err);
+      setPeriodError(tt('sm_period_load_failed', 'Could not load the period summary.'));
+    }
+  }
+
+  async function handleClosePeriod() {
+    setSubmitting(true);
+    setPeriodError(null);
+    try {
+      await client.apiCall.invoke({
+        url: '/api/v1/production/shifts/period-close',
+        method: 'POST',
+        data: currentPeriod(),
+      });
+      setPeriodDialog(false);
+      setPeriodSummary(null);
+      await loadShiftData();
+    } catch (err) {
+      console.error('Failed to close period:', err);
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setPeriodError(detail || tt('sm_period_close_failed', 'Could not close the period.'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function formatDuration(start: string) {
     const ms = Date.now() - new Date(start).getTime();
     const hours = Math.floor(ms / 3600000);
@@ -488,10 +560,16 @@ export default function ShiftManagement() {
       {/* Shift History */}
       <Card className="bg-card border-border">
         <CardHeader>
-          <CardTitle className="text-foreground flex items-center gap-2">
-            <History className="h-5 w-5 text-brand" />
-            {t('sm_shift_history')}
-          </CardTitle>
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-foreground flex items-center gap-2">
+              <History className="h-5 w-5 text-brand" />
+              {t('sm_shift_history')}
+            </CardTitle>
+            {/* Issue #210: month-end / year-end period close. */}
+            <Button variant="outline" size="sm" onClick={openPeriodDialog} className="text-foreground">
+              <CalendarCheck className="h-4 w-4 me-1" /> {tt('sm_period_close', 'Period close')}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto rounded-lg border border-border">
@@ -561,6 +639,63 @@ export default function ShiftManagement() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Period Close Dialog (issue #210) */}
+      <Dialog open={periodDialog} onOpenChange={setPeriodDialog}>
+        <DialogContent className="bg-card border-border text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-foreground flex items-center gap-2">
+              <CalendarCheck className="h-5 w-5 text-brand" />
+              {tt('sm_period_close_title', 'Month-end close')}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {periodSummary ? (
+              <>
+                <div className="bg-muted/50 rounded-lg p-4 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{tt('sm_period', 'Period')}</span>
+                    <span className="text-foreground font-medium tabular-nums">{periodSummary.period_key}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{tt('sm_period_shifts', 'Shifts in period')}</span>
+                    <span className="text-foreground tabular-nums">
+                      {periodSummary.shifts_count} {tt('sm_period_shifts_unit', 'shift(s)')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('sm_sales_total')}</span>
+                    <span className="text-foreground tabular-nums">{formatMoney(periodSummary.total_sales || 0, language)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('sm_difference')}</span>
+                    <span className={`tabular-nums ${(periodSummary.cash_difference || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                      {(periodSummary.cash_difference || 0) >= 0 ? '+' : ''}{formatMoney(periodSummary.cash_difference || 0, language)}
+                    </span>
+                  </div>
+                </div>
+                {periodSummary.already_closed && (
+                  <p className="text-sm text-warning">{tt('sm_period_already_closed', 'This period is already closed.')}</p>
+                )}
+                {periodSummary.has_open_shift && (
+                  <p className="text-sm text-warning">{tt('sm_period_has_open', 'Close the open shift before closing the period.')}</p>
+                )}
+                {periodError && <p className="text-sm text-danger">{periodError}</p>}
+                <Button
+                  onClick={handleClosePeriod}
+                  disabled={submitting || periodSummary.already_closed || periodSummary.has_open_shift}
+                  variant="destructive"
+                  className="w-full"
+                >
+                  {submitting ? t('loading') : tt('sm_period_close_confirm', 'Close period')}
+                </Button>
+              </>
+            ) : (
+              <p className="text-muted-foreground text-sm">{periodError || t('loading')}</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Open Shift Dialog */}
       <Dialog open={openShiftDialog} onOpenChange={setOpenShiftDialog}>

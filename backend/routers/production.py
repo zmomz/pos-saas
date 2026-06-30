@@ -144,6 +144,17 @@ class ShiftReopenRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class PeriodCloseRequest(BaseModel):
+    # Issue #210 — month-end / year-end period close. ``period_type`` is "month"
+    # or "year"; ``month`` (1-12) is required for a month close. The close rolls
+    # every closed shift in the period into one reconciled, audited summary and
+    # locks the period so it can't be closed twice.
+    period_type: str = Field(description="month | year")
+    year: int
+    month: Optional[int] = None
+    notes: Optional[str] = None
+
+
 class CashMovementRequest(BaseModel):
     # FIN-04 / POS-09 drawer movement against the open shift. ``amount`` is the
     # positive cash magnitude; the sign is implied by ``movement_type``.
@@ -1138,6 +1149,186 @@ async def reopen_shift(
         "branch_id": shift.branch_id,
         "notes": new_notes,
     }
+
+
+def _period_bounds(period_type: str, year: int, month: Optional[int]):
+    """Resolve a period into ``(period_key, start, end)`` half-open ISO bounds (#210).
+
+    ``month`` covers [Y-M-01, first-of-next-month); ``year`` covers [Y-01-01,
+    (Y+1)-01-01). Raises HTTPException(400) on a bad ``period_type``/``month``.
+    The key (``2026-06`` / ``2026``) is the period's stable audit/lock identity."""
+    pt = (period_type or "").lower()
+    if pt == "month":
+        if month is None or not (1 <= month <= 12):
+            raise HTTPException(status_code=400, detail="A valid month (1-12) is required for a month close")
+        start = datetime(year, month, 1, tzinfo=timezone.utc)
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc) if month == 12 else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+        key = f"{year:04d}-{month:02d}"
+    elif pt == "year":
+        start = datetime(year, 1, 1, tzinfo=timezone.utc)
+        end = datetime(year + 1, 1, 1, tzinfo=timezone.utc)
+        key = f"{year:04d}"
+    else:
+        raise HTTPException(status_code=400, detail="period_type must be one of month, year")
+    return key, start, end
+
+
+async def _build_period_summary(db: AsyncSession, owner_id: str, period_type: str, year: int, month: Optional[int]) -> Dict[str, Any]:
+    """Roll up the owner's *closed* shifts in a period into one reconciled summary.
+
+    Shifts are matched by ``start_time`` falling in the half-open period window
+    (the stored value is a sortable ISO-8601 string, so a lexical range filter is
+    chronological). The summary carries the summed cash/sales totals, the net
+    over/short reconciliation, whether the period is already locked, and whether a
+    drawer is still open — the operator's close-readiness view (#210)."""
+    from models.audit_logs import Audit_logs
+    from models.shifts import Shifts
+
+    key, start, end = _period_bounds(period_type, year, month)
+    start_iso, end_iso = start.isoformat(), end.isoformat()
+
+    result = await db.execute(
+        select(Shifts).where(
+            Shifts.user_id == owner_id,
+            Shifts.status == "closed",
+            Shifts.start_time >= start_iso,
+            Shifts.start_time < end_iso,
+        )
+    )
+    shifts = result.scalars().all()
+
+    opening_cash = round(sum(float(s.opening_cash or 0) for s in shifts), 2)
+    closing_cash = round(sum(float(s.closing_cash or 0) for s in shifts), 2)
+    expected_cash = round(sum(float(s.expected_cash or 0) for s in shifts), 2)
+    cash_difference = round(sum(float(s.cash_difference or 0) for s in shifts), 2)
+    total_sales = round(sum(float(s.total_sales or 0) for s in shifts), 2)
+    total_transactions = sum(int(s.total_transactions or 0) for s in shifts)
+
+    already_closed = (
+        await db.execute(
+            select(func.count(Audit_logs.id)).where(
+                Audit_logs.action == "shift.period_closed",
+                Audit_logs.entity_id == key,
+                Audit_logs.owner_user_id == owner_id,
+            )
+        )
+    ).scalar() or 0
+
+    open_shift = (
+        await db.execute(
+            select(func.count(Shifts.id)).where(
+                Shifts.user_id == owner_id,
+                Shifts.status == "open",
+            )
+        )
+    ).scalar() or 0
+
+    return {
+        "period_type": period_type.lower(),
+        "year": year,
+        "month": month if period_type.lower() == "month" else None,
+        "period_key": key,
+        "period_start": start_iso,
+        "period_end": end_iso,
+        "shifts_count": len(shifts),
+        "opening_cash": opening_cash,
+        "closing_cash": closing_cash,
+        "expected_cash": expected_cash,
+        "cash_difference": cash_difference,
+        "total_sales": total_sales,
+        "total_transactions": total_transactions,
+        "reconciliation": "balanced" if abs(cash_difference) < 0.01 else ("over" if cash_difference > 0 else "short"),
+        "already_closed": bool(already_closed),
+        "has_open_shift": bool(open_shift),
+    }
+
+
+@router.get("/shifts/period-summary")
+async def get_period_summary(
+    period_type: str = Query("month", description="month | year"),
+    year: int = Query(..., description="Calendar year of the period"),
+    month: Optional[int] = Query(None, description="Calendar month (1-12) for a month close"),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Preview the month-end/year-end close: the read-only roll-up of the period's
+    closed shifts plus whether it is already locked or a drawer is still open (#210)."""
+    return await _build_period_summary(db, owner_id, period_type, year, month)
+
+
+@router.post("/shifts/period-close")
+async def close_period(
+    data: PeriodCloseRequest,
+    background_tasks: BackgroundTasks,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a month-end / year-end close: roll the period's closed shifts into one
+    reconciled summary, record it in the tamper-evident audit trail
+    (``shift.period_closed``) and lock the period so it can't be closed twice (#210).
+
+    Guards: a future period (one that has not started) can't be closed; the period
+    can't be closed while a drawer is still open — close the operational shift
+    first so its sales land in the period; and a period already closed is refused."""
+    summary = await _build_period_summary(db, owner_id, data.period_type, data.year, data.month)
+
+    _, start, _ = _period_bounds(data.period_type, data.year, data.month)
+    if start > datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Cannot close a future period that has not started")
+    if summary["has_open_shift"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot close the period while a shift is still open. Close the open drawer first.",
+        )
+    if summary["already_closed"]:
+        raise HTTPException(status_code=400, detail=f"Period {summary['period_key']} is already closed")
+
+    now = datetime.now(timezone.utc)
+
+    # Tamper-evident audit trail (ISSUE-019, #210): the period close is the lock —
+    # the actor, the period and its reconciled totals are persisted so the close is
+    # never silent and a re-close detects this row.
+    await write_audit_log(
+        user_id=current_user.id,
+        action="shift.period_closed",
+        details=(
+            f"{summary['period_type']}-end close {summary['period_key']}: "
+            f"{summary['shifts_count']} shift(s), {summary['reconciliation']}"
+            + (f" — {data.notes}" if data.notes else "")
+        ),
+        entity_type="period",
+        entity_id=summary["period_key"],
+        changes=json.dumps(
+            {
+                "period_key": summary["period_key"],
+                "shifts_count": summary["shifts_count"],
+                "closing_cash": summary["closing_cash"],
+                "expected_cash": summary["expected_cash"],
+                "cash_difference": summary["cash_difference"],
+                "total_sales": summary["total_sales"],
+                "reconciliation": summary["reconciliation"],
+            }
+        ),
+    )
+
+    # Domain webhook (ISSUE-051, H25): notify subscribers the period closed.
+    background_tasks.add_task(
+        fire_event_background,
+        owner_id,
+        "shift.period_closed",
+        {
+            "period_key": summary["period_key"],
+            "period_type": summary["period_type"],
+            "shifts_count": summary["shifts_count"],
+            "closing_cash": summary["closing_cash"],
+            "cash_difference": summary["cash_difference"],
+            "reconciliation": summary["reconciliation"],
+        },
+    )
+
+    return {**summary, "already_closed": True, "closed_at": now.isoformat()}
 
 
 @router.get("/shifts/current")
