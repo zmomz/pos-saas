@@ -16,6 +16,7 @@ import { formatMoney, formatDate, currencyLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
+import ErrorState from '@/components/states/ErrorState';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
 import {
   DollarSign, TrendingUp, Monitor, ShoppingBag,
@@ -87,6 +88,7 @@ export default function ClientDashboard() {
   // card locally (Rail 2 — merchant card-on-file).
   const [savedCard, setSavedCard] = useState<{ last4: string; brand: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [retailFocus, setRetailFocus] = useState<RetailFocus | null>(null);
   const [restaurantFocus, setRestaurantFocus] = useState<RestaurantFocus | null>(null);
   const navigate = useNavigate();
@@ -113,19 +115,26 @@ export default function ClientDashboard() {
   }, [businessType]);
 
   async function loadData() {
+    setLoading(true);
+    setLoadError(false);
     try {
-      const [dashData, brandData, txData, subData] = await Promise.all([
-        getClientDashboard(),
+      // The headline KPIs hang off the dashboard stats — a failure here must
+      // surface honestly (H4) rather than render an all-zero fake, so it is the
+      // one hard dependency. The chrome around it (branding/transactions/
+      // subscription) degrades on its own.
+      const dashData = await getClientDashboard();
+      setStats(dashData);
+      const [brandData, txData, subData] = await Promise.all([
         getClientBranding().catch(() => null),
-        getTransactions(1, 10),
+        getTransactions(1, 10).catch(() => []),
         getClientSubscription().catch(() => null),
       ]);
-      setStats(dashData);
       setBrandName(brandData?.company_name || '');
       setTransactions(Array.isArray(txData) ? txData : (txData?.items || txData?.transactions || []));
       setSubscription(subData);
     } catch (err) {
       console.error('Failed to load:', err);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -217,6 +226,12 @@ export default function ClientDashboard() {
         <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
       </div>
     );
+  }
+
+  // H4 — the dashboard stats failed to load. Tell the truth with a retry rather
+  // than rendering all-zero KPIs that read as a real (empty) business.
+  if (loadError) {
+    return <ErrorState onRetry={loadData} />;
   }
 
   const todaySales = stats?.today_sales || 0;

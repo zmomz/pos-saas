@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { Avatar } from '@/components/dashboard/Avatar';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
+import ErrorState from '@/components/states/ErrorState';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
@@ -56,6 +57,7 @@ export default function AgentDashboard() {
   const [deleteConfirm, setDeleteConfirm] = useState<ClientItem | null>(null);
   const [branding, setBranding] = useState<Branding | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newClientForm, setNewClientForm] = useState({ business_name: '', email: '', phone: '', subscription_fee: '', billing_cycle: 'monthly' });
   const [featureClient, setFeatureClient] = useState<ClientItem | null>(null);
@@ -176,14 +178,20 @@ export default function AgentDashboard() {
   }
 
   async function loadData() {
+    setLoading(true);
+    setLoadError(false);
     try {
-      const [clientData, brandData] = await Promise.all([getAgentClients(), getAgentBranding()]);
+      // The merchant book (slots/clients KPIs) is the hard dependency — a failure
+      // here must surface honestly (H4) rather than render a fabricated all-zero
+      // book. The branding chrome degrades on its own.
+      const clientData = await getAgentClients();
       setClients((clientData?.items || []).map(mapClient));
       setRemainingSlots(clientData?.remaining_slots ?? 0);
       setTotalClients(clientData?.total ?? clientData?.items?.length ?? 0);
-      setBranding(brandData);
+      setBranding(await getAgentBranding().catch(() => null));
     } catch (err) {
       console.error('Failed to load:', err);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -507,6 +515,12 @@ export default function AgentDashboard() {
         <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
       </div>
     );
+  }
+
+  // H4 — the merchant book failed to load. Tell the truth with a retry rather
+  // than rendering an all-zero book that reads as a real (empty) agent.
+  if (loadError) {
+    return <ErrorState onRetry={loadData} />;
   }
 
   return (

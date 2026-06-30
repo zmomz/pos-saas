@@ -199,6 +199,9 @@ export default function MasterDashboard() {
   // Live MRR scalar from the backend. There is no historical series yet, so the
   // hero shows an explicit "no history" state rather than a synthesized trend.
   const mrr = economics?.mrr ?? 0;
+  // When economics failed to load, every scalar derived from it is unknown — show
+  // an honest dash instead of a fabricated 0 (H4 KPI-error isolation).
+  const ecoVal = (node: ReactNode): ReactNode => (ecoError ? '—' : node);
 
   const paletteGroups = [
     {
@@ -239,16 +242,35 @@ export default function MasterDashboard() {
       {/* BENTO */}
       <div data-tour="stats-section" className="grid gap-4 lg:auto-rows-[116px] lg:grid-cols-12">
 
-        {/* HERO — MRR spotlight */}
+        {/* HERO — MRR spotlight. When the economics call fails the scalar is
+            unknown, so the hero shows an honest "—" + retry rather than a
+            fabricated ⃁ 0 (H4 KPI-error isolation). */}
         <section className="dxr-tile dxr-ink flex flex-col lg:col-span-8 lg:row-span-3">
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="dxr-eyebrow">{tt('platform_mrr', 'Platform MRR')}</div>
               <div className="mt-2 text-[clamp(32px,4vw,46px)] font-extrabold leading-none tracking-tight tabular-nums">
-                <CountUp value={mrr} prefix="⃁ " />
+                {ecoError ? (
+                  <span data-testid="mrr-hero-value">—</span>
+                ) : (
+                  <span data-testid="mrr-hero-value"><CountUp value={mrr} prefix="⃁ " /></span>
+                )}
               </div>
               <div className="mt-3 flex items-center gap-2.5 text-[13px] text-white/70">
-                <span>{t('arr')} <b className="text-white">{formatMoney(economics?.arr ?? 0, language)}</b></span>
+                {ecoError ? (
+                  <>
+                    <span>{t('load_error')}</span>
+                    <button
+                      data-testid="mrr-hero-retry"
+                      onClick={loadEconomics}
+                      className="font-bold text-white underline underline-offset-2 hover:opacity-80"
+                    >
+                      {t('retry')}
+                    </button>
+                  </>
+                ) : (
+                  <span>{t('arr')} <b className="text-white">{formatMoney(economics?.arr ?? 0, language)}</b></span>
+                )}
               </div>
             </div>
           </div>
@@ -273,15 +295,15 @@ export default function MasterDashboard() {
         {/* Active merchants mini */}
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-4 lg:row-span-1">
           <div className="text-[12.5px] font-semibold text-muted-foreground">{tt('active_merchants', 'Active Merchants')}</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={economics?.active_clients ?? 0} /></div>
-          <div className="mt-auto text-[11.5px] text-muted-foreground">{economics?.total_clients ?? 0} {tt('total', 'total')} · {totalAgents} {tt('agents', 'agents')}</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{ecoVal(<CountUp value={economics?.active_clients ?? 0} />)}</div>
+          <div className="mt-auto text-[11.5px] text-muted-foreground">{ecoError ? '—' : economics?.total_clients ?? 0} {tt('total', 'total')} · {totalAgents} {tt('agents', 'agents')}</div>
         </section>
 
         {/* KPI chips */}
         <KpiChip label={tt('total_agents', 'Total Agents')} value={<CountUp value={totalAgents} />} delta={{ dir: 'up', text: `${activeAgents} ${tt('active', 'active')}` }} foot={`${totalSlots} ${tt('slots', 'slots')} total`} />
-        <KpiChip label={t('arr')} value={<CountUp value={economics?.arr ?? 0} prefix="⃁ " />} foot={tt('annual_run_rate', 'annual run-rate')} />
-        <KpiChip label={tt('churn_rate', 'Churn Rate')} value={<CountUp value={(economics?.churn_rate ?? 0) * 100} decimals={1} suffix="%" />} foot={`${economics?.churned_clients ?? 0} ${tt('churned', 'churned')}`} />
-        <KpiChip label={tt('collected', 'Collected')} value={<CountUp value={economics?.collected ?? 0} prefix="⃁ " />} foot={`${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
+        <KpiChip label={t('arr')} value={ecoVal(<CountUp value={economics?.arr ?? 0} prefix="⃁ " />)} foot={tt('annual_run_rate', 'annual run-rate')} />
+        <KpiChip label={tt('churn_rate', 'Churn Rate')} value={ecoVal(<CountUp value={(economics?.churn_rate ?? 0) * 100} decimals={1} suffix="%" />)} foot={ecoError ? '—' : `${economics?.churned_clients ?? 0} ${tt('churned', 'churned')}`} />
+        <KpiChip label={tt('collected', 'Collected')} value={ecoVal(<CountUp value={economics?.collected ?? 0} prefix="⃁ " />)} foot={ecoError ? '—' : `${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
 
         {/* Leaderboard */}
         <section className="dxr-tile lg:col-span-8 lg:row-span-4">
