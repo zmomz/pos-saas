@@ -33,6 +33,7 @@ from models.product_branch_price import Product_branch_price  # noqa: F401
 from models.branch_tax_rate import Branch_tax_rate  # noqa: F401
 from models.branch_promotion_override import Branch_promotion_override  # noqa: F401
 from models.staff_branch_access import Staff_branch_access  # noqa: F401
+from models.branch_catalog_override import Branch_catalog_override  # noqa: F401
 # Imported so the variant table registers on Base.metadata at startup
 # (services.product_variants is only imported lazily inside handlers).
 from models.product_variants import Product_variants  # noqa: F401
@@ -2628,6 +2629,68 @@ async def delete_branch_promotion_endpoint(
     if not removed:
         raise HTTPException(status_code=404, detail="Branch promotion override not found")
     return {"branch_id": branch_id, "promotion_id": promotion_id, "removed": True}
+
+
+# ---------- Shared catalog management across branches (#220 multi-branch) ----------
+class BranchCatalogSetRequest(BaseModel):
+    is_available: bool
+
+
+@router.get("/branches/{branch_id}/catalog/resolve")
+async def resolve_branch_catalog_endpoint(
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve the shared catalog effective at a branch — every active chain product
+    the branch has not opted out of, plus the ids it has disabled (#220 shared
+    catalog management)."""
+    from services.branch_catalog import resolve_branch_catalog
+
+    client = await get_client_for_user(db, owner_id)
+    return await resolve_branch_catalog(db, client.id, branch_id)
+
+
+@router.put("/branches/{branch_id}/catalog/{product_id}")
+async def set_branch_catalog_endpoint(
+    branch_id: int,
+    product_id: int,
+    data: BranchCatalogSetRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Make a shared chain product available/unavailable at one branch (#220)."""
+    from services.branch_catalog import set_branch_catalog
+
+    client = await get_client_for_user(db, owner_id)
+    row = await set_branch_catalog(
+        db, owner_id, client.id, branch_id, product_id, data.is_available
+    )
+    return {
+        "branch_id": branch_id,
+        "product_id": product_id,
+        "is_available": row.is_available,
+    }
+
+
+@router.delete("/branches/{branch_id}/catalog/{product_id}")
+async def delete_branch_catalog_endpoint(
+    branch_id: int,
+    product_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a branch's catalog override so the product falls back to available (#220)."""
+    from services.branch_catalog import delete_branch_catalog
+
+    client = await get_client_for_user(db, owner_id)
+    removed = await delete_branch_catalog(db, client.id, branch_id, product_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Branch catalog override not found")
+    return {"branch_id": branch_id, "product_id": product_id, "removed": True}
 
 
 # ---------- Cross-branch sales reporting (#220 multi-branch) ----------
