@@ -103,6 +103,10 @@ class SubscriptionChargeError(Exception):
     """A Moyasar subscription charge was attempted and declined/failed."""
 
 
+class SubscriptionRefundError(Exception):
+    """A subscription-payment refund was attempted and declined/failed (#206)."""
+
+
 @dataclass
 class ChargeResult:
     charged: bool  # True only when money actually moved through a gateway
@@ -170,6 +174,59 @@ async def charge_subscription(
 
     return ChargeResult(
         charged=True, status="paid", method=result.gateway, reference=result.gateway_ref
+    )
+
+
+@dataclass
+class RefundResult:
+    refunded: bool  # True only when the gateway accepted the refund
+    method: str  # "moyasar" | "sandbox"
+    reference: Optional[str]  # the refund's gateway reference
+
+
+async def refund_subscription(
+    *,
+    gateway_ref: str,
+    amount: float,
+    agent_moyasar_key: Optional[str] = None,
+) -> RefundResult:
+    """Refund a settled merchant subscription payment through the agent's Moyasar
+    account (Rail 2, #206).
+
+    ``gateway_ref`` is the original charge's gateway reference (the Moyasar payment
+    id stored on the ``Subscription_payments`` row); ``agent_moyasar_key`` is the
+    owning agent's **decrypted** Moyasar secret key. The refund routes through the
+    same gateway the charge did — the agent's account when a key is present, else
+    the deterministic sandbox gateway so the flow stays demonstrable on un-onboarded
+    installs (OPS-08). A declined/failed refund raises :class:`SubscriptionRefundError`
+    so the caller returns 402 and records no refund row.
+    """
+    from services.payment_gateway import (
+        GatewayNotConfigured,
+        PaymentDeclined,
+        recurring_gateway,
+    )
+
+    if not gateway_ref:
+        raise SubscriptionRefundError("payment has no gateway reference to refund")
+
+    key = (agent_moyasar_key or "").strip() or _platform_moyasar_key()
+    gateway = recurring_gateway(key)
+
+    try:
+        result = await gateway.refund(gateway_ref, amount)
+    except PaymentDeclined as exc:
+        raise SubscriptionRefundError(f"Refund declined: {exc.reason}") from exc
+    except GatewayNotConfigured as exc:
+        raise SubscriptionRefundError(str(exc)) from exc
+
+    if not result.approved:
+        raise SubscriptionRefundError(
+            f"Refund failed: {result.decline_reason or 'declined'}"
+        )
+
+    return RefundResult(
+        refunded=True, method=result.gateway, reference=result.gateway_ref
     )
 
 

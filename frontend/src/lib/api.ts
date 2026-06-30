@@ -2860,12 +2860,45 @@ export interface SubscriptionStatus {
   subscription_status: string;
   next_billing_date?: string;
   is_active: boolean;
+  // Self-serve lifecycle stamps (#206): when the merchant paused / cancelled.
+  subscription_paused_at?: string | null;
+  subscription_cancelled_at?: string | null;
+  // Card-on-file summary (#206): the masked card for the "replace card" affordance.
+  has_card?: boolean;
+  card_last4?: string | null;
+  card_brand?: string | null;
   // Dunning state (CL-06): drive the client-facing overdue notice.
   dunning_attempts?: number;
   grace_deadline?: string;
   // Rail 2: the owning agent's Moyasar publishable key for live card tokenization.
   moyasar_publishable_key?: string | null;
   payments: SubscriptionPayment[];
+}
+
+// Upcoming renewal / upgrade-downgrade preview (#206).
+export interface ProrationPreview {
+  new_fee: number;
+  billing_cycle: string;
+  days_remaining: number;
+  cycle_days: number;
+  amount: number; // pro-rated charge (positive) or credit (negative)
+  is_credit: boolean;
+}
+
+export interface RenewalPreview {
+  subscription_status: string;
+  billing_cycle: string;
+  renewal_date?: string | null;
+  currency: string;
+  gross_fee: number;
+  coupon_active: boolean;
+  coupon_type?: string | null;
+  coupon_value?: number | null;
+  discount_amount: number;
+  net_amount: number; // what will actually be charged on the next renewal
+  will_charge: boolean; // false when paused / cancelled
+  in_trial: boolean;
+  proration?: ProrationPreview | null;
 }
 
 // Client: read own subscription status + payment history (CL-04)
@@ -2896,7 +2929,8 @@ export interface SaveCardResult {
   card_brand?: string | null;
 }
 
-// Client: store the card used to pay the subscription (Rail 2).
+// Client: store the card used to pay the subscription (Rail 2). Used both for the
+// first card and to replace the card on file (#206) — the new token overwrites it.
 export async function saveSubscriptionCard(data: {
   token: string;
   last4?: string;
@@ -2906,6 +2940,68 @@ export async function saveSubscriptionCard(data: {
     url: '/api/v1/tenant/client/subscription/card',
     method: 'POST',
     data,
+  });
+  return response.data;
+}
+
+// Client: pause their own subscription — billing stops, access kept (#206).
+export async function pauseSubscription(): Promise<SubscriptionStatus> {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: '/api/v1/tenant/client/subscription/pause',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: resume a paused (or reactivate a cancelled) subscription (#206).
+export async function resumeSubscription(): Promise<SubscriptionStatus> {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: '/api/v1/tenant/client/subscription/resume',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: cancel their own subscription at period end (#206).
+export async function cancelSubscription(): Promise<SubscriptionStatus> {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: '/api/v1/tenant/client/subscription/cancel',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: preview the upcoming renewal — and optionally an upgrade/downgrade's
+// proration when newFee is supplied (#206).
+export async function getRenewalPreview(opts?: {
+  newFee?: number;
+  newCycle?: string;
+}): Promise<RenewalPreview> {
+  const params = new URLSearchParams();
+  if (opts?.newFee !== undefined) params.set('new_fee', String(opts.newFee));
+  if (opts?.newCycle) params.set('new_cycle', opts.newCycle);
+  const qs = params.toString();
+  const response = await client.apiCall.invoke<RenewalPreview>({
+    url: `/api/v1/tenant/client/subscription/renewal-preview${qs ? `?${qs}` : ''}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: refund one of their settled subscription payments (#206). Omit amount
+// for a full refund of the remaining amount.
+export async function refundSubscriptionPayment(
+  paymentId: number,
+  amount?: number
+): Promise<SubscriptionStatus> {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: `/api/v1/tenant/client/subscription/payments/${paymentId}/refund`,
+    method: 'POST',
+    data: amount !== undefined ? { amount } : {},
   });
   return response.data;
 }

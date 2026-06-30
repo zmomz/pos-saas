@@ -15,12 +15,25 @@ class Clients(Base):
     email = Column(String, nullable=False)
     phone = Column(String, nullable=True)
     subscription_fee = Column(Money, nullable=True)
-    # Subscription lifecycle (CL-03/CL-04). billing_cycle is 'monthly'|'yearly';
-    # subscription_status is 'active'|'past_due'|'suspended'. next_billing_date is
-    # an ISO date string advanced each time the client pays.
+    # Subscription lifecycle (CL-03/CL-04, #206). billing_cycle is 'monthly'|'yearly'.
+    # subscription_status walks the merchant-managed lifecycle:
+    #   'active' | 'trialing' | 'past_due' | 'dunning' | 'suspended' (dunning)
+    #   'paused'    — merchant self-paused billing; auto-charges skipped until resume
+    #   'cancelled' — merchant cancelled; no further charges, access kept until the
+    #                 paid period ends. Only 'active'/'past_due'/'dunning' are dunned
+    #                 (see services.dunning.ACTIVE_STATES), so paused/cancelled subs
+    #                 are never charged or escalated by the sweep.
+    # next_billing_date is an ISO date string advanced each time the client pays.
     billing_cycle = Column(String, nullable=True, default='monthly', server_default='monthly')
     subscription_status = Column(String, nullable=True, default='active', server_default='active')
     next_billing_date = Column(String, nullable=True)
+    # Self-serve lifecycle stamps (#206). ``subscription_paused_at`` is the ISO date
+    # the merchant paused on — resume shifts ``next_billing_date`` forward by the
+    # paused span so paid days are preserved, never forfeited. ``subscription_cancelled_at``
+    # is the ISO date the merchant cancelled on (shown in the billing UI). Both null
+    # in the normal active lifecycle.
+    subscription_paused_at = Column(String, nullable=True)
+    subscription_cancelled_at = Column(String, nullable=True)
     # Dunning state machine (CL-06). A failed retry walks the subscription
     # active -> past_due -> dunning -> suspended; a successful charge / pay resets
     # both fields and returns to active. ``dunning_attempts`` counts consecutive

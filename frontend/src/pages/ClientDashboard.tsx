@@ -425,7 +425,7 @@ export default function ClientDashboard() {
         {subscription && (subscription.subscription_fee > 0 || subscription.payments.length > 0) ? (
           <div className="dxr-tile">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[16px] font-extrabold tracking-tight">{t('subscription') || 'Subscription'}</h2>
+              <button onClick={() => navigate('/billing')} className="text-[16px] font-extrabold tracking-tight hover:text-brand-700">{t('subscription') || 'Subscription'}</button>
               <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold', subStatusCls)}>
                 <span className="h-1.5 w-1.5 rounded-full bg-current" />{subscription.subscription_status}
               </span>
