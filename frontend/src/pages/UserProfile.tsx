@@ -6,11 +6,23 @@ import { Switch } from '@/components/ui/switch';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check } from 'lucide-react';
-import { changePassword, getUserPreferences, saveUserPreferences, type NotificationPrefs } from '@/lib/api';
+import { changePassword, getUserPreferences, saveUserPreferences, getActiveSessions, type NotificationPrefs, type SessionInfo } from '@/lib/api';
+import { formatDate } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+
+// Light-touch device label from a user-agent string; surfaces the browser family
+// instead of dumping the raw UA. Returns null when nothing recognizable is found.
+function deviceLabel(ua?: string | null): string | null {
+  if (!ua) return null;
+  const m = /(Edg|Edge|OPR|Opera|Chrome|Firefox|Safari)/.exec(ua);
+  if (!m) return null;
+  return m[1].replace('Edg', 'Edge').replace('OPR', 'Opera');
+}
 
 export default function UserProfile() {
   const { language, setLanguage, t, tt } = useLanguage();
+  const [currentSession, setCurrentSession] = useState<SessionInfo | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
   const { theme, toggleTheme, isDark } = useTheme();
   const [displayName, setDisplayName] = useState('');
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>({
@@ -51,6 +63,27 @@ export default function UserProfile() {
             // use defaults
           }
         }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Real current-session details replace the old hardcoded "Active now" row.
+    getActiveSessions()
+      .then((data) => {
+        if (cancelled) return;
+        const current = data.sessions.find((s) => s.current) ?? null;
+        setCurrentSession(current);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCurrentSession(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSessionLoading(false);
       });
     return () => {
       cancelled = true;
@@ -207,13 +240,35 @@ export default function UserProfile() {
             <Shield className="h-5 w-5 text-danger" />
             {tt('security_and_sessions', 'Security & Sessions')}
           </h2>
-          <div className="flex items-center justify-between py-2">
-            <div>
-              <p className="text-foreground text-sm font-medium">{tt('current_session', 'Current Session')}</p>
-              <p className="text-muted-foreground text-xs">{tt('active_now', 'Active now')}</p>
+          {sessionLoading ? (
+            <div className="flex items-center justify-between py-2">
+              <p className="text-muted-foreground text-xs animate-pulse">{t('loading')}</p>
             </div>
-            <Badge className="pill-success">{tt('active', 'Active')}</Badge>
-          </div>
+          ) : currentSession ? (
+            <div className="flex items-center justify-between py-2">
+              <div className="min-w-0">
+                <p className="text-foreground text-sm font-medium">{tt('current_session', 'Current Session')}</p>
+                <p className="text-muted-foreground text-xs truncate">
+                  {[
+                    deviceLabel(currentSession.user_agent),
+                    currentSession.created_at
+                      ? `${tt('signed_in', 'Signed in')} ${formatDate(currentSession.created_at, language)}`
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ') || tt('active_now', 'Active now')}
+                </p>
+              </div>
+              <Badge className="pill-success">{tt('active', 'Active')}</Badge>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between py-2">
+              <div>
+                <p className="text-foreground text-sm font-medium">{tt('current_session', 'Current Session')}</p>
+                <p className="text-muted-foreground text-xs">{tt('session_unavailable', 'Session details unavailable')}</p>
+              </div>
+            </div>
+          )}
           <div className="py-2 border-t border-border space-y-3">
             <p className="text-foreground text-sm font-medium">{t('change_password')}</p>
             <Input

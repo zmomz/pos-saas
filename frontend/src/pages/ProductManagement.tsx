@@ -144,6 +144,7 @@ export default function ProductManagement() {
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [productsError, setProductsError] = useState(false);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   // ISSUE-068: opt in to see archived (soft-deleted) products so they can be restored.
@@ -213,6 +214,7 @@ export default function ProductManagement() {
 
   async function loadProducts() {
     setLoading(true);
+    setProductsError(false);
     try {
       // H7 (ISSUE-038): filter by the linked category id.
       const categoryId = categoryFilter !== 'all' ? categoryFilter : undefined;
@@ -223,6 +225,7 @@ export default function ProductManagement() {
     } catch (err) {
       console.error('Failed to load products:', err);
       setProducts([]);
+      setProductsError(true);
     } finally {
       setLoading(false);
     }
@@ -1021,22 +1024,28 @@ export default function ProductManagement() {
         </div>
       )}
 
-      {/* Products Table */}
-      <div className="dxr-tile p-0">
-        <DataTable
-          columns={productColumns}
-          rows={pagedProducts}
-          rowKey={(product) => product.id}
-          empty={t('no_products')}
-        />
-      </div>
+      {/* Products Table — a failed load shows an error+retry, never "no products" */}
+      {productsError ? (
+        <ErrorState message={t('products_load_error')} onRetry={loadProducts} />
+      ) : (
+        <>
+          <div className="dxr-tile p-0">
+            <DataTable
+              columns={productColumns}
+              rows={pagedProducts}
+              rowKey={(product) => product.id}
+              empty={t('no_products')}
+            />
+          </div>
 
-      <DataPagination
-        page={page}
-        pageSize={PAGE_SIZE}
-        total={products.length}
-        onPageChange={setPage}
-      />
+          <DataPagination
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={products.length}
+            onPageChange={setPage}
+          />
+        </>
+      )}
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
