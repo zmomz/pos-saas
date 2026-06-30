@@ -494,6 +494,10 @@ class BackupHealthResponse(BaseModel):
 
     status: str
     last_success_at: Optional[datetime] = None
+    # The most recent restore drill — a backup is not proven recoverable until
+    # it has been restored, so the indicator surfaces this alongside the dump.
+    last_drill_at: Optional[datetime] = None
+    last_drill_status: Optional[str] = None
     last_run_at: Optional[datetime] = None
     last_run_status: Optional[str] = None
     age_seconds: Optional[int] = None
@@ -552,8 +556,12 @@ async def backup_health(
     if role_info["role"] != "master":
         raise HTTPException(status_code=403, detail="Only master can access this endpoint")
 
+    # Restore-drill rows share the ledger but are a *recovery* signal, not a
+    # backup landing — keep them out of the backup-freshness math below.
+    is_backup = Backup_runs.kind != "restore_drill"
+
     total = int(
-        (await db.execute(select(func.count(Backup_runs.id)))).scalar() or 0
+        (await db.execute(select(func.count(Backup_runs.id)).where(is_backup))).scalar() or 0
     )
 
     base = BackupHealthResponse(
@@ -562,23 +570,37 @@ async def backup_health(
         rpo_target_seconds=BACKUP_RPO_TARGET_SECONDS,
         rto_target_seconds=BACKUP_RTO_TARGET_SECONDS,
     )
+
+    # The most recent restore drill, surfaced independently of backup freshness.
+    last_drill = (
+        await db.execute(
+            select(Backup_runs)
+            .where(Backup_runs.kind == "restore_drill")
+            .order_by(Backup_runs.finished_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last_drill is not None:
+        base.last_drill_at = last_drill.finished_at
+        base.last_drill_status = last_drill.status
+
     if total == 0:
         return base
 
-    # Most recent run of any outcome (a fresh failure must dominate the indicator).
+    # Most recent backup run of any outcome (a fresh failure must dominate).
     latest = (
         await db.execute(
-            select(Backup_runs).order_by(Backup_runs.finished_at.desc()).limit(1)
+            select(Backup_runs).where(is_backup).order_by(Backup_runs.finished_at.desc()).limit(1)
         )
     ).scalar_one()
     base.last_run_at = latest.finished_at
     base.last_run_status = latest.status
 
-    # Most recent *successful* run bounds the RPO window.
+    # Most recent *successful* backup bounds the RPO window.
     last_success = (
         await db.execute(
             select(Backup_runs)
-            .where(Backup_runs.status == "success")
+            .where(is_backup, Backup_runs.status == "success")
             .order_by(Backup_runs.finished_at.desc())
             .limit(1)
         )

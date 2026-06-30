@@ -67,16 +67,25 @@ This guards against the failover losing in-flight offline transactions.
 
 A restore is only real once it has been *practised*. Quarterly:
 
-1. Provision a throwaway Postgres instance.
-2. Restore the latest off-site archive:
+1. Provision a throwaway Postgres instance and an empty scratch database
+   (default `<dbname>_drill`).
+2. Run the automated drill — it `pg_restore`s the latest archive into the
+   scratch DB and heartbeats a `restore_drill` row into the `backup_runs`
+   ledger (pass or fail), exactly like the backup cron:
    ```sh
-   pg_restore --clean --if-exists --dbname=postgresql://…/posdb_drill pos_backup_<label>.dump
+   python -m services.backup --drill /path/to/pos_backup_<label>.dump
+   # scratch DB overridable via RESTORE_DRILL_DB; defaults to <dbname>_drill
    ```
+   The manual fallback is `pg_restore --no-owner --dbname=…/posdb_drill
+   pos_backup_<label>.dump`.
 3. Boot the app against the restored database; smoke-test login, a sale, and a
    report.
 4. **Time it** end-to-end and confirm it is within the **4h RTO**; confirm the
    restored data is within the **24h RPO**.
-5. Record the drill date, measured restore time, and any gaps in the table below.
+5. The drill outcome surfaces on the master health endpoint
+   (`GET /api/v1/tenant/master/ops/backups/health` → `last_drill_at` /
+   `last_drill_status`); record the drill date, measured restore time, and any
+   gaps in the table below.
 
 ### Restore-drill log
 
