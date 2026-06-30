@@ -78,6 +78,7 @@ function parseTags(value: string): string[] {
 export default function CustomerManagement() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -103,12 +104,14 @@ export default function CustomerManagement() {
 
   async function loadCustomers() {
     setLoading(true);
+    setLoadError(false);
     try {
       const data = await getCustomers();
       setCustomers(Array.isArray(data?.items) ? data.items : Array.isArray(data) ? data : []);
     } catch (err) {
       console.error('Failed to load customers:', err);
       setCustomers([]);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -505,7 +508,10 @@ export default function CustomerManagement() {
         </div>
       )}
 
-      {/* Table */}
+      {/* Table — an error never masquerades as "no customers" */}
+      {loadError ? (
+        <ErrorState message={t('customers_load_error')} onRetry={loadCustomers} />
+      ) : (
       <div className="overflow-x-auto rounded-lg border border-border">
         <table className="w-full text-sm">
           <thead className="bg-card">
@@ -622,6 +628,7 @@ export default function CustomerManagement() {
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>

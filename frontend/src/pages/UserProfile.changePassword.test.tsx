@@ -31,9 +31,10 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
-// Every test needs the on-mount preferences fetch satisfied.
+// Every test needs the on-mount preferences + sessions fetches satisfied.
 function stubPrefs() {
   server.use(
+    http.get(`${BASE}/auth/sessions`, () => HttpResponse.json({ sessions: [] })),
     http.get(PREFS_URL, () =>
       HttpResponse.json({
         display_name: '',

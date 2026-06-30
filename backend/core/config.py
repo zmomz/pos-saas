@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./app.db"
 
+    # Read-replica posture (M9 reporting). Optional connection URL for a read-only
+    # replica that heavy analytics/report queries are routed to (see
+    # core.database.get_read_db) so they never contend with the sale path's write
+    # pool. Empty / unset → reporting reuses the primary database (safe default for
+    # single-DB deployments). Same driver-normalization as DATABASE_URL applies.
+    read_replica_url: str = ""
+
     # JWT / local authentication
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
