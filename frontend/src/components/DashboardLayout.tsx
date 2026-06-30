@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { getNotifications } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext';
@@ -50,6 +50,8 @@ import {
   Webhook,
   Activity,
   ClipboardList,
+  Banknote,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 type UserRole = 'master' | 'agent' | 'client';
@@ -60,12 +62,33 @@ interface NavItem {
   path: string;
 }
 
-const navConfig: Record<UserRole, NavItem[]> = {
+/**
+ * A rail group. `section` is an i18n key for the group header, or '' for the
+ * top, header-less group (the dashboard home link). Items inside a group are
+ * still subject to the business-type filter, so a group with every item hidden
+ * collapses away entirely.
+ */
+interface NavSection {
+  section: string;
+  items: NavItem[];
+}
+
+// Sectioned navigation (issue #213): the flat 27-icon rail is grouped into
+// Sell / Catalog / People / Setup so it scales past a wall of icons. Icons are
+// de-duplicated within each role's rail (Receipt now belongs only to the
+// receipt template, Package only to master packages, modifiers get their own
+// SlidersHorizontal) so no two destinations look identical.
+export const navConfig: Record<UserRole, NavSection[]> = {
   master: [
-    { icon: LayoutDashboard, label: 'dashboard', path: '/master' },
-    { icon: Package, label: 'packages', path: '/packages' },
-    { icon: Shield, label: 'audit_log', path: '/audit' },
-    { icon: Bell, label: 'notifications', path: '/notifications' },
+    {
+      section: '',
+      items: [
+        { icon: LayoutDashboard, label: 'dashboard', path: '/master' },
+        { icon: Package, label: 'packages', path: '/packages' },
+        { icon: Shield, label: 'audit_log', path: '/audit' },
+        { icon: Bell, label: 'notifications', path: '/notifications' },
+      ],
+    },
   ],
   // Agents are resellers: they manage white-label branding and their own
   // merchant clients, but own no catalog/sales of their own. The merchant-data
@@ -73,48 +96,97 @@ const navConfig: Record<UserRole, NavItem[]> = {
   // reports) are all client-scoped on the backend and 403 for an agent, so they
   // are intentionally absent here rather than advertised as broken links.
   agent: [
-    { icon: LayoutDashboard, label: 'dashboard', path: '/agent' },
-    { icon: Palette, label: 'branding', path: '/branding' },
-    { icon: Shield, label: 'audit_log', path: '/audit' },
-    { icon: Bell, label: 'notifications', path: '/notifications' },
+    {
+      section: '',
+      items: [
+        { icon: LayoutDashboard, label: 'dashboard', path: '/agent' },
+        { icon: Palette, label: 'branding', path: '/branding' },
+        { icon: Shield, label: 'audit_log', path: '/audit' },
+        { icon: Bell, label: 'notifications', path: '/notifications' },
+      ],
+    },
   ],
   client: [
-    { icon: LayoutDashboard, label: 'dashboard', path: '/client' },
-    { icon: Monitor, label: 'pos_terminal', path: '/pos' },
-    { icon: UtensilsCrossed, label: 'floor_map', path: '/floor' },
-    { icon: CalendarClock, label: 'rw_reservations', path: '/reservations' },
-    { icon: Layers, label: 'menu_builder', path: '/menu-builder' },
-    { icon: ChefHat, label: 'kds', path: '/kds' },
-    { icon: ShoppingBag, label: 'products', path: '/products' },
-    { icon: FolderTree, label: 'categories', path: '/categories' },
-    { icon: Package, label: 'catalog_modifiers', path: '/catalog-modifiers' },
-    { icon: UserCheck, label: 'customers', path: '/customers' },
-    { icon: Star, label: 'loyalty', path: '/loyalty' },
-    { icon: Users, label: 'staff', path: '/staff' },
-    { icon: Clock, label: 'shifts', path: '/shifts' },
-    { icon: Truck, label: 'suppliers', path: '/suppliers' },
-    { icon: FileText, label: 'quotations', path: '/quotations' },
-    { icon: Receipt, label: 'expenses', path: '/expenses' },
-    { icon: Tag, label: 'discounts', path: '/discounts' },
-    { icon: Gift, label: 'gift_cards', path: '/gift-cards' },
-    { icon: GitBranch, label: 'branches', path: '/branches' },
-    { icon: ClipboardList, label: 'stocktake', path: '/stocktake' },
-    { icon: Printer, label: 'printers', path: '/printers' },
-    { icon: CreditCard, label: 'devices', path: '/devices' },
-    { icon: Receipt, label: 'receipt_template', path: '/receipt-template' },
-    { icon: Store, label: 'store_settings', path: '/store-settings' },
-    { icon: Wallet, label: 'billing', path: '/billing' },
-    { icon: BarChart3, label: 'reports', path: '/reports' },
-    { icon: Globe, label: 'online_orders', path: '/channels' },
-    { icon: Webhook, label: 'webhooks', path: '/webhooks' },
-    { icon: ShieldCheck, label: 'zatca_status', path: '/zatca' },
-    { icon: Activity, label: 'ops_title', path: '/ops' },
-    { icon: Shield, label: 'audit_log', path: '/audit' },
-    { icon: Bell, label: 'notifications', path: '/notifications' },
+    {
+      section: '',
+      items: [{ icon: LayoutDashboard, label: 'dashboard', path: '/client' }],
+    },
+    {
+      section: 'nav_section_sell',
+      items: [
+        { icon: Monitor, label: 'pos_terminal', path: '/pos' },
+        { icon: Globe, label: 'online_orders', path: '/channels' },
+        { icon: UtensilsCrossed, label: 'floor_map', path: '/floor' },
+        { icon: CalendarClock, label: 'rw_reservations', path: '/reservations' },
+        { icon: Layers, label: 'menu_builder', path: '/menu-builder' },
+        { icon: ChefHat, label: 'kds', path: '/kds' },
+      ],
+    },
+    {
+      section: 'nav_section_catalog',
+      items: [
+        { icon: ShoppingBag, label: 'products', path: '/products' },
+        { icon: FolderTree, label: 'categories', path: '/categories' },
+        { icon: SlidersHorizontal, label: 'catalog_modifiers', path: '/catalog-modifiers' },
+        { icon: Truck, label: 'suppliers', path: '/suppliers' },
+        { icon: FileText, label: 'quotations', path: '/quotations' },
+        { icon: ClipboardList, label: 'stocktake', path: '/stocktake' },
+        { icon: Tag, label: 'discounts', path: '/discounts' },
+        { icon: Gift, label: 'gift_cards', path: '/gift-cards' },
+        { icon: Star, label: 'loyalty', path: '/loyalty' },
+      ],
+    },
+    {
+      section: 'nav_section_people',
+      items: [
+        { icon: UserCheck, label: 'customers', path: '/customers' },
+        { icon: Users, label: 'staff', path: '/staff' },
+        { icon: Clock, label: 'shifts', path: '/shifts' },
+      ],
+    },
+    {
+      section: 'nav_section_setup',
+      items: [
+        { icon: GitBranch, label: 'branches', path: '/branches' },
+        { icon: Printer, label: 'printers', path: '/printers' },
+        { icon: CreditCard, label: 'devices', path: '/devices' },
+        { icon: Receipt, label: 'receipt_template', path: '/receipt-template' },
+        { icon: Store, label: 'store_settings', path: '/store-settings' },
+        { icon: Wallet, label: 'billing', path: '/billing' },
+        { icon: Banknote, label: 'expenses', path: '/expenses' },
+        { icon: BarChart3, label: 'reports', path: '/reports' },
+        { icon: Webhook, label: 'webhooks', path: '/webhooks' },
+        { icon: ShieldCheck, label: 'zatca_status', path: '/zatca' },
+        { icon: Activity, label: 'ops_title', path: '/ops' },
+        { icon: Shield, label: 'audit_log', path: '/audit' },
+        { icon: Bell, label: 'notifications', path: '/notifications' },
+      ],
+    },
   ],
 };
 
 const DASHBOARD_PATHS = new Set(['/master', '/agent', '/client']);
+
+/**
+ * Resolve the page-identity title (issue #213) for the current location from a
+ * role's rail. Longest matching path wins so nested routes (`/products/123`)
+ * inherit their parent's identity. Returns the matched item's i18n label key,
+ * or '' when nothing matches (e.g. detail routes outside the rail).
+ */
+function titleKeyForPath(sections: NavSection[], pathname: string): string {
+  let best = '';
+  let bestLen = -1;
+  for (const section of sections) {
+    for (const item of section.items) {
+      const matches = pathname === item.path || pathname.startsWith(`${item.path}/`);
+      if (matches && item.path.length > bestLen) {
+        best = item.label;
+        bestLen = item.path.length;
+      }
+    }
+  }
+  return best;
+}
 
 function greetingKey(): string {
   const hour = new Date().getHours();
@@ -142,6 +214,7 @@ const Shell: React.FC = () => {
   const { toggleTheme, isDark } = useTheme();
   const { t, language, setLanguage, isRTL } = useLanguage();
   const navigate = useNavigate();
+  const location = useLocation();
   const chrome = useShellChrome();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
@@ -172,14 +245,31 @@ const Shell: React.FC = () => {
   // shows everything. While the type is still loading (null) we show the full
   // rail rather than briefly hiding the wrong items — the route guards still
   // protect any vertical page reached early.
-  const navItems = useMemo(() => {
+  const navSections = useMemo(() => {
     const base = navConfig[userRole] || navConfig.client;
-    if (userRole !== 'client' || !businessType) return base;
-    return base.filter((item) => isPathAllowed(item.path, businessType));
+    const filtered =
+      userRole !== 'client' || !businessType
+        ? base
+        : base.map((section) => ({
+            ...section,
+            items: section.items.filter((item) => isPathAllowed(item.path, businessType)),
+          }));
+    // Drop any group left empty by the business-type filter so no orphan header
+    // shows above zero links.
+    return filtered.filter((section) => section.items.length > 0);
   }, [userRole, businessType]);
+
+  const navItems = useMemo(() => navSections.flatMap((s) => s.items), [navSections]);
 
   const displayName = (user?.name || user?.email?.split('@')[0] || '').trim();
   const greeting = t(greetingKey());
+
+  // Page identity (issue #213): the dashboard home keeps the personal greeting;
+  // every other page promotes its own name to the H1 instead. A page may
+  // override the derived title via `chrome.title`.
+  const isDashboardHome = DASHBOARD_PATHS.has(location.pathname);
+  const titleKey = titleKeyForPath(navConfig[userRole] || navConfig.client, location.pathname);
+  const pageTitle = chrome.title || (titleKey ? t(titleKey) : '');
 
   const handleLogout = async () => {
     await logout();
@@ -213,7 +303,7 @@ const Shell: React.FC = () => {
       <aside
         data-tour="sidebar-nav"
         className={cn(
-          'fixed inset-y-0 start-0 z-50 flex w-20 flex-col items-center gap-1.5 border-e border-border bg-card py-4 transition-transform duration-200 ease-in-out lg:static lg:translate-x-0',
+          'fixed inset-y-0 start-0 z-50 flex w-64 flex-col items-center gap-1.5 border-e border-border bg-card py-4 transition-transform duration-200 ease-in-out lg:static lg:w-20 lg:translate-x-0',
           drawerOpen
             ? 'translate-x-0'
             : isRTL
@@ -237,40 +327,64 @@ const Shell: React.FC = () => {
             otherwise compute overflow-x to `auto` too (CSS spec coupling) and
             the rail would scroll horizontally toward the portalled tooltips. */}
         <TooltipProvider delayDuration={0}>
-          <nav className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden px-1 py-1">
-            {navItems.map((item, index) => {
-              const Icon = item.icon;
-              return (
-                <Tooltip key={`${item.path}-${index}`}>
-                  <TooltipTrigger asChild>
-                    <NavLink
-                      to={item.path}
-                      end={DASHBOARD_PATHS.has(item.path)}
-                      onClick={() => setDrawerOpen(false)}
-                      aria-label={t(item.label)}
-                      className={({ isActive }) =>
-                        cn(
-                          'flex h-[46px] w-[46px] shrink-0 items-center justify-center rounded-[14px] transition-all',
-                          isActive
-                            ? 'bg-gradient-to-br from-brand to-brand-700 text-white shadow-brand'
-                            : 'text-muted-foreground hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10'
-                        )
-                      }
-                    >
-                      <Icon className="h-[21px] w-[21px]" />
-                    </NavLink>
-                  </TooltipTrigger>
-                  {/* Portalled to <body>, so the label escapes the rail instead
-                      of widening it. Desktop only — mobile uses the drawer. */}
-                  <TooltipContent
-                    side={isRTL ? 'left' : 'right'}
-                    className="hidden font-semibold lg:block"
-                  >
-                    {t(item.label)}
-                  </TooltipContent>
-                </Tooltip>
-              );
-            })}
+          <nav className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden px-2 py-1">
+            {navSections.map((section) => (
+              <div
+                key={section.section || 'home'}
+                role="group"
+                aria-label={section.section ? t(section.section) : undefined}
+                className="flex w-full flex-col items-center gap-1.5"
+              >
+                {section.section && (
+                  // Group header: a real text label in the mobile drawer; a
+                  // thin divider stands in for it on the 80px desktop icon rail
+                  // (the label stays in the a11y tree via sr-only).
+                  <div className="w-full px-2 pt-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground lg:px-0">
+                    <span className="lg:sr-only">{t(section.section)}</span>
+                    <span aria-hidden="true" className="mx-auto mt-1 hidden h-px w-6 bg-border lg:block" />
+                  </div>
+                )}
+                {section.items.map((item, index) => {
+                  const Icon = item.icon;
+                  return (
+                    <Tooltip key={`${item.path}-${index}`}>
+                      <TooltipTrigger asChild>
+                        <NavLink
+                          to={item.path}
+                          end={DASHBOARD_PATHS.has(item.path)}
+                          onClick={() => setDrawerOpen(false)}
+                          aria-label={t(item.label)}
+                          className={({ isActive }) =>
+                            cn(
+                              'flex h-[46px] w-full shrink-0 items-center justify-start gap-3 rounded-[14px] px-3 transition-all lg:w-[46px] lg:justify-center lg:gap-0 lg:px-0',
+                              isActive
+                                ? 'bg-gradient-to-br from-brand to-brand-700 text-white shadow-brand'
+                                : 'text-muted-foreground hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10'
+                            )
+                          }
+                        >
+                          <Icon className="h-[21px] w-[21px] shrink-0" />
+                          {/* Visible label in the mobile drawer; the desktop
+                              icon rail relies on the portalled tooltip below. */}
+                          <span className="truncate text-sm font-semibold lg:hidden">
+                            {t(item.label)}
+                          </span>
+                        </NavLink>
+                      </TooltipTrigger>
+                      {/* Portalled to <body>, so the label escapes the rail
+                          instead of widening it. Desktop only — mobile uses
+                          the in-drawer label above. */}
+                      <TooltipContent
+                        side={isRTL ? 'left' : 'right'}
+                        className="hidden font-semibold lg:block"
+                      >
+                        {t(item.label)}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </div>
+            ))}
           </nav>
         </TooltipProvider>
 
@@ -348,9 +462,13 @@ const Shell: React.FC = () => {
           </button>
 
           <div className="min-w-0" data-tour="dashboard-title">
-            <div className="truncate text-[20px] font-extrabold leading-tight tracking-tight">
-              {displayName ? `${greeting}, ${displayName.charAt(0).toUpperCase()}${displayName.slice(1)}` : greeting}
-            </div>
+            <h1 className="truncate text-[20px] font-extrabold leading-tight tracking-tight">
+              {isDashboardHome
+                ? displayName
+                  ? `${greeting}, ${displayName.charAt(0).toUpperCase()}${displayName.slice(1)}`
+                  : greeting
+                : pageTitle || t('app_name')}
+            </h1>
             {chrome.subtitle && (
               <div className="truncate text-[13px] text-muted-foreground">{chrome.subtitle}</div>
             )}

@@ -7,6 +7,11 @@ import type { PaletteGroup } from '@/components/dashboard/rx/CommandPalette';
  * to supply its subtitle line, a primary action button and any ⌘K quick actions.
  */
 export interface PageChromeConfig {
+  /**
+   * Page-identity H1 (issue #213). Overrides the title the shell derives from
+   * the nav rail; ignored on the dashboard home, which keeps the greeting.
+   */
+  title?: string;
   /** Subtitle line shown under the greeting (defaults to nothing). */
   subtitle?: string;
   /** Primary action button rendered at the end of the command bar. */
