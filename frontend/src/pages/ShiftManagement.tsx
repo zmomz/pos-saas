@@ -67,6 +67,20 @@ function normalizeShift(raw: any): Shift {
   };
 }
 
+// Issue #210: the close-readiness checklist returned by GET /shifts/eod-checklist.
+// Each blocking item that is not satisfied keeps `ready_to_close` false.
+interface EodChecklistItem {
+  key: string;
+  label: string;
+  blocking: boolean;
+  satisfied: boolean;
+  count: number;
+}
+interface EodChecklist {
+  ready_to_close: boolean;
+  items: EodChecklistItem[];
+}
+
 export default function ShiftManagement() {
   const [currentShift, setCurrentShift] = useState<Shift | null>(null);
   const [shiftHistory, setShiftHistory] = useState<Shift[]>([]);
@@ -91,6 +105,12 @@ export default function ShiftManagement() {
   const [reopenShiftId, setReopenShiftId] = useState<number | null>(null);
   const [reopenReason, setReopenReason] = useState('');
   const [reopenError, setReopenError] = useState<string | null>(null);
+  // Issue #210: the end-of-day checklist gates the close. With a blocking item
+  // unsatisfied (a held ticket still parked) the close is refused unless a manager
+  // forces it with an audited reason.
+  const [eodChecklist, setEodChecklist] = useState<EodChecklist | null>(null);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [closeError, setCloseError] = useState<string | null>(null);
 
   const { t, tt, isRTL, language } = useLanguage();
 
@@ -184,17 +204,47 @@ export default function ShiftManagement() {
     }
   }
 
+  async function openCloseDialog() {
+    setCloseError(null);
+    setOverrideReason('');
+    setEodChecklist(null);
+    setCloseShiftDialog(true);
+    // Surface the end-of-day checklist so the cashier sees blocking work (a held
+    // ticket still parked) before they count the drawer (#210).
+    try {
+      const res = await client.apiCall.invoke<EodChecklist>({
+        url: '/api/v1/production/shifts/eod-checklist',
+        method: 'GET',
+      });
+      if (res.data) setEodChecklist(res.data);
+    } catch (err) {
+      console.error('Failed to load EOD checklist:', err);
+    }
+  }
+
   async function handleCloseShift() {
+    const blocked = eodChecklist != null && !eodChecklist.ready_to_close;
+    const reason = overrideReason.trim();
+    if (blocked && !reason) {
+      setCloseError(tt('sm_close_override_required', 'A reason is required to force the close past the checklist.'));
+      return;
+    }
     setSubmitting(true);
+    setCloseError(null);
     try {
       const res = await client.apiCall.invoke({
         url: '/api/v1/production/shifts/close',
         method: 'POST',
-        data: { closing_cash: parseFloat(closingCash) || 0 },
+        data: {
+          closing_cash: parseFloat(closingCash) || 0,
+          ...(blocked ? { override: true, override_reason: reason } : {}),
+        },
       });
       setCurrentShift(null);
       setCloseShiftDialog(false);
       setClosingCash('');
+      setOverrideReason('');
+      setEodChecklist(null);
       if (res.data) {
         setShiftHistory((prev) => [normalizeShift(res.data), ...prev]);
       }
@@ -213,6 +263,10 @@ export default function ShiftManagement() {
       await loadShiftData();
     } catch (err) {
       console.error('Failed to close shift:', err);
+      // Surface the gate so the cashier knows why the close was refused (#210).
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setCloseError(detail || tt('sm_close_failed', 'Could not close the shift. Resolve the checklist or try again.'));
     } finally {
       setSubmitting(false);
     }
@@ -359,7 +413,7 @@ export default function ShiftManagement() {
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-3">
-                <Button variant="destructive" onClick={() => setCloseShiftDialog(true)}>
+                <Button variant="destructive" onClick={openCloseDialog}>
                   <StopCircle className="h-4 w-4 me-2" /> {t('sm_close_shift')}
                 </Button>
                 <Button
@@ -582,8 +636,49 @@ export default function ShiftManagement() {
                 </div>
               </div>
             )}
+            {/* End-of-day checklist (#210): block the close on unfinished work; a
+                manager may force it past with an audited reason. */}
+            {eodChecklist && eodChecklist.items.length > 0 && (
+              <div className="bg-muted/50 rounded-lg p-3 space-y-2">
+                <p className="text-sm font-medium text-foreground">
+                  {tt('sm_eod_checklist', 'End-of-day checklist')}
+                </p>
+                {eodChecklist.items.map((item) => (
+                  <div key={item.key} className="flex justify-between text-sm">
+                    <span className={item.satisfied ? 'text-muted-foreground' : 'text-danger'}>
+                      {item.satisfied ? '✓' : '✗'}{' '}
+                      {item.key === 'no_held_orders'
+                        ? tt('sm_eod_no_held', 'No held tickets outstanding')
+                        : item.label}
+                    </span>
+                    {!item.satisfied && item.count > 0 && (
+                      <span className="text-danger tabular-nums">{item.count}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {eodChecklist && !eodChecklist.ready_to_close && (
+              <div>
+                <label htmlFor="close-override-reason" className="text-sm text-muted-foreground mb-1 block">
+                  {tt('sm_close_override_reason', 'Override reason (required to force the close)')}
+                </label>
+                <Input
+                  id="close-override-reason"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder={tt('sm_close_override_placeholder', 'e.g. end of day; ticket abandoned')}
+                  className="bg-muted border-input text-foreground"
+                />
+              </div>
+            )}
+            {closeError && <p className="text-danger text-sm">{closeError}</p>}
             <Button variant="destructive" onClick={handleCloseShift} disabled={submitting} className="w-full">
-              {submitting ? t('loading') : t('sm_close_shift')}
+              {submitting
+                ? t('loading')
+                : eodChecklist && !eodChecklist.ready_to_close
+                  ? tt('sm_close_override_confirm', 'Override & Close')
+                  : t('sm_close_shift')}
             </Button>
           </div>
         </DialogContent>

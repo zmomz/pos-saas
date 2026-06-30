@@ -130,6 +130,12 @@ class ShiftOpenRequest(BaseModel):
 class ShiftCloseRequest(BaseModel):
     closing_cash: float
     notes: Optional[str] = None
+    # Issue #210 — the end-of-day checklist gates the close. A manager may force
+    # the close past an unsatisfied (blocking) checklist item with ``override``,
+    # but only with a stated ``override_reason`` — the bypass is audited so it is
+    # never a silent edit.
+    override: bool = False
+    override_reason: Optional[str] = None
 
 
 class ShiftReopenRequest(BaseModel):
@@ -839,15 +845,50 @@ async def open_shift(
     }
 
 
-@router.post("/shifts/close")
-async def close_shift(
-    data: ShiftCloseRequest,
-    background_tasks: BackgroundTasks,
+async def _build_eod_checklist(db: AsyncSession, owner_id: str, shift) -> Dict[str, Any]:
+    """Build the end-of-day close-readiness checklist for an open shift (#210).
+
+    Each item is ``{key, label, blocking, satisfied, count}``. A *blocking* item
+    that is not satisfied keeps ``ready_to_close`` False — the close is refused
+    unless a manager overrides with a reason. Today the one blocking item is held
+    (parked) tickets (POS-10): a parked ticket is an unfinished sale — money the
+    cashier still owes the till — and closing over it silently strands it."""
+    from models.transactions import Transactions
+
+    held_count = (
+        await db.execute(
+            select(func.count(Transactions.id)).where(
+                Transactions.user_id == owner_id,
+                Transactions.status == "held",
+            )
+        )
+    ).scalar() or 0
+
+    items = [
+        {
+            "key": "no_held_orders",
+            "label": "No held (parked) tickets outstanding",
+            "blocking": True,
+            "satisfied": held_count == 0,
+            "count": int(held_count),
+        },
+    ]
+    return {
+        "ready_to_close": all(i["satisfied"] for i in items if i["blocking"]),
+        "items": items,
+    }
+
+
+@router.get("/shifts/eod-checklist")
+async def get_eod_checklist(
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
-    """Close the current open shift with cash reconciliation."""
+    """Surface the end-of-day close-readiness checklist for the current open shift.
+
+    The checklist is for the drawer that is about to close; with none open it is a
+    404. ``POST /shifts/close`` gates on the same blocking items (#210)."""
     from models.shifts import Shifts
 
     result = await db.execute(
@@ -859,6 +900,66 @@ async def close_shift(
     shift = result.scalar_one_or_none()
     if not shift:
         raise HTTPException(status_code=404, detail="No open shift found")
+
+    return await _build_eod_checklist(db, owner_id, shift)
+
+
+@router.post("/shifts/close")
+async def close_shift(
+    data: ShiftCloseRequest,
+    background_tasks: BackgroundTasks,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Close the current open shift with cash reconciliation.
+
+    The end-of-day checklist gates the close (#210): with a blocking item
+    unsatisfied (e.g. a held ticket still parked) the close is refused, unless a
+    manager forces it with ``override`` + a stated ``override_reason`` — the bypass
+    is written to the tamper-evident audit trail (``shift.close_overridden``) so it
+    is never a silent edit."""
+    from models.shifts import Shifts
+
+    result = await db.execute(
+        select(Shifts).where(
+            Shifts.user_id == owner_id,
+            Shifts.status == "open",
+        )
+    )
+    shift = result.scalar_one_or_none()
+    if not shift:
+        raise HTTPException(status_code=404, detail="No open shift found")
+
+    # Gate the close on the EOD checklist. A blocking item (held tickets) refuses
+    # the close so unfinished work is never silently stranded; a manager may force
+    # it with an audited reason.
+    checklist = await _build_eod_checklist(db, owner_id, shift)
+    override_reason = (data.override_reason or "").strip()
+    override_applied = False
+    if not checklist["ready_to_close"]:
+        if not data.override:
+            held = next(
+                (i for i in checklist["items"] if i["key"] == "no_held_orders" and not i["satisfied"]),
+                None,
+            )
+            if held:
+                detail = (
+                    f"Cannot close: {held['count']} held ticket(s) still parked. "
+                    "Recall or settle them first, or override with a reason."
+                )
+            else:
+                detail = (
+                    "Cannot close: the end-of-day checklist is not satisfied. "
+                    "Override with a reason to force the close."
+                )
+            raise HTTPException(status_code=400, detail=detail)
+        if not override_reason:
+            raise HTTPException(
+                status_code=400,
+                detail="An override reason is required to force the close past the checklist.",
+            )
+        override_applied = True
 
     now = datetime.now(timezone.utc)
     # Reconcile the drawer against CASH tenders only — not gross sales (POS-09,
@@ -881,6 +982,28 @@ async def close_shift(
         )
     )
     await db.commit()
+
+    # Tamper-evident audit trail (ISSUE-019, #210): a forced close past an
+    # unsatisfied EOD checklist records the actor, the affected shift, the stated
+    # reason and which blocking items were bypassed — the override is never silent.
+    if override_applied:
+        await write_audit_log(
+            user_id=current_user.id,
+            action="shift.close_overridden",
+            details=f"Forced close past EOD checklist: {override_reason}",
+            entity_type="shift",
+            entity_id=shift.id,
+            changes=json.dumps(
+                {
+                    "override_reason": override_reason,
+                    "blocking_unsatisfied": [
+                        i["key"]
+                        for i in checklist["items"]
+                        if i["blocking"] and not i["satisfied"]
+                    ],
+                }
+            ),
+        )
 
     # Domain webhook (ISSUE-051, H25): notify subscribers the shift closed,
     # carrying the reconciliation outcome integrations care about.
