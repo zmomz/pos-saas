@@ -98,6 +98,10 @@ interface PeriodSummary {
   reconciliation: string;
   already_closed: boolean;
   has_open_shift: boolean;
+  // Issue #210: was the inventory reconciled (an approved stocktake) in this period?
+  inventory_reconciled: boolean;
+  stock_counts_approved: number;
+  last_reconciled_at: string | null;
 }
 
 export default function ShiftManagement() {
@@ -672,6 +676,22 @@ export default function ShiftManagement() {
                     <span className={`tabular-nums ${(periodSummary.cash_difference || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
                       {(periodSummary.cash_difference || 0) >= 0 ? '+' : ''}{formatMoney(periodSummary.cash_difference || 0, language)}
                     </span>
+                  </div>
+                  {/* Issue #210: inventory reconciliation status for the period. */}
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{tt('sm_period_inventory', 'Inventory')}</span>
+                    {periodSummary.inventory_reconciled ? (
+                      <span className="text-success font-medium">
+                        {tt('sm_period_reconciled', 'Inventory reconciled')}
+                        {periodSummary.stock_counts_approved > 1
+                          ? ` (${periodSummary.stock_counts_approved})`
+                          : ''}
+                      </span>
+                    ) : (
+                      <span className="text-warning font-medium">
+                        {tt('sm_period_unreconciled', 'No stock count — un-reconciled')}
+                      </span>
+                    )}
                   </div>
                 </div>
                 {periodSummary.already_closed && (

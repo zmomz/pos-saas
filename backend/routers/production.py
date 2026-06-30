@@ -1183,6 +1183,7 @@ async def _build_period_summary(db: AsyncSession, owner_id: str, period_type: st
     drawer is still open — the operator's close-readiness view (#210)."""
     from models.audit_logs import Audit_logs
     from models.shifts import Shifts
+    from models.stock_counts import Stock_count_sessions
 
     key, start, end = _period_bounds(period_type, year, month)
     start_iso, end_iso = start.isoformat(), end.isoformat()
@@ -1223,6 +1224,33 @@ async def _build_period_summary(db: AsyncSession, owner_id: str, period_type: st
         )
     ).scalar() or 0
 
+    # Inventory reconciliation (#210, ties in the guided stocktake #207): an
+    # *approved* stock count whose ``approved_at`` falls in the period window means
+    # the shelves were reconciled against system on-hand this period. ``approved_at``
+    # is stored naive (the stocktake stamps ``datetime.now()``), so the window is
+    # compared on naive-UTC to dodge SQLite's tz coercion. Informational only — a
+    # period with no count still closes, but the operator (and the audit lock) can
+    # see it was closed un-reconciled.
+    approved_at_rows = (
+        await db.execute(
+            select(Stock_count_sessions.approved_at).where(
+                Stock_count_sessions.user_id == owner_id,
+                Stock_count_sessions.status == "approved",
+                Stock_count_sessions.approved_at.isnot(None),
+            )
+        )
+    ).scalars().all()
+    start_naive, end_naive = start.replace(tzinfo=None), end.replace(tzinfo=None)
+    reconciled_at = []
+    for ts in approved_at_rows:
+        if ts is None:
+            continue
+        naive = ts.astimezone(timezone.utc).replace(tzinfo=None) if ts.tzinfo is not None else ts
+        if start_naive <= naive < end_naive:
+            reconciled_at.append(naive)
+    stock_counts_approved = len(reconciled_at)
+    last_reconciled_at = max(reconciled_at).isoformat() if reconciled_at else None
+
     return {
         "period_type": period_type.lower(),
         "year": year,
@@ -1240,6 +1268,9 @@ async def _build_period_summary(db: AsyncSession, owner_id: str, period_type: st
         "reconciliation": "balanced" if abs(cash_difference) < 0.01 else ("over" if cash_difference > 0 else "short"),
         "already_closed": bool(already_closed),
         "has_open_shift": bool(open_shift),
+        "inventory_reconciled": stock_counts_approved > 0,
+        "stock_counts_approved": stock_counts_approved,
+        "last_reconciled_at": last_reconciled_at,
     }
 
 
@@ -1309,6 +1340,8 @@ async def close_period(
                 "cash_difference": summary["cash_difference"],
                 "total_sales": summary["total_sales"],
                 "reconciliation": summary["reconciliation"],
+                "inventory_reconciled": summary["inventory_reconciled"],
+                "stock_counts_approved": summary["stock_counts_approved"],
             }
         ),
     )
@@ -1325,6 +1358,7 @@ async def close_period(
             "closing_cash": summary["closing_cash"],
             "cash_difference": summary["cash_difference"],
             "reconciliation": summary["reconciliation"],
+            "inventory_reconciled": summary["inventory_reconciled"],
         },
     )
 
