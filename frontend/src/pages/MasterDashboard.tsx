@@ -274,9 +274,7 @@ export default function MasterDashboard() {
               </div>
             </div>
           </div>
-          <div className="mt-auto flex h-[150px] items-end">
-            <p className="text-[12.5px] text-white/55">{tt('mrr_trend_history_unavailable', 'Trend history not available yet.')}</p>
-          </div>
+          <p data-testid="mrr-trend-note" className="mt-4 text-[12.5px] text-white/55">{tt('mrr_trend_history_unavailable', 'Trend history not available yet.')}</p>
         </section>
 
         {/* Slots filled gauge */}

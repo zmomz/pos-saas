@@ -490,7 +490,7 @@ export default function LandingPage() {
           {steps.map((s, idx) => (
             <div key={s.n} className="text-center px-4 relative">
               {idx < steps.length - 1 && (
-                <div className={`hidden md:block absolute top-7 ${isRTL ? 'right-1/2 me-9' : 'left-1/2 ms-9'} w-[calc(100%-72px)] border-t-2 border-dashed border-brand-100`} />
+                <div className="hidden md:block absolute top-7 start-1/2 ms-9 w-[calc(100%-72px)] border-t-2 border-dashed border-brand-100" />
               )}
               <div className="w-14 h-14 rounded-full bg-brand-500 text-white grid place-items-center text-[22px] font-extrabold mx-auto mb-4 relative z-[2] ring-[6px] ring-brand-50">{s.n}</div>
               <h3 className="text-[17px] font-bold mb-2">{s.t}</h3>
@@ -515,7 +515,7 @@ export default function LandingPage() {
                 className={`relative bg-white rounded-2xl p-7 flex flex-col shadow-sm border ${plan.feat ? 'border-brand-500 shadow-md md:scale-[1.03]' : 'border-slate-200'}`}
               >
                 {plan.feat && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gold text-gold-900 text-xs font-bold px-3.5 py-1 rounded-full whitespace-nowrap">{c.most_popular}</span>
+                  <span className="absolute -top-3 inset-x-0 mx-auto w-fit bg-gold text-gold-900 text-xs font-bold px-3.5 py-1 rounded-full whitespace-nowrap">{c.most_popular}</span>
                 )}
                 <div className="text-[15px] font-bold">{plan.name}</div>
                 <div className="text-[13px] text-slate-500 mt-1 min-h-[38px]">{plan.desc}</div>

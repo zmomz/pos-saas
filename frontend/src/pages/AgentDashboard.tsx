@@ -21,7 +21,8 @@ import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
 import AgentMoyasarBanner from '@/components/billing/AgentMoyasarBanner';
-import { Users, CreditCard, UserPlus, Palette, ShoppingBag, BarChart3, Box, Percent, Star, QrCode, Mail, Sliders, KeyRound, Store, BadgeCheck, Wallet, Link2, Archive, ArchiveRestore, ArrowRightLeft, Download, Trash2, MoreVertical } from 'lucide-react';
+import { Users, CreditCard, UserPlus, Palette, ShoppingBag, BarChart3, Box, Percent, Star, QrCode, Mail, Sliders, KeyRound, Store, Wallet, Link2, Archive, ArchiveRestore, ArrowRightLeft, Download, Trash2, MoreVertical } from 'lucide-react';
+import { readableTextColor } from '@/lib/contrast';
 
 interface ClientItem {
   id: number;
@@ -465,6 +466,11 @@ export default function AgentDashboard() {
   const tableClients = archivedView ? archivedClients : clients;
   const panelClient = clients.find((c) => c.id === panelClientId) || clients[0] || null;
   const brandColor = branding?.primary_color || '#1488a6';
+  // Preview foreground derived from the brand the same way the runtime theme
+  // flips ink (#243 AC3) — a pale brand shows dark ink, never invisible white.
+  const previewFg = readableTextColor(brandColor);
+  const previewChipBg = previewFg === '#ffffff' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.08)';
+  const previewChipRing = previewFg === '#ffffff' ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.12)';
 
   // Hydrate the selected client's real feature flags the first time its panel is
   // shown. Without this the switches would fabricate an all-on state per client.
@@ -489,10 +495,15 @@ export default function AgentDashboard() {
     {
       subtitle: `${branding?.company_name ? `${branding.company_name} · ` : ''}${clients.length} ${t('clients')} · ${activeClients.length} ${t('active_subscriptions') || 'active subscriptions'}`,
       primaryAction: (
-        <Button onClick={() => setDialogOpen(true)} className="h-11 rounded-[10px] shadow-brand">
-          <UserPlus className="h-4 w-4" />
-          {t('create_client') || 'Add Client'}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={handleRunDunning} disabled={dunningBusy} title={t('run_billing_hint')} className="h-11 rounded-[10px]">
+            {dunningBusy ? t('loading') : (t('run_billing_cycle') || 'Run billing')}
+          </Button>
+          <Button onClick={() => setDialogOpen(true)} className="h-11 rounded-[10px] shadow-brand">
+            <UserPlus className="h-4 w-4" />
+            {t('create_client') || 'Add Client'}
+          </Button>
+        </div>
       ),
       paletteGroups: [
         {
@@ -507,7 +518,7 @@ export default function AgentDashboard() {
         },
       ],
     },
-    [language, branding?.company_name, clients.length, activeClients.length]
+    [language, branding?.company_name, clients.length, activeClients.length, dunningBusy]
   );
 
   if (loading) {
@@ -526,15 +537,9 @@ export default function AgentDashboard() {
 
   return (
     <div className="animate-fade-up space-y-5">
-      <div className="flex flex-wrap items-center gap-2.5">
-        <span className="dxr-sw dxr-sw-brand h-9 w-9"><Store className="h-[18px] w-[18px]" /></span>
-        <h1 className="text-[18px] font-extrabold tracking-tight">{branding?.company_name || t('dashboard')}</h1>
-        <span className="pill-gold"><BadgeCheck className="h-3.5 w-3.5" />{t('white_label_active') || 'White-label active'}</span>
-        <div className="flex-1" />
-        <Button variant="outline" onClick={handleRunDunning} disabled={dunningBusy} title={t('run_billing_hint')}>
-          {dunningBusy ? t('loading') : (t('run_billing_cycle') || 'Run billing')}
-        </Button>
-      </div>
+      {/* No bespoke in-body header here (#243): the shell (usePageChrome) owns
+          the page title/subtitle and the Run-billing primary action, so a
+          second <h1> + Run-billing button would duplicate both. */}
       {dunningResult && <p role="status" className="text-sm text-muted-foreground">{dunningResult}</p>}
 
       {/* Fail-closed (#235): an unconnected Moyasar stalls the whole merchant book.
@@ -783,9 +788,9 @@ export default function AgentDashboard() {
           <div className="dxr-tile">
             <h2 className="mb-3 text-sm font-extrabold tracking-tight">{t('your_white_label') || 'Your white-label look'}</h2>
             <div className="overflow-hidden rounded-xl border border-border">
-              <div className="flex h-16 items-center gap-2.5 px-4" style={{ background: `linear-gradient(135deg, ${brandColor}, ${brandColor})` }}>
-                <span className="flex h-[30px] w-[30px] items-center justify-center rounded-lg bg-white/20 text-white ring-1 ring-white/25"><Store className="h-4 w-4" /></span>
-                <b className="text-sm text-white">{branding?.company_name || t('app_name')}</b>
+              <div data-testid="wl-preview-header" className="flex h-16 items-center gap-2.5 px-4" style={{ background: brandColor, color: previewFg }}>
+                <span className="flex h-[30px] w-[30px] items-center justify-center rounded-lg" style={{ background: previewChipBg, boxShadow: `0 0 0 1px ${previewChipRing}` }}><Store className="h-4 w-4" /></span>
+                <b className="text-sm">{branding?.company_name || t('app_name')}</b>
               </div>
               <div className="flex flex-col gap-2.5 bg-card p-4">
                 <div className="h-[9px] w-[70%] rounded bg-muted" />
