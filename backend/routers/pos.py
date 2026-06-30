@@ -2350,6 +2350,34 @@ async def delete_branch_price_endpoint(
     return {"branch_id": branch_id, "product_id": product_id, "removed": True}
 
 
+# ---------- Cross-branch sales reporting (#220 multi-branch) ----------
+@router.get("/reports/cross-branch-sales")
+async def get_cross_branch_sales(
+    start: Optional[str] = Query(None, description="ISO start (inclusive) for the window"),
+    end: Optional[str] = Query(None, description="ISO end (exclusive) for the window"),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Roll each branch's net sales + sale count up side by side for the chain.
+
+    Non-excluded sales (held/voided dropped) are grouped by branch; credit notes
+    net refunds out. Owner-scoped (SEC-02). ``start``/``end`` optionally bound the
+    window by ``created_at`` (half-open)."""
+    from services.branch_reporting import cross_branch_sales
+
+    def _parse(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date; expected ISO format")
+
+    client = await get_client_for_user(db, owner_id)
+    return await cross_branch_sales(db, client.id, owner_id, _parse(start), _parse(end))
+
+
 # ---------- Per-branch variant stock ledger (ISSUE-067) ----------
 class VariantBranchStockSetRequest(BaseModel):
     variant_id: int

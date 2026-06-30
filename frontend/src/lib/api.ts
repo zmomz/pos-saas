@@ -2719,6 +2719,34 @@ export async function resolveBranchPrice(branchId: number, productId: number) {
   return response.data as BranchPriceResolution;
 }
 
+// Cross-branch sales reporting (#220 multi-branch). Rolls each branch's net sales
+// and sale count up side by side for the chain; refunds (credit notes) net out and
+// held/voided rows are excluded. Optional ISO start/end bound the window.
+export interface CrossBranchSalesRow {
+  branch_id: number | null;
+  branch_name: string;
+  net_sales: number;
+  sales_count: number;
+}
+
+export interface CrossBranchSalesSummary {
+  branches: CrossBranchSalesRow[];
+  total_net_sales: number;
+  total_sales_count: number;
+}
+
+export async function getCrossBranchSales(start?: string, end?: string) {
+  const params = new URLSearchParams();
+  if (start) params.set('start', start);
+  if (end) params.set('end', end);
+  const qs = params.toString();
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/reports/cross-branch-sales${qs ? `?${qs}` : ''}`,
+    method: 'GET',
+  });
+  return response.data as CrossBranchSalesSummary;
+}
+
 // Per-branch *variant* stock ledger (parity #5, INV-03 × INV-04). Each variant SKU
 // carries its own per-branch allocation, separate from the parent product's stock.
 export interface BranchVariantStockItem {
