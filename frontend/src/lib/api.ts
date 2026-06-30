@@ -2290,6 +2290,36 @@ export async function setBranchStock(branchId: number, productId: number, quanti
   return response.data;
 }
 
+// Per-branch *variant* stock ledger (parity #5, INV-03 × INV-04). Each variant SKU
+// carries its own per-branch allocation, separate from the parent product's stock.
+export interface BranchVariantStockItem {
+  variant_id: number;
+  quantity: number;
+}
+
+export interface BranchVariantStock {
+  branch_id: number;
+  items: BranchVariantStockItem[];
+  total: number;
+}
+
+export async function getBranchVariantStock(branchId: number): Promise<BranchVariantStock> {
+  const response = await client.apiCall.invoke<BranchVariantStock>({
+    url: `/api/v1/pos/branches/${branchId}/variant-stock`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function setBranchVariantStock(branchId: number, variantId: number, quantity: number) {
+  const response = await client.apiCall.invoke<BranchVariantStockItem & { branch_id: number }>({
+    url: `/api/v1/pos/branches/${branchId}/variant-stock`,
+    method: 'PUT',
+    data: { variant_id: variantId, quantity },
+  });
+  return response.data;
+}
+
 // Expense Management
 // ISSUE-022/026: the generic entity list wraps rows as `{ items, total }`.
 // Mirrors backend Expenses (models/expenses.py). Explicit signature so the page
@@ -3161,6 +3191,28 @@ export async function createFloorZone(data: { name: string; branch_id?: number }
     url: '/api/v1/restaurant/zones',
     method: 'POST',
     data,
+  });
+  return res.data;
+}
+
+// Rename a floor zone (parity #7). Only non-null fields are applied server-side.
+export async function updateFloorZone(
+  zoneId: number,
+  data: { name?: string; branch_id?: number },
+): Promise<FloorZone> {
+  const res = await client.apiCall.invoke<FloorZone>({
+    url: `/api/v1/restaurant/zones/${zoneId}`,
+    method: 'PUT',
+    data,
+  });
+  return res.data;
+}
+
+// Delete a floor zone (parity #7). Tables keep their seats but lose the zone tab.
+export async function deleteFloorZone(zoneId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/zones/${zoneId}`,
+    method: 'DELETE',
   });
   return res.data;
 }
