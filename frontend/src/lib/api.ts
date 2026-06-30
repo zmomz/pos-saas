@@ -1210,6 +1210,46 @@ export async function changePassword(currentPassword: string, newPassword: strin
   return response.data;
 }
 
+// Self-service password reset (ISSUE-082 backend / #199 UI).
+export interface PasswordResetRequestResult {
+  success: boolean;
+  message: string;
+  // Populated only in dev / no-SMTP mode so the flow is usable without a real
+  // mailbox; null in production. Never assume it is present.
+  reset_token?: string | null;
+}
+
+/**
+ * Request a password-reset link for `email`. Always resolves 200 regardless of
+ * whether the address maps to an account — the backend is anti-enumeration, so
+ * the caller must show the same neutral confirmation either way.
+ */
+export async function requestPasswordReset(email: string): Promise<PasswordResetRequestResult> {
+  const response = await client.apiCall.invoke<PasswordResetRequestResult>({
+    url: '/api/v1/auth/password/forgot',
+    method: 'POST',
+    data: { email },
+  });
+  return response.data;
+}
+
+/**
+ * Complete a password reset with a single-use token from the emailed link.
+ * Throws on an invalid/expired token or a password that fails complexity — the
+ * caller surfaces `response.data.detail`.
+ */
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+): Promise<{ success: boolean; message: string }> {
+  const response = await client.apiCall.invoke<{ success: boolean; message: string }>({
+    url: '/api/v1/auth/password/reset',
+    method: 'POST',
+    data: { token, new_password: newPassword },
+  });
+  return response.data;
+}
+
 // Active login sessions for the current user (auth/sessions). Used to show the
 // real current-session details on the profile instead of a hardcoded row.
 export interface SessionInfo {
