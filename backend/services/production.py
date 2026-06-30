@@ -876,6 +876,70 @@ class EmailService:
 
 
 # =============================================================================
+# Notification Composer (M10 / parity #8, ISSUE-214)
+# =============================================================================
+
+# Channels an operator can target from the composer. ``email`` delivers through
+# core.email (real SMTP when configured, dev-fallback logging otherwise);
+# ``whatsapp`` / ``push`` have no provider wired yet, so they log and report
+# ``"logged"`` exactly like email without SMTP — never a false ``"sent"``.
+NOTIFY_CHANNELS = ("email", "whatsapp", "push")
+
+
+async def deliver_composed_notification(
+    *,
+    channel: str,
+    to: str,
+    subject: str,
+    body: str,
+    html_body: Optional[str] = None,
+    scheduled_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Deliver one operator-composed notification over a single channel.
+
+    Returns a per-send status map. ``scheduled_at`` set to a future time defers
+    delivery: the send is acknowledged as ``"scheduled"`` and **not** dispatched
+    now — real send-at-time is a worker concern (deferred), so the UI never
+    claims a future-dated message was already sent. ``email`` is delivered
+    immediately via the configured transport; ``whatsapp`` / ``push`` fall back
+    to logging until a provider is configured.
+    """
+    channel = (channel or "email").lower()
+    base = {"channel": channel, "to": to, "subject": subject}
+
+    if scheduled_at is not None:
+        # Normalize to an aware UTC instant so the echoed timestamp is unambiguous.
+        when = scheduled_at
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        logger.info(
+            "Notification scheduled (%s) → %s | %s | at %s",
+            channel, to, subject, when.isoformat(),
+        )
+        return {
+            **base,
+            "message_id": str(uuid.uuid4()),
+            "status": "scheduled",
+            "scheduled_at": when.isoformat(),
+            "delivered": False,
+        }
+
+    if channel == "email":
+        result = await EmailService.send_email(to, subject, body, html_body)
+        result["channel"] = "email"
+        return result
+
+    # whatsapp / push: no provider configured — log + report the dev fallback.
+    logger.info("Notification (%s dev fallback) → %s | %s", channel, to, subject)
+    return {
+        **base,
+        "message_id": str(uuid.uuid4()),
+        "status": "logged",
+        "delivered": False,
+    }
+
+
+# =============================================================================
 # Webhook Dispatcher
 # =============================================================================
 
@@ -985,36 +1049,20 @@ class WebhookDispatcher:
 async def fire_event(
     db: AsyncSession, user_id: str, event: str, payload: Dict[str, Any]
 ) -> int:
-    """Deliver ``event`` to every active webhook of ``user_id`` subscribed to it.
+    """Publish ``event`` onto the internal event bus and return endpoints attempted.
 
-    Looks up ``webhooks`` rows owned by the user whose ``events`` (comma- or
-    JSON-list) include ``event`` (or the wildcard ``*``) and dispatches the
-    signed payload to each. Returns the number of endpoints attempted. Best
-    effort — a misconfigured webhook never breaks the originating sale/refund.
-    Intended to be scheduled via ``BackgroundTasks`` after the commit.
+    Since ISSUE-218 this is a thin shim over :func:`services.event_bus.publish`:
+    the bus fans the event out to every subscriber, the canonical one being the
+    outbound-webhook dispatcher, which enqueues one durable ``webhook.deliver``
+    job per active endpoint whose ``events`` (comma- or JSON-list) include the
+    event (or the wildcard ``*``). The return value is the number of webhook
+    endpoints scheduled — the same "attempted" contract callers and tests relied
+    on. Best effort — a misconfigured webhook never breaks the originating
+    sale/refund. Intended to be scheduled via ``BackgroundTasks`` after commit.
     """
-    from models.webhooks import Webhooks
+    from services import event_bus
 
-    try:
-        result = await db.execute(
-            select(Webhooks).where(Webhooks.user_id == str(user_id))
-        )
-        hooks = result.scalars().all()
-    except Exception as exc:  # pragma: no cover - lookup failure must not propagate
-        logger.warning("Webhook lookup failed for event %s: %s", event, exc)
-        return 0
-
-    attempted = 0
-    body = {"event": event, "data": payload}
-    for hook in hooks:
-        if hook.is_active is False:
-            continue
-        if not _hook_subscribes(hook.events, event):
-            continue
-        result = await WebhookDispatcher.dispatch(hook.url, event, body, hook.secret_key or "")
-        await record_delivery(db, str(user_id), hook.id, hook.url, event, result)
-        attempted += 1
-    return attempted
+    return await event_bus.publish(db, str(user_id), event, payload)
 
 
 async def record_delivery(

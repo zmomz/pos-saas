@@ -64,6 +64,12 @@ async def _reset_db(_init_db):
     async with db_manager.engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             await conn.execute(table.delete())
+    # M10/#219: the read cache (core/cache.py) is a module-level singleton with a
+    # process-local store in tests; reset it in lockstep with the DB wipe so a
+    # value cached in one test can never bleed into the next.
+    from core.cache import cache  # local import: app/settings already imported above
+
+    await cache.reset()
 
 
 @pytest_asyncio.fixture

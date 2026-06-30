@@ -2100,7 +2100,8 @@ async def kds_stream(
     no longer travels in the URL). The resolved subject runs through the same
     restaurant double-gate as every other route. The stream emits an initial
     ``snapshot`` of the active board, then ``fired`` / ``bumped`` / ``recalled``
-    events as they happen (≤1s, fanned out by the in-process broker) with periodic
+    events as they happen (≤1s, fanned out by the KDS channel — in-process, or
+    Redis pub/sub across workers when configured, #212) with periodic
     ``: keepalive`` comments so proxies don't drop an idle connection.
     """
     user_id = consume_stream_ticket(ticket)

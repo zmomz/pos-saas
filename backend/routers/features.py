@@ -13,7 +13,8 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, update, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.database import get_db, db_manager
+from core.cache import invalidate_brand
+from core.database import get_db, get_read_db, db_manager
 from dependencies.auth import get_current_user
 from dependencies.tenancy import get_owner_id
 from dependencies.features import require_feature
@@ -865,6 +866,12 @@ async def update_agent_branding(
 
     update_data = data.model_dump(exclude_unset=True)
 
+    # M10/#219: capture the domain the brand cache may currently be keyed under, so
+    # we can clear the *old* domain key even when this edit changes the domain.
+    old_domain = (
+        await db.execute(select(Agents.custom_domain).where(Agents.id == agent_id))
+    ).scalar_one_or_none()
+
     # AG-05: a custom domain is normalized (lowercase, no scheme/port/www) and must
     # be unique across agents — two resellers can't claim the same host. An empty
     # value clears it. Imported here to avoid a circular import at module load.
@@ -890,6 +897,10 @@ async def update_agent_branding(
             update(Agents).where(Agents.id == agent_id).values(**update_data)
         )
         await db.commit()
+        # M10/#219: clear the agent's cached brand for the by-agent read and for
+        # both the old and (possibly new) custom-domain keys.
+        new_domain = update_data.get("custom_domain", old_domain)
+        await invalidate_brand(agent_id, old_domain, new_domain)
 
     # Fetch updated agent
     result = await db.execute(select(Agents).where(Agents.id == agent_id))
@@ -2920,6 +2931,289 @@ async def report_discounts(
     )
     if format == "pdf":
         return _pdf_discounts(resp)
+    return resp
+
+
+# ============================================================
+# PROFIT & LOSS STATEMENT (M9, F-068) — the income statement
+# ============================================================
+# The single most-requested financial report for a POS buyer: a period income
+# statement. Net revenue (ex-VAT, discounts netted) − COGS (rolled up from the
+# bill of materials when a parent carries no own cost) = gross profit; less
+# operating expenses (by category) = net profit. Aggregated entirely by the
+# financial-reporting service (services.financial_reports) — SQL sums plus one
+# bounded items_json stream for COGS (OPS-05), tenant-scoped, on the read replica.
+
+
+class PnlExpenseRow(BaseModel):
+    category: str
+    amount: float
+
+
+class PnlResponse(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    gross_sales: float
+    discounts: float
+    net_revenue: float
+    vat: float
+    cogs: float
+    gross_profit: float
+    gross_margin_pct: float
+    expenses: List[PnlExpenseRow]
+    total_expenses: float
+    net_profit: float
+    net_margin_pct: float
+    csv_content: str
+
+
+def _pdf_pnl(resp: "PnlResponse") -> Response:
+    pnl_rows = [
+        [("الإيراد الإجمالي", "Gross sales"), _m(resp.gross_sales)],
+        [("الخصومات", "Discounts"), _m(-resp.discounts)],
+        [("صافي الإيراد", "Net revenue"), _m(resp.net_revenue)],
+        [("تكلفة البضاعة", "COGS"), _m(-resp.cogs)],
+        [("إجمالي الربح", "Gross profit"), _m(resp.gross_profit)],
+        [("هامش الربح الإجمالي %", "Gross margin %"), _m(resp.gross_margin_pct)],
+    ]
+    expense_rows = [[e.category, _m(-e.amount)] for e in resp.expenses]
+    expense_rows.append([("إجمالي المصروفات", "Total expenses"), _m(-resp.total_expenses)])
+    sections = [
+        {
+            "heading": ("الأرباح والخسائر", "Profit & Loss"),
+            "columns": [("البند", "Line"), ("المبلغ", "Amount")],
+            "rows": pnl_rows,
+            "widths": [120, 60],
+        },
+        {
+            "heading": ("المصروفات التشغيلية", "Operating expenses"),
+            "columns": [("الفئة", "Category"), ("المبلغ", "Amount")],
+            "rows": expense_rows,
+            "widths": [120, 60],
+        },
+    ]
+    meta = [
+        (("الفترة", "Period"), f"{resp.from_date}..{resp.to_date}"),
+        (("صافي الربح", "Net profit"), _m(resp.net_profit)),
+        (("هامش صافي الربح %", "Net margin %"), _m(resp.net_margin_pct)),
+    ]
+    return _report_pdf(("قائمة الأرباح والخسائر", "Profit & Loss"), meta, sections, "pnl")
+
+
+@router.get("/api/v1/reports/pnl", response_model=PnlResponse)
+async def report_pnl(
+    days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_read_db),
+):
+    """Profit & Loss statement for the trailing ``days`` window (F-068).
+
+    Net revenue − COGS = gross profit; less operating expenses = net profit. COGS
+    rolls the bill of materials up onto BOM-backed parents. Owner-scoped (SEC-02),
+    aggregated server-side (OPS-05), routed to the read replica so it never
+    contends with the sale path.
+    """
+    from services.financial_reports import compute_pnl
+
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can view the P&L report")
+
+    client_id = role_info["entity_id"]
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+    data = await compute_pnl(db, client_id, start_date, now)
+
+    # ---- CSV (income-statement lines + an expense breakdown) ----
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Line", "Amount"])
+    writer.writerow(["Gross sales", f"{data['gross_sales']:.2f}"])
+    writer.writerow(["Discounts", f"{-data['discounts']:.2f}"])
+    writer.writerow(["Net revenue", f"{data['net_revenue']:.2f}"])
+    writer.writerow(["COGS", f"{-data['cogs']:.2f}"])
+    writer.writerow(["Gross profit", f"{data['gross_profit']:.2f}"])
+    writer.writerow(["Gross margin %", f"{data['gross_margin_pct']:.2f}"])
+    writer.writerow([])
+    writer.writerow(["Operating expenses", ""])
+    for e in data["expenses"]:
+        writer.writerow([e["category"], f"{-e['amount']:.2f}"])
+    writer.writerow(["Total expenses", f"{-data['total_expenses']:.2f}"])
+    writer.writerow([])
+    writer.writerow(["Net profit", f"{data['net_profit']:.2f}"])
+    writer.writerow(["Net margin %", f"{data['net_margin_pct']:.2f}"])
+
+    resp = PnlResponse(
+        days=days,
+        from_date=start_date.date().isoformat(),
+        to_date=now.date().isoformat(),
+        expenses=[PnlExpenseRow(**e) for e in data["expenses"]],
+        csv_content=output.getvalue(),
+        **{k: data[k] for k in (
+            "gross_sales", "discounts", "net_revenue", "vat", "cogs",
+            "gross_profit", "gross_margin_pct", "total_expenses",
+            "net_profit", "net_margin_pct",
+        )},
+    )
+    if format == "pdf":
+        return _pdf_pnl(resp)
+    return resp
+
+
+# ============================================================
+# CASH FLOW STATEMENT (M9, F-068) — cash-basis money movement
+# ============================================================
+# Cash basis: customer receipts (every tender, net of refunds) − cash operating
+# expenses = net operating cash flow. The receipts-by-tender split and the
+# cash-drawer movement totals (pay-in/pay-out/cash-drop) are surfaced alongside
+# for traceability but kept out of the operating-cash-flow net (they are drawer
+# float management, not business cash flow). Aggregated server-side, tenant-scoped,
+# on the read replica.
+
+
+class CashFlowLine(BaseModel):
+    label: str
+    amount: float
+
+
+class CashFlowTender(BaseModel):
+    tender_type: str
+    collected: float
+    refunds: float
+    net: float
+
+
+class CashFlowDrawer(BaseModel):
+    pay_in: float
+    pay_out: float
+    cash_drop: float
+    net_drawer: float
+
+
+class CashFlowResponse(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    receipts_collected: float
+    receipts_refunds: float
+    receipts_net: float
+    by_tender: List[CashFlowTender]
+    expenses: List[PnlExpenseRow]
+    total_expenses: float
+    inflows: List[CashFlowLine]
+    outflows: List[CashFlowLine]
+    net_cash_flow: float
+    drawer_movements: CashFlowDrawer
+    csv_content: str
+
+
+def _pdf_cash_flow(resp: "CashFlowResponse") -> Response:
+    flow_rows = [[i.label, _m(i.amount)] for i in resp.inflows]
+    flow_rows += [[o.label, _m(-o.amount)] for o in resp.outflows]
+    flow_rows.append([("صافي التدفق النقدي", "Net cash flow"), _m(resp.net_cash_flow)])
+    tender_rows = [[t.tender_type, _m(t.collected), _m(t.refunds), _m(t.net)] for t in resp.by_tender]
+    d = resp.drawer_movements
+    drawer_rows = [
+        [("إيداع نقدي", "Cash pay-in"), _m(d.pay_in)],
+        [("سحب نقدي", "Cash pay-out"), _m(-d.pay_out)],
+        [("ترحيل نقدي", "Cash drop"), _m(-d.cash_drop)],
+        [("صافي حركة الدرج", "Net drawer change"), _m(d.net_drawer)],
+    ]
+    sections = [
+        {
+            "heading": ("التدفق النقدي التشغيلي", "Operating cash flow"),
+            "columns": [("البند", "Line"), ("المبلغ", "Amount")],
+            "rows": flow_rows,
+            "widths": [120, 60],
+        },
+        {
+            "heading": ("المقبوضات حسب طريقة الدفع", "Receipts by tender"),
+            "columns": [("الطريقة", "Method"), ("المحصّل", "Collected"),
+                        ("المرتجع", "Refunds"), ("الصافي", "Net")],
+            "rows": tender_rows,
+        },
+        {
+            "heading": ("حركات درج النقد", "Cash-drawer movements"),
+            "columns": [("البند", "Line"), ("المبلغ", "Amount")],
+            "rows": drawer_rows,
+            "widths": [120, 60],
+        },
+    ]
+    meta = [
+        (("الفترة", "Period"), f"{resp.from_date}..{resp.to_date}"),
+        (("صافي التدفق النقدي", "Net cash flow"), _m(resp.net_cash_flow)),
+    ]
+    return _report_pdf(("قائمة التدفقات النقدية", "Cash Flow"), meta, sections, "cash-flow")
+
+
+@router.get("/api/v1/reports/cash-flow", response_model=CashFlowResponse)
+async def report_cash_flow(
+    days: int = Query(30, ge=1, le=365),
+    format: str = Query("json", pattern=_FMT_FORMATS),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_read_db),
+):
+    """Cash-basis Cash Flow statement for the trailing ``days`` window (F-068).
+
+    Operating cash flow = customer receipts (net of refunds) − cash operating
+    expenses, with a receipts-by-tender split and the drawer-movement totals shown
+    for traceability. Owner-scoped (SEC-02), aggregated server-side (OPS-05),
+    routed to the read replica.
+    """
+    from services.financial_reports import compute_cash_flow
+
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can view the cash-flow report")
+
+    client_id = role_info["entity_id"]
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=days)
+    data = await compute_cash_flow(db, client_id, start_date, now)
+
+    # ---- CSV (operating-flow lines + tender split + drawer movements) ----
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Line", "Amount"])
+    for i in data["inflows"]:
+        writer.writerow([i["label"], f"{i['amount']:.2f}"])
+    for o in data["outflows"]:
+        writer.writerow([o["label"], f"{-o['amount']:.2f}"])
+    writer.writerow(["Net cash flow", f"{data['net_cash_flow']:.2f}"])
+    writer.writerow([])
+    writer.writerow(["Receipts by tender", "Collected", "Refunds", "Net"])
+    for t in data["by_tender"]:
+        writer.writerow([t["tender_type"], f"{t['collected']:.2f}", f"{t['refunds']:.2f}", f"{t['net']:.2f}"])
+    writer.writerow([])
+    dm = data["drawer_movements"]
+    writer.writerow(["Cash-drawer movements", ""])
+    writer.writerow(["Cash pay-in", f"{dm['pay_in']:.2f}"])
+    writer.writerow(["Cash pay-out", f"{-dm['pay_out']:.2f}"])
+    writer.writerow(["Cash drop", f"{-dm['cash_drop']:.2f}"])
+    writer.writerow(["Net drawer change", f"{dm['net_drawer']:.2f}"])
+
+    resp = CashFlowResponse(
+        days=days,
+        from_date=start_date.date().isoformat(),
+        to_date=now.date().isoformat(),
+        receipts_collected=data["receipts_collected"],
+        receipts_refunds=data["receipts_refunds"],
+        receipts_net=data["receipts_net"],
+        by_tender=[CashFlowTender(**t) for t in data["by_tender"]],
+        expenses=[PnlExpenseRow(**e) for e in data["expenses"]],
+        total_expenses=data["total_expenses"],
+        inflows=[CashFlowLine(**i) for i in data["inflows"]],
+        outflows=[CashFlowLine(**o) for o in data["outflows"]],
+        net_cash_flow=data["net_cash_flow"],
+        drawer_movements=CashFlowDrawer(**data["drawer_movements"]),
+        csv_content=output.getvalue(),
+    )
+    if format == "pdf":
+        return _pdf_cash_flow(resp)
     return resp
 
 

@@ -81,11 +81,15 @@ async def lifespan(app: FastAPI):
 
     validate_secrets()
 
-    # KDS real-time broker is in-process (services/kds_channel.py); under >1
-    # uvicorn worker it would silently drop kitchen-board events. Fail loud on a
-    # multi-worker config until a shared broker backs it (ARC-09, #166).
-    from services.kds_channel import assert_single_worker_safe
+    # KDS real-time channel (services/kds_channel.py). Configure the backend
+    # first: Redis pub/sub when REDIS_URL/KDS_REDIS_URL is set (fans events across
+    # workers, #212), otherwise the in-process backend. The guard then only fires
+    # for the in-process backend — under >1 worker it would silently drop
+    # kitchen-board events — so a Redis-backed multi-worker deploy boots cleanly
+    # while a misconfigured single-process one still fails loud (ARC-09, #212).
+    from services.kds_channel import assert_single_worker_safe, kds_broker
 
+    await kds_broker.configure()
     assert_single_worker_safe()
 
     # Run Alembic migrations first when enabled (prod default); when they own the
@@ -105,14 +109,30 @@ async def lifespan(app: FastAPI):
     from services.billing_scheduler import start_billing_scheduler
 
     start_billing_scheduler()
+
+    # Job queue + internal event bus (ISSUE-218, M10). Importing the event bus
+    # registers every domain-event subscriber and queued-job handler up front, so
+    # the first published event (e.g. shift.closed) always has its webhook fan-out
+    # and delivery jobs wired — no lazy first-call surprise. The queue runs inline
+    # under the default "memory" backend; JOB_QUEUE_BACKEND=redis offloads to the
+    # Arq worker (see worker.py).
+    import services.event_bus  # noqa: F401  (side-effect: subscriber/job registration)
     # MODULE_STARTUP_END
 
     logger.info("=== Application startup completed successfully ===")
     yield
     # MODULE_SHUTDOWN_START
     from services.billing_scheduler import stop_billing_scheduler
+    from services.kds_channel import kds_broker
 
     await stop_billing_scheduler()
+
+    await kds_broker.shutdown()
+
+    # Release the job-queue broker connection (no-op under the memory backend).
+    from services import job_queue
+
+    await job_queue.close()
     await close_database()
     # MODULE_SHUTDOWN_END
 

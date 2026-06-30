@@ -1,118 +1,82 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useBusinessProfile } from '@/contexts/BusinessProfileContext';
 import { useLanguage } from '@/lib/i18n';
+import type { BusinessType } from '@/lib/businessType';
 import { X, ChevronRight, SkipForward } from 'lucide-react';
 
 interface TourStep {
-  title: string;
-  description: string;
+  // i18n keys, resolved at render time so the tour follows the active locale.
+  titleKey: string;
+  descKey: string;
   targetSelector: string;
   position: 'top' | 'bottom' | 'left' | 'right';
 }
 
 const masterSteps: TourStep[] = [
-  {
-    title: 'Welcome, Master Admin!',
-    description: 'This is your control center. Manage all agents, packages, and system settings from here.',
-    targetSelector: '[data-tour="dashboard-title"]',
-    position: 'bottom',
-  },
-  {
-    title: 'Navigation Sidebar',
-    description: 'Use the sidebar to navigate between agents, packages, audit logs, and notifications.',
-    targetSelector: '[data-tour="sidebar-nav"]',
-    position: 'right',
-  },
-  {
-    title: 'Quick Stats',
-    description: 'View key metrics at a glance — total agents, revenue, and system health.',
-    targetSelector: '[data-tour="stats-section"]',
-    position: 'bottom',
-  },
-  {
-    title: 'Theme & Language',
-    description: 'Switch between dark/light mode and change language using the header controls.',
-    targetSelector: '[data-tour="theme-toggle"]',
-    position: 'bottom',
-  },
+  { titleKey: 'tour_master_welcome_t', descKey: 'tour_master_welcome_d', targetSelector: '[data-tour="dashboard-title"]', position: 'bottom' },
+  { titleKey: 'tour_master_nav_t', descKey: 'tour_master_nav_d', targetSelector: '[data-tour="sidebar-nav"]', position: 'right' },
+  { titleKey: 'tour_master_stats_t', descKey: 'tour_master_stats_d', targetSelector: '[data-tour="stats-section"]', position: 'bottom' },
+  { titleKey: 'tour_master_theme_t', descKey: 'tour_master_theme_d', targetSelector: '[data-tour="theme-toggle"]', position: 'bottom' },
 ];
 
 const agentSteps: TourStep[] = [
-  {
-    title: 'Welcome, Agent!',
-    description: 'Manage your clients, customize branding, and track revenue from your dashboard.',
-    targetSelector: '[data-tour="dashboard-title"]',
-    position: 'bottom',
-  },
-  {
-    title: 'Client Management',
-    description: 'Add and manage your clients. Monitor their activity and subscription status.',
-    targetSelector: '[data-tour="sidebar-nav"]',
-    position: 'right',
-  },
-  {
-    title: 'Revenue Overview',
-    description: 'Track your monthly revenue, active clients, and subscription metrics.',
-    targetSelector: '[data-tour="stats-section"]',
-    position: 'bottom',
-  },
-  {
-    title: 'Branding & Products',
-    description: 'Customize your white-label branding and manage product catalog for your clients.',
-    targetSelector: '[data-tour="quick-actions"]',
-    position: 'bottom',
-  },
+  { titleKey: 'tour_agent_welcome_t', descKey: 'tour_agent_welcome_d', targetSelector: '[data-tour="dashboard-title"]', position: 'bottom' },
+  { titleKey: 'tour_agent_clients_t', descKey: 'tour_agent_clients_d', targetSelector: '[data-tour="sidebar-nav"]', position: 'right' },
+  { titleKey: 'tour_agent_revenue_t', descKey: 'tour_agent_revenue_d', targetSelector: '[data-tour="stats-section"]', position: 'bottom' },
+  { titleKey: 'tour_agent_branding_t', descKey: 'tour_agent_branding_d', targetSelector: '[data-tour="quick-actions"]', position: 'bottom' },
 ];
 
-const clientSteps: TourStep[] = [
-  {
-    title: 'Welcome to Your POS!',
-    description: 'Process sales, manage products, and track your business performance.',
-    targetSelector: '[data-tour="dashboard-title"]',
-    position: 'bottom',
-  },
-  {
-    title: 'POS Terminal',
-    description: 'Open the POS terminal to process sales with ZATCA-compliant invoices.',
-    targetSelector: '[data-tour="sidebar-nav"]',
-    position: 'right',
-  },
-  {
-    title: 'Sales Overview',
-    description: "View today's sales, total transactions, and product counts at a glance.",
-    targetSelector: '[data-tour="stats-section"]',
-    position: 'bottom',
-  },
-  {
-    title: 'Quick Actions',
-    description: 'Access POS, products, reports, and more with one click.',
-    targetSelector: '[data-tour="quick-actions"]',
-    position: 'bottom',
-  },
-];
+// Client tour reframed per business type (issue #201) — was hardcoded retail.
+// The welcome / navigation / focus steps speak to the merchant's actual vertical
+// (retail catalog vs restaurant floor & kitchen vs both); the quick-actions step
+// is shared.
+function clientSteps(businessType: BusinessType): TourStep[] {
+  const variant = businessType === 'restaurant' ? 'restaurant' : businessType === 'both' ? 'both' : 'retail';
+  return [
+    { titleKey: 'tour_client_welcome_t', descKey: `tour_client_welcome_${variant}`, targetSelector: '[data-tour="dashboard-title"]', position: 'bottom' },
+    { titleKey: 'tour_client_nav_t', descKey: `tour_client_nav_${variant}`, targetSelector: '[data-tour="sidebar-nav"]', position: 'right' },
+    { titleKey: 'tour_client_focus_t', descKey: `tour_client_focus_${variant}`, targetSelector: '[data-tour="stats-section"]', position: 'bottom' },
+    { titleKey: 'tour_client_actions_t', descKey: 'tour_client_actions_d', targetSelector: '[data-tour="quick-actions"]', position: 'bottom' },
+  ];
+}
 
 const OnboardingTour: React.FC = () => {
   const { user } = useAuth();
+  const { businessType, ready } = useBusinessProfile();
   const { t, isRTL } = useLanguage();
   const [currentStep, setCurrentStep] = useState(0);
   const [isVisible, setIsVisible] = useState(false);
   const [tooltipPosition, setTooltipPosition] = useState({ top: 0, left: 0 });
 
   const role = (user?.role as 'master' | 'agent' | 'client') || 'client';
-  const storageKey = `onboarding_completed_${role}`;
+  // For a client, key the completion flag on the business type too, so the
+  // change-type flow re-runs the tour for the new experience (no data deleted —
+  // just a fresh walkthrough of what changed).
+  const effectiveType: BusinessType = businessType ?? 'retail';
+  const storageKey =
+    role === 'client' ? `onboarding_completed_client_${effectiveType}` : `onboarding_completed_${role}`;
 
-  const steps = role === 'master' ? masterSteps : role === 'agent' ? agentSteps : clientSteps;
+  const steps =
+    role === 'master' ? masterSteps : role === 'agent' ? agentSteps : clientSteps(effectiveType);
+
+  // Hold the client tour until the business type has resolved, otherwise the
+  // first-run walkthrough could describe the wrong vertical.
+  const canStart = role !== 'client' || ready;
 
   useEffect(() => {
+    if (!canStart) return;
     const completed = localStorage.getItem(storageKey);
     if (!completed) {
       const timer = setTimeout(() => {
+        setCurrentStep(0);
         setIsVisible(true);
         positionTooltip(0);
       }, 800);
       return () => clearTimeout(timer);
     }
-  }, [storageKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey, canStart]);
 
   const positionTooltip = (stepIndex: number) => {
     const step = steps[stepIndex];
@@ -205,6 +169,7 @@ const OnboardingTour: React.FC = () => {
         <button
           onClick={handleSkip}
           className="absolute top-3 end-3 text-muted-foreground hover:text-muted-foreground dark:hover:text-foreground"
+          aria-label={t('skip') || 'Skip'}
         >
           <X className="h-4 w-4" />
         </button>
@@ -223,10 +188,10 @@ const OnboardingTour: React.FC = () => {
 
         {/* Content */}
         <h3 className="text-base font-semibold text-foreground dark:text-foreground mb-2">
-          {step.title}
+          {t(step.titleKey)}
         </h3>
         <p className="text-sm text-muted-foreground dark:text-foreground/90 mb-4 leading-relaxed">
-          {step.description}
+          {t(step.descKey)}
         </p>
 
         {/* Actions */}

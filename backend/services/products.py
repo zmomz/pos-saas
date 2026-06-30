@@ -4,6 +4,7 @@ from typing import Optional, Dict, Any, List
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cache import invalidate_dashboard
 from models.products import Products
 from services.query_filter import apply_query_filters
 
@@ -30,6 +31,8 @@ class ProductsService:
             await self.db.commit()
             await self.db.refresh(obj)
             logger.info(f"Created products with id: {obj.id}")
+            # M10/#219: the dashboard's products_count just changed for this client.
+            await invalidate_dashboard(getattr(obj, "client_id", None))
             return obj
         except Exception as e:
             await self.db.rollback()
@@ -132,9 +135,12 @@ class ProductsService:
             if not obj:
                 logger.warning(f"Products {obj_id} not found for deletion")
                 return False
+            client_id = getattr(obj, "client_id", None)
             await self.db.delete(obj)
             await self.db.commit()
             logger.info(f"Deleted products {obj_id}")
+            # M10/#219: the dashboard's products_count just changed for this client.
+            await invalidate_dashboard(client_id)
             return True
         except Exception as e:
             await self.db.rollback()

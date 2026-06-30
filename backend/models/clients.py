@@ -42,6 +42,14 @@ class Clients(Base):
     dunning_attempts = Column(Integer, nullable=True, default=0, server_default='0')
     grace_deadline = Column(String, nullable=True)
     is_active = Column(Boolean, nullable=True, default=True, server_default='true')
+    # Merchant lifecycle (M8 / issue-215). When set to an ISO timestamp the merchant
+    # has been *archived* by its owning agent: hidden from the active book, blocked
+    # at authentication (distinct from the ``is_active`` non-payment suspension), and
+    # its slot freed back to the agent's quota. All data is retained so a *restore*
+    # (clears this column, re-deducts a slot) reverses the state with no data loss.
+    # The timestamp also anchors the post-retention permanent-delete window. NULL ⇒
+    # the merchant is live.
+    archived_at = Column(String, nullable=True)
     # Card-on-file for subscription billing (Rail 2). The merchant tokenizes their
     # card once via moyasar.js (PAN never reaches us — PAY-09) and the reusable
     # token is stored encrypted (core.crypto); each billing cycle charges it

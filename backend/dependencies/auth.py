@@ -89,24 +89,52 @@ async def _assert_account_active(db: AsyncSession, user_id: str) -> None:
     from dependencies.tenancy import resolve_tenant_scope
     from models.agents import Agents
     from models.clients import Clients
+    from models.staff_members import Staff_members
 
     scope = await resolve_tenant_scope(
         db, UserResponse(id=str(user_id), email="", role="user")
     )
 
+    # Issue #216 — staff lifecycle: a suspended or terminated staff member is
+    # blocked on their *own* login regardless of the owning merchant's state.
+    # Keyed on the immutable login FK (SEC-11), never the mutable email. Bumping
+    # the login's security stamp already kills live tokens on suspend/terminate;
+    # this is the durable, replay-proof backstop checked on every request.
+    staff_status = (
+        await db.execute(
+            select(Staff_members.status).where(Staff_members.login_user_id == str(user_id))
+        )
+    ).scalars().first()
+    if staff_status in ("suspended", "terminated"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your staff access has been revoked. Contact your manager.",
+        )
+
     # SEC-06: the owning merchant's row (``None`` for an agent/master => no merchant
     # to suspend). An is_active that is explicitly False => suspended; NULL/True pass.
+    # M8 (issue-215): an archived merchant (``archived_at`` set) is likewise blocked —
+    # a distinct lifecycle state from the non-payment suspension above.
     if scope.owner_user_id is not None:
-        client_active = (
+        row = (
             await db.execute(
-                select(Clients.is_active).where(Clients.user_id == str(scope.owner_user_id))
+                select(Clients.is_active, Clients.archived_at).where(
+                    Clients.user_id == str(scope.owner_user_id)
+                )
             )
-        ).scalar_one_or_none()
-        if client_active is False:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="This account has been suspended. Contact your provider.",
-            )
+        ).one_or_none()
+        if row is not None:
+            client_active, client_archived_at = row
+            if client_active is False:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This account has been suspended. Contact your provider.",
+                )
+            if client_archived_at:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="This account has been archived. Contact your provider.",
+                )
 
     # SEC-02: the owning agent (``None`` for master => no agent to suspend). A
     # suspended agent blocks himself and cascades to all his merchants.
