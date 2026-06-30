@@ -578,6 +578,87 @@ async def restore_product(
     )
 
 
+@router.post("/api/v1/products/{product_id}/duplicate", response_model=ProductResponse)
+async def duplicate_product(
+    product_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """ISSUE-223 (M4 Product): clone an existing product into a new SKU.
+
+    Seeds a new product from an existing one (a new size/flavour/variant) without
+    re-keying every catalog field. The clone copies the descriptive catalog fields
+    but is a *fresh* SKU: it starts active with zero on-hand stock and **no
+    barcode** (a barcode is a unique physical scan code — the merchant assigns a
+    new one) so it never collides with the original at the scanner. The name is
+    suffixed ``(Copy)`` to keep the two distinguishable. Owner-scoped — a product
+    the merchant does not own is a 404, so one merchant cannot clone another's SKU.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can duplicate products")
+
+    client_id = role_info["entity_id"]
+
+    result = await db.execute(
+        select(Products).where(
+            and_(Products.id == product_id, Products.client_id == client_id)
+        )
+    )
+    original = result.scalar_one_or_none()
+    if not original:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    copy = Products(
+        user_id=owner_id,
+        client_id=client_id,
+        name=f"{original.name} (Copy)",
+        name_ar=original.name_ar,
+        # A fresh SKU: no inherited barcode (unique scan code) and no stock.
+        barcode=None,
+        price=original.price,
+        cost_price=original.cost_price,
+        quantity=0,
+        reorder_point=original.reorder_point or 0,
+        reorder_quantity=original.reorder_quantity or 0,
+        category=original.category,
+        category_id=original.category_id,
+        vat_rate=original.vat_rate,
+        is_active=True,
+        is_weighted=bool(original.is_weighted),
+        is_open_price=bool(original.is_open_price),
+        unit_label=original.unit_label,
+        image_url=original.image_url,
+    )
+    db.add(copy)
+    await db.commit()
+    await db.refresh(copy)
+
+    return ProductResponse(
+        id=copy.id,
+        client_id=copy.client_id,
+        name=copy.name,
+        name_ar=copy.name_ar,
+        barcode=copy.barcode,
+        price=copy.price,
+        cost_price=copy.cost_price,
+        quantity=copy.quantity or 0,
+        reorder_point=copy.reorder_point or 0,
+        reorder_quantity=copy.reorder_quantity or 0,
+        category=copy.category,
+        category_id=copy.category_id,
+        vat_rate=copy.vat_rate,
+        is_active=True,
+        is_weighted=bool(copy.is_weighted),
+        is_open_price=bool(copy.is_open_price),
+        unit_label=copy.unit_label,
+        image_url=copy.image_url,
+        created_at=copy.created_at,
+        updated_at=copy.updated_at,
+    )
+
+
 @router.get("/api/v1/products/low-stock", response_model=ProductListResponse)
 async def get_low_stock_products(
     threshold: int = Query(10, ge=1),
