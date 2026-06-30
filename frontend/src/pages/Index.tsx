@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import AuthLayout from '@/components/auth/AuthLayout';
+import LoadingState from '@/components/states/LoadingState';
 import { useAuth } from '@/contexts/AuthContext';
 import { isMfaChallenge } from '@/lib/auth';
 import { useLanguage } from '@/lib/i18n';
@@ -28,6 +30,7 @@ export default function Index() {
   const [password, setPassword] = useState('');
   const [pin, setPin] = useState('');
   const [name, setName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // #202 — when a password login returns an MFA challenge, hold the ticket and
@@ -92,7 +95,7 @@ export default function Index() {
         dir={isRTL ? 'rtl' : 'ltr'}
         className="min-h-screen bg-background flex items-center justify-center"
       >
-        <div className="text-foreground text-lg animate-pulse">{t('loading')}</div>
+        <LoadingState />
       </div>
     );
   }
@@ -101,17 +104,41 @@ export default function Index() {
     <AuthLayout
       title={t('welcome')}
       description={t('welcome_desc')}
+      aside={
+        <>
+          <div className="dxr-eyebrow">{tt('login_thesis_eyebrow', 'Built for Saudi retail & F&B')}</div>
+          <div className="mt-auto">
+            <h2 className="text-[26px] font-bold leading-snug">
+              {tt('login_thesis_title', 'One platform to run, bill, and grow every store you operate.')}
+            </h2>
+            <p className="mt-4 text-sm leading-relaxed text-white/70">
+              {tt(
+                'login_thesis_body',
+                'Multi-tenant, white-label point of sale with ZATCA-compliant invoicing, real-time inventory, and agent-led billing — from a single counter to a national chain.'
+              )}
+            </p>
+          </div>
+        </>
+      }
       footer={
-        <button
-          type="button"
-          onClick={() => {
-            setMode(mode === 'login' ? 'register' : 'login');
-            setError(null);
-          }}
-          className="text-sm text-muted-foreground hover:text-foreground underline"
-        >
-          {mode === 'login' ? t('dont_have_account') : t('already_have_account')}
-        </button>
+        <div className="flex items-center justify-center gap-2 text-sm">
+          <span className="text-muted-foreground">
+            {mode === 'login'
+              ? tt('register_prompt', 'New here?')
+              : tt('have_account_prompt', 'Already with us?')}
+          </span>
+          <button
+            type="button"
+            data-testid="auth-mode-toggle"
+            onClick={() => {
+              setMode(mode === 'login' ? 'register' : 'login');
+              setError(null);
+            }}
+            className="font-semibold text-brand hover:text-brand-700"
+          >
+            {mode === 'login' ? t('dont_have_account') : t('already_have_account')}
+          </button>
+        </div>
       }
     >
       {mfaToken ? (
@@ -225,13 +252,25 @@ export default function Index() {
         ) : (
           <div className="flex flex-col gap-2">
             <Label htmlFor="password" className="text-foreground/90">{t('password')}</Label>
-            <Input
-              id="password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+            <div className="relative">
+              <Input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="pe-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? tt('hide_password', 'Hide password') : tt('show_password', 'Show password')}
+                aria-pressed={showPassword}
+                className="absolute inset-y-0 end-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
             {mode === 'login' && (
               <Link
                 to="/auth/password/forgot"

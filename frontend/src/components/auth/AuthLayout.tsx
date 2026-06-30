@@ -17,6 +17,13 @@ interface AuthLayoutProps {
   /** Optional content rendered under the card (e.g. a mode toggle). */
   footer?: ReactNode;
   /**
+   * Optional branded side panel (a product thesis). When present the gate
+   * becomes a deliberate two-column composition on large screens — a dark
+   * `dxr-ink` brand panel beside the card — instead of a lone centered form
+   * (ISSUE-242). Collapses to the card alone on small screens.
+   */
+  aside?: ReactNode;
+  /**
    * Show the header language switcher. Off for first-login reset, which carries
    * its own guided language step (CL-02).
    */
@@ -35,6 +42,7 @@ export default function AuthLayout({
   description,
   children,
   footer,
+  aside,
   showLanguageSwitcher = true,
 }: AuthLayoutProps) {
   const { t, language, setLanguage, isRTL } = useLanguage();
@@ -75,7 +83,19 @@ export default function AuthLayout({
       </header>
 
       <main className="relative flex flex-1 items-center justify-center p-6">
-        <div className="w-full max-w-md">
+        <div
+          className={
+            aside
+              ? 'grid w-full max-w-5xl items-stretch gap-8 lg:grid-cols-2'
+              : 'w-full max-w-md'
+          }
+        >
+          {aside ? (
+            <aside className="dxr-ink hidden flex-col justify-between rounded-[20px] p-10 lg:flex">
+              {aside}
+            </aside>
+          ) : null}
+          <div className="mx-auto w-full max-w-md">
           <div className="rounded-[20px] border border-border bg-card p-8 shadow-card">
             <div className="mb-6 text-center">
               <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-[16px] bg-gradient-to-br from-brand to-brand-700 text-2xl font-extrabold text-white shadow-brand">
@@ -89,6 +109,7 @@ export default function AuthLayout({
             {children}
           </div>
           {footer ? <div className="mt-4 text-center">{footer}</div> : null}
+          </div>
         </div>
       </main>
     </div>
