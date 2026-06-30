@@ -227,6 +227,13 @@ const translations: Record<Language, Record<string, string>> = {
     // F-056 — modifiers, modifier groups & combos
     menu_builder: 'Menu builder',
     catalog_modifiers: 'Modifiers & combos',
+    // Shell nav sections (H6) + footer controls.
+    nav_sell: 'Sell',
+    nav_catalog: 'Catalog',
+    nav_people: 'People',
+    nav_setup: 'Setup',
+    dark_mode: 'Dark mode',
+    light_mode: 'Light mode',
     group_name: 'Group name',
     combo_name: 'Combo name',
     modifier_groups: 'Modifier groups',
@@ -1234,6 +1241,13 @@ const translations: Record<Language, Record<string, string>> = {
     // F-056 — الإضافات ومجموعات الإضافات والوجبات
     menu_builder: 'منشئ القائمة',
     catalog_modifiers: 'الإضافات والوجبات',
+    // Shell nav sections (H6) + footer controls.
+    nav_sell: 'البيع',
+    nav_catalog: 'الكتالوج',
+    nav_people: 'الأشخاص',
+    nav_setup: 'الإعداد',
+    dark_mode: 'الوضع الداكن',
+    light_mode: 'الوضع الفاتح',
     group_name: 'اسم المجموعة',
     combo_name: 'اسم الوجبة',
     modifier_groups: 'مجموعات الإضافات',
@@ -2174,6 +2188,13 @@ const translations: Record<Language, Record<string, string>> = {
     // F-056 — मॉडिफ़ायर, मॉडिफ़ायर समूह और कॉम्बो
     menu_builder: 'मेन्यू बिल्डर',
     catalog_modifiers: 'मॉडिफ़ायर और कॉम्बो',
+    // Shell nav sections (H6) + footer controls.
+    nav_sell: 'बिक्री',
+    nav_catalog: 'कैटलॉग',
+    nav_people: 'लोग',
+    nav_setup: 'सेटअप',
+    dark_mode: 'डार्क मोड',
+    light_mode: 'लाइट मोड',
     group_name: 'समूह नाम',
     combo_name: 'कॉम्बो नाम',
     modifier_groups: 'मॉडिफ़ायर समूह',
@@ -3029,6 +3050,13 @@ const translations: Record<Language, Record<string, string>> = {
     // F-056 — موڈیفائرز، موڈیفائر گروپس اور کومبو
     menu_builder: 'مینو بلڈر',
     catalog_modifiers: 'موڈیفائرز اور کومبو',
+    // Shell nav sections (H6) + footer controls.
+    nav_sell: 'فروخت',
+    nav_catalog: 'کیٹلاگ',
+    nav_people: 'لوگ',
+    nav_setup: 'سیٹ اپ',
+    dark_mode: 'ڈارک موڈ',
+    light_mode: 'لائٹ موڈ',
     group_name: 'گروپ کا نام',
     combo_name: 'کومبو کا نام',
     modifier_groups: 'موڈیفائر گروپس',
