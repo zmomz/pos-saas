@@ -71,6 +71,11 @@ class CustomersResponse(BaseModel):
     marketing_consent: Optional[bool] = None
     consent_updated_at: Optional[datetime] = None
     pii_erased_at: Optional[datetime] = None
+    # CRM blacklist (#221): ``blacklisted`` is a derived flag (true iff
+    # ``blacklisted_at`` is set) so the client never has to interpret the timestamp.
+    blacklisted: Optional[bool] = None
+    blacklisted_at: Optional[datetime] = None
+    blacklist_reason: Optional[str] = None
     # Segmentation labels (CRM-04 / F-039). Stored as a JSON string on the ORM
     # row; the validator below parses it back into a list for the API so the
     # client always sees ``tags`` as a real array (or null when untagged).
@@ -822,3 +827,43 @@ async def post_store_credit(
         "balance": float(balance),
         "entry": StoreCreditEntry.model_validate(row),
     }
+
+
+# ---------- M5·CRM (#221) — customer blacklist ----------
+class BlacklistData(BaseModel):
+    """Body for blacklisting a customer; the reason is recorded for the audit trail."""
+    reason: Optional[str] = None
+
+
+@router.post("/{id}/blacklist", response_model=CustomersResponse)
+async def blacklist_customer(
+    id: int,
+    data: BlacklistData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Blacklist a customer so they can no longer transact (CRM, #221).
+
+    Owner-scoped (SEC-02): a foreign/unknown customer id → 404. The block is
+    enforced server-side at sale time (POS), not merely surfaced in the UI."""
+    customer = await CustomersService(db).set_blacklist(
+        id, user_id=scope.owner_user_id, reason=data.reason
+    )
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customers not found")
+    return CustomersResponse.model_validate(customer)
+
+
+@router.delete("/{id}/blacklist", response_model=CustomersResponse)
+async def unblacklist_customer(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lift a customer's blacklist (CRM, #221). Owner-scoped (SEC-02): foreign → 404."""
+    customer = await CustomersService(db).clear_blacklist(id, user_id=scope.owner_user_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customers not found")
+    return CustomersResponse.model_validate(customer)

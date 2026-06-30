@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy import select, func
@@ -139,6 +140,37 @@ class CustomersService:
             await self.db.rollback()
             logger.error(f"Error updating customers {obj_id}: {str(e)}")
             raise
+
+    async def set_blacklist(
+        self, obj_id: int, *, user_id: str, reason: Optional[str] = None
+    ) -> Optional[Customers]:
+        """Blacklist a customer (CRM #221), stamping when and why (owner-scoped).
+
+        Returns the updated row, or None when the customer isn't in the caller's
+        scope so the router can 404 (SEC-02)."""
+        obj = await self.get_by_id(obj_id, user_id=user_id)
+        if not obj:
+            return None
+        obj.blacklisted_at = datetime.now(timezone.utc)
+        obj.blacklist_reason = (reason or "").strip() or None
+        await self.db.commit()
+        await self.db.refresh(obj)
+        logger.info("Blacklisted customer %s", obj_id)
+        return obj
+
+    async def clear_blacklist(self, obj_id: int, *, user_id: str) -> Optional[Customers]:
+        """Lift a customer's blacklist (CRM #221), owner-scoped.
+
+        Returns the updated row, or None when out of scope (SEC-02 → router 404)."""
+        obj = await self.get_by_id(obj_id, user_id=user_id)
+        if not obj:
+            return None
+        obj.blacklisted_at = None
+        obj.blacklist_reason = None
+        await self.db.commit()
+        await self.db.refresh(obj)
+        logger.info("Cleared blacklist for customer %s", obj_id)
+        return obj
 
     async def delete(self, obj_id: int, user_id: Optional[str] = None) -> bool:
         """Delete customers (requires ownership)"""

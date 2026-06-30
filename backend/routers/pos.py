@@ -535,6 +535,27 @@ async def create_transaction(
     """Create a new POS transaction, ECDSA-signed and ZATCA-reported (C-3/C-4)."""
     client = await get_client_for_user(db, owner_id)
 
+    # ---- CRM blacklist (#221): a blacklisted customer cannot transact ----
+    # The server is authoritative: if the sale identifies a known customer in this
+    # tenancy who has been blacklisted, reject it (403) before anything is booked.
+    # An unknown/foreign customer_id is left to the existing flow (it may be a loose
+    # reference); only an owned, currently-blacklisted customer blocks the sale.
+    if data.customer_id:
+        blacklisted_customer = (
+            await db.execute(
+                select(Customers).where(
+                    Customers.id == data.customer_id,
+                    Customers.user_id == owner_id,
+                    Customers.blacklisted_at.isnot(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if blacklisted_customer is not None:
+            raise HTTPException(
+                status_code=403,
+                detail="Customer is blacklisted and cannot transact.",
+            )
+
     # ---- Branch-level pricing (#220): enforce the branch price at sale time ----
     # A catalog line rung up at a branch is charged that branch's effective price:
     # the branch override when one exists, else the chain-wide base. Mirrors the

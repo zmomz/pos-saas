@@ -43,5 +43,17 @@ class Customers(Base):
     # 6-year retention overrides erasure for fiscal records — see the data-export
     # retention notice). Null until erased.
     pii_erased_at = Column(DateTime(timezone=True), nullable=True)
+    # CRM blacklist (#221). When set, this customer is barred from transacting:
+    # ``blacklisted_at`` stamps when the merchant blocked them and
+    # ``blacklist_reason`` records why (chargeback fraud, abuse, …). Null ⇒ in good
+    # standing. The server is authoritative — a blacklisted customer is rejected at
+    # sale time (POS) rather than merely hidden in the UI.
+    blacklisted_at = Column(DateTime(timezone=True), nullable=True)
+    blacklist_reason = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.now)
     updated_at = Column(DateTime(timezone=True), default=datetime.now, onupdate=datetime.now)
+
+    @property
+    def blacklisted(self) -> bool:
+        """True when the customer is currently blacklisted (CRM #221)."""
+        return self.blacklisted_at is not None
