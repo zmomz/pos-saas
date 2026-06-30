@@ -33,6 +33,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class PinLoginRequest(BaseModel):
+    """Request body for on-terminal staff PIN login (#216).
+
+    ``merchant_email`` scopes the PIN to a single merchant's staff (PINs are only
+    unique within a merchant); ``pin`` is the staff member's numeric PIN.
+    """
+
+    merchant_email: EmailStr
+    pin: str
+
+
 class LoginResponse(BaseModel):
     """Response body for a successful login/registration."""
 

@@ -2189,6 +2189,124 @@ export async function deleteStaffMember(id: string) {
   await client.entities.staff_members.delete({ id });
 }
 
+// ---------------------------------------------------------------------------
+// Staff lifecycle (#216): suspend/terminate, attendance, shifts, PIN.
+// ---------------------------------------------------------------------------
+const STAFF_BASE = '/api/v1/entities/staff_members';
+
+export type StaffLifecycleAction = 'suspend' | 'terminate' | 'reactivate';
+
+/** Move a staff member through the lifecycle (suspend/terminate revoke access). */
+export async function setStaffLifecycle(id: string | number, action: StaffLifecycleAction) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/${action}`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+/** Set a staff member's numeric login PIN (4–8 digits). */
+export async function setStaffPin(id: string | number, pin: string) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/pin`,
+    method: 'PUT',
+    data: { pin },
+  });
+  return response.data;
+}
+
+/** Remove a staff member's PIN (disables their PIN login). */
+export async function clearStaffPin(id: string | number) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/pin`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
+export interface StaffAttendance {
+  id: number;
+  staff_id: number;
+  branch_id?: number | null;
+  clock_in?: string | null;
+  clock_out?: string | null;
+  hours?: number | null;
+  notes?: string | null;
+}
+
+export async function clockInStaff(id: string | number, notes?: string) {
+  const response = await client.apiCall.invoke<StaffAttendance>({
+    url: `${STAFF_BASE}/${id}/attendance/clock-in`,
+    method: 'POST',
+    data: { notes },
+  });
+  return response.data;
+}
+
+export async function clockOutStaff(id: string | number) {
+  const response = await client.apiCall.invoke<StaffAttendance>({
+    url: `${STAFF_BASE}/${id}/attendance/clock-out`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+export async function getStaffAttendance(id: string | number): Promise<StaffAttendance[]> {
+  const response = await client.apiCall.invoke<StaffAttendance[]>({
+    url: `${STAFF_BASE}/${id}/attendance`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export interface StaffShift {
+  id: number;
+  staff_id: number;
+  branch_id?: number | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  role?: string | null;
+  notes?: string | null;
+  status: string;
+}
+
+export async function assignStaffShift(
+  id: string | number,
+  shift: { starts_at: string; ends_at: string; role?: string; notes?: string },
+): Promise<StaffShift> {
+  const response = await client.apiCall.invoke<StaffShift>({
+    url: `${STAFF_BASE}/${id}/shifts`,
+    method: 'POST',
+    data: shift,
+  });
+  return response.data;
+}
+
+export async function getStaffShifts(id: string | number): Promise<StaffShift[]> {
+  const response = await client.apiCall.invoke<StaffShift[]>({
+    url: `${STAFF_BASE}/${id}/shifts`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function cancelStaffShift(shiftId: string | number): Promise<StaffShift> {
+  const response = await client.apiCall.invoke<StaffShift>({
+    url: `${STAFF_BASE}/shifts/${shiftId}`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
+/** Fetch the merchant's attendance export as CSV text (payroll hand-off). */
+export async function exportStaffAttendanceCsv(): Promise<string> {
+  const response = await client.apiCall.invoke<string>({
+    url: `${STAFF_BASE}/attendance/export`,
+    method: 'GET',
+  });
+  return typeof response.data === 'string' ? response.data : String(response.data ?? '');
+}
+
 // ISSUE-035: owner-scoped staff-permission editor. `override` is the explicit
 // grant/deny row (null = no override → the role default applies); `effective`
 // is what `has_permission` resolves to.
