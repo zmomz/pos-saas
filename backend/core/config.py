@@ -149,6 +149,26 @@ class Settings(BaseSettings):
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.0
 
+    # Job queue + internal event bus (ISSUE-218, M10 / §6.2). Background work
+    # (webhook-delivery retries, ZATCA reconcile, report materialization,
+    # notifications, exports) is funnelled through one ``services.job_queue``
+    # seam. The default backend "memory" runs each queued job inline in the
+    # originating process — no broker, so dev/CI need nothing extra and existing
+    # behaviour is preserved. Set JOB_QUEUE_BACKEND=redis (with REDIS_URL) to
+    # enqueue onto a real Redis-backed Arq queue drained by a separate worker
+    # process (see ``worker.py``), so the work survives a crash and runs
+    # out-of-band of the request that triggered it.
+    job_queue_backend: str = "memory"
+    redis_url: str = ""
+    # Per-job durable retry budget for the queue (webhook delivery, reconcile,
+    # …). The memory backend retries inline with exponential backoff; the Redis
+    # backend maps this onto Arq's ``max_tries``.
+    job_max_retries: int = 5
+    # Arq cron cadence: how often the worker re-enqueues the platform-wide ZATCA
+    # reconcile + report-materialization sweeps. Only meaningful under the redis
+    # backend; 0 disables the periodic enqueue.
+    queue_sweep_interval_seconds: int = 900
+
     @property
     def backend_url(self) -> str:
         """Generate backend URL from host and port."""

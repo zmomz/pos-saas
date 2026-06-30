@@ -109,6 +109,14 @@ async def lifespan(app: FastAPI):
     from services.billing_scheduler import start_billing_scheduler
 
     start_billing_scheduler()
+
+    # Job queue + internal event bus (ISSUE-218, M10). Importing the event bus
+    # registers every domain-event subscriber and queued-job handler up front, so
+    # the first published event (e.g. shift.closed) always has its webhook fan-out
+    # and delivery jobs wired — no lazy first-call surprise. The queue runs inline
+    # under the default "memory" backend; JOB_QUEUE_BACKEND=redis offloads to the
+    # Arq worker (see worker.py).
+    import services.event_bus  # noqa: F401  (side-effect: subscriber/job registration)
     # MODULE_STARTUP_END
 
     logger.info("=== Application startup completed successfully ===")
@@ -118,7 +126,13 @@ async def lifespan(app: FastAPI):
     from services.kds_channel import kds_broker
 
     await stop_billing_scheduler()
+
     await kds_broker.shutdown()
+
+    # Release the job-queue broker connection (no-op under the memory backend).
+    from services import job_queue
+
+    await job_queue.close()
     await close_database()
     # MODULE_SHUTDOWN_END
 
