@@ -339,7 +339,7 @@ export default function ExpenseTracking() {
                       {expense.category}
                     </span>
                   </td>
-                  <td className="p-3 max-w-[200px] truncate">{expense.description || '—'}</td>
+                  <td className="p-3 max-w-[200px] truncate" title={expense.description || undefined}>{expense.description || '—'}</td>
                   <td className="p-3 text-danger font-medium tabular-nums">{formatMoney(expense.amount || 0, language)}</td>
                   <td className="p-3">
                     <div className="flex gap-2">

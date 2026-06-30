@@ -10,6 +10,14 @@ export type Language = 'ar' | 'en' | 'hi' | 'ur';
 
 export const translations: Record<Language, Record<string, string>> = {
   en: {
+    // ISSUE-244 — i18n/layout long-tail: shared pagination + example placeholders.
+    of: 'of',
+    previous: 'Previous',
+    next: 'Next',
+    product_name_ar_placeholder: 'Arabic name',
+    variant_name_placeholder: 'Red / Large',
+    station_name_placeholder: 'Grill',
+    station_name_ar_placeholder: 'Arabic name',
     // Reservations + waitlist (ISSUE-069).
     rw_title: 'Reservations & Waitlist',
     rw_subtitle: 'Book tables ahead and queue walk-ins',
@@ -1493,6 +1501,14 @@ export const translations: Record<Language, Record<string, string>> = {
     no_inventory_data: "No inventory data for this branch",
   },
   ar: {
+    // ISSUE-244 — i18n/layout long-tail: shared pagination + example placeholders.
+    of: 'من',
+    previous: 'السابق',
+    next: 'التالي',
+    product_name_ar_placeholder: 'الاسم بالعربية',
+    variant_name_placeholder: 'أحمر / كبير',
+    station_name_placeholder: 'الشواية',
+    station_name_ar_placeholder: 'الاسم بالعربية',
     // Shell command bar (icon rail + greeting + ⌘K).
     good_morning: 'صباح الخير',
     good_afternoon: 'مساء الخير',
@@ -2975,6 +2991,14 @@ export const translations: Record<Language, Record<string, string>> = {
     no_inventory_data: "لا توجد بيانات مخزون لهذا الفرع",
   },
   hi: {
+    // ISSUE-244 — i18n/layout long-tail: shared pagination + example placeholders.
+    of: 'में से',
+    previous: 'पिछला',
+    next: 'अगला',
+    product_name_ar_placeholder: 'अरबी नाम',
+    variant_name_placeholder: 'लाल / बड़ा',
+    station_name_placeholder: 'ग्रिल',
+    station_name_ar_placeholder: 'अरबी नाम',
     // Reservations + waitlist (ISSUE-069).
     rw_title: 'आरक्षण और प्रतीक्षा सूची',
     rw_subtitle: 'टेबल पहले से बुक करें और वॉक-इन को कतार में रखें',
@@ -4449,6 +4473,14 @@ export const translations: Record<Language, Record<string, string>> = {
     no_inventory_data: "इस शाखा के लिए कोई इन्वेंट्री डेटा नहीं",
   },
   ur: {
+    // ISSUE-244 — i18n/layout long-tail: shared pagination + example placeholders.
+    of: 'میں سے',
+    previous: 'پچھلا',
+    next: 'اگلا',
+    product_name_ar_placeholder: 'عربی نام',
+    variant_name_placeholder: 'سرخ / بڑا',
+    station_name_placeholder: 'گرل',
+    station_name_ar_placeholder: 'عربی نام',
     // Reservations + waitlist (ISSUE-069).
     rw_title: 'بکنگز اور ویٹ لسٹ',
     rw_subtitle: 'میزیں پہلے سے بُک کریں اور آنے والوں کو قطار میں رکھیں',

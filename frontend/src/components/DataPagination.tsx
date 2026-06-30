@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button';
+import { useLanguage } from '@/lib/i18n';
 
 interface DataPaginationProps {
   page: number;
@@ -16,6 +17,7 @@ interface DataPaginationProps {
  * array for client-side paging, or wire onPageChange to a server fetch.
  */
 export function DataPagination({ page, pageSize, total, onPageChange }: DataPaginationProps) {
+  const { t } = useLanguage();
   const pageCount = Math.max(1, Math.ceil(total / pageSize));
   if (total <= pageSize) return null;
 
@@ -25,7 +27,7 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
   return (
     <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
       <span>
-        {start}–{end} of {total}
+        {start}–{end} {t('of')} {total}
       </span>
       <div className="flex items-center gap-2">
         <Button
@@ -35,7 +37,7 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
           onClick={() => onPageChange(page - 1)}
           className="border-input text-foreground/90 hover:bg-muted"
         >
-          Previous
+          {t('previous')}
         </Button>
         <span className="px-2">
           {page} / {pageCount}
@@ -47,7 +49,7 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
           onClick={() => onPageChange(page + 1)}
           className="border-input text-foreground/90 hover:bg-muted"
         >
-          Next
+          {t('next')}
         </Button>
       </div>
     </div>

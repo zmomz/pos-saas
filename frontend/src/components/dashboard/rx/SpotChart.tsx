@@ -106,7 +106,9 @@ export default function SpotChart({
         </div>
       </div>
 
-      <div className="relative">
+      {/* overflow-x-clip: the hover tooltip is translated -50% on x, so at the
+          chart edges it would otherwise overflow and trigger a phantom scrollbar. */}
+      <div className="relative overflow-x-clip">
         <svg
           ref={svgRef}
           viewBox={`0 0 ${W} ${H}`}

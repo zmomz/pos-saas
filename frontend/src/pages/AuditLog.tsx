@@ -181,7 +181,7 @@ export default function AuditLog() {
                         {actionLabel(log.action)}
                       </span>
                     </td>
-                    <td className="max-w-[320px] truncate px-4 py-3">{log.details || '—'}</td>
+                    <td className="max-w-[320px] truncate px-4 py-3" title={log.details || undefined}>{log.details || '—'}</td>
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground" dir="ltr">{log.ip_address || '—'}</td>
                   </tr>
                 ))

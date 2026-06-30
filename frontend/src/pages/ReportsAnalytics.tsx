@@ -1141,7 +1141,7 @@ export default function ReportsAnalytics() {
                 const barWidth = (point.total_sales / maxSales) * 100;
                 return (
                   <div key={point.period} className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground w-24 shrink-0 truncate">
+                    <span className="text-xs text-muted-foreground w-28 shrink-0 truncate" title={point.period}>
                       {point.period}
                     </span>
                     <Bar pct={barWidth} className="flex-1" />

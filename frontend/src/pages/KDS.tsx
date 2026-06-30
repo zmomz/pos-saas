@@ -54,7 +54,7 @@ function isLate(fromIso?: string | null, now = Date.now()): boolean {
 }
 
 export default function KDS() {
-  const { t } = useLanguage();
+  const { t, tt } = useLanguage();
 
   const [stations, setStations] = useState<PrepStation[]>([]);
   const [cards, setCards] = useState<KdsCard[]>([]);
@@ -352,7 +352,7 @@ export default function KDS() {
                   <Input
                     value={stationForm.name}
                     onChange={(e) => setStationForm((f) => ({ ...f, name: e.target.value }))}
-                    placeholder="Grill"
+                    placeholder={tt('station_name_placeholder', 'Grill')}
                     className="bg-muted border-input text-foreground"
                   />
                 </div>
@@ -364,7 +364,7 @@ export default function KDS() {
                     value={stationForm.name_ar}
                     onChange={(e) => setStationForm((f) => ({ ...f, name_ar: e.target.value }))}
                     dir="rtl"
-                    placeholder="الشواية"
+                    placeholder={tt('station_name_ar_placeholder', 'الشواية')}
                     className="bg-muted border-input text-foreground"
                   />
                 </div>

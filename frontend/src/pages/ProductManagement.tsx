@@ -516,7 +516,7 @@ export default function ProductManagement() {
           <Input
             value={formData.name_ar}
             onChange={(e) => handleFormChange('name_ar', e.target.value)}
-            placeholder="اسم المنتج"
+            placeholder={tt('product_name_ar_placeholder', 'اسم المنتج')}
             dir="rtl"
           />
         </div>
@@ -1126,7 +1126,7 @@ export default function ProductManagement() {
                 <Input
                   value={variantForm.name}
                   onChange={(e) => setVariantForm((p) => ({ ...p, name: e.target.value }))}
-                  placeholder="Red / Large"
+                  placeholder={tt('variant_name_placeholder', 'Red / Large')}
                 />
               </div>
               <div>

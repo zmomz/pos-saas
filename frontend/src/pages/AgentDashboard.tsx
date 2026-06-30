@@ -616,7 +616,7 @@ export default function AgentDashboard() {
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
           <div className="text-[12.5px] font-semibold text-muted-foreground">{t('remaining_slots')}</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{remainingSlots} of {slotCapacity}</div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{remainingSlots} {t('of')} {slotCapacity}</div>
           <div className="mt-auto pt-2">
             <Bar pct={slotCapacity > 0 ? Math.round((remainingSlots / slotCapacity) * 100) : 0} barClassName="bg-gradient-to-r from-warning to-gold-600" />
           </div>
