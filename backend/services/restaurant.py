@@ -596,6 +596,70 @@ class RestaurantService:
         )
         return result.scalar() or 0
 
+    @staticmethod
+    def _naive(value: Optional[datetime]) -> Optional[datetime]:
+        """Drop tz-info so a naive ``opened_at`` and a naive clock subtract cleanly."""
+        if value is not None and value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+
+    async def table_timers(
+        self,
+        user_id: str,
+        at: Optional[datetime] = None,
+        over_minutes: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """How long each of the caller's *active* tables has been seated (F-062).
+
+        One row per non-closed ticket (open/held/fired — settled/void are off the
+        floor), with the duration since ``opened_at`` against ``at`` (defaults to
+        the live clock). When ``over_minutes`` is given, a ticket seated at/over
+        that target is flagged ``is_over`` — the floor-map "long-seated" alert.
+        Owner-scoped (SEC-02); sorted longest-seated first.
+        """
+        clock = self._naive(at) or self._naive(datetime.now())
+        threshold = None if over_minutes is None else float(over_minutes) * 60
+
+        tickets = (
+            await self.db.execute(
+                select(OrderTickets).where(
+                    OrderTickets.user_id == user_id,
+                    OrderTickets.status.notin_(CLOSED_TICKET_STATUSES),
+                )
+            )
+        ).scalars().all()
+
+        names = {
+            t.id: t.name
+            for t in (
+                await self.db.execute(
+                    select(RestaurantTables).where(RestaurantTables.user_id == user_id)
+                )
+            ).scalars().all()
+        }
+
+        timers: List[Dict[str, Any]] = []
+        for tk in tickets:
+            opened = self._naive(tk.opened_at)
+            seconds = 0.0 if opened is None else (clock - opened).total_seconds()
+            seconds = max(0.0, seconds)
+            timers.append(
+                {
+                    "ticket_id": tk.id,
+                    "table_id": tk.table_id,
+                    "table_name": names.get(tk.table_id),
+                    "order_type": tk.order_type or "dine_in",
+                    "status": tk.status or "open",
+                    "server_name": tk.server_name,
+                    "opened_at": opened.isoformat() if opened else None,
+                    "seated_seconds": int(seconds),
+                    "seated_minutes": int(seconds // 60),
+                    "is_over": bool(threshold is not None and seconds >= threshold),
+                }
+            )
+        timers.sort(key=lambda r: r["seated_seconds"], reverse=True)
+        return timers
+
     # ------------------------------------------------------ order ticket items
     async def list_items(self, ticket_id: int, user_id: str) -> List[OrderTicketItems]:
         """Lines on a ticket the caller owns (owner-scoped, SEC-02)."""

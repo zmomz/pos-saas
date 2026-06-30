@@ -1006,6 +1006,23 @@ async def create_order_ticket(
     return ticket
 
 
+@router.get("/order-tickets/timers")
+async def get_table_timers(
+    over_minutes: Optional[float] = Query(None, ge=0),
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """How long each active table has been seated, longest first (F-062).
+
+    ``over_minutes`` flags tickets seated past a turn-time target (the floor-map
+    "long-seated" alert). Registered before ``/order-tickets/{ticket_id}`` so the
+    literal path wins. Owner-scoped (SEC-02).
+    """
+    service = RestaurantService(db)
+    timers = await service.table_timers(client.user_id, over_minutes=over_minutes)
+    return {"items": timers, "total": len(timers)}
+
+
 @router.get("/order-tickets/{ticket_id}", response_model=OrderTicketResponse)
 async def get_order_ticket(
     ticket_id: int,
