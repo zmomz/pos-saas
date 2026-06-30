@@ -49,6 +49,28 @@ export async function getAgentSuspendImpact(agentId: number): Promise<AgentSuspe
   return response.data;
 }
 
+// M10 Ops (#211): the "last backup" health indicator. Collapses the backup-run
+// ledger into one operable state — ok / stale / failing / missing — against the
+// documented RPO/RTO targets, so the master sees DR posture at a glance.
+export interface BackupHealth {
+  status: 'ok' | 'stale' | 'failing' | 'missing';
+  last_success_at?: string | null;
+  last_run_at?: string | null;
+  last_run_status?: string | null;
+  age_seconds?: number | null;
+  total_runs: number;
+  rpo_target_seconds: number;
+  rto_target_seconds: number;
+}
+export async function getBackupHealth(): Promise<BackupHealth> {
+  const response = await client.apiCall.invoke<BackupHealth>({
+    url: '/api/v1/tenant/master/ops/backups/health',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // MA-08 / RSL-08 / RPT-09 (F-023): platform-wide economics for the master operator
 // console — MRR (yearly plans normalized to fee/12), churn (suspended share),
 // active merchants, and a revenue-by-agent leaderboard. `collected` is the agent's

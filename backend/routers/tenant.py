@@ -11,7 +11,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, update, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,6 +48,9 @@ from core.cache import (
     invalidate_tax,
 )
 from models.audit_logs import Audit_logs
+# Imported so the backup_runs ledger table registers on Base.metadata at startup
+# (M10 Ops / #211). The /master/ops/backups endpoints reference it lazily.
+from models.backup_runs import Backup_runs  # noqa: F401
 from models.processed_webhook_events import Processed_webhook_events
 from services.system_settings import (
     GLOBAL_TAX_RATE_KEY,
@@ -451,6 +454,154 @@ async def agent_suspend_impact(
         merchant_count=merchant_count,
         staff_count=staff_count,
     )
+
+
+# ---------- Backup health indicator (M10 Ops / #211) ----------
+# Documented disaster-recovery targets. RPO bounds acceptable data loss (how
+# stale the newest successful backup may be); RTO bounds restore time. Surfaced
+# on the health payload so the indicator is operable, not just a green/red dot.
+BACKUP_RPO_TARGET_SECONDS = 24 * 60 * 60  # 24h — a daily backup must have landed
+BACKUP_RTO_TARGET_SECONDS = 4 * 60 * 60  # 4h — restore-drill target
+
+
+class BackupRunRequest(BaseModel):
+    """A backup-run heartbeat posted by the PITR cron after each run finishes."""
+
+    status: str = Field(default="success", description="success | failed")
+    kind: str = Field(default="full", description="full | incremental | wal")
+    size_bytes: Optional[int] = None
+    note: Optional[str] = None
+    finished_at: Optional[datetime] = None
+
+
+class BackupRunResponse(BaseModel):
+    id: int
+    kind: str
+    status: str
+    size_bytes: Optional[int] = None
+    finished_at: Optional[datetime] = None
+
+
+class BackupHealthResponse(BaseModel):
+    """The "last backup" indicator (#211).
+
+    ``status`` collapses the ledger into one operable state:
+    * ``missing`` — no backup has ever run.
+    * ``failing`` — the most recent run failed (regardless of older successes).
+    * ``stale``  — the newest *successful* backup is older than the RPO target.
+    * ``ok``     — a successful backup landed within the RPO window.
+    """
+
+    status: str
+    last_success_at: Optional[datetime] = None
+    last_run_at: Optional[datetime] = None
+    last_run_status: Optional[str] = None
+    age_seconds: Optional[int] = None
+    total_runs: int
+    rpo_target_seconds: int
+    rto_target_seconds: int
+
+
+@router.post("/master/ops/backups", response_model=BackupRunResponse, status_code=201)
+async def record_backup_run(
+    data: BackupRunRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Master: record a backup run (heartbeat from the PITR cron). Append-only."""
+    from models.backup_runs import Backup_runs
+
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "master":
+        raise HTTPException(status_code=403, detail="Only master can access this endpoint")
+
+    finished_at = data.finished_at or datetime.now(timezone.utc)
+    run = Backup_runs(
+        kind=data.kind,
+        status=data.status,
+        size_bytes=data.size_bytes,
+        note=data.note,
+        finished_at=finished_at,
+    )
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+
+    return BackupRunResponse(
+        id=run.id,
+        kind=run.kind,
+        status=run.status,
+        size_bytes=run.size_bytes,
+        finished_at=run.finished_at,
+    )
+
+
+@router.get("/master/ops/backups/health", response_model=BackupHealthResponse)
+async def backup_health(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Master: the "last backup" health indicator (#211).
+
+    Collapses the backup ledger into one operable state against the documented
+    RPO target. Read-only — never mutates the ledger.
+    """
+    from models.backup_runs import Backup_runs
+
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "master":
+        raise HTTPException(status_code=403, detail="Only master can access this endpoint")
+
+    total = int(
+        (await db.execute(select(func.count(Backup_runs.id)))).scalar() or 0
+    )
+
+    base = BackupHealthResponse(
+        status="missing",
+        total_runs=total,
+        rpo_target_seconds=BACKUP_RPO_TARGET_SECONDS,
+        rto_target_seconds=BACKUP_RTO_TARGET_SECONDS,
+    )
+    if total == 0:
+        return base
+
+    # Most recent run of any outcome (a fresh failure must dominate the indicator).
+    latest = (
+        await db.execute(
+            select(Backup_runs).order_by(Backup_runs.finished_at.desc()).limit(1)
+        )
+    ).scalar_one()
+    base.last_run_at = latest.finished_at
+    base.last_run_status = latest.status
+
+    # Most recent *successful* run bounds the RPO window.
+    last_success = (
+        await db.execute(
+            select(Backup_runs)
+            .where(Backup_runs.status == "success")
+            .order_by(Backup_runs.finished_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if last_success is not None and last_success.finished_at is not None:
+        base.last_success_at = last_success.finished_at
+        finished = last_success.finished_at
+        if finished.tzinfo is None:
+            finished = finished.replace(tzinfo=timezone.utc)
+        age = int((datetime.now(timezone.utc) - finished).total_seconds())
+        base.age_seconds = max(age, 0)
+
+    if latest.status != "success":
+        base.status = "failing"
+    elif base.age_seconds is not None and base.age_seconds > BACKUP_RPO_TARGET_SECONDS:
+        base.status = "stale"
+    elif base.last_success_at is not None:
+        base.status = "ok"
+    else:
+        base.status = "missing"
+
+    return base
 
 
 @router.post("/master/agents", response_model=CreateAgentResponse, status_code=201)

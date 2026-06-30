@@ -4,9 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, getAuditLogs, getAgentSuspendImpact, type MasterEconomics, type AgentSuspendImpact } from '@/lib/api';
+import { getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, getAuditLogs, getAgentSuspendImpact, getBackupHealth, type MasterEconomics, type AgentSuspendImpact, type BackupHealth } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import ErrorState from '@/components/states/ErrorState';
 import CountUp from '@/components/dashboard/rx/CountUp';
@@ -66,6 +66,9 @@ export default function MasterDashboard() {
   const [ecoLoading, setEcoLoading] = useState(true);
   const [ecoError, setEcoError] = useState(false);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
+  // #211 (M10 Ops): the "last backup" DR indicator. null = probe failed/not yet
+  // loaded → renders an honest "unknown" rather than a fabricated healthy dot.
+  const [backup, setBackup] = useState<BackupHealth | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newAgentForm, setNewAgentForm] = useState({ company_name: '', email: '', phone: '', package_id: '' });
   const [creating, setCreating] = useState(false);
@@ -90,6 +93,9 @@ export default function MasterDashboard() {
     getAuditLogs()
       .then((d) => setAuditEntries(Array.isArray(d?.items) ? d.items : Array.isArray(d) ? d : []))
       .catch(() => setAuditEntries([]));
+    // Fetched in isolation — a failed backup probe degrades to "unknown" and must
+    // never block the operator console (#211).
+    getBackupHealth().then(setBackup).catch(() => setBackup(null));
   }, []);
 
   async function loadData() {
@@ -343,6 +349,34 @@ export default function MasterDashboard() {
           <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums">{ecoVal(<CountUp value={economics?.active_clients ?? 0} />)}</div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{ecoError ? '—' : economics?.total_clients ?? 0} {tt('total', 'total')} · {totalAgents} {tt('agents', 'agents')}</div>
         </section>
+
+        {/* Last-backup DR indicator (#211). status: ok | stale | failing |
+            missing | unknown (probe failed). Operable, not just a dot — shows
+            the last-success time so the operator can judge RPO posture. */}
+        {(() => {
+          const status = backup?.status ?? 'unknown';
+          const ok = status === 'ok';
+          const pill = ok ? 'pill-success' : status === 'unknown' || status === 'missing' ? 'pill-muted' : 'pill-danger';
+          const label =
+            status === 'ok' ? tt('backup_ok', 'Backups healthy')
+            : status === 'stale' ? tt('backup_stale', 'Backup stale')
+            : status === 'failing' ? tt('backup_failing', 'Backup failing')
+            : status === 'missing' ? tt('backup_missing', 'No backups yet')
+            : tt('backup_unknown', 'Status unknown');
+          return (
+            <section data-testid="backup-health" data-status={status} className="dxr-tile dxr-hover flex flex-col lg:col-span-4 lg:row-span-1">
+              <div className="mb-1 flex items-center justify-between">
+                <div className="text-[12.5px] font-semibold text-muted-foreground">{tt('last_backup', 'Last Backup')}</div>
+                <span data-testid="backup-health-status" data-status={status} className={pill}><span className="h-1.5 w-1.5 rounded-full bg-current" />{label}</span>
+              </div>
+              <div className="mt-auto text-[11.5px] text-muted-foreground">
+                {backup?.last_success_at
+                  ? formatDateTime(backup.last_success_at, language)
+                  : tt('backup_never', 'never')}
+              </div>
+            </section>
+          );
+        })()}
 
         {/* KPI chips */}
         <KpiChip label={tt('total_agents', 'Total Agents')} value={<CountUp value={totalAgents} />} delta={{ dir: 'up', text: `${activeAgents} ${tt('active', 'active')}` }} foot={`${totalSlots} ${tt('slots', 'slots')} total`} />
