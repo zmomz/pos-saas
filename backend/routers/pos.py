@@ -29,6 +29,7 @@ from models.zatca_documents import ZatcaDocuments
 # Imported so the per-branch stock table registers on Base.metadata at startup
 # (services.branch_stock is only imported lazily inside handlers).
 from models.product_branch_stock import Product_branch_stock  # noqa: F401
+from models.product_branch_price import Product_branch_price  # noqa: F401
 # Imported so the variant table registers on Base.metadata at startup
 # (services.product_variants is only imported lazily inside handlers).
 from models.product_variants import Product_variants  # noqa: F401
@@ -2263,6 +2264,90 @@ async def set_branch_stock_endpoint(
         "product_id": row.product_id,
         "quantity": row.quantity,
     }
+
+
+# ---------- Per-branch price overrides (#220 multi-branch: branch pricing) ----------
+class BranchPriceSetRequest(BaseModel):
+    product_id: int
+    price: float
+
+
+@router.get("/branches/{branch_id}/prices")
+async def get_branch_prices(
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the per-branch price overrides for a branch (#220 branch pricing)."""
+    from services.branch_pricing import list_branch_prices
+
+    client = await get_client_for_user(db, owner_id)
+    rows = await list_branch_prices(db, client.id, branch_id)
+    return {
+        "branch_id": branch_id,
+        "items": [{"product_id": r.product_id, "price": r.price} for r in rows],
+        "total": len(rows),
+    }
+
+
+@router.get("/branches/{branch_id}/prices/resolve")
+async def resolve_branch_price(
+    branch_id: int,
+    product_id: int = Query(..., description="Product to resolve the effective price for"),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve the effective price for a product at a branch — the branch override
+    when one exists, else the product's chain-wide base price (#220)."""
+    from services.branch_pricing import resolve_price
+
+    client = await get_client_for_user(db, owner_id)
+    resolved = await resolve_price(db, client.id, branch_id, product_id)
+    if resolved is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return resolved
+
+
+@router.put("/branches/{branch_id}/prices")
+async def set_branch_price_endpoint(
+    branch_id: int,
+    data: BranchPriceSetRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set/adjust a product's price override for a specific branch (#220)."""
+    from services.branch_pricing import set_branch_price
+
+    client = await get_client_for_user(db, owner_id)
+    row = await set_branch_price(
+        db, owner_id, client.id, branch_id, data.product_id, data.price
+    )
+    return {
+        "branch_id": branch_id,
+        "product_id": row.product_id,
+        "price": row.price,
+    }
+
+
+@router.delete("/branches/{branch_id}/prices/{product_id}")
+async def delete_branch_price_endpoint(
+    branch_id: int,
+    product_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a product's branch override so it falls back to the base price (#220)."""
+    from services.branch_pricing import delete_branch_price
+
+    client = await get_client_for_user(db, owner_id)
+    removed = await delete_branch_price(db, client.id, branch_id, product_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Branch price override not found")
+    return {"branch_id": branch_id, "product_id": product_id, "removed": True}
 
 
 # ---------- Per-branch variant stock ledger (ISSUE-067) ----------

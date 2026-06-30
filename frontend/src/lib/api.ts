@@ -2671,6 +2671,54 @@ export async function setBranchStock(branchId: number, productId: number, quanti
   return response.data;
 }
 
+// Per-branch price overrides (#220 multi-branch: branch-level pricing). A branch
+// may carry its own price for a product; absent an override the chain-wide base
+// price applies. `resolveBranchPrice` returns the effective price for the POS.
+export interface BranchPriceItem {
+  product_id: number;
+  price: number;
+}
+
+export interface BranchPriceResolution {
+  product_id: number;
+  branch_id: number;
+  price: number;
+  is_override: boolean;
+}
+
+export async function getBranchPrices(branchId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/prices`,
+    method: 'GET',
+  });
+  return response.data as { branch_id: number; items: BranchPriceItem[]; total: number };
+}
+
+export async function setBranchPrice(branchId: number, productId: number, price: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/prices`,
+    method: 'PUT',
+    data: { product_id: productId, price },
+  });
+  return response.data;
+}
+
+export async function deleteBranchPrice(branchId: number, productId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/prices/${productId}`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
+export async function resolveBranchPrice(branchId: number, productId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/prices/resolve?product_id=${productId}`,
+    method: 'GET',
+  });
+  return response.data as BranchPriceResolution;
+}
+
 // Per-branch *variant* stock ledger (parity #5, INV-03 × INV-04). Each variant SKU
 // carries its own per-branch allocation, separate from the parent product's stock.
 export interface BranchVariantStockItem {
