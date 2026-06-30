@@ -1,9 +1,27 @@
 import { useState, useEffect } from 'react';
-import { Bell, AlertTriangle, CheckCheck } from 'lucide-react';
+import { Bell, AlertTriangle, CheckCheck, Send, Mail, MessageCircle, Smartphone, CalendarClock } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { useLanguage } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import { getNotifications, markNotificationRead } from '@/lib/api';
+import {
+  getNotifications,
+  markNotificationRead,
+  sendNotification,
+  type NotificationChannel,
+} from '@/lib/api';
+import { notifyError } from '@/lib/notify';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
@@ -16,12 +34,31 @@ interface Notification {
   created_at: string;
 }
 
+// The channels the composer can target. Each carries its own recipient idiom so
+// the field labels itself by what the operator actually types (an email address
+// vs. a phone number vs. a device/user), never a generic "to".
+const CHANNELS: { value: NotificationChannel; icon: typeof Mail }[] = [
+  { value: 'email', icon: Mail },
+  { value: 'whatsapp', icon: MessageCircle },
+  { value: 'push', icon: Smartphone },
+];
+
 export default function Notifications() {
   const { language, t, tt, isRTL } = useLanguage();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [denied, setDenied] = useState(false);
+
+  // Composer state (M10 / parity #8).
+  const [composeOpen, setComposeOpen] = useState(false);
+  const [channel, setChannel] = useState<NotificationChannel>('email');
+  const [recipient, setRecipient] = useState('');
+  const [subject, setSubject] = useState('');
+  const [body, setBody] = useState('');
+  const [scheduleOn, setScheduleOn] = useState(false);
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [sending, setSending] = useState(false);
 
   useEffect(() => {
     fetchNotifications();
@@ -63,6 +100,44 @@ export default function Notifications() {
     }
   }
 
+  function resetComposer() {
+    setChannel('email');
+    setRecipient('');
+    setSubject('');
+    setBody('');
+    setScheduleOn(false);
+    setScheduledAt('');
+  }
+
+  async function handleSend() {
+    setSending(true);
+    try {
+      const scheduled_at = scheduleOn && scheduledAt ? new Date(scheduledAt).toISOString() : null;
+      const res = await sendNotification({
+        channel,
+        to: recipient.trim(),
+        subject: subject.trim() || undefined,
+        body,
+        scheduled_at,
+      });
+      // Report the server's real outcome — never claim "sent" when the channel
+      // only logged (no provider) or the send was deferred.
+      if (res.status === 'scheduled') {
+        toast.success(tt('notification_scheduled', 'Notification scheduled'));
+      } else if (res.status === 'sent') {
+        toast.success(tt('notification_sent', 'Notification sent'));
+      } else {
+        toast.info(tt('notification_logged', 'Recorded — this channel has no provider configured yet'));
+      }
+      setComposeOpen(false);
+      resetComposer();
+    } catch (err) {
+      notifyError(err, tt('notification_send_failed', 'Could not send the notification'));
+    } finally {
+      setSending(false);
+    }
+  }
+
   function formatTime(dateStr: string) {
     try {
       const date = new Date(dateStr);
@@ -74,6 +149,15 @@ export default function Notifications() {
       return dateStr;
     }
   }
+
+  const recipientLabel =
+    channel === 'email'
+      ? tt('recipient_email', 'Email address')
+      : channel === 'whatsapp'
+      ? tt('recipient_phone', 'Phone number')
+      : tt('recipient_device', 'Device or user');
+  const recipientType = channel === 'email' ? 'email' : channel === 'whatsapp' ? 'tel' : 'text';
+  const canSend = recipient.trim() !== '' && body.trim() !== '' && (!scheduleOn || scheduledAt !== '');
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
   const title = t('notifications');
@@ -93,6 +177,10 @@ export default function Notifications() {
             {markAllLabel}
           </Button>
         )}
+        <Button size="sm" onClick={() => setComposeOpen(true)}>
+          <Send className="h-4 w-4" />
+          {tt('compose', 'Compose')}
+        </Button>
       </PageHeading>
 
       {loading && (
@@ -140,6 +228,108 @@ export default function Notifications() {
           })}
         </div>
       )}
+
+      {/* Composer (M10 / parity #8) */}
+      <Dialog open={composeOpen} onOpenChange={(o) => { setComposeOpen(o); if (!o) resetComposer(); }}>
+        <DialogContent dir={isRTL ? 'rtl' : 'ltr'}>
+          <DialogHeader>
+            <DialogTitle>{tt('compose_notification', 'Compose notification')}</DialogTitle>
+            <DialogDescription>
+              {tt('compose_notification_desc', 'Send a message over the channel you choose, or schedule it for later.')}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Channel */}
+            <div className="space-y-1.5">
+              <label className="dxr-eyebrow">{tt('channel', 'Channel')}</label>
+              <div className="dxr-seg w-full">
+                {CHANNELS.map(({ value, icon: Icon }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    data-active={channel === value}
+                    onClick={() => setChannel(value)}
+                    className="flex-1"
+                  >
+                    <Icon className="h-4 w-4 me-1.5 inline-block" />
+                    {tt(`channel_${value}`, value === 'email' ? 'Email' : value === 'whatsapp' ? 'WhatsApp' : 'Push')}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Recipient */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">{recipientLabel}</label>
+              <Input
+                type={recipientType}
+                value={recipient}
+                onChange={(e) => setRecipient(e.target.value)}
+                placeholder={recipientLabel}
+              />
+            </div>
+
+            {/* Subject */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">{tt('subject', 'Subject')}</label>
+              <Input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder={tt('subject_placeholder', 'Optional subject')}
+              />
+            </div>
+
+            {/* Message */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">{tt('message', 'Message')}</label>
+              <Textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder={tt('message_placeholder', 'Write your message…')}
+                rows={4}
+              />
+            </div>
+
+            {/* Schedule */}
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CalendarClock className="h-4 w-4 text-brand-400" />
+                  <span className="text-sm font-medium text-foreground">{tt('schedule_for_later', 'Schedule for later')}</span>
+                </div>
+                <Switch
+                  checked={scheduleOn}
+                  onCheckedChange={setScheduleOn}
+                  aria-label={tt('schedule_for_later', 'Schedule for later')}
+                />
+              </div>
+              {scheduleOn && (
+                <Input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  aria-label={tt('send_at', 'Send at')}
+                />
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setComposeOpen(false); resetComposer(); }}>
+              {tt('cancel', 'Cancel')}
+            </Button>
+            <Button onClick={handleSend} disabled={!canSend || sending}>
+              {scheduleOn ? <CalendarClock className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+              {sending
+                ? t('saving')
+                : scheduleOn
+                ? tt('schedule', 'Schedule')
+                : tt('send', 'Send')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

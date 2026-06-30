@@ -1213,6 +1213,8 @@ export async function changePassword(currentPassword: string, newPassword: strin
 // Per-user profile + notification preferences (ISSUE-078, persisted server-side)
 export interface NotificationPrefs {
   email_alerts: boolean;
+  whatsapp_alerts: boolean;
+  push_alerts: boolean;
   low_stock_alerts: boolean;
   daily_summary: boolean;
   transaction_alerts: boolean;
@@ -1724,6 +1726,40 @@ export async function markNotificationRead(notificationId: string) {
     url: '/api/v1/notifications/mark-read',
     method: 'POST',
     data: { notification_id: notificationId },
+  });
+  return response.data;
+}
+
+// Operator-composed notification (M10 / parity #8, ISSUE-214). Sends over the
+// chosen channel; a future `scheduled_at` (ISO string) defers delivery and the
+// server acknowledges it as `scheduled` rather than `sent`.
+export type NotificationChannel = 'email' | 'whatsapp' | 'push';
+
+export interface ComposeNotificationInput {
+  channel: NotificationChannel;
+  to: string;
+  subject?: string;
+  body: string;
+  scheduled_at?: string | null;
+}
+
+export interface ComposeNotificationResult {
+  channel: NotificationChannel;
+  to: string;
+  subject: string;
+  status: string; // sent | logged | scheduled
+  scheduled_at?: string;
+  delivered?: boolean;
+  message_id?: string;
+}
+
+export async function sendNotification(
+  input: ComposeNotificationInput,
+): Promise<ComposeNotificationResult> {
+  const response = await client.apiCall.invoke<ComposeNotificationResult>({
+    url: '/api/v1/production/notifications/send',
+    method: 'POST',
+    data: input,
   });
   return response.data;
 }

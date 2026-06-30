@@ -15,6 +15,8 @@ export default function UserProfile() {
   const [displayName, setDisplayName] = useState('');
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>({
     email_alerts: true,
+    whatsapp_alerts: false,
+    push_alerts: false,
     low_stock_alerts: true,
     daily_summary: false,
     transaction_alerts: true,
@@ -38,7 +40,9 @@ export default function UserProfile() {
       .then((prefs) => {
         if (cancelled) return;
         setDisplayName(prefs.display_name || '');
-        setNotifPrefs(prefs.notification_prefs);
+        // Merge over the defaults so a server response that predates a channel
+        // (e.g. whatsapp/push) leaves that Switch controlled, not undefined.
+        setNotifPrefs((prev) => ({ ...prev, ...prefs.notification_prefs }));
       })
       .catch(() => {
         if (cancelled) return;
@@ -46,7 +50,7 @@ export default function UserProfile() {
         const cached = localStorage.getItem('pos-notification-prefs');
         if (cached) {
           try {
-            setNotifPrefs(JSON.parse(cached));
+            setNotifPrefs((prev) => ({ ...prev, ...JSON.parse(cached) }));
           } catch {
             // use defaults
           }
@@ -176,29 +180,55 @@ export default function UserProfile() {
         </div>
 
         {/* Notification Preferences */}
-        <div className="dxr-tile space-y-3">
+        <div className="dxr-tile space-y-5">
           <h2 className="text-foreground flex items-center gap-2 font-semibold">
             <Bell className="h-5 w-5 text-warning" />
             {t('notifications')}
           </h2>
-          {[
-            { key: 'email_alerts' as const, label: tt('email_alerts', 'Email Alerts'), desc: tt('email_alerts_desc', 'Receive important updates via email') },
-            { key: 'low_stock_alerts' as const, label: tt('low_stock_alerts', 'Low Stock Alerts'), desc: tt('low_stock_alerts_desc', 'Get notified when products are running low') },
-            { key: 'daily_summary' as const, label: tt('daily_summary', 'Daily Summary'), desc: tt('daily_summary_desc', 'Receive a daily sales summary') },
-            { key: 'transaction_alerts' as const, label: tt('transaction_alerts', 'Transaction Alerts'), desc: tt('transaction_alerts_desc', 'Get notified for each transaction') },
-          ].map((item) => (
-            <div key={item.key} className="flex items-center justify-between py-2 border-b border-border last:border-0">
-              <div>
-                <p className="text-foreground text-sm font-medium">{item.label}</p>
-                <p className="text-muted-foreground text-xs">{item.desc}</p>
+
+          {/* Channels — how we reach you */}
+          <div className="space-y-1">
+            <p className="dxr-eyebrow">{tt('delivery_channels', 'Delivery channels')}</p>
+            {[
+              { key: 'email_alerts' as const, label: tt('email_alerts', 'Email'), desc: tt('email_alerts_desc', 'Receive important updates by email') },
+              { key: 'whatsapp_alerts' as const, label: tt('whatsapp_alerts', 'WhatsApp'), desc: tt('whatsapp_alerts_desc', 'Receive updates on WhatsApp') },
+              { key: 'push_alerts' as const, label: tt('push_alerts', 'Push'), desc: tt('push_alerts_desc', 'Receive push notifications on this device') },
+            ].map((item) => (
+              <div key={item.key} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                <div>
+                  <p className="text-foreground text-sm font-medium">{item.label}</p>
+                  <p className="text-muted-foreground text-xs">{item.desc}</p>
+                </div>
+                <Switch
+                  checked={notifPrefs[item.key]}
+                  onCheckedChange={() => toggleNotifPref(item.key)}
+                  aria-label={item.label}
+                />
               </div>
-              <Switch
-                checked={notifPrefs[item.key]}
-                onCheckedChange={() => toggleNotifPref(item.key)}
-                aria-label={item.label}
-              />
-            </div>
-          ))}
+            ))}
+          </div>
+
+          {/* Categories — what we tell you about */}
+          <div className="space-y-1">
+            <p className="dxr-eyebrow">{tt('alert_categories', 'Alert categories')}</p>
+            {[
+              { key: 'low_stock_alerts' as const, label: tt('low_stock_alerts', 'Low Stock Alerts'), desc: tt('low_stock_alerts_desc', 'Get notified when products are running low') },
+              { key: 'daily_summary' as const, label: tt('daily_summary', 'Daily Summary'), desc: tt('daily_summary_desc', 'Receive a daily sales summary') },
+              { key: 'transaction_alerts' as const, label: tt('transaction_alerts', 'Transaction Alerts'), desc: tt('transaction_alerts_desc', 'Get notified for each transaction') },
+            ].map((item) => (
+              <div key={item.key} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                <div>
+                  <p className="text-foreground text-sm font-medium">{item.label}</p>
+                  <p className="text-muted-foreground text-xs">{item.desc}</p>
+                </div>
+                <Switch
+                  checked={notifPrefs[item.key]}
+                  onCheckedChange={() => toggleNotifPref(item.key)}
+                  aria-label={item.label}
+                />
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Session Info */}
