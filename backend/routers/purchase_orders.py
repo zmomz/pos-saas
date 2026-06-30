@@ -20,6 +20,39 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/entities/purchase_orders", tags=["purchase_orders"])
 
 
+# ---------- PO approval chain (ISSUE-224, M4 Inventory) ----------
+# Procurement governance: a purchase order walks an approval state machine before
+# its goods may be booked into stock. ``received`` is the terminal stage and is
+# reached ONLY through ``/receive`` (which books stock), never via ``/transition``.
+PO_APPROVAL_CHAIN = ["draft", "submitted", "approved", "ordered", "received"]
+
+# Approval stages that precede a PO being placed with the supplier — stock cannot
+# be booked from these (nor from a cancelled PO). Every other status (the legacy
+# "pending"/"ordered", "approved", "partially_received", …) stays receivable so
+# pre-existing purchase orders are unaffected by the new chain.
+PRE_APPROVAL_STATUSES = {"draft", "submitted", "cancelled"}
+
+
+def _ensure_receivable(po) -> None:
+    """Gate stock-booking on the approval chain (ISSUE-224).
+
+    A PO that has not yet been approved (draft/submitted), or that is cancelled,
+    cannot be received; an already-received PO is rejected so stock is never
+    double-counted. Legacy statuses remain receivable for backward compatibility.
+    """
+    status = (po.status or "").lower()
+    if status == "received":
+        raise HTTPException(status_code=400, detail="Purchase order already received")
+    if status in PRE_APPROVAL_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Purchase order must be approved before it can be received "
+                f"(current status: {status or 'draft'})"
+            ),
+        )
+
+
 # ---------- Pydantic Schemas ----------
 class Purchase_ordersData(BaseModel):
     """Entity data schema (for create/update)"""
@@ -294,6 +327,83 @@ def _apply_received_to_lines(items: list, to_receive: dict) -> dict:
     return applied
 
 
+class TransitionPurchaseOrderRequest(BaseModel):
+    """Advance a PO one step along the approval chain (ISSUE-224)."""
+    status: str
+
+
+class TransitionPurchaseOrderResponse(BaseModel):
+    id: int
+    status: str
+    message: str
+
+
+@router.post("/{id}/transition", response_model=TransitionPurchaseOrderResponse)
+async def transition_purchase_order(
+    id: int,
+    request: TransitionPurchaseOrderRequest,
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Advance a purchase order along the approval chain (ISSUE-224, M4 Inventory).
+
+    The chain is ``draft → submitted → approved → ordered → received``. A
+    transition is valid only when it moves the PO to the *immediate next* stage —
+    a step cannot be skipped (so a PO cannot be ordered without being approved) and
+    the order cannot be walked backwards. ``received`` is terminal and is reached
+    only through ``/receive`` (which books stock), so it is never a valid
+    ``/transition`` target.
+    """
+    from sqlalchemy import select
+
+    from models.purchase_orders import Purchase_orders
+
+    po = (
+        await db.execute(
+            select(Purchase_orders).where(
+                Purchase_orders.id == id,
+                Purchase_orders.user_id == owner_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase_orders not found")
+
+    target = (request.status or "").strip().lower()
+    current = (po.status or "draft").strip().lower()
+
+    if target == "received":
+        raise HTTPException(
+            status_code=400,
+            detail="Use /receive to mark a purchase order received (it books stock)",
+        )
+    if target not in PO_APPROVAL_CHAIN:
+        raise HTTPException(
+            status_code=400, detail=f"Unknown target status '{request.status}'"
+        )
+    if current not in PO_APPROVAL_CHAIN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot transition a purchase order from status '{current}'",
+        )
+
+    expected_next = PO_APPROVAL_CHAIN[PO_APPROVAL_CHAIN.index(current) + 1]
+    if target != expected_next:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid transition {current} → {target}; the next stage is "
+                f"'{expected_next}'"
+            ),
+        )
+
+    po.status = target
+    await db.commit()
+    return TransitionPurchaseOrderResponse(
+        id=id, status=target, message=f"Purchase order moved to {target}"
+    )
+
+
 @router.post("/{id}/receive", response_model=ReceivePurchaseOrderResponse)
 async def receive_purchase_order(
     id: int,
@@ -333,8 +443,7 @@ async def receive_purchase_order(
     ).scalar_one_or_none()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase_orders not found")
-    if (po.status or "").lower() == "received":
-        raise HTTPException(status_code=400, detail="Purchase order already received")
+    _ensure_receivable(po)
 
     try:
         items = json.loads(po.items_json) if po.items_json else []
@@ -527,8 +636,7 @@ async def distribute_purchase_order(
     ).scalar_one_or_none()
     if not po:
         raise HTTPException(status_code=404, detail="Purchase_orders not found")
-    if (po.status or "").lower() == "received":
-        raise HTTPException(status_code=400, detail="Purchase order already received")
+    _ensure_receivable(po)
 
     try:
         items = json.loads(po.items_json) if po.items_json else []
