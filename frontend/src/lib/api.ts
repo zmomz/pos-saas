@@ -87,6 +87,8 @@ export interface AgentClientListItem {
   zatca_enabled: boolean;
   language_preference: string;
   created_at?: string | null;
+  // M8 (issue-215): ISO timestamp the merchant was archived, or null when live.
+  archived_at?: string | null;
 }
 
 export interface AgentClientsResponse {
@@ -98,11 +100,13 @@ export interface AgentClientsResponse {
 export async function getAgentClients(
   skip = 0,
   limit = 50,
+  archived = false,
 ): Promise<AgentClientsResponse> {
   const response = await client.apiCall.invoke<AgentClientsResponse>({
     url: '/api/v1/tenant/agent/clients',
     method: 'GET',
-    data: { skip, limit },
+    // M8: `archived` selects the archived book (for restore/delete) over the live one.
+    data: { skip, limit, archived },
   });
   return response.data;
 }
@@ -1792,6 +1796,78 @@ export async function resetClientPassword(clientId: number): Promise<ResetPasswo
   const response = await client.apiCall.invoke<ResetPasswordResult>({
     url: `/api/v1/tenant/agent/clients/${clientId}/reset-password`,
     method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// ---- Merchant lifecycle (M8 / issue-215): archive/restore/transfer/export/delete ----
+
+export interface MerchantLifecycleResult {
+  success: boolean;
+  client_id: number;
+  archived_at?: string | null;
+}
+
+// Agent: archive a merchant — retires it without data loss, frees its slot and
+// blocks its login. Reversed by restoreClient.
+export async function archiveClient(clientId: number): Promise<MerchantLifecycleResult> {
+  const response = await client.apiCall.invoke<MerchantLifecycleResult>({
+    url: `/api/v1/tenant/agent/clients/${clientId}/archive`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Agent: restore an archived merchant back into the active book (re-takes a slot).
+export async function restoreClient(clientId: number): Promise<MerchantLifecycleResult> {
+  const response = await client.apiCall.invoke<MerchantLifecycleResult>({
+    url: `/api/v1/tenant/agent/clients/${clientId}/restore`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+export interface TransferClientResult {
+  success: boolean;
+  client_id: number;
+  from_agent_id: number;
+  to_agent_id: number;
+}
+
+// Agent: transfer a merchant to another agent (by the destination agent's email).
+// Changes the owning agent_id; the merchant's catalog/customers/sales follow.
+export async function transferClient(
+  clientId: number,
+  targetAgentEmail: string,
+): Promise<TransferClientResult> {
+  const response = await client.apiCall.invoke<TransferClientResult>({
+    url: `/api/v1/tenant/agent/clients/${clientId}/transfer`,
+    method: 'POST',
+    data: { target_agent_email: targetAgentEmail },
+  });
+  return response.data;
+}
+
+// Agent: download a portable JSON snapshot of a merchant (PDPL data-portability).
+export async function exportClientData(clientId: number): Promise<unknown> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/agent/clients/${clientId}/export`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// Agent: permanently delete an archived merchant once its retention window lapses.
+export async function deleteClient(
+  clientId: number,
+): Promise<{ success: boolean; client_id: number; deleted: boolean }> {
+  const response = await client.apiCall.invoke<{ success: boolean; client_id: number; deleted: boolean }>({
+    url: `/api/v1/tenant/agent/clients/${clientId}`,
+    method: 'DELETE',
     data: {},
   });
   return response.data;
