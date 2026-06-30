@@ -7,7 +7,9 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, resetClientPassword, runDunning, getQuotaStatus, payQuota, saveQuotaCard, saveAgentMoyasarKeys, type AgentRevenue, type CommissionStatement, type QuotaStatus } from '@/lib/api';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { getAgentClients, getAgentBranding, getAgentRevenue, getAgentCommissionStatements, createNewClient, toggleClient, setClientZatca, setClientFeature, getClientFeatures, resetClientPassword, runDunning, getQuotaStatus, payQuota, saveQuotaCard, saveAgentMoyasarKeys, archiveClient, restoreClient, transferClient, exportClientData, deleteClient, type AgentRevenue, type CommissionStatement, type QuotaStatus } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -17,7 +19,7 @@ import CountUp from '@/components/dashboard/rx/CountUp';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
-import { Users, CreditCard, UserPlus, Palette, ShoppingBag, BarChart3, Box, Percent, Star, QrCode, Mail, Sliders, KeyRound, Store, BadgeCheck, Wallet, Link2 } from 'lucide-react';
+import { Users, CreditCard, UserPlus, Palette, ShoppingBag, BarChart3, Box, Percent, Star, QrCode, Mail, Sliders, KeyRound, Store, BadgeCheck, Wallet, Link2, Archive, ArchiveRestore, ArrowRightLeft, Download, Trash2, MoreVertical } from 'lucide-react';
 
 interface ClientItem {
   id: number;
@@ -27,6 +29,7 @@ interface ClientItem {
   is_active: boolean;
   subscription_fee: number;
   zatca_enabled: boolean;
+  archived_at?: string | null;
 }
 
 interface Branding {
@@ -39,6 +42,18 @@ export default function AgentDashboard() {
   const [clients, setClients] = useState<ClientItem[]>([]);
   const [remainingSlots, setRemainingSlots] = useState(0);
   const [totalClients, setTotalClients] = useState(0);
+  // M8 (issue-215): the archived book is loaded lazily and kept separate from the
+  // live `clients` so the KPI tiles always reflect active merchants, never the
+  // archived view.
+  const [clientView, setClientView] = useState<'active' | 'archived'>('active');
+  const [archivedClients, setArchivedClients] = useState<ClientItem[]>([]);
+  const [archivedLoading, setArchivedLoading] = useState(false);
+  const [lifecycleBusyId, setLifecycleBusyId] = useState<number | null>(null);
+  const [transferTarget, setTransferTarget] = useState<ClientItem | null>(null);
+  const [transferEmail, setTransferEmail] = useState('');
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [archiveConfirm, setArchiveConfirm] = useState<ClientItem | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<ClientItem | null>(null);
   const [branding, setBranding] = useState<Branding | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -46,7 +61,11 @@ export default function AgentDashboard() {
   const [featureClient, setFeatureClient] = useState<ClientItem | null>(null);
   const [featureBusy, setFeatureBusy] = useState(false);
   const [panelClientId, setPanelClientId] = useState<number | null>(null);
-  const [featureState, setFeatureState] = useState<Record<string, boolean>>({});
+  // Real per-client feature flags, keyed by client id. Hydrated from the backend
+  // so the right-rail switches reflect actual state instead of assuming "all on".
+  const [featureState, setFeatureState] = useState<Record<number, Record<string, boolean>>>({});
+  const [featureLoadingId, setFeatureLoadingId] = useState<number | null>(null);
+  const [featureLoadError, setFeatureLoadError] = useState<number | null>(null);
   const [createdCreds, setCreatedCreds] = useState<
     { email: string; temp_password: string; email_delivered: boolean; reset?: boolean } | null
   >(null);
@@ -81,6 +100,12 @@ export default function AgentDashboard() {
     loadStatements();
     loadQuota();
   }, []);
+
+  // M8: fetch the archived book the first time the agent opens that view.
+  useEffect(() => {
+    if (clientView === 'archived') loadArchived();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientView]);
 
   async function loadQuota() {
     setQuotaLoading(true);
@@ -137,26 +162,44 @@ export default function AgentDashboard() {
     }
   }
 
+  function mapClient(c: Awaited<ReturnType<typeof getAgentClients>>['items'][number]): ClientItem {
+    return {
+      id: c.id,
+      business_name: c.business_name,
+      email: c.email,
+      phone: c.phone ?? '',
+      is_active: c.is_active,
+      subscription_fee: c.subscription_fee ?? 0,
+      zatca_enabled: c.zatca_enabled,
+      archived_at: c.archived_at ?? null,
+    };
+  }
+
   async function loadData() {
     try {
       const [clientData, brandData] = await Promise.all([getAgentClients(), getAgentBranding()]);
-      const items: ClientItem[] = (clientData?.items || []).map((c) => ({
-        id: c.id,
-        business_name: c.business_name,
-        email: c.email,
-        phone: c.phone ?? '',
-        is_active: c.is_active,
-        subscription_fee: c.subscription_fee ?? 0,
-        zatca_enabled: c.zatca_enabled,
-      }));
-      setClients(items);
+      setClients((clientData?.items || []).map(mapClient));
       setRemainingSlots(clientData?.remaining_slots ?? 0);
-      setTotalClients(clientData?.total ?? items.length);
+      setTotalClients(clientData?.total ?? clientData?.items?.length ?? 0);
       setBranding(brandData);
     } catch (err) {
       console.error('Failed to load:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // M8: load the archived book on demand (and after a lifecycle action). Kept
+  // separate from `clients` so KPI tiles never count archived merchants.
+  async function loadArchived() {
+    setArchivedLoading(true);
+    try {
+      const data = await getAgentClients(0, 50, true);
+      setArchivedClients((data?.items || []).map(mapClient));
+    } catch (err) {
+      console.error('Failed to load archived:', err);
+    } finally {
+      setArchivedLoading(false);
     }
   }
 
@@ -236,6 +279,96 @@ export default function AgentDashboard() {
     }
   }
 
+  // M8 (issue-215): merchant lifecycle — archive / restore / transfer / export / delete.
+  async function handleArchive(c: ClientItem) {
+    setArchiveConfirm(null);
+    setLifecycleBusyId(c.id);
+    try {
+      await archiveClient(c.id);
+      toast.success(t('archive_merchant') || 'Merchant archived');
+      await Promise.all([loadData(), loadArchived()]);
+    } catch (err) {
+      console.error('Archive client failed:', err);
+      toast.error(t('archive_failed') || 'Could not archive the merchant.');
+    } finally {
+      setLifecycleBusyId(null);
+    }
+  }
+
+  async function handleRestore(c: ClientItem) {
+    setLifecycleBusyId(c.id);
+    try {
+      await restoreClient(c.id);
+      toast.success(t('restore_merchant') || 'Merchant restored');
+      await Promise.all([loadData(), loadArchived()]);
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      console.error('Restore client failed:', err);
+      toast.error(detail || t('restore_failed') || 'Could not restore the merchant.');
+    } finally {
+      setLifecycleBusyId(null);
+    }
+  }
+
+  async function handleTransfer() {
+    if (!transferTarget) return;
+    const email = transferEmail.trim();
+    if (!email) return;
+    setTransferBusy(true);
+    try {
+      await transferClient(transferTarget.id, email);
+      toast.success(t('transfer_merchant') || 'Merchant transferred');
+      setTransferTarget(null);
+      setTransferEmail('');
+      await Promise.all([loadData(), clientView === 'archived' ? loadArchived() : Promise.resolve()]);
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      console.error('Transfer client failed:', err);
+      toast.error(detail || t('merchant_transfer_failed') || 'Could not transfer the merchant.');
+    } finally {
+      setTransferBusy(false);
+    }
+  }
+
+  async function handleExport(c: ClientItem) {
+    setLifecycleBusyId(c.id);
+    try {
+      const data = await exportClientData(c.id);
+      // Trigger a client-side download of the JSON snapshot.
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `merchant-${c.id}-export.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(t('export_merchant') || 'Export downloaded');
+    } catch (err) {
+      console.error('Export client failed:', err);
+      toast.error(t('merchant_export_failed') || 'Could not export the merchant.');
+    } finally {
+      setLifecycleBusyId(null);
+    }
+  }
+
+  async function handleDelete(c: ClientItem) {
+    setDeleteConfirm(null);
+    setLifecycleBusyId(c.id);
+    try {
+      await deleteClient(c.id);
+      toast.success(t('delete_merchant') || 'Merchant deleted');
+      await Promise.all([loadData(), loadArchived()]);
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      console.error('Delete client failed:', err);
+      toast.error(detail || t('delete_failed') || 'Could not delete the merchant.');
+    } finally {
+      setLifecycleBusyId(null);
+    }
+  }
+
   async function handleResetPassword(clientId: number) {
     setResettingId(clientId);
     try {
@@ -262,25 +395,46 @@ export default function AgentDashboard() {
     }
   }
 
+  async function loadClientFeatures(clientId: number) {
+    setFeatureLoadingId(clientId);
+    setFeatureLoadError((prev) => (prev === clientId ? null : prev));
+    try {
+      const data = await getClientFeatures(clientId);
+      setFeatureState((prev) => ({ ...prev, [clientId]: data.features }));
+    } catch (err) {
+      console.error('Failed to load client features:', err);
+      setFeatureLoadError(clientId);
+    } finally {
+      setFeatureLoadingId((prev) => (prev === clientId ? null : prev));
+    }
+  }
+
   async function handleSetFeature(featureName: string, isEnabled: boolean) {
     if (!featureClient) return;
+    const clientId = featureClient.id;
     setFeatureBusy(true);
     try {
-      await setClientFeature(featureClient.id, featureName, isEnabled);
+      await setClientFeature(clientId, featureName, isEnabled);
+      // Keep the right-rail panel in sync if this client's flags are cached.
+      setFeatureState((prev) =>
+        prev[clientId] ? { ...prev, [clientId]: { ...prev[clientId], [featureName]: isEnabled } } : prev
+      );
     } catch (err) {
       console.error('Set feature failed:', err);
+      toast.error(t('feature_toggle_failed') || 'Could not change the feature. Please try again.');
     } finally {
       setFeatureBusy(false);
     }
   }
 
   async function handleToggleFeatureInline(client: ClientItem, featureName: string, next: boolean) {
-    setFeatureState((prev) => ({ ...prev, [featureName]: next }));
+    setFeatureState((prev) => ({ ...prev, [client.id]: { ...prev[client.id], [featureName]: next } }));
     try {
       await setClientFeature(client.id, featureName, next);
     } catch (err) {
       console.error('Set feature failed:', err);
-      setFeatureState((prev) => ({ ...prev, [featureName]: !next }));
+      setFeatureState((prev) => ({ ...prev, [client.id]: { ...prev[client.id], [featureName]: !next } }));
+      toast.error(t('feature_toggle_failed') || 'Could not change the feature. Please try again.');
     }
   }
 
@@ -296,8 +450,23 @@ export default function AgentDashboard() {
   const slotCapacity = remainingSlots + totalClients;
   const activeClients = clients.filter((c) => c.is_active);
   const totalMonthlyRevenue = activeClients.reduce((sum, c) => sum + (c.subscription_fee || 0), 0);
+  // M8: the table shows the live book or the archived book; KPIs above always use
+  // the live `clients` so switching views never misrepresents the headline numbers.
+  const archivedView = clientView === 'archived';
+  const tableClients = archivedView ? archivedClients : clients;
   const panelClient = clients.find((c) => c.id === panelClientId) || clients[0] || null;
   const brandColor = branding?.primary_color || '#1488a6';
+
+  // Hydrate the selected client's real feature flags the first time its panel is
+  // shown. Without this the switches would fabricate an all-on state per client.
+  const panelClientFeatureId = panelClient?.id ?? null;
+  useEffect(() => {
+    if (panelClientFeatureId == null) return;
+    if (featureState[panelClientFeatureId]) return;
+    if (featureLoadingId === panelClientFeatureId) return;
+    loadClientFeatures(panelClientFeatureId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelClientFeatureId]);
 
   // The agent keeps 100% of his merchants' subscription revenue (no platform cut
   // here — the platform's cut is the agent's quota, Rail 1). So there is no
@@ -445,8 +614,13 @@ export default function AgentDashboard() {
       <div className="grid items-start gap-[18px] lg:grid-cols-[1fr_320px]">
         {/* Client list */}
         <div className="dxr-tile p-0">
-          <div className="flex items-center justify-between px-5 pb-3 pt-5">
-            <h2 className="text-[16px] font-extrabold tracking-tight">{t('clients')} <span className="text-muted-foreground">({clients.length})</span></h2>
+          <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-3 pt-5">
+            <h2 className="text-[16px] font-extrabold tracking-tight">{t('clients')} <span className="text-muted-foreground">({tableClients.length})</span></h2>
+            {/* M8: live book ⇄ archived book. */}
+            <div className="dxr-seg" role="tablist" aria-label={t('clients')}>
+              <button type="button" role="tab" aria-selected={!archivedView} data-active={!archivedView} onClick={() => setClientView('active')}>{t('active') || 'Active'}</button>
+              <button type="button" role="tab" aria-selected={archivedView} data-active={archivedView} onClick={() => setClientView('archived')}>{t('archived') || 'Archived'}</button>
+            </div>
           </div>
           <div className="overflow-x-auto px-2 pb-2">
             <table className="w-full">
@@ -460,38 +634,83 @@ export default function AgentDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {clients.map((c) => (
-                  <tr key={c.id} className={cn('border-t border-border/70 transition-colors hover:bg-muted/40', panelClient?.id === c.id && 'bg-brand-50/60 dark:bg-brand-500/10')}>
+                {tableClients.map((c) => (
+                  <tr key={c.id} className={cn('border-t border-border/70 transition-colors hover:bg-muted/40', !archivedView && panelClient?.id === c.id && 'bg-brand-50/60 dark:bg-brand-500/10')}>
                     <td className="px-3 py-3">
-                      <button type="button" onClick={() => setPanelClientId(c.id)} className="flex items-center gap-2.5 text-start" title={t('manage_features') || 'Manage features'}>
-                        <Avatar name={c.business_name} size={34} />
-                        <span className="min-w-0">
-                          <b className="block truncate font-semibold text-foreground">{c.business_name}</b>
-                          <span className="block truncate text-[11.5px] text-muted-foreground">{c.email}</span>
+                      {archivedView ? (
+                        <span className="flex items-center gap-2.5 text-start">
+                          <Avatar name={c.business_name} size={34} />
+                          <span className="min-w-0">
+                            <b className="block truncate font-semibold text-foreground">{c.business_name}</b>
+                            <span className="block truncate text-[11.5px] text-muted-foreground">{c.email}</span>
+                          </span>
                         </span>
-                      </button>
+                      ) : (
+                        <button type="button" onClick={() => setPanelClientId(c.id)} className="flex items-center gap-2.5 text-start" title={t('manage_features') || 'Manage features'}>
+                          <Avatar name={c.business_name} size={34} />
+                          <span className="min-w-0">
+                            <b className="block truncate font-semibold text-foreground">{c.business_name}</b>
+                            <span className="block truncate text-[11.5px] text-muted-foreground">{c.email}</span>
+                          </span>
+                        </button>
+                      )}
                     </td>
                     <td className="px-3 py-3 font-semibold tabular-nums">{formatMoney(c.subscription_fee || 0, language)}</td>
                     <td className="px-3 py-3">
-                      <span className={c.is_active ? 'pill-success' : 'pill-danger'}><span className="h-[7px] w-[7px] rounded-full bg-current" /> {c.is_active ? t('active') : t('inactive')}</span>
+                      {archivedView ? (
+                        <span className="pill-muted" title={c.archived_at ? formatDate(c.archived_at, language) : undefined}><Archive className="h-3 w-3" /> {t('archived') || 'Archived'}</span>
+                      ) : (
+                        <span className={c.is_active ? 'pill-success' : 'pill-danger'}><span className="h-[7px] w-[7px] rounded-full bg-current" /> {c.is_active ? t('active') : t('inactive')}</span>
+                      )}
                     </td>
                     <td className="px-3 py-3">
                       <span className={c.zatca_enabled ? 'pill-sky' : 'pill-muted'}>{c.zatca_enabled ? (t('zatca_on') || 'On') : (t('zatca_off') || 'Off')}</span>
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        <button type="button" onClick={() => handleToggleClient(c.id)} disabled={togglingId === c.id} title={c.is_active ? (t('deactivate') || 'Deactivate') : (t('activate') || 'Activate')} className={cn('rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50', c.is_active ? 'bg-danger/10 text-danger hover:bg-danger/15' : 'bg-success/10 text-success hover:bg-success/15')}>
-                          {togglingId === c.id ? '…' : c.is_active ? (t('deactivate') || 'Deactivate') : (t('activate') || 'Activate')}
-                        </button>
-                        <button type="button" onClick={() => setFeatureClient(c)} title={t('features') || 'Features'} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors hover:border-brand hover:text-brand-700"><Sliders className="h-4 w-4" /></button>
-                        <button type="button" onClick={() => handleResetPassword(c.id)} disabled={resettingId === c.id} title={t('reset_password') || 'Reset password'} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors hover:border-brand hover:text-brand-700 disabled:opacity-50">{resettingId === c.id ? <span className="text-xs">…</span> : <KeyRound className="h-4 w-4" />}</button>
-                        <button type="button" onClick={() => handleToggleZatca(c.id)} disabled={zatcaTogglingId === c.id} title={c.zatca_enabled ? (t('disable_zatca') || 'Disable ZATCA') : (t('enable_zatca') || 'Enable ZATCA')} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors hover:border-brand hover:text-brand-700 disabled:opacity-50">{zatcaTogglingId === c.id ? <span className="text-xs">…</span> : <QrCode className="h-4 w-4" />}</button>
+                        {archivedView ? (
+                          <>
+                            <button type="button" onClick={() => handleRestore(c)} disabled={lifecycleBusyId === c.id} title={t('restore_merchant') || 'Restore'} className="inline-flex items-center gap-1.5 rounded-lg bg-success/10 px-2.5 py-1.5 text-xs font-semibold text-success transition-colors hover:bg-success/15 disabled:opacity-50">
+                              {lifecycleBusyId === c.id ? '…' : <><ArchiveRestore className="h-3.5 w-3.5" /> {t('restore') || 'Restore'}</>}
+                            </button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button type="button" title={t('more_actions') || 'More actions'} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors hover:border-brand hover:text-brand-700"><MoreVertical className="h-4 w-4" /></button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => handleExport(c)}><Download className="h-4 w-4" /> {t('export_merchant') || 'Export data'}</DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-danger focus:text-danger" onClick={() => setDeleteConfirm(c)}><Trash2 className="h-4 w-4" /> {t('delete_merchant') || 'Delete merchant'}</DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </>
+                        ) : (
+                          <>
+                            <button type="button" onClick={() => handleToggleClient(c.id)} disabled={togglingId === c.id} title={c.is_active ? (t('deactivate') || 'Deactivate') : (t('activate') || 'Activate')} className={cn('rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50', c.is_active ? 'bg-danger/10 text-danger hover:bg-danger/15' : 'bg-success/10 text-success hover:bg-success/15')}>
+                              {togglingId === c.id ? '…' : c.is_active ? (t('deactivate') || 'Deactivate') : (t('activate') || 'Activate')}
+                            </button>
+                            <button type="button" onClick={() => setFeatureClient(c)} title={t('features') || 'Features'} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors hover:border-brand hover:text-brand-700"><Sliders className="h-4 w-4" /></button>
+                            <button type="button" onClick={() => handleResetPassword(c.id)} disabled={resettingId === c.id} title={t('reset_password') || 'Reset password'} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors hover:border-brand hover:text-brand-700 disabled:opacity-50">{resettingId === c.id ? <span className="text-xs">…</span> : <KeyRound className="h-4 w-4" />}</button>
+                            <button type="button" onClick={() => handleToggleZatca(c.id)} disabled={zatcaTogglingId === c.id} title={c.zatca_enabled ? (t('disable_zatca') || 'Disable ZATCA') : (t('enable_zatca') || 'Enable ZATCA')} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors hover:border-brand hover:text-brand-700 disabled:opacity-50">{zatcaTogglingId === c.id ? <span className="text-xs">…</span> : <QrCode className="h-4 w-4" />}</button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button type="button" title={t('more_actions') || 'More actions'} disabled={lifecycleBusyId === c.id} className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-muted-foreground transition-colors hover:border-brand hover:text-brand-700 disabled:opacity-50">{lifecycleBusyId === c.id ? <span className="text-xs">…</span> : <MoreVertical className="h-4 w-4" />}</button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => { setTransferTarget(c); setTransferEmail(''); }}><ArrowRightLeft className="h-4 w-4" /> {t('transfer_merchant') || 'Transfer merchant'}</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => handleExport(c)}><Download className="h-4 w-4" /> {t('export_merchant') || 'Export data'}</DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-danger focus:text-danger" onClick={() => setArchiveConfirm(c)}><Archive className="h-4 w-4" /> {t('archive_merchant') || 'Archive merchant'}</DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
                 ))}
-                {clients.length === 0 && (
-                  <tr><td colSpan={5} className="py-8 text-center text-sm text-muted-foreground">{t('no_clients') || 'No clients yet.'}</td></tr>
+                {tableClients.length === 0 && (
+                  <tr><td colSpan={5} className="py-8 text-center text-sm text-muted-foreground">{archivedView ? (archivedLoading ? (t('loading') || 'Loading…') : (t('no_archived_clients') || 'No archived merchants.')) : (t('no_clients') || 'No clients yet.')}</td></tr>
                 )}
               </tbody>
             </table>
@@ -508,23 +727,33 @@ export default function AgentDashboard() {
                   <Avatar name={panelClient.business_name} size={26} />
                   <b className="text-[13px] font-semibold text-foreground">{panelClient.business_name}</b>
                 </div>
-                {TOGGLEABLE_FEATURES.map((f) => {
-                  const meta = FEATURE_META[f];
-                  const Icon = meta?.icon || Box;
-                  const checked = featureState[f] ?? true;
-                  return (
-                    <div key={f} className="flex items-center justify-between gap-3 border-b border-dashed border-border py-3 last:border-b-0">
-                      <div className="flex items-center gap-2.5">
-                        <span className={cn('dxr-sw h-8 w-8', meta?.tone || 'bg-muted text-muted-foreground')}><Icon className="h-4 w-4" /></span>
-                        <div>
-                          <b className="block text-[13.5px] font-semibold text-foreground">{meta?.label || (t(f) || f)}</b>
-                          <span className="block text-[11.5px] text-muted-foreground">{meta?.desc}</span>
+                {!featureState[panelClient.id] && featureLoadError === panelClient.id ? (
+                  <div role="alert" className="flex flex-col items-start gap-2 py-3">
+                    <p className="text-sm text-danger">{t('feature_load_error')}</p>
+                    <Button variant="outline" size="sm" onClick={() => loadClientFeatures(panelClient.id)}>{t('retry')}</Button>
+                  </div>
+                ) : !featureState[panelClient.id] ? (
+                  <p className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</p>
+                ) : (
+                  TOGGLEABLE_FEATURES.map((f) => {
+                    const meta = FEATURE_META[f];
+                    const Icon = meta?.icon || Box;
+                    const flags = featureState[panelClient.id];
+                    const checked = flags?.[f] ?? true;
+                    return (
+                      <div key={f} className="flex items-center justify-between gap-3 border-b border-dashed border-border py-3 last:border-b-0">
+                        <div className="flex items-center gap-2.5">
+                          <span className={cn('dxr-sw h-8 w-8', meta?.tone || 'bg-muted text-muted-foreground')}><Icon className="h-4 w-4" /></span>
+                          <div>
+                            <b className="block text-[13.5px] font-semibold text-foreground">{meta?.label || (t(f) || f)}</b>
+                            <span className="block text-[11.5px] text-muted-foreground">{meta?.desc}</span>
+                          </div>
                         </div>
+                        <Switch checked={checked} disabled={!flags} onCheckedChange={(v) => handleToggleFeatureInline(panelClient, f, v)} />
                       </div>
-                      <Switch checked={checked} onCheckedChange={(v) => handleToggleFeatureInline(panelClient, f, v)} />
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </>
             ) : (
               <p className="py-4 text-sm text-muted-foreground">{t('select_client_features') || 'Select a client to manage features.'}</p>
@@ -784,6 +1013,54 @@ export default function AgentDashboard() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* M8: transfer a merchant to another agent (by the destination agent's email). */}
+      <Dialog open={!!transferTarget} onOpenChange={(open) => { if (!open) { setTransferTarget(null); setTransferEmail(''); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t('transfer_merchant') || 'Transfer merchant'}{transferTarget ? ` — ${transferTarget.business_name}` : ''}</DialogTitle></DialogHeader>
+          <form
+            className="space-y-4"
+            onSubmit={(e) => { e.preventDefault(); handleTransfer(); }}
+          >
+            <p className="text-sm text-muted-foreground">{t('transfer_merchant_desc') || 'Hand this merchant to another agent. Their catalog, customers and sales move with them.'}</p>
+            <div className="space-y-1.5">
+              <Label htmlFor="transfer-email">{t('destination_agent_email') || "Destination agent's email"}</Label>
+              <Input id="transfer-email" type="email" autoFocus required value={transferEmail} onChange={(e) => setTransferEmail(e.target.value)} placeholder="agent@example.com" />
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={() => { setTransferTarget(null); setTransferEmail(''); }}>{t('cancel') || 'Cancel'}</Button>
+              <Button type="submit" disabled={transferBusy || !transferEmail.trim()} className="shadow-brand"><ArrowRightLeft className="h-4 w-4" /> {transferBusy ? (t('loading') || 'Loading…') : (t('transfer') || 'Transfer')}</Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* M8: confirm archive (reversible) and post-retention delete (irreversible). */}
+      <AlertDialog open={!!archiveConfirm} onOpenChange={(open) => !open && setArchiveConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('archive_merchant') || 'Archive merchant'}{archiveConfirm ? ` — ${archiveConfirm.business_name}` : ''}</AlertDialogTitle>
+            <AlertDialogDescription>{t('confirm_archive_merchant') || 'Archive this merchant? Its login is blocked and its slot is freed. You can restore it anytime.'}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('cancel') || 'Cancel'}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => archiveConfirm && handleArchive(archiveConfirm)}>{t('archive') || 'Archive'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('delete_merchant') || 'Delete merchant'}{deleteConfirm ? ` — ${deleteConfirm.business_name}` : ''}</AlertDialogTitle>
+            <AlertDialogDescription>{t('confirm_delete_merchant') || 'Permanently delete this archived merchant? This cannot be undone.'}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('cancel') || 'Cancel'}</AlertDialogCancel>
+            <AlertDialogAction className="bg-danger text-danger-foreground hover:bg-danger/90" onClick={() => deleteConfirm && handleDelete(deleteConfirm)}>{t('delete') || 'Delete'}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

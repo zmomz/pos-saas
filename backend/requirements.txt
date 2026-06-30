@@ -28,6 +28,11 @@ arabic-reshaper>=3.0
 python-bidi>=0.4
 
 
+# Caching layer (M10 / issue #219). Async Redis client backing the tenant-scoped
+# read cache (core/cache.py). Optional at runtime: when REDIS_URL is unset the
+# cache degrades to a process-local store, so dev/CI work without this installed.
+redis>=5.0
+
 # database module dependencies
 sqlalchemy>=2.0.0
 asyncpg>=0.29.0
@@ -37,6 +42,11 @@ greenlet
 
 # auth module dependencies
 python-jose[cryptography]>=3.3.0
+
+# KDS real-time channel — Redis pub/sub backend (M6, #212). Optional at runtime:
+# only imported when REDIS_URL/KDS_REDIS_URL is set; the in-process backend (the
+# single-worker default) needs no Redis. redis.asyncio ships in this package.
+redis>=5.0.0
 
 # payment module dependencies
 

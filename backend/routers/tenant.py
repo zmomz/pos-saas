@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, update, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,10 +30,23 @@ from models.packages import Packages
 from services.packages import parse_feature_tier
 from models.products import Products
 from models.transactions import Transactions
+from models.customers import Customers
+from models.branches import Branches
 from models.agent_features import Agent_features
 from models.client_features import Client_features
 from models.subscription_payments import Subscription_payments
 from models.agent_quota_payments import Agent_quota_payments
+from core.cache import (
+    TTL_BRAND,
+    TTL_DASHBOARD,
+    brand_agent_key,
+    brand_domain_key,
+    cache,
+    dashboard_key,
+    invalidate_brand,
+    invalidate_features,
+    invalidate_tax,
+)
 from models.audit_logs import Audit_logs
 from models.processed_webhook_events import Processed_webhook_events
 from services.system_settings import (
@@ -113,6 +127,10 @@ class ClientListItem(BaseModel):
     zatca_enabled: bool
     language_preference: str
     created_at: Optional[datetime] = None
+    # M8 (issue-215): the ISO timestamp the merchant was archived, or None when
+    # live. Lets the agent's book distinguish an archived merchant (restorable) from
+    # a merely suspended one.
+    archived_at: Optional[str] = None
 
 class AgentClientsResponse(BaseModel):
     items: List[ClientListItem]
@@ -136,6 +154,27 @@ class BrandingResponse(BaseModel):
     # OWN branding read (never leaked to clients / the public by-domain lookup).
     email_template_subject: Optional[str] = None
     email_template_body: Optional[str] = None
+
+
+def _public_branding_payload(agent: Agents) -> dict:
+    """The public, brandable agent fields as a plain dict (cache-friendly, M10/#219).
+
+    Shared by the two *hot* brand reads — the public by-domain lookup and a
+    client's branding read — so both cache and emit an identical shape. The
+    private provisioning-email template is deliberately excluded; only the agent's
+    own (rarely-hit, uncached) read surfaces it.
+    """
+    return {
+        "logo_url": agent.logo_url,
+        "primary_color": agent.primary_color or "#3B82F6",
+        "secondary_color": agent.secondary_color or "#1E40AF",
+        "font_family": agent.font_family or "Inter",
+        "button_radius": agent.button_radius or "8px",
+        "company_name": agent.company_name,
+        "default_language": agent.default_language or "en",
+        "custom_domain": getattr(agent, "custom_domain", None),
+    }
+
 
 class CreateClientRequest(BaseModel):
     business_name: str
@@ -233,6 +272,15 @@ class FeatureToggleResponse(BaseModel):
     client_id: int
     feature_name: str
     is_enabled: bool
+
+
+class ClientFeaturesResponse(BaseModel):
+    """Resolved feature flags for one client — every canonical key with its
+    effective on/off state (default-on unless an explicit row disables it). Lets
+    the agent UI render real toggle state instead of fabricating one."""
+
+    client_id: int
+    features: dict[str, bool]
 
 
 # ---------- Helper: Determine user role ----------
@@ -335,6 +383,9 @@ async def toggle_agent(
         update(Agents).where(Agents.id == agent_id).values(is_active=new_status)
     )
     await db.commit()
+    # M10/#219: the public by-domain lookup only resolves *active* agents, so an
+    # activate/deactivate must clear this agent's cached brand (by agent + domain).
+    await invalidate_brand(agent_id, agent.custom_domain)
 
     return ToggleResponse(success=True, is_active=new_status)
 
@@ -519,6 +570,9 @@ async def set_tax_rate(
 
     await set_setting(db, GLOBAL_TAX_RATE_KEY, str(data.tax_rate))
     await db.commit()
+    # M10/#219: clear the cached rate AFTER commit so a concurrent reader can't
+    # repopulate the cache with the pre-write value between flush and commit.
+    await invalidate_tax()
     return TaxRateResponse(tax_rate=data.tax_rate, is_global=True)
 
 
@@ -527,10 +581,20 @@ async def set_tax_rate(
 async def list_agent_clients(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
+    archived: bool = Query(
+        False,
+        description="M8: list archived merchants (for restore) instead of the live book.",
+    ),
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Agent: List their clients"""
+    """Agent: List their clients.
+
+    By default returns the **live** book (non-archived merchants). Pass
+    ``archived=true`` to list the archived merchants the agent can restore or
+    permanently delete (M8 / issue-215). The two views never mix, so an archived
+    merchant disappears from the active list the moment it is archived.
+    """
     role_info = await get_user_role(db, str(current_user.id))
     if role_info["role"] != "agent":
         raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
@@ -541,14 +605,20 @@ async def list_agent_clients(
     agent_result = await db.execute(select(Agents).where(Agents.id == agent_id))
     agent = agent_result.scalar_one_or_none()
 
+    # M8: split the book by archive state — the active list hides archived rows and
+    # the archived list shows only them.
+    archived_pred = (
+        Clients.archived_at.isnot(None) if archived else Clients.archived_at.is_(None)
+    )
+
     result = await db.execute(
-        select(Clients).where(Clients.agent_id == agent_id)
+        select(Clients).where(Clients.agent_id == agent_id, archived_pred)
         .order_by(Clients.created_at.desc()).offset(skip).limit(limit)
     )
     clients = result.scalars().all()
 
     count_result = await db.execute(
-        select(func.count(Clients.id)).where(Clients.agent_id == agent_id)
+        select(func.count(Clients.id)).where(Clients.agent_id == agent_id, archived_pred)
     )
     total = count_result.scalar() or 0
 
@@ -566,6 +636,7 @@ async def list_agent_clients(
             zatca_enabled=client.zatca_enabled if client.zatca_enabled is not None else True,
             language_preference=client.language_preference or "en",
             created_at=client.created_at,
+            archived_at=client.archived_at,
         ))
 
     return AgentClientsResponse(items=items, total=total, remaining_slots=remaining_slots)
@@ -1017,26 +1088,25 @@ async def get_branding_by_domain(
     if not normalized:
         raise HTTPException(status_code=404, detail="No branding for this domain")
 
-    result = await db.execute(
-        select(Agents).where(
-            func.lower(Agents.custom_domain) == normalized, Agents.is_active == True  # noqa: E712
+    # M10/#219: this unauthenticated lookup is hit on every login/funnel page load
+    # served on an agent's custom domain, so the resolved (public) brand is cached
+    # by domain. A miss (no agent claims the domain) is NOT cached — it returns 404
+    # straight from the DB so a probe for arbitrary hosts can't fill the cache.
+    async def _load() -> Optional[dict]:
+        result = await db.execute(
+            select(Agents).where(
+                func.lower(Agents.custom_domain) == normalized, Agents.is_active == True  # noqa: E712
+            )
         )
-    )
-    agent = result.scalar_one_or_none()
-    if not agent:
+        agent = result.scalar_one_or_none()
+        return _public_branding_payload(agent) if agent else None
+
+    payload = await cache.get_or_load(brand_domain_key(normalized), TTL_BRAND, _load)
+    if payload is None:
         raise HTTPException(status_code=404, detail="No branding for this domain")
 
-    return BrandingResponse(
-        logo_url=agent.logo_url,
-        primary_color=agent.primary_color or "#3B82F6",
-        secondary_color=agent.secondary_color or "#1E40AF",
-        font_family=agent.font_family or "Inter",
-        button_radius=agent.button_radius or "8px",
-        company_name=agent.company_name,
-        default_language=agent.default_language or "en",
-        custom_domain=getattr(agent, "custom_domain", None),
-        # email_template_* deliberately omitted — not public.
-    )
+    # email_template_* deliberately omitted — not public.
+    return BrandingResponse(**payload)
 
 
 # Agent logo upload (AG-01). Stored locally and served from /uploads; the cloud
@@ -1098,6 +1168,14 @@ async def upload_agent_logo(
         update(Agents).where(Agents.id == role_info["entity_id"]).values(logo_url=logo_url)
     )
     await db.commit()
+    # M10/#219: a new logo changes the cached brand for both the by-domain and the
+    # by-agent reads, so clear both for this agent (and its custom domain, if any).
+    domain = (
+        await db.execute(
+            select(Agents.custom_domain).where(Agents.id == role_info["entity_id"])
+        )
+    ).scalar_one_or_none()
+    await invalidate_brand(role_info["entity_id"], domain)
     return LogoUploadResponse(logo_url=logo_url)
 
 
@@ -1236,6 +1314,13 @@ async def create_client_for_agent(
                 )
             await db.commit()
 
+    # Type-driven seed (issue #201): align the restaurant feature flag with the
+    # chosen business type so a restaurant/both merchant is provisioned with the
+    # vertical unlocked and a retail merchant has it explicitly off, regardless
+    # of the package tier. Runs after the tier/explicit seeding above so it wins.
+    await _sync_type_features(db, new_user.id, new_client.id, business_type)
+    await db.commit()
+
     # Hand over the credential: email it when SMTP is configured, otherwise the
     # agent surfaces it from the response (dev/no-SMTP). AG-06: the email carries
     # the agent's brand + login URL (their custom domain when set), not the
@@ -1296,6 +1381,443 @@ async def toggle_client(
     )
     await db.commit()
     return ToggleResponse(success=True, is_active=new_status)
+
+
+# ---------- Merchant lifecycle: archive / restore / transfer / export / delete ----
+# (M8 / issue-215). An agent manages their merchant book beyond plain suspension:
+#   * archive  — retire a merchant without data loss; frees its slot, blocks login.
+#   * restore  — bring an archived merchant back (re-deducts a slot).
+#   * transfer — hand a merchant to another agent (changes the owning agent_id).
+#   * export   — download a portable JSON snapshot of the merchant before deletion.
+#   * delete   — permanently purge an archived merchant once its retention has lapsed.
+
+# Days a merchant must remain archived before it may be permanently deleted. The
+# retention window protects against an accidental archive and gives the operator a
+# recovery period; after it lapses the merchant + login may be purged for good.
+MERCHANT_RETENTION_DAYS = 30
+
+
+async def _agent_owned_client(db: AsyncSession, agent_id: int, client_id: int) -> Clients:
+    """Fetch a client that belongs to ``agent_id`` or raise 404 (SEC-02).
+
+    Every lifecycle action is scoped to the caller's own book exactly like
+    :func:`toggle_client` — a non-owning agent can never see, let alone mutate,
+    another agent's merchant.
+    """
+    result = await db.execute(
+        select(Clients).where(Clients.id == client_id, Clients.agent_id == agent_id)
+    )
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return merchant
+
+
+async def _free_agent_slot(db: AsyncSession, agent_id: int) -> None:
+    """Return one client slot to an agent's quota, never dropping below zero.
+
+    Guarded so a legacy agent whose ``used_slots`` is already 0 (e.g. clients
+    created directly in tests / pre-MA-02) stays at 0 rather than going negative.
+    """
+    await db.execute(
+        update(Agents)
+        .where(Agents.id == agent_id, func.coalesce(Agents.used_slots, 0) > 0)
+        .values(used_slots=Agents.used_slots - 1)
+    )
+
+
+async def _acquire_agent_slot(db: AsyncSession, agent_id: int) -> bool:
+    """Atomically deduct one client slot from an agent's quota (MA-02).
+
+    Mirrors the guarded UPDATE in :func:`create_client_for_agent` so a restore /
+    transfer can never oversell a package. Returns True when a slot was taken,
+    False when the agent is at capacity.
+    """
+    result = await db.execute(
+        update(Agents)
+        .where(
+            Agents.id == agent_id,
+            func.coalesce(Agents.used_slots, 0) < Agents.package_type,
+        )
+        .values(used_slots=func.coalesce(Agents.used_slots, 0) + 1)
+    )
+    return result.rowcount > 0
+
+
+class MerchantLifecycleResponse(BaseModel):
+    """Shared result for archive / restore. ``archived_at`` is the ISO timestamp
+    when the merchant is archived, or None once restored."""
+
+    success: bool
+    client_id: int
+    archived_at: Optional[str] = None
+
+
+class TransferClientRequest(BaseModel):
+    # Identify the destination agent by id or by email (the agent UI cannot list
+    # other agents — that is master-only — so an email is the practical handle).
+    target_agent_id: Optional[int] = None
+    target_agent_email: Optional[str] = None
+
+
+class TransferClientResponse(BaseModel):
+    success: bool
+    client_id: int
+    from_agent_id: int
+    to_agent_id: int
+
+
+@router.post("/agent/clients/{client_id}/archive", response_model=MerchantLifecycleResponse)
+async def archive_client(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: archive one of their merchants (M8 / issue-215).
+
+    Archiving retires a merchant without touching its data: it is hidden from the
+    active book, blocked at authentication (``dependencies/auth.py``), and its slot
+    is returned to the agent's quota so the freed capacity can provision another
+    merchant. A *restore* fully reverses this — no data is lost. Idempotency: an
+    already-archived merchant returns 409 so the slot is never double-freed.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    agent_id = role_info["entity_id"]
+    merchant = await _agent_owned_client(db, agent_id, client_id)
+    if merchant.archived_at:
+        raise HTTPException(status_code=409, detail="Merchant is already archived")
+
+    archived_at = datetime.now(timezone.utc).isoformat()
+    await db.execute(
+        update(Clients).where(Clients.id == client_id).values(archived_at=archived_at)
+    )
+    # Free the slot back to the agent's quota (the merchant no longer operates).
+    await _free_agent_slot(db, agent_id)
+    db.add(
+        Audit_logs(
+            user_id=str(current_user.id),
+            action="AGENT_ARCHIVE_CLIENT",
+            entity_type="clients",
+            entity_id=str(client_id),
+            details=f"Agent {agent_id} archived merchant {client_id} ({merchant.email})",
+        )
+    )
+    await db.commit()
+    return MerchantLifecycleResponse(success=True, client_id=client_id, archived_at=archived_at)
+
+
+@router.post("/agent/clients/{client_id}/restore", response_model=MerchantLifecycleResponse)
+async def restore_client(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: restore an archived merchant back into the active book (M8).
+
+    Reverses :func:`archive_client` with no data loss. Because archiving freed the
+    slot, a restore must re-acquire one — if the agent has since filled the package
+    the restore fails closed (409) rather than overselling. A merchant that is not
+    archived returns 409.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    agent_id = role_info["entity_id"]
+    merchant = await _agent_owned_client(db, agent_id, client_id)
+    if not merchant.archived_at:
+        raise HTTPException(status_code=409, detail="Merchant is not archived")
+
+    # Re-acquire the slot the archive freed; fail closed if the package is now full.
+    if not await _acquire_agent_slot(db, agent_id):
+        raise HTTPException(
+            status_code=409,
+            detail="No available client slots to restore into. Please upgrade your package.",
+        )
+
+    await db.execute(
+        update(Clients).where(Clients.id == client_id).values(archived_at=None)
+    )
+    db.add(
+        Audit_logs(
+            user_id=str(current_user.id),
+            action="AGENT_RESTORE_CLIENT",
+            entity_type="clients",
+            entity_id=str(client_id),
+            details=f"Agent {agent_id} restored merchant {client_id} ({merchant.email})",
+        )
+    )
+    await db.commit()
+    return MerchantLifecycleResponse(success=True, client_id=client_id, archived_at=None)
+
+
+@router.post("/agent/clients/{client_id}/transfer", response_model=TransferClientResponse)
+async def transfer_client(
+    client_id: int,
+    data: TransferClientRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: transfer one of their merchants to another agent (M8 / issue-215).
+
+    Changes the owning ``agent_id`` so the destination agent now manages the
+    merchant — its catalog, customers and sales follow untouched (tenancy resolves
+    by the merchant's own ``user_id``, not the agent). Slots move with the
+    merchant: a slot is atomically acquired on the destination first (fail closed if
+    that agent is full), then freed on the source. The destination must be an active
+    agent and different from the source. The merchant's login is untouched.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    source_agent_id = role_info["entity_id"]
+    merchant = await _agent_owned_client(db, source_agent_id, client_id)
+
+    # Resolve the destination agent by id or email.
+    if data.target_agent_id is not None:
+        target_q = select(Agents).where(Agents.id == data.target_agent_id)
+    elif data.target_agent_email:
+        target_q = select(Agents).where(
+            func.lower(Agents.email) == data.target_agent_email.strip().lower()
+        )
+    else:
+        raise HTTPException(
+            status_code=400, detail="target_agent_id or target_agent_email is required"
+        )
+    target_agent = (await db.execute(target_q)).scalar_one_or_none()
+    if not target_agent:
+        raise HTTPException(status_code=404, detail="Destination agent not found")
+    if target_agent.id == source_agent_id:
+        raise HTTPException(status_code=400, detail="Merchant already belongs to this agent")
+    if target_agent.is_active is False:
+        raise HTTPException(status_code=409, detail="Destination agent is suspended")
+
+    # An archived merchant holds no slot on the source (archive freed it), so only
+    # acquire on the destination when the merchant is live.
+    is_live = not merchant.archived_at
+    if is_live and not await _acquire_agent_slot(db, target_agent.id):
+        raise HTTPException(
+            status_code=409,
+            detail="Destination agent has no available client slots.",
+        )
+
+    await db.execute(
+        update(Clients).where(Clients.id == client_id).values(agent_id=target_agent.id)
+    )
+    if is_live:
+        await _free_agent_slot(db, source_agent_id)
+    db.add(
+        Audit_logs(
+            user_id=str(current_user.id),
+            action="AGENT_TRANSFER_CLIENT",
+            entity_type="clients",
+            entity_id=str(client_id),
+            details=(
+                f"Agent {source_agent_id} transferred merchant {client_id} "
+                f"({merchant.email}) to agent {target_agent.id} ({target_agent.email})"
+            ),
+        )
+    )
+    await db.commit()
+    return TransferClientResponse(
+        success=True,
+        client_id=client_id,
+        from_agent_id=source_agent_id,
+        to_agent_id=target_agent.id,
+    )
+
+
+@router.get("/agent/clients/{client_id}/export")
+async def export_client(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: download a portable JSON snapshot of one of their merchants (M8).
+
+    A self-contained export the agent keeps before a transfer or post-retention
+    delete (PDPL data-portability, §4.1(8)): the merchant profile (secrets such as
+    card tokens / webhook secrets are deliberately excluded), its subscription
+    payment history, and a count of the operational records it owns. Returned as a
+    downloadable ``application/json`` attachment.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    agent_id = role_info["entity_id"]
+    merchant = await _agent_owned_client(db, agent_id, client_id)
+
+    # Operational-record counts, scoped to the merchant's own tenant (its user_id).
+    owner_id = str(merchant.user_id)
+
+    async def _count(model) -> int:
+        return int(
+            (
+                await db.execute(
+                    select(func.count(model.id)).where(model.user_id == owner_id)
+                )
+            ).scalar()
+            or 0
+        )
+
+    counts = {
+        "products": await _count(Products),
+        "customers": await _count(Customers),
+        "branches": await _count(Branches),
+        "transactions": await _count(Transactions),
+    }
+
+    payments = (
+        await db.execute(
+            select(Subscription_payments)
+            .where(Subscription_payments.client_id == client_id)
+            .order_by(Subscription_payments.id.asc())
+        )
+    ).scalars().all()
+
+    login = (
+        await db.execute(select(User).where(User.id == merchant.user_id))
+    ).scalar_one_or_none()
+
+    export = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "schema": "pos-saas/merchant-export@1",
+        "merchant": {
+            "id": merchant.id,
+            "business_name": merchant.business_name,
+            "email": merchant.email,
+            "phone": merchant.phone,
+            "agent_id": merchant.agent_id,
+            "business_type": merchant.business_type,
+            "subscription_fee": merchant.subscription_fee,
+            "billing_cycle": merchant.billing_cycle,
+            "subscription_status": merchant.subscription_status,
+            "next_billing_date": merchant.next_billing_date,
+            "language_preference": merchant.language_preference,
+            "vat_number": merchant.vat_number,
+            "zatca_enabled": merchant.zatca_enabled,
+            "is_active": merchant.is_active,
+            "archived_at": merchant.archived_at,
+            "created_at": merchant.created_at.isoformat() if merchant.created_at else None,
+        },
+        "login_account": {
+            "email": getattr(login, "email", None),
+            "name": getattr(login, "name", None),
+        },
+        "record_counts": counts,
+        "subscription_payments": [
+            {
+                "id": p.id,
+                "amount": p.amount,
+                "billing_cycle": p.billing_cycle,
+                "period_start": p.period_start,
+                "period_end": p.period_end,
+                "method": p.method,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in payments
+        ],
+    }
+
+    db.add(
+        Audit_logs(
+            user_id=str(current_user.id),
+            action="AGENT_EXPORT_CLIENT",
+            entity_type="clients",
+            entity_id=str(client_id),
+            details=f"Agent {agent_id} exported merchant {client_id} ({merchant.email})",
+        )
+    )
+    await db.commit()
+
+    filename = f"merchant-{client_id}-export.json"
+    return JSONResponse(
+        content=export,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.delete("/agent/clients/{client_id}")
+async def delete_client(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: permanently delete an archived merchant after its retention lapses (M8).
+
+    The irreversible end of the lifecycle. Guarded twice: the merchant must already
+    be archived, and it must have stayed archived for at least
+    ``MERCHANT_RETENTION_DAYS`` — the recovery window that protects against an
+    accidental archive. Only then is the merchant identity purged: the ``clients``
+    row, its subscription-payment and feature records, and its login account. The
+    slot was already freed at archive time, so capacity is unchanged.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    agent_id = role_info["entity_id"]
+    merchant = await _agent_owned_client(db, agent_id, client_id)
+
+    if not merchant.archived_at:
+        raise HTTPException(
+            status_code=409,
+            detail="Merchant must be archived before it can be deleted.",
+        )
+    try:
+        archived_dt = datetime.fromisoformat(merchant.archived_at)
+    except ValueError:
+        archived_dt = None
+    if archived_dt is not None:
+        if archived_dt.tzinfo is None:
+            archived_dt = archived_dt.replace(tzinfo=timezone.utc)
+        eligible_on = archived_dt + timedelta(days=MERCHANT_RETENTION_DAYS)
+        if datetime.now(timezone.utc) < eligible_on:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Retention period not elapsed. Eligible for deletion on "
+                    f"{eligible_on.date().isoformat()}."
+                ),
+            )
+
+    merchant_email = merchant.email
+    user_id = merchant.user_id
+
+    # Purge the merchant identity: billing + feature records, the client row, and the
+    # login account. Operational catalog data is owner-scoped by the same user_id and
+    # is retired with the login (no account can reach it once the user is gone).
+    from sqlalchemy import delete as sa_delete
+
+    await db.execute(
+        sa_delete(Subscription_payments).where(Subscription_payments.client_id == client_id)
+    )
+    await db.execute(
+        sa_delete(Client_features).where(Client_features.client_id == client_id)
+    )
+    await db.execute(sa_delete(Clients).where(Clients.id == client_id))
+    if user_id:
+        await db.execute(sa_delete(User).where(User.id == user_id))
+
+    db.add(
+        Audit_logs(
+            user_id=str(current_user.id),
+            action="AGENT_DELETE_CLIENT",
+            entity_type="clients",
+            entity_id=str(client_id),
+            details=(
+                f"Agent {agent_id} permanently deleted archived merchant "
+                f"{client_id} ({merchant_email}) after retention"
+            ),
+        )
+    )
+    await db.commit()
+    return {"success": True, "client_id": client_id, "deleted": True}
 
 
 class ZatcaToggleResponse(BaseModel):
@@ -1492,12 +2014,53 @@ async def set_client_feature(
     else:
         row.is_enabled = data.is_enabled
     await db.commit()
+    # M10/#219: drop this client's cached entitlements so the gate re-reads the
+    # new flag on the next request (invalidate after commit to avoid a re-cache
+    # race against the old value).
+    await invalidate_features(client_id)
 
     return FeatureToggleResponse(
         client_id=client_id,
         feature_name=data.feature_name,
         is_enabled=data.is_enabled,
     )
+
+
+@router.get("/agent/clients/{client_id}/features", response_model=ClientFeaturesResponse)
+async def get_client_features(
+    client_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Agent: read the resolved feature flags for one of their clients (AG-03).
+
+    Returns every canonical key with its effective state — default-on unless an
+    explicit ``client_features`` row disables it — so the dashboard hydrates real
+    toggle state per client instead of assuming every switch is on.
+    """
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "agent":
+        raise HTTPException(status_code=403, detail="Only agents can access this endpoint")
+
+    result = await db.execute(
+        select(Clients).where(
+            Clients.id == client_id, Clients.agent_id == role_info["entity_id"]
+        )
+    )
+    merchant = result.scalar_one_or_none()
+    if not merchant:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    rows = await db.execute(
+        select(Client_features.feature_name, Client_features.is_enabled).where(
+            Client_features.client_id == client_id
+        )
+    )
+    stored = {name: bool(enabled) for name, enabled in rows.all()}
+    # Default-on: a key with no explicit row is enabled (mirrors is_feature_enabled).
+    features = {key: stored.get(key, True) for key in sorted(FEATURE_KEYS)}
+
+    return ClientFeaturesResponse(client_id=client_id, features=features)
 
 
 # ---------- Client Endpoints ----------
@@ -1511,25 +2074,22 @@ async def get_client_branding(
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access this endpoint")
 
-    # Get the agent who owns this client
-    result = await db.execute(
-        select(Agents).where(Agents.id == role_info["agent_id"])
-    )
-    agent = result.scalar_one_or_none()
-    if not agent:
+    # Get the agent who owns this client. M10/#219: a client loads its agent's
+    # branding on every app boot, so the resolved (public) brand is cached by agent
+    # id and invalidated when the agent edits branding / uploads a logo.
+    agent_id = role_info["agent_id"]
+
+    async def _load() -> Optional[dict]:
+        result = await db.execute(select(Agents).where(Agents.id == agent_id))
+        agent = result.scalar_one_or_none()
+        return _public_branding_payload(agent) if agent else None
+
+    payload = await cache.get_or_load(brand_agent_key(agent_id), TTL_BRAND, _load)
+    if payload is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    return BrandingResponse(
-        logo_url=agent.logo_url,
-        primary_color=agent.primary_color or "#3B82F6",
-        secondary_color=agent.secondary_color or "#1E40AF",
-        font_family=agent.font_family or "Inter",
-        button_radius=agent.button_radius or "8px",
-        company_name=agent.company_name,
-        default_language=agent.default_language or "en",
-        custom_domain=getattr(agent, "custom_domain", None),
-        # email_template_* deliberately omitted — a client never sees it.
-    )
+    # email_template_* deliberately omitted — a client never sees it.
+    return BrandingResponse(**payload)
 
 
 # ---------- Subscription (CL-03 / CL-04) ----------
@@ -1898,6 +2458,44 @@ async def get_subscription_invoice_pdf(
 # default by the agent at provisioning and the client confirms/changes it during
 # the first-login setup flow (CL-02).
 _VALID_BUSINESS_TYPES = ("retail", "restaurant", "both")
+# Business types that unlock the restaurant vertical (floor/tables/KDS/menu).
+_RESTAURANT_BUSINESS_TYPES = ("restaurant", "both")
+
+
+async def _sync_type_features(
+    db: AsyncSession, client_user_id: str, client_id: int, business_type: str
+) -> None:
+    """Type-driven feature seeding / recompute (the #201 business-type spine).
+
+    The restaurant vertical is double-gated: ``business_type`` first, then the
+    per-merchant ``restaurant`` feature flag (see routers/restaurant.py). The
+    type is the source of truth, so we keep the flag aligned with it — enabled
+    for restaurant/both, explicitly disabled for retail. This makes the guard
+    *derive from type before* any per-merchant feature override, and is what the
+    change-type flow calls to recompute permissions.
+
+    Reversible by design: it only toggles a single feature flag, never deletes
+    catalog, sales or restaurant data — switching the type back re-enables it.
+    """
+    wants_restaurant = business_type in _RESTAURANT_BUSINESS_TYPES
+    result = await db.execute(
+        select(Client_features).where(
+            Client_features.client_id == client_id,
+            Client_features.feature_name == "restaurant",
+        )
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        db.add(
+            Client_features(
+                user_id=client_user_id,
+                client_id=client_id,
+                feature_name="restaurant",
+                is_enabled=wants_restaurant,
+            )
+        )
+    else:
+        row.is_enabled = wants_restaurant
 
 
 class ClientProfileResponse(BaseModel):
@@ -1957,6 +2555,11 @@ async def set_client_business_type(
     await db.execute(
         update(Clients).where(Clients.id == merchant.id).values(business_type=business_type)
     )
+    # Recompute type-driven permissions in the same transaction (issue #201
+    # change-type flow): align the restaurant feature flag with the new type so
+    # nav/guards/dashboard recompute consistently. No data is deleted — only the
+    # flag is toggled, so switching back restores the hidden tools.
+    await _sync_type_features(db, merchant.user_id, merchant.id, business_type)
     await db.commit()
     await db.refresh(merchant)
     return ClientProfileResponse(
@@ -2650,46 +3253,55 @@ async def get_client_dashboard(
 
     client_id = role_info["entity_id"]
 
-    # Total sales
-    total_result = await db.execute(
-        select(func.coalesce(func.sum(Transactions.total_amount), 0))
-        .where(Transactions.client_id == client_id)
-    )
-    total_sales = float(total_result.scalar() or 0)
+    # M10/#219: the dashboard fans out four aggregate scans + a count on every
+    # load; cache the computed snapshot per client with a short TTL. A sale clears
+    # it explicitly (services.sale_core.execute_sale -> invalidate_dashboard), and
+    # the short TTL bounds staleness for the rarer catalog-count change and the
+    # midnight "today" rollover.
+    async def _load() -> dict:
+        # Total sales
+        total_result = await db.execute(
+            select(func.coalesce(func.sum(Transactions.total_amount), 0))
+            .where(Transactions.client_id == client_id)
+        )
+        total_sales = float(total_result.scalar() or 0)
 
-    # Total transactions
-    count_result = await db.execute(
-        select(func.count(Transactions.id)).where(Transactions.client_id == client_id)
-    )
-    total_transactions = count_result.scalar() or 0
+        # Total transactions
+        count_result = await db.execute(
+            select(func.count(Transactions.id)).where(Transactions.client_id == client_id)
+        )
+        total_transactions = count_result.scalar() or 0
 
-    # Today's transactions
-    today = datetime.now(timezone.utc).date()
-    today_count_result = await db.execute(
-        select(func.count(Transactions.id))
-        .where(Transactions.client_id == client_id)
-        .where(func.date(Transactions.created_at) == today)
-    )
-    today_transactions = today_count_result.scalar() or 0
+        # Today's transactions
+        today = datetime.now(timezone.utc).date()
+        today_count_result = await db.execute(
+            select(func.count(Transactions.id))
+            .where(Transactions.client_id == client_id)
+            .where(func.date(Transactions.created_at) == today)
+        )
+        today_transactions = today_count_result.scalar() or 0
 
-    # Today's sales
-    today_sales_result = await db.execute(
-        select(func.coalesce(func.sum(Transactions.total_amount), 0))
-        .where(Transactions.client_id == client_id)
-        .where(func.date(Transactions.created_at) == today)
-    )
-    today_sales = float(today_sales_result.scalar() or 0)
+        # Today's sales
+        today_sales_result = await db.execute(
+            select(func.coalesce(func.sum(Transactions.total_amount), 0))
+            .where(Transactions.client_id == client_id)
+            .where(func.date(Transactions.created_at) == today)
+        )
+        today_sales = float(today_sales_result.scalar() or 0)
 
-    # Products count
-    products_result = await db.execute(
-        select(func.count(Products.id)).where(Products.client_id == client_id)
-    )
-    products_count = products_result.scalar() or 0
+        # Products count
+        products_result = await db.execute(
+            select(func.count(Products.id)).where(Products.client_id == client_id)
+        )
+        products_count = products_result.scalar() or 0
 
-    return DashboardStatsResponse(
-        total_sales=total_sales,
-        total_transactions=total_transactions,
-        today_transactions=today_transactions,
-        today_sales=today_sales,
-        products_count=products_count,
-    )
+        return {
+            "total_sales": total_sales,
+            "total_transactions": total_transactions,
+            "today_transactions": today_transactions,
+            "today_sales": today_sales,
+            "products_count": products_count,
+        }
+
+    stats = await cache.get_or_load(dashboard_key(client_id), TTL_DASHBOARD, _load)
+    return DashboardStatsResponse(**stats)

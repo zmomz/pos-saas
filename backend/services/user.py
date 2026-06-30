@@ -9,7 +9,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Notification-preference fields that live on UserProfile.
-_PREF_FIELDS = ("email_alerts", "low_stock_alerts", "daily_summary", "transaction_alerts")
+_PREF_FIELDS = (
+    "email_alerts",
+    "whatsapp_alerts",
+    "push_alerts",
+    "low_stock_alerts",
+    "daily_summary",
+    "transaction_alerts",
+)
 
 logger = logging.getLogger(__name__)
 

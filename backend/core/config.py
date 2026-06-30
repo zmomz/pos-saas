@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./app.db"
 
+    # Read-replica posture (M9 reporting). Optional connection URL for a read-only
+    # replica that heavy analytics/report queries are routed to (see
+    # core.database.get_read_db) so they never contend with the sale path's write
+    # pool. Empty / unset → reporting reuses the primary database (safe default for
+    # single-DB deployments). Same driver-normalization as DATABASE_URL applies.
+    read_replica_url: str = ""
+
     # JWT / local authentication
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
@@ -120,6 +127,14 @@ class Settings(BaseSettings):
     # unattended subscription charger.
     billing_scheduler_enabled: bool = False
     billing_scheduler_interval_seconds: int = 3600
+
+    # Caching layer (M10 / issue #219). When REDIS_URL is set, hot reads
+    # (brand resolution, feature entitlements, the global tax rate, dashboard
+    # aggregates) are cached in Redis — shared across every API worker so an
+    # invalidation on write is seen everywhere. When unset, the cache degrades
+    # to a process-local in-memory store (correct per-process), so dev/CI need no
+    # Redis. See core/cache.py.
+    redis_url: str = ""
 
     # Object storage (OSS) — ISSUE-030. When both are set, StorageService talks
     # to the external object-storage gateway. When either is absent the service

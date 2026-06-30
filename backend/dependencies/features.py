@@ -16,6 +16,7 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cache import TTL_FEATURES, cache, feature_key
 from core.database import get_db
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from models.client_features import Client_features
@@ -45,16 +46,29 @@ FEATURE_KEYS = frozenset(
 
 
 async def is_feature_enabled(db: AsyncSession, client_id: int, feature_name: str) -> bool:
-    """Return whether ``feature_name`` is enabled for ``client_id`` (default True)."""
-    result = await db.execute(
-        select(Client_features.is_enabled).where(
-            Client_features.client_id == client_id,
-            Client_features.feature_name == feature_name,
+    """Return whether ``feature_name`` is enabled for ``client_id`` (default True).
+
+    Cached (M10 / #219): a gated route consults this on every request but the flag
+    only changes when an agent toggles it, so the boolean is cached per
+    ``(client_id, feature_name)`` and invalidated for the whole client by
+    ``invalidate_features`` when ``set_client_feature`` writes. The result is a
+    plain bool, so it caches cleanly (``False`` is a real cached value, not a miss).
+    """
+
+    async def _load() -> bool:
+        result = await db.execute(
+            select(Client_features.is_enabled).where(
+                Client_features.client_id == client_id,
+                Client_features.feature_name == feature_name,
+            )
         )
+        flag = result.scalar_one_or_none()
+        # No row => feature not explicitly disabled => allowed.
+        return flag is not False
+
+    return await cache.get_or_load(
+        feature_key(client_id, feature_name), TTL_FEATURES, _load
     )
-    flag = result.scalar_one_or_none()
-    # No row => feature not explicitly disabled => allowed.
-    return flag is not False
 
 
 def require_feature(feature_name: str):

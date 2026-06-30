@@ -811,7 +811,7 @@ class RestaurantService:
             # Push the new cards to any open kitchen stream (≤1s real-time, F-057).
             for card in kds_cards:
                 await self.db.refresh(card)
-                kds_broker.publish(
+                await kds_broker.publish(
                     user_id, {"type": "fired", "card": self._kds_to_dict(card)}
                 )
             logger.info(
@@ -1757,7 +1757,7 @@ class RestaurantService:
             await self.db.commit()
             await self.db.refresh(card)
             payload = self._kds_to_dict(card)
-            kds_broker.publish(user_id, {"type": "bumped", "card": payload})
+            await kds_broker.publish(user_id, {"type": "bumped", "card": payload})
             logger.info(f"Bumped KDS card {kds_id}")
             return payload
         except Exception as e:
@@ -1781,7 +1781,7 @@ class RestaurantService:
             await self.db.commit()
             await self.db.refresh(card)
             payload = self._kds_to_dict(card)
-            kds_broker.publish(user_id, {"type": "recalled", "card": payload})
+            await kds_broker.publish(user_id, {"type": "recalled", "card": payload})
             logger.info(f"Recalled KDS card {kds_id}")
             return payload
         except Exception as e:
