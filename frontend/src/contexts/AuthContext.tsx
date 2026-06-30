@@ -22,6 +22,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
+  loginWithPin: (merchantEmail: string, pin: string) => Promise<void>;
   register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => Promise<void>;
   refetch: () => Promise<void>;
@@ -101,6 +102,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setUser({ ...userData, role });
   };
 
+  const loginWithPin = async (merchantEmail: string, pin: string) => {
+    setError(null);
+    const userData = await authApi.loginWithPin(merchantEmail, pin);
+    const role = await resolveTenancyRole();
+    setUser({ ...userData, role });
+  };
+
   const register = async (email: string, password: string, name?: string) => {
     setError(null);
     const userData = await authApi.register(email, password, name);
@@ -128,6 +136,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loading,
     error,
     login,
+    loginWithPin,
     register,
     logout,
     refetch: checkAuthStatus,

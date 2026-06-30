@@ -247,7 +247,10 @@ async def test_disabled_omnichannel_feature_ignores_webhook(client):
     pid = await _add_product_with_barcode(client_id, user["id"], barcode=sku, quantity=10)
     await _connect(client, headers, store_id)
 
-    # Agent disables the omnichannel feature for this client.
+    # Agent disables the omnichannel feature for this client. The real agent
+    # endpoint (set_client_feature) invalidates the entitlement cache on write
+    # (M10/#219); this test writes the row directly, so it invalidates the same
+    # way to mirror that path — the gate above already cached "enabled" on connect.
     async with db_manager.async_session_maker() as db:
         db.add(
             Client_features(
@@ -258,6 +261,9 @@ async def test_disabled_omnichannel_feature_ignores_webhook(client):
             )
         )
         await db.commit()
+    from core.cache import invalidate_features
+
+    await invalidate_features(client_id)
 
     resp = await _post_webhook(
         client, _salla_payload(merchant=store_id, order_id=90004, sku=sku, qty=2)

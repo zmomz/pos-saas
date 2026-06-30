@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, productImageSrc, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, emailReceipt, smsReceipt, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, productImageSrc, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
 import { CUSTOMER_DISPLAY_KEY, buildCustomerDisplayPayload, paidCustomerDisplayPayload } from '@/lib/customerDisplay';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatMoneyAr, formatDateTime } from '@/lib/format';
@@ -11,8 +11,10 @@ import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQu
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { notifyError } from '@/lib/notify';
+import { toast } from 'sonner';
 import ErrorState from '@/components/states/ErrorState';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Mail, MessageSquare, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon, Minus, Plus } from 'lucide-react';
 
 export interface Product {
   id: number;
@@ -262,6 +264,11 @@ export default function POSTerminal() {
   const [voidProcessing, setVoidProcessing] = useState(false);
   // ISSUE-075: reprint-in-progress flag for the selected past sale.
   const [reprinting, setReprinting] = useState(false);
+  // Parity #6 (#198): send a finished receipt by email/SMS. `sendChannel` is the
+  // open dialog's channel (null = closed); `sendTo` is the typed recipient.
+  const [sendChannel, setSendChannel] = useState<'email' | 'sms' | null>(null);
+  const [sendTo, setSendTo] = useState('');
+  const [sendingReceipt, setSendingReceipt] = useState(false);
   const [voidError, setVoidError] = useState('');
   // POS-07: per-line quantity to return, keyed by the line's index in the
   // selected transaction. Defaults to the full sold quantity (whole-invoice
@@ -978,6 +985,35 @@ export default function POSTerminal() {
     }
   }
 
+  // Parity #6 (#198): send the just-finished receipt by email or SMS. Both
+  // channels are sold as feature flags (email_receipts / sms_receipts); the
+  // backend gates and delivers. We surface the outcome honestly — a backend that
+  // only *logged* the message (no provider configured) reports delivered:false,
+  // so we warn rather than claim it was sent.
+  async function handleSendReceipt() {
+    if (!receipt?.id || !sendChannel) return;
+    const to = sendTo.trim();
+    if (!to) return;
+    setSendingReceipt(true);
+    try {
+      const result =
+        sendChannel === 'email'
+          ? await emailReceipt(receipt.id, to)
+          : await smsReceipt(receipt.id, to);
+      if (result?.delivered) {
+        toast.success(t('receipt_sent') || 'Receipt sent');
+      } else {
+        toast.warning(t('receipt_logged') || 'Receipt recorded, but delivery isn’t set up yet');
+      }
+      setSendChannel(null);
+      setSendTo('');
+    } catch (err) {
+      notifyError(err, t('send_receipt_failed') || 'Couldn’t send the receipt');
+    } finally {
+      setSendingReceipt(false);
+    }
+  }
+
   // POS-07: select a sale for refund and default every line's return quantity to
   // its full sold quantity (whole-invoice refund as the starting point).
   function selectTransactionForRefund(txn: Transaction) {
@@ -1268,6 +1304,30 @@ export default function POSTerminal() {
                   <Printer className="w-4 h-4" />
                 </Button>
               )}
+              {/* Parity #6 (#198): send the receipt by email / SMS. Both are
+                  sold feature flags; the backend enforces entitlement. */}
+              {receipt.id && (
+                <Button
+                  variant="outline"
+                  onClick={() => { setSendChannel('email'); setSendTo(''); }}
+                  className="border-border text-foreground hover:bg-muted"
+                  title={t('email_receipt') || 'Email receipt'}
+                  aria-label={t('email_receipt') || 'Email receipt'}
+                >
+                  <Mail className="w-4 h-4" />
+                </Button>
+              )}
+              {receipt.id && (
+                <Button
+                  variant="outline"
+                  onClick={() => { setSendChannel('sms'); setSendTo(''); }}
+                  className="border-border text-foreground hover:bg-muted"
+                  title={t('sms_receipt') || 'SMS receipt'}
+                  aria-label={t('sms_receipt') || 'SMS receipt'}
+                >
+                  <MessageSquare className="w-4 h-4" />
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => navigate('/client')}
@@ -1278,6 +1338,51 @@ export default function POSTerminal() {
             </div>
           </div>
         </div>
+
+        {/* Parity #6 (#198): recipient prompt shared by the email/SMS actions. */}
+        <Dialog
+          open={sendChannel !== null}
+          onOpenChange={(open) => { if (!open) { setSendChannel(null); setSendTo(''); } }}
+        >
+          <DialogContent className="bg-card border-border text-foreground sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-foreground">
+                {sendChannel === 'sms' ? (t('sms_receipt') || 'SMS receipt') : (t('email_receipt') || 'Email receipt')}
+              </DialogTitle>
+              <DialogDescription>
+                {(t('invoice_number') || 'Invoice #')} {receipt.invoice_number}
+              </DialogDescription>
+            </DialogHeader>
+            <form
+              onSubmit={(e) => { e.preventDefault(); handleSendReceipt(); }}
+              className="space-y-4"
+            >
+              <Input
+                type={sendChannel === 'sms' ? 'tel' : 'email'}
+                inputMode={sendChannel === 'sms' ? 'tel' : 'email'}
+                dir="ltr"
+                autoFocus
+                value={sendTo}
+                onChange={(e) => setSendTo(e.target.value)}
+                placeholder={sendChannel === 'sms' ? '+9665XXXXXXXX' : 'name@example.com'}
+                aria-label={sendChannel === 'sms' ? (t('recipient_phone') || 'Recipient phone') : (t('recipient_email') || 'Recipient email')}
+              />
+              <DialogFooter className="gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-border text-foreground hover:bg-muted"
+                  onClick={() => { setSendChannel(null); setSendTo(''); }}
+                >
+                  {t('cancel')}
+                </Button>
+                <Button type="submit" disabled={sendingReceipt || !sendTo.trim()}>
+                  {sendingReceipt ? (t('loading') || '…') : (t('send_receipt') || 'Send receipt')}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
@@ -1515,10 +1620,16 @@ export default function POSTerminal() {
   }
 
   // Sale Mode View (default)
+  //
+  // H2 (height chain): the screen is locked to the viewport (`h-screen` +
+  // `overflow-hidden`) so the product grid and the cart each own their own
+  // scroll. The cart's TOTAL/checkout block stays pinned at the bottom while the
+  // line items scroll, instead of the whole page growing past the viewport and
+  // pushing checkout off-screen under a heavy cart.
   return (
-    <div className="min-h-screen bg-background flex flex-col lg:flex-row">
+    <div className="flex h-screen flex-col overflow-hidden bg-background lg:flex-row">
       {/* Product Grid */}
-      <div className="flex-1 p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-bold text-foreground">{t('products')}</h2>
@@ -1739,8 +1850,11 @@ export default function POSTerminal() {
         )}
       </div>
 
-      {/* Cart Sidebar */}
-      <div className="flex w-full flex-col border-t border-border bg-card p-4 lg:w-[400px] lg:border-s lg:border-t-0">
+      {/* Cart Sidebar — H2: bounded height so the items list scrolls and the
+          TOTAL/checkout block below stays pinned. On a stacked phone layout the
+          cart shares the viewport with the grid (flex-1); on the counter it is a
+          fixed-width full-height column. */}
+      <div className="flex w-full flex-1 min-h-0 flex-col border-t border-border bg-card p-4 lg:w-[400px] lg:flex-none lg:border-s lg:border-t-0">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="flex items-center gap-2 text-lg font-bold text-foreground">
             <ShoppingCart className="h-[18px] w-[18px]" /> {t('current_sale') || 'Current Sale'}
@@ -1767,7 +1881,7 @@ export default function POSTerminal() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto space-y-2">
+        <div className="flex-1 min-h-0 overflow-y-auto space-y-2">
           {cart.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-12 text-center text-muted-foreground">
               <ShoppingCart className="h-10 w-10 opacity-30" />
@@ -1802,12 +1916,14 @@ export default function POSTerminal() {
                         <span className="text-muted-foreground text-xs">{t('unit_price')}</span>
                         <Input
                           type="number"
+                          inputMode="decimal"
                           min="0"
                           step="0.01"
                           value={lineUnitPrice(item)}
                           onChange={(e) => setLineUnitPrice(item.key, e.target.value)}
                           dir="ltr"
-                          className="h-6 w-20 bg-card border-border text-foreground text-xs"
+                          aria-label={`${t('unit_price')} — ${item.product.name}`}
+                          className="h-11 w-24 bg-card border-border text-foreground text-base"
                         />
                       </div>
                     ) : (
@@ -1819,13 +1935,15 @@ export default function POSTerminal() {
                       </p>
                     )}
                   </div>
+                  {/* H5: 44px labelled remove control (was a 24px raw glyph). */}
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() => removeFromCart(item.key)}
-                    className="text-destructive hover:text-destructive hover:bg-muted h-6 w-6 p-0"
+                    className="h-11 w-11 shrink-0 p-0 text-destructive hover:bg-muted hover:text-destructive"
+                    aria-label={`${t('remove')} ${item.product.name}`}
                   >
-                    ✕
+                    <Trash2 className="h-5 w-5" />
                   </Button>
                 </div>
                 <div className="flex items-center gap-2 mt-2">
@@ -1834,12 +1952,14 @@ export default function POSTerminal() {
                     <div className="flex items-center gap-1">
                       <Input
                         type="number"
+                        inputMode="decimal"
                         min="0"
                         step="0.001"
                         value={item.quantity}
                         onChange={(e) => setLineQuantity(item.key, e.target.value)}
                         dir="ltr"
-                        className="h-7 w-24 bg-card border-border text-foreground text-xs"
+                        aria-label={`${t('quantity')} — ${item.product.name}`}
+                        className="h-11 w-24 bg-card border-border text-foreground text-base"
                       />
                       {item.product.unit_label && (
                         <span className="text-muted-foreground text-xs">{item.product.unit_label}</span>
@@ -1847,22 +1967,25 @@ export default function POSTerminal() {
                     </div>
                   ) : (
                     <>
+                      {/* H5: 44px labelled steppers with lucide glyphs. */}
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => updateQuantity(item.key, -1)}
-                        className="h-9 w-9 p-0 border-border text-foreground hover:bg-muted"
+                        className="h-11 w-11 shrink-0 border-border p-0 text-foreground hover:bg-muted"
+                        aria-label={`${t('decrease_quantity')} — ${item.product.name}`}
                       >
-                        -
+                        <Minus className="h-4 w-4" />
                       </Button>
-                      <span className="text-foreground text-sm w-8 text-center">{item.quantity}</span>
+                      <span className="w-8 text-center text-base font-semibold text-foreground tabular-nums">{item.quantity}</span>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => updateQuantity(item.key, 1)}
-                        className="h-9 w-9 p-0 border-border text-foreground hover:bg-muted"
+                        className="h-11 w-11 shrink-0 border-border p-0 text-foreground hover:bg-muted"
+                        aria-label={`${t('increase_quantity')} — ${item.product.name}`}
                       >
-                        +
+                        <Plus className="h-4 w-4" />
                       </Button>
                     </>
                   )}
@@ -2000,7 +2123,7 @@ export default function POSTerminal() {
                 onClick={() => setSplitMode((v) => !v)}
                 className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
                   splitMode
-                    ? 'border-brand bg-brand text-white'
+                    ? 'border-primary bg-primary text-primary-foreground'
                     : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
                 }`}
               >
@@ -2028,7 +2151,7 @@ export default function POSTerminal() {
                         key={m.v}
                         type="button"
                         onClick={() => setPaymentMethod(m.v)}
-                        className={`inline-flex items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[13px] font-semibold transition-colors ${
+                        className={`inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[13px] font-semibold transition-colors ${
                           active
                             ? 'border-brand bg-brand-50 text-brand-700'
                             : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
@@ -2091,7 +2214,7 @@ export default function POSTerminal() {
                       <button
                         type="button"
                         onClick={() => setSelectedTerminalId('')}
-                        className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                        className={`inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
                           selectedTerminalId === ''
                             ? 'border-brand bg-brand-50 text-brand-700'
                             : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
@@ -2106,7 +2229,7 @@ export default function POSTerminal() {
                             key={tm.id}
                             type="button"
                             onClick={() => setSelectedTerminalId(String(tm.id))}
-                            className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                            className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
                               active
                                 ? 'border-brand bg-brand-50 text-brand-700'
                                 : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
@@ -2169,10 +2292,14 @@ export default function POSTerminal() {
             )}
           </div>
 
+          {/* H1: the checkout CTA is white-labelled — it rides the tenant's
+              primary and pairs it with `text-primary-foreground`, which
+              BrandingContext flips to dark ink for pale brands so the amount due
+              stays legible (was a fixed `bg-brand text-white`). */}
           <button
             onClick={handleCheckout}
             disabled={cart.length === 0 || processing || (splitMode && !splitBalanced)}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand py-4 text-base font-bold text-white shadow-brand transition-colors hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-4 text-base font-bold text-primary-foreground shadow-brand transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {cart.length === 0 ? (
               <>

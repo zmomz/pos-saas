@@ -87,6 +87,8 @@ export interface AgentClientListItem {
   zatca_enabled: boolean;
   language_preference: string;
   created_at?: string | null;
+  // M8 (issue-215): ISO timestamp the merchant was archived, or null when live.
+  archived_at?: string | null;
 }
 
 export interface AgentClientsResponse {
@@ -98,11 +100,13 @@ export interface AgentClientsResponse {
 export async function getAgentClients(
   skip = 0,
   limit = 50,
+  archived = false,
 ): Promise<AgentClientsResponse> {
   const response = await client.apiCall.invoke<AgentClientsResponse>({
     url: '/api/v1/tenant/agent/clients',
     method: 'GET',
-    data: { skip, limit },
+    // M8: `archived` selects the archived book (for restore/delete) over the live one.
+    data: { skip, limit, archived },
   });
   return response.data;
 }
@@ -1327,9 +1331,71 @@ export async function changePassword(currentPassword: string, newPassword: strin
   return response.data;
 }
 
+// Self-service password reset (ISSUE-082 backend / #199 UI).
+export interface PasswordResetRequestResult {
+  success: boolean;
+  message: string;
+  // Populated only in dev / no-SMTP mode so the flow is usable without a real
+  // mailbox; null in production. Never assume it is present.
+  reset_token?: string | null;
+}
+
+/**
+ * Request a password-reset link for `email`. Always resolves 200 regardless of
+ * whether the address maps to an account — the backend is anti-enumeration, so
+ * the caller must show the same neutral confirmation either way.
+ */
+export async function requestPasswordReset(email: string): Promise<PasswordResetRequestResult> {
+  const response = await client.apiCall.invoke<PasswordResetRequestResult>({
+    url: '/api/v1/auth/password/forgot',
+    method: 'POST',
+    data: { email },
+  });
+  return response.data;
+}
+
+/**
+ * Complete a password reset with a single-use token from the emailed link.
+ * Throws on an invalid/expired token or a password that fails complexity — the
+ * caller surfaces `response.data.detail`.
+ */
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+): Promise<{ success: boolean; message: string }> {
+  const response = await client.apiCall.invoke<{ success: boolean; message: string }>({
+    url: '/api/v1/auth/password/reset',
+    method: 'POST',
+    data: { token, new_password: newPassword },
+  });
+  return response.data;
+}
+
+// Active login sessions for the current user (auth/sessions). Used to show the
+// real current-session details on the profile instead of a hardcoded row.
+export interface SessionInfo {
+  id: string;
+  current: boolean;
+  user_agent?: string | null;
+  ip_address?: string | null;
+  created_at?: string | null;
+  last_used_at?: string | null;
+}
+
+export async function getActiveSessions() {
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/auth/sessions',
+    method: 'GET',
+    data: {},
+  });
+  return response.data as { sessions: SessionInfo[] };
+}
+
 // Per-user profile + notification preferences (ISSUE-078, persisted server-side)
 export interface NotificationPrefs {
   email_alerts: boolean;
+  whatsapp_alerts: boolean;
+  push_alerts: boolean;
   low_stock_alerts: boolean;
   daily_summary: boolean;
   transaction_alerts: boolean;
@@ -1737,6 +1803,88 @@ export async function getDiscountReport(days = 30): Promise<DiscountReport> {
   return response.data;
 }
 
+// M9 (F-068): Profit & Loss statement — net revenue (ex-VAT) − COGS (rolled up
+// from the bill of materials) − operating expenses = net profit, for the window.
+export interface PnlExpenseRow {
+  category: string;
+  amount: number;
+}
+
+export interface PnlReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  gross_sales: number;
+  discounts: number;
+  net_revenue: number;
+  vat: number;
+  cogs: number;
+  gross_profit: number;
+  gross_margin_pct: number;
+  expenses: PnlExpenseRow[];
+  total_expenses: number;
+  net_profit: number;
+  net_margin_pct: number;
+  csv_content: string;
+}
+
+export async function getPnlReport(days = 30): Promise<PnlReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/pnl?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// M9 (F-068): Cash Flow statement — cash-basis receipts (net of refunds) − cash
+// operating expenses = net operating cash flow, with a receipts-by-tender split
+// and the drawer movement totals (pay-in/pay-out/cash-drop) for traceability.
+export interface CashFlowLine {
+  label: string;
+  amount: number;
+}
+
+export interface CashFlowTender {
+  tender_type: string;
+  collected: number;
+  refunds: number;
+  net: number;
+}
+
+export interface CashFlowDrawer {
+  pay_in: number;
+  pay_out: number;
+  cash_drop: number;
+  net_drawer: number;
+}
+
+export interface CashFlowReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  receipts_collected: number;
+  receipts_refunds: number;
+  receipts_net: number;
+  by_tender: CashFlowTender[];
+  expenses: PnlExpenseRow[];
+  total_expenses: number;
+  inflows: CashFlowLine[];
+  outflows: CashFlowLine[];
+  net_cash_flow: number;
+  drawer_movements: CashFlowDrawer;
+  csv_content: string;
+}
+
+export async function getCashFlowReport(days = 30): Promise<CashFlowReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/cash-flow?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.
@@ -1845,6 +1993,40 @@ export async function markNotificationRead(notificationId: string) {
   return response.data;
 }
 
+// Operator-composed notification (M10 / parity #8, ISSUE-214). Sends over the
+// chosen channel; a future `scheduled_at` (ISO string) defers delivery and the
+// server acknowledges it as `scheduled` rather than `sent`.
+export type NotificationChannel = 'email' | 'whatsapp' | 'push';
+
+export interface ComposeNotificationInput {
+  channel: NotificationChannel;
+  to: string;
+  subject?: string;
+  body: string;
+  scheduled_at?: string | null;
+}
+
+export interface ComposeNotificationResult {
+  channel: NotificationChannel;
+  to: string;
+  subject: string;
+  status: string; // sent | logged | scheduled
+  scheduled_at?: string;
+  delivered?: boolean;
+  message_id?: string;
+}
+
+export async function sendNotification(
+  input: ComposeNotificationInput,
+): Promise<ComposeNotificationResult> {
+  const response = await client.apiCall.invoke<ComposeNotificationResult>({
+    url: '/api/v1/production/notifications/send',
+    method: 'POST',
+    data: input,
+  });
+  return response.data;
+}
+
 // Create Agent (Master Admin)
 export interface CreatedAgent {
   id: number;
@@ -1909,6 +2091,78 @@ export async function resetClientPassword(clientId: number): Promise<ResetPasswo
   const response = await client.apiCall.invoke<ResetPasswordResult>({
     url: `/api/v1/tenant/agent/clients/${clientId}/reset-password`,
     method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// ---- Merchant lifecycle (M8 / issue-215): archive/restore/transfer/export/delete ----
+
+export interface MerchantLifecycleResult {
+  success: boolean;
+  client_id: number;
+  archived_at?: string | null;
+}
+
+// Agent: archive a merchant — retires it without data loss, frees its slot and
+// blocks its login. Reversed by restoreClient.
+export async function archiveClient(clientId: number): Promise<MerchantLifecycleResult> {
+  const response = await client.apiCall.invoke<MerchantLifecycleResult>({
+    url: `/api/v1/tenant/agent/clients/${clientId}/archive`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Agent: restore an archived merchant back into the active book (re-takes a slot).
+export async function restoreClient(clientId: number): Promise<MerchantLifecycleResult> {
+  const response = await client.apiCall.invoke<MerchantLifecycleResult>({
+    url: `/api/v1/tenant/agent/clients/${clientId}/restore`,
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+export interface TransferClientResult {
+  success: boolean;
+  client_id: number;
+  from_agent_id: number;
+  to_agent_id: number;
+}
+
+// Agent: transfer a merchant to another agent (by the destination agent's email).
+// Changes the owning agent_id; the merchant's catalog/customers/sales follow.
+export async function transferClient(
+  clientId: number,
+  targetAgentEmail: string,
+): Promise<TransferClientResult> {
+  const response = await client.apiCall.invoke<TransferClientResult>({
+    url: `/api/v1/tenant/agent/clients/${clientId}/transfer`,
+    method: 'POST',
+    data: { target_agent_email: targetAgentEmail },
+  });
+  return response.data;
+}
+
+// Agent: download a portable JSON snapshot of a merchant (PDPL data-portability).
+export async function exportClientData(clientId: number): Promise<unknown> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/agent/clients/${clientId}/export`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// Agent: permanently delete an archived merchant once its retention window lapses.
+export async function deleteClient(
+  clientId: number,
+): Promise<{ success: boolean; client_id: number; deleted: boolean }> {
+  const response = await client.apiCall.invoke<{ success: boolean; client_id: number; deleted: boolean }>({
+    url: `/api/v1/tenant/agent/clients/${clientId}`,
+    method: 'DELETE',
     data: {},
   });
   return response.data;
@@ -2229,6 +2483,36 @@ export async function setBranchStock(branchId: number, productId: number, quanti
   return response.data;
 }
 
+// Per-branch *variant* stock ledger (parity #5, INV-03 × INV-04). Each variant SKU
+// carries its own per-branch allocation, separate from the parent product's stock.
+export interface BranchVariantStockItem {
+  variant_id: number;
+  quantity: number;
+}
+
+export interface BranchVariantStock {
+  branch_id: number;
+  items: BranchVariantStockItem[];
+  total: number;
+}
+
+export async function getBranchVariantStock(branchId: number): Promise<BranchVariantStock> {
+  const response = await client.apiCall.invoke<BranchVariantStock>({
+    url: `/api/v1/pos/branches/${branchId}/variant-stock`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function setBranchVariantStock(branchId: number, variantId: number, quantity: number) {
+  const response = await client.apiCall.invoke<BranchVariantStockItem & { branch_id: number }>({
+    url: `/api/v1/pos/branches/${branchId}/variant-stock`,
+    method: 'PUT',
+    data: { variant_id: variantId, quantity },
+  });
+  return response.data;
+}
+
 // Expense Management
 // ISSUE-022/026: the generic entity list wraps rows as `{ items, total }`.
 // Mirrors backend Expenses (models/expenses.py). Explicit signature so the page
@@ -2304,6 +2588,124 @@ export async function updateStaffMember(id: string, data: Record<string, unknown
 
 export async function deleteStaffMember(id: string) {
   await client.entities.staff_members.delete({ id });
+}
+
+// ---------------------------------------------------------------------------
+// Staff lifecycle (#216): suspend/terminate, attendance, shifts, PIN.
+// ---------------------------------------------------------------------------
+const STAFF_BASE = '/api/v1/entities/staff_members';
+
+export type StaffLifecycleAction = 'suspend' | 'terminate' | 'reactivate';
+
+/** Move a staff member through the lifecycle (suspend/terminate revoke access). */
+export async function setStaffLifecycle(id: string | number, action: StaffLifecycleAction) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/${action}`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+/** Set a staff member's numeric login PIN (4–8 digits). */
+export async function setStaffPin(id: string | number, pin: string) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/pin`,
+    method: 'PUT',
+    data: { pin },
+  });
+  return response.data;
+}
+
+/** Remove a staff member's PIN (disables their PIN login). */
+export async function clearStaffPin(id: string | number) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/pin`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
+export interface StaffAttendance {
+  id: number;
+  staff_id: number;
+  branch_id?: number | null;
+  clock_in?: string | null;
+  clock_out?: string | null;
+  hours?: number | null;
+  notes?: string | null;
+}
+
+export async function clockInStaff(id: string | number, notes?: string) {
+  const response = await client.apiCall.invoke<StaffAttendance>({
+    url: `${STAFF_BASE}/${id}/attendance/clock-in`,
+    method: 'POST',
+    data: { notes },
+  });
+  return response.data;
+}
+
+export async function clockOutStaff(id: string | number) {
+  const response = await client.apiCall.invoke<StaffAttendance>({
+    url: `${STAFF_BASE}/${id}/attendance/clock-out`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+export async function getStaffAttendance(id: string | number): Promise<StaffAttendance[]> {
+  const response = await client.apiCall.invoke<StaffAttendance[]>({
+    url: `${STAFF_BASE}/${id}/attendance`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export interface StaffShift {
+  id: number;
+  staff_id: number;
+  branch_id?: number | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  role?: string | null;
+  notes?: string | null;
+  status: string;
+}
+
+export async function assignStaffShift(
+  id: string | number,
+  shift: { starts_at: string; ends_at: string; role?: string; notes?: string },
+): Promise<StaffShift> {
+  const response = await client.apiCall.invoke<StaffShift>({
+    url: `${STAFF_BASE}/${id}/shifts`,
+    method: 'POST',
+    data: shift,
+  });
+  return response.data;
+}
+
+export async function getStaffShifts(id: string | number): Promise<StaffShift[]> {
+  const response = await client.apiCall.invoke<StaffShift[]>({
+    url: `${STAFF_BASE}/${id}/shifts`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function cancelStaffShift(shiftId: string | number): Promise<StaffShift> {
+  const response = await client.apiCall.invoke<StaffShift>({
+    url: `${STAFF_BASE}/shifts/${shiftId}`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
+/** Fetch the merchant's attendance export as CSV text (payroll hand-off). */
+export async function exportStaffAttendanceCsv(): Promise<string> {
+  const response = await client.apiCall.invoke<string>({
+    url: `${STAFF_BASE}/attendance/export`,
+    method: 'GET',
+  });
+  return typeof response.data === 'string' ? response.data : String(response.data ?? '');
 }
 
 // ISSUE-035: owner-scoped staff-permission editor. `override` is the explicit
@@ -2502,6 +2904,18 @@ export async function setGlobalTaxRate(taxRate: number) {
   return response.data;
 }
 
+// Agent: read the resolved per-client feature flags (AG-03). Every canonical key
+// with its effective on/off state (default-on unless explicitly disabled), so the
+// dashboard hydrates real toggle state per client instead of fabricating one.
+export async function getClientFeatures(clientId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/agent/clients/${clientId}/features`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data as { client_id: number; features: Record<string, boolean> };
+}
+
 // Agent: toggle a per-client feature flag at runtime (AG-03)
 export async function setClientFeature(clientId: number, featureName: string, isEnabled: boolean) {
   const response = await client.apiCall.invoke({
@@ -2563,12 +2977,45 @@ export interface SubscriptionStatus {
   subscription_status: string;
   next_billing_date?: string;
   is_active: boolean;
+  // Self-serve lifecycle stamps (#206): when the merchant paused / cancelled.
+  subscription_paused_at?: string | null;
+  subscription_cancelled_at?: string | null;
+  // Card-on-file summary (#206): the masked card for the "replace card" affordance.
+  has_card?: boolean;
+  card_last4?: string | null;
+  card_brand?: string | null;
   // Dunning state (CL-06): drive the client-facing overdue notice.
   dunning_attempts?: number;
   grace_deadline?: string;
   // Rail 2: the owning agent's Moyasar publishable key for live card tokenization.
   moyasar_publishable_key?: string | null;
   payments: SubscriptionPayment[];
+}
+
+// Upcoming renewal / upgrade-downgrade preview (#206).
+export interface ProrationPreview {
+  new_fee: number;
+  billing_cycle: string;
+  days_remaining: number;
+  cycle_days: number;
+  amount: number; // pro-rated charge (positive) or credit (negative)
+  is_credit: boolean;
+}
+
+export interface RenewalPreview {
+  subscription_status: string;
+  billing_cycle: string;
+  renewal_date?: string | null;
+  currency: string;
+  gross_fee: number;
+  coupon_active: boolean;
+  coupon_type?: string | null;
+  coupon_value?: number | null;
+  discount_amount: number;
+  net_amount: number; // what will actually be charged on the next renewal
+  will_charge: boolean; // false when paused / cancelled
+  in_trial: boolean;
+  proration?: ProrationPreview | null;
 }
 
 // Client: read own subscription status + payment history (CL-04)
@@ -2599,7 +3046,8 @@ export interface SaveCardResult {
   card_brand?: string | null;
 }
 
-// Client: store the card used to pay the subscription (Rail 2).
+// Client: store the card used to pay the subscription (Rail 2). Used both for the
+// first card and to replace the card on file (#206) — the new token overwrites it.
 export async function saveSubscriptionCard(data: {
   token: string;
   last4?: string;
@@ -2609,6 +3057,68 @@ export async function saveSubscriptionCard(data: {
     url: '/api/v1/tenant/client/subscription/card',
     method: 'POST',
     data,
+  });
+  return response.data;
+}
+
+// Client: pause their own subscription — billing stops, access kept (#206).
+export async function pauseSubscription(): Promise<SubscriptionStatus> {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: '/api/v1/tenant/client/subscription/pause',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: resume a paused (or reactivate a cancelled) subscription (#206).
+export async function resumeSubscription(): Promise<SubscriptionStatus> {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: '/api/v1/tenant/client/subscription/resume',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: cancel their own subscription at period end (#206).
+export async function cancelSubscription(): Promise<SubscriptionStatus> {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: '/api/v1/tenant/client/subscription/cancel',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: preview the upcoming renewal — and optionally an upgrade/downgrade's
+// proration when newFee is supplied (#206).
+export async function getRenewalPreview(opts?: {
+  newFee?: number;
+  newCycle?: string;
+}): Promise<RenewalPreview> {
+  const params = new URLSearchParams();
+  if (opts?.newFee !== undefined) params.set('new_fee', String(opts.newFee));
+  if (opts?.newCycle) params.set('new_cycle', opts.newCycle);
+  const qs = params.toString();
+  const response = await client.apiCall.invoke<RenewalPreview>({
+    url: `/api/v1/tenant/client/subscription/renewal-preview${qs ? `?${qs}` : ''}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// Client: refund one of their settled subscription payments (#206). Omit amount
+// for a full refund of the remaining amount.
+export async function refundSubscriptionPayment(
+  paymentId: number,
+  amount?: number
+): Promise<SubscriptionStatus> {
+  const response = await client.apiCall.invoke<SubscriptionStatus>({
+    url: `/api/v1/tenant/client/subscription/payments/${paymentId}/refund`,
+    method: 'POST',
+    data: amount !== undefined ? { amount } : {},
   });
   return response.data;
 }
@@ -2761,12 +3271,41 @@ export async function downloadReportPdf(
   URL.revokeObjectURL(url);
 }
 
+// Result shared by the email/SMS receipt actions. `delivered` is false when the
+// backend only *logged* the message (no SMTP/Twilio configured) — the UI must
+// not claim "sent" in that case (parity #6).
+export interface ReceiptDeliveryResult {
+  status: 'sent' | 'logged' | string;
+  to: string;
+  delivered: boolean;
+  message_id?: string;
+  subject?: string;
+  invoice_number?: string;
+}
+
 // POS-04: email a receipt for a transaction
-export async function emailReceipt(transactionId: number, toEmail: string) {
+export async function emailReceipt(
+  transactionId: number,
+  toEmail: string,
+): Promise<ReceiptDeliveryResult> {
   const response = await client.apiCall.invoke({
     url: `/api/v1/pos/transactions/${transactionId}/email`,
     method: 'POST',
     data: { to_email: toEmail },
+  });
+  return response.data;
+}
+
+// Parity #6: SMS a receipt for a transaction. Sibling of `emailReceipt`; the
+// backend gates it behind the `sms_receipts` feature flag and expects `to_number`.
+export async function smsReceipt(
+  transactionId: number,
+  toNumber: string,
+): Promise<ReceiptDeliveryResult> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/transactions/${transactionId}/sms`,
+    method: 'POST',
+    data: { to_number: toNumber },
   });
   return response.data;
 }
@@ -2941,6 +3480,28 @@ export async function createFloorZone(data: { name: string; branch_id?: number }
     url: '/api/v1/restaurant/zones',
     method: 'POST',
     data,
+  });
+  return res.data;
+}
+
+// Rename a floor zone (parity #7). Only non-null fields are applied server-side.
+export async function updateFloorZone(
+  zoneId: number,
+  data: { name?: string; branch_id?: number },
+): Promise<FloorZone> {
+  const res = await client.apiCall.invoke<FloorZone>({
+    url: `/api/v1/restaurant/zones/${zoneId}`,
+    method: 'PUT',
+    data,
+  });
+  return res.data;
+}
+
+// Delete a floor zone (parity #7). Tables keep their seats but lose the zone tab.
+export async function deleteFloorZone(zoneId: number) {
+  const res = await client.apiCall.invoke({
+    url: `/api/v1/restaurant/zones/${zoneId}`,
+    method: 'DELETE',
   });
   return res.data;
 }

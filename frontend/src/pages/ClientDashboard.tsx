@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { getClientDashboard, getClientBranding, getTransactions, getClientSubscription, payClientSubscription, saveSubscriptionCard, downloadSubscriptionInvoice, type SubscriptionStatus } from '@/lib/api';
+import {
+  getClientDashboard, getClientBranding, getTransactions, getClientSubscription,
+  payClientSubscription, saveSubscriptionCard, downloadSubscriptionInvoice,
+  getLowStockProducts, getTopProducts, getInventoryReport,
+  getRestaurantTables, getKdsTickets, getReservations,
+  type SubscriptionStatus,
+} from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { useBusinessProfile } from '@/contexts/BusinessProfileContext';
+import { isRetailType, isRestaurantType, SALE_MODES, type SaleMode } from '@/lib/businessType';
 import { notifyError } from '@/lib/notify';
 import { formatMoney, formatDate, currencyLabel } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -10,8 +18,9 @@ import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
 import {
-  DollarSign, ShoppingCart, TrendingUp, Package as PackageIcon, Monitor, ShoppingBag,
-  BarChart3, Users, Download, AlertTriangle, ArrowRight, Receipt, CreditCard,
+  DollarSign, TrendingUp, Monitor, ShoppingBag,
+  BarChart3, Users, Download, AlertTriangle, ArrowRight, CreditCard,
+  UtensilsCrossed, ChefHat, CalendarClock, Boxes, Layers,
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -30,6 +39,43 @@ interface Transaction {
   created_at: string;
 }
 
+interface RetailFocus {
+  lowStock: number | null;
+  inventoryValue: number | null;
+  bestSeller: string | null;
+}
+
+interface RestaurantFocus {
+  activeTables: number | null;
+  totalTables: number | null;
+  kitchenQueue: number | null;
+  reservations: number | null;
+}
+
+// Tolerate the various list-endpoint shapes (array | {items} | {total}) without
+// fabricating a count when none is available.
+function countOf(data: unknown): number | null {
+  if (Array.isArray(data)) return data.length;
+  if (data && typeof data === 'object') {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.items)) return (d.items as unknown[]).length;
+    if (Array.isArray(d.products)) return (d.products as unknown[]).length;
+    if (typeof d.total === 'number') return d.total;
+  }
+  return null;
+}
+
+function firstName(data: unknown): string | null {
+  const arr = Array.isArray(data)
+    ? data
+    : data && typeof data === 'object' && Array.isArray((data as Record<string, unknown>).items)
+      ? ((data as Record<string, unknown>).items as unknown[])
+      : [];
+  const first = arr[0] as Record<string, unknown> | undefined;
+  if (!first) return null;
+  return (first.name || first.product_name || first.product || first.title || null) as string | null;
+}
+
 export default function ClientDashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -41,12 +87,30 @@ export default function ClientDashboard() {
   // card locally (Rail 2 — merchant card-on-file).
   const [savedCard, setSavedCard] = useState<{ last4: string; brand: string } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [retailFocus, setRetailFocus] = useState<RetailFocus | null>(null);
+  const [restaurantFocus, setRestaurantFocus] = useState<RestaurantFocus | null>(null);
   const navigate = useNavigate();
   const { t, language } = useLanguage();
+  const { businessType, saleMode, setSaleMode } = useBusinessProfile();
+
+  const isRetail = businessType ? isRetailType(businessType) : false;
+  const isRestaurant = businessType ? isRestaurantType(businessType) : false;
+  const isHybrid = businessType === 'both';
 
   useEffect(() => {
     loadData();
   }, []);
+
+  // Type-specific operations data (issue #201) — fetched only for the relevant
+  // vertical so a retail merchant never calls the restaurant endpoints (which
+  // 403 by type) and vice versa. Each call degrades to null on failure so the
+  // tile shows "unknown" rather than a fabricated number.
+  useEffect(() => {
+    if (!businessType) return;
+    if (isRetailType(businessType)) loadRetailFocus();
+    if (isRestaurantType(businessType)) loadRestaurantFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [businessType]);
 
   async function loadData() {
     try {
@@ -67,6 +131,35 @@ export default function ClientDashboard() {
     }
   }
 
+  async function loadRetailFocus() {
+    const [low, top, inv] = await Promise.all([
+      getLowStockProducts().catch(() => null),
+      getTopProducts(3).catch(() => null),
+      getInventoryReport(30).catch(() => null),
+    ]);
+    setRetailFocus({
+      lowStock: countOf(low),
+      bestSeller: firstName(top),
+      inventoryValue: typeof inv?.total_valuation === 'number' ? inv.total_valuation : null,
+    });
+  }
+
+  async function loadRestaurantFocus() {
+    const [tables, kds, resv] = await Promise.all([
+      getRestaurantTables().catch(() => null),
+      getKdsTickets().catch(() => null),
+      getReservations({ status: 'booked' }).catch(() => null),
+    ]);
+    const tableItems = tables?.items ?? null;
+    const kdsItems = kds?.items ?? null;
+    setRestaurantFocus({
+      totalTables: tableItems ? tableItems.length : null,
+      activeTables: tableItems ? tableItems.filter((tbl) => (tbl.state || 'free') !== 'free').length : null,
+      kitchenQueue: kdsItems ? kdsItems.filter((c) => c.status === 'active').length : countOf(kds),
+      reservations: countOf(resv),
+    });
+  }
+
   async function handleSaveCard(token: CardOnFileToken) {
     const result = await saveSubscriptionCard({ token: token.token, last4: token.last4, brand: token.brand });
     setSavedCard({ last4: result.card_last4 || token.last4, brand: result.card_brand || token.brand });
@@ -84,28 +177,38 @@ export default function ClientDashboard() {
     }
   }
 
+  // Type-aware POS entry: a hybrid merchant carries their chosen default sale
+  // mode as intent; single-vertical merchants just open the terminal.
+  const openPos = () => navigate(isHybrid ? `/pos?mode=${saleMode}` : '/pos');
+
+  // ⌘K quick actions follow the merchant's vertical so they never jump to a
+  // route their business type hides.
+  const quickPalette = isRestaurant && !isRetail
+    ? [
+        { icon: Monitor, label: t('go_to_pos') || 'Open POS', kbd: 'P', onSelect: openPos },
+        { icon: UtensilsCrossed, label: t('floor_map') || 'Floor', onSelect: () => navigate('/floor') },
+        { icon: ChefHat, label: t('kds') || 'Kitchen', onSelect: () => navigate('/kds') },
+        { icon: BarChart3, label: t('reports') || 'Reports', onSelect: () => navigate('/reports') },
+      ]
+    : [
+        { icon: Monitor, label: t('go_to_pos') || 'Open POS', kbd: 'P', onSelect: openPos },
+        { icon: ShoppingBag, label: t('products') || 'Products', onSelect: () => navigate('/products') },
+        { icon: BarChart3, label: t('reports') || 'Reports', onSelect: () => navigate('/reports') },
+        { icon: Users, label: t('staff') || 'Staff', onSelect: () => navigate('/staff') },
+      ];
+
   usePageChrome(
     {
       subtitle: `${brandName ? `${brandName} · ` : ''}${t('recent_transactions')}`,
       primaryAction: (
-        <Button onClick={() => navigate('/pos')} className="h-11 rounded-[10px] shadow-brand">
+        <Button onClick={openPos} className="h-11 rounded-[10px] shadow-brand">
           <Monitor className="h-4 w-4" />
           {t('go_to_pos') || 'Open POS'}
         </Button>
       ),
-      paletteGroups: [
-        {
-          label: t('cmd_quick_actions'),
-          items: [
-            { icon: Monitor, label: t('go_to_pos') || 'Open POS', kbd: 'P', onSelect: () => navigate('/pos') },
-            { icon: ShoppingBag, label: t('products') || 'Products', onSelect: () => navigate('/products') },
-            { icon: BarChart3, label: t('reports') || 'Reports', onSelect: () => navigate('/reports') },
-            { icon: Users, label: t('staff') || 'Staff', onSelect: () => navigate('/staff') },
-          ],
-        },
-      ],
+      paletteGroups: [{ label: t('cmd_quick_actions'), items: quickPalette }],
     },
-    [language, brandName]
+    [language, brandName, businessType, saleMode]
   );
 
   if (loading) {
@@ -129,6 +232,9 @@ export default function ClientDashboard() {
     : subscription?.subscription_status === 'suspended'
       ? 'bg-danger/10 text-danger'
       : 'bg-warning/15 text-warning';
+  // Pure-restaurant merchants build their offering as menu items, not products.
+  const catalogLabel = isRestaurant && !isRetail ? (t('menu_items') || 'Menu items') : (t('products_count') || 'Products');
+  const num = (v: number | null) => (v === null ? '—' : String(v));
 
   // Real sparkline from recent transaction amounts (chronological).
   const spark = (() => {
@@ -189,7 +295,7 @@ export default function ClientDashboard() {
         </section>
 
         {/* Open POS action tile */}
-        <button onClick={() => navigate('/pos')} className="dxr-tile flex flex-col justify-between bg-gradient-to-br from-brand to-brand-700 text-start text-white lg:col-span-4 lg:row-span-2">
+        <button onClick={openPos} className="dxr-tile flex flex-col justify-between bg-gradient-to-br from-brand to-brand-700 text-start text-white lg:col-span-4 lg:row-span-2">
           <div className="flex items-center justify-between">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15"><Monitor className="h-5 w-5" /></span>
             <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/15"><ArrowRight className="h-5 w-5" /></span>
@@ -217,15 +323,98 @@ export default function ClientDashboard() {
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('today') || 'today'}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
-          <div className="text-[12.5px] font-semibold text-muted-foreground">{t('products_count') || 'Products'}</div>
+          <div className="text-[12.5px] font-semibold text-muted-foreground">{catalogLabel}</div>
           <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.products_count || 0} /></div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('active') || 'active'}</div>
         </section>
       </div>
 
-      {/* Quick actions */}
+      {/* Hybrid sale-mode switch — only a `both` merchant rings up sales across
+          retail and the restaurant order types, so only they get the switch. */}
+      {isHybrid && (
+        <div className="dxr-tile flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-[14px] font-extrabold tracking-tight">{t('sale_mode') || 'Default sale mode'}</div>
+            <div className="text-[12.5px] text-muted-foreground">{t('sale_mode_hint') || 'How a new sale opens in the POS.'}</div>
+          </div>
+          <div className="dxr-seg" role="group" aria-label={t('sale_mode') || 'Default sale mode'}>
+            {SALE_MODES.map((mode: SaleMode) => (
+              <button
+                key={mode}
+                type="button"
+                data-active={saleMode === mode}
+                onClick={() => setSaleMode(mode)}
+              >
+                {t(`sale_mode_${mode}`) || mode}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Type-aware operations focus (issue #201). Real metrics linking to the
+          page that acts on them; "—" means the figure is currently unavailable. */}
+      {isRetail && (
+        <section>
+          {isHybrid && <h2 className="mb-2.5 text-[13px] font-bold uppercase tracking-wider text-muted-foreground">{t('dash_retail_ops') || 'Retail'}</h2>}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <FocusTile
+              swatch="dxr-sw-warning" icon={<AlertTriangle className="h-[18px] w-[18px]" />}
+              label={t('kpi_low_stock') || 'Low stock'} value={num(retailFocus?.lowStock ?? null)}
+              sub={t('kpi_needs_reorder') || 'items need reorder'} onClick={() => navigate('/products')}
+            />
+            <FocusTile
+              swatch="dxr-sw-brand" icon={<Boxes className="h-[18px] w-[18px]" />}
+              label={t('kpi_inventory_value') || 'Inventory value'}
+              value={retailFocus?.inventoryValue != null ? formatMoney(retailFocus.inventoryValue, language) : '—'}
+              sub={t('kpi_on_hand') || 'stock on hand'} onClick={() => navigate('/reports')}
+            />
+            <FocusTile
+              swatch="dxr-sw-gold" icon={<TrendingUp className="h-[18px] w-[18px]" />}
+              label={t('kpi_best_seller') || 'Best seller'} value={retailFocus?.bestSeller || '—'}
+              valueClass="truncate text-lg" sub={t('kpi_top_30d') || 'top item · last 30 days'} onClick={() => navigate('/reports')}
+            />
+          </div>
+        </section>
+      )}
+
+      {isRestaurant && (
+        <section>
+          {isHybrid && <h2 className="mb-2.5 text-[13px] font-bold uppercase tracking-wider text-muted-foreground">{t('dash_restaurant_ops') || 'Restaurant'}</h2>}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <FocusTile
+              swatch="dxr-sw-violet" icon={<UtensilsCrossed className="h-[18px] w-[18px]" />}
+              label={t('kpi_active_tables') || 'Active tables'}
+              value={restaurantFocus?.activeTables != null && restaurantFocus?.totalTables != null
+                ? `${restaurantFocus.activeTables}/${restaurantFocus.totalTables}`
+                : num(restaurantFocus?.activeTables ?? null)}
+              sub={t('kpi_seated_now') || 'seated now'} onClick={() => navigate('/floor')}
+            />
+            <FocusTile
+              swatch="dxr-sw-sky" icon={<ChefHat className="h-[18px] w-[18px]" />}
+              label={t('kpi_kitchen_queue') || 'Kitchen queue'} value={num(restaurantFocus?.kitchenQueue ?? null)}
+              sub={t('kpi_tickets_cooking') || 'tickets cooking'} onClick={() => navigate('/kds')}
+            />
+            <FocusTile
+              swatch="dxr-sw-success" icon={<CalendarClock className="h-[18px] w-[18px]" />}
+              label={t('kpi_reservations') || 'Reservations'} value={num(restaurantFocus?.reservations ?? null)}
+              sub={t('kpi_upcoming') || 'upcoming'} onClick={() => navigate('/reservations')}
+            />
+          </div>
+        </section>
+      )}
+
+      {/* Quick actions — vertical-aware so every chip lands on a reachable page. */}
       <div data-tour="quick-actions" className="flex flex-wrap gap-2.5">
-        <button onClick={() => navigate('/products')} className="chip-link"><ShoppingBag className="h-4 w-4" /> {t('manage_products') || 'Products'}</button>
+        {isRetail && (
+          <button onClick={() => navigate('/products')} className="chip-link"><ShoppingBag className="h-4 w-4" /> {t('manage_products') || 'Products'}</button>
+        )}
+        {isRestaurant && (
+          <>
+            <button onClick={() => navigate('/floor')} className="chip-link"><UtensilsCrossed className="h-4 w-4" /> {t('floor_map') || 'Floor'}</button>
+            <button onClick={() => navigate('/menu-builder')} className="chip-link"><Layers className="h-4 w-4" /> {t('menu_builder') || 'Menu'}</button>
+          </>
+        )}
         <button onClick={() => navigate('/reports')} className="chip-link"><BarChart3 className="h-4 w-4" /> {t('reports_analytics') || 'Reports'}</button>
         <button onClick={() => navigate('/staff')} className="chip-link"><Users className="h-4 w-4" /> {t('staff') || 'Staff'}</button>
       </div>
@@ -236,7 +425,7 @@ export default function ClientDashboard() {
         {subscription && (subscription.subscription_fee > 0 || subscription.payments.length > 0) ? (
           <div className="dxr-tile">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[16px] font-extrabold tracking-tight">{t('subscription') || 'Subscription'}</h2>
+              <button onClick={() => navigate('/billing')} className="text-[16px] font-extrabold tracking-tight hover:text-brand-700">{t('subscription') || 'Subscription'}</button>
               <span className={cn('inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-bold', subStatusCls)}>
                 <span className="h-1.5 w-1.5 rounded-full bg-current" />{subscription.subscription_status}
               </span>
@@ -342,5 +531,31 @@ export default function ClientDashboard() {
         titleKey="payment_method"
       />
     </div>
+  );
+}
+
+// A type-aware operations tile: icon swatch + metric + sub-label, links to the
+// page that acts on it. Kept local to the dashboard.
+function FocusTile({
+  swatch, icon, label, value, sub, onClick, valueClass,
+}: {
+  swatch: string;
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub: string;
+  onClick: () => void;
+  valueClass?: string;
+}) {
+  return (
+    <button onClick={onClick} className="dxr-tile dxr-hover flex items-center gap-3.5 text-start">
+      <span className={cn('dxr-sw h-11 w-11 shrink-0', swatch)}>{icon}</span>
+      <div className="min-w-0">
+        <div className="text-[12.5px] font-semibold text-muted-foreground">{label}</div>
+        <div className={cn('mt-0.5 font-extrabold tracking-tight tabular-nums', valueClass || 'text-2xl')}>{value}</div>
+        <div className="text-[11px] text-muted-foreground">{sub}</div>
+      </div>
+      <ArrowRight className="ms-auto h-4 w-4 shrink-0 text-muted-foreground rtl:-scale-x-100" />
+    </button>
   );
 }

@@ -4,7 +4,8 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/check-i18n-parity.mjs && vite build",
+    "i18n:check": "node scripts/check-i18n-parity.mjs",
     "lint": "eslint --quiet ./src",
     "preview": "vite preview",
     "test": "vitest run",

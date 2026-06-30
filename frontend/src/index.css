@@ -304,6 +304,11 @@
   .dxr-seg-ink button[data-active='true'] {
     @apply bg-white/20 text-white shadow-none;
   }
+  /* Touch variant — ≥44px tap targets for counter/tablet/wall contexts (POS,
+     KDS, floor map). Add `dxr-seg-touch` next to `dxr-seg`. */
+  .dxr-seg-touch button {
+    @apply min-h-[44px] px-4 text-[13px];
+  }
   /* Soft icon swatch tints (semantic) */
   .dxr-sw {
     @apply flex shrink-0 items-center justify-center rounded-xl;
