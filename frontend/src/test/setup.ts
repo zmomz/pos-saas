@@ -60,3 +60,10 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.setPointerCapture = vi.fn();
   Element.prototype.releasePointerCapture = vi.fn();
 }
+
+// jsdom doesn't implement elementFromPoint; input-otp's password-manager badge
+// probe (#202 MFA code entry) calls it from a timer and would otherwise raise an
+// unhandled error after the test completes.
+if (!document.elementFromPoint) {
+  document.elementFromPoint = () => null;
+}

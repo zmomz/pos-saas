@@ -1391,6 +1391,63 @@ export async function getActiveSessions() {
   return response.data as { sessions: SessionInfo[] };
 }
 
+/** Revoke one of the caller's sessions by id (#202, parity #2). */
+export async function revokeSession(sessionId: string) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/auth/sessions/${sessionId}`,
+    method: 'DELETE',
+    data: {},
+  });
+  return response.data as { success: boolean; revoked: number };
+}
+
+// ---- MFA (TOTP) — #202 (parity #1). Backend ISSUE-081. ----
+export interface MfaStatus {
+  enabled: boolean;
+  recovery_codes_remaining: number;
+}
+
+export interface MfaEnrollResult {
+  secret: string; // base32 shared secret
+  otpauth_uri: string; // otpauth://totp/... for QR provisioning
+  enabled: boolean;
+}
+
+export interface MfaActivateResult {
+  enabled: boolean;
+  recovery_codes: string[]; // shown once — the user must save these
+}
+
+/** Whether MFA is active for the caller (+ remaining recovery codes). */
+export async function getMfaStatus(): Promise<MfaStatus> {
+  const response = await client.apiCall.invoke<MfaStatus>({
+    url: '/api/v1/auth/mfa/status',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+/** Begin TOTP enrollment: mint a pending secret + provisioning URI. */
+export async function enrollMfa(): Promise<MfaEnrollResult> {
+  const response = await client.apiCall.invoke<MfaEnrollResult>({
+    url: '/api/v1/auth/mfa/enroll',
+    method: 'POST',
+    data: {},
+  });
+  return response.data;
+}
+
+/** Confirm enrollment with a code; enables MFA and returns recovery codes. */
+export async function activateMfa(code: string): Promise<MfaActivateResult> {
+  const response = await client.apiCall.invoke<MfaActivateResult>({
+    url: '/api/v1/auth/mfa/activate',
+    method: 'POST',
+    data: { code },
+  });
+  return response.data;
+}
+
 // Per-user profile + notification preferences (ISSUE-078, persisted server-side)
 export interface NotificationPrefs {
   email_alerts: boolean;

@@ -20,6 +20,27 @@ interface LoginResponse {
   user: AuthUser;
 }
 
+// #202 (parity #1) — when the account has MFA enabled, /auth/login answers with
+// a challenge ticket instead of tokens. The caller must collect a second-factor
+// code and exchange it at /auth/login/mfa via `completeMfaLogin`.
+export interface MfaChallenge {
+  mfaRequired: true;
+  mfaToken: string;
+}
+
+export type LoginResult = AuthUser | MfaChallenge;
+
+/** Narrow a login result to the MFA-challenge branch. */
+export function isMfaChallenge(result: LoginResult): result is MfaChallenge {
+  return (result as MfaChallenge)?.mfaRequired === true;
+}
+
+// Wire shape of the challenge returned by /auth/login when MFA is required.
+interface MfaChallengeWire {
+  mfa_required?: boolean;
+  mfa_token?: string;
+}
+
 const REFRESH_TOKEN_KEY = 'pos_refresh_token';
 
 // FE-01: the refresh token now lives ONLY in an HttpOnly cookie the backend sets
@@ -104,19 +125,47 @@ class LocalAuthApi {
     }
   }
 
-  /** Email/password login. Stores the JWT and returns the user. */
-  async login(email: string, password: string): Promise<AuthUser> {
+  /**
+   * Email/password login. Returns the user on success, or — for an MFA-enabled
+   * account — an {@link MfaChallenge} the caller must complete with
+   * {@link completeMfaLogin}. Only the user branch stores a token; the challenge
+   * branch leaves the app logged out until the second factor is verified.
+   */
+  async login(email: string, password: string): Promise<LoginResult> {
     try {
-      const response = await this.client.post<LoginResponse>(
+      const response = await this.client.post<LoginResponse & MfaChallengeWire>(
         `${this.getBaseURL()}/api/v1/auth/login`,
         { email, password }
       );
+      if (response.data.mfa_required) {
+        return { mfaRequired: true, mfaToken: response.data.mfa_token ?? '' };
+      }
       setToken(response.data.token);
       purgeLegacyRefreshToken();
       return response.data.user;
     } catch (error) {
       throw new Error(
         (axios.isAxiosError(error) && error.response?.data?.detail) || 'Invalid email or password'
+      );
+    }
+  }
+
+  /**
+   * Complete an MFA login: exchange the challenge ticket + a TOTP (or recovery)
+   * code at /auth/login/mfa for tokens, store the JWT, and return the user.
+   */
+  async completeMfaLogin(mfaToken: string, code: string): Promise<AuthUser> {
+    try {
+      const response = await this.client.post<LoginResponse>(
+        `${this.getBaseURL()}/api/v1/auth/login/mfa`,
+        { mfa_token: mfaToken, code }
+      );
+      setToken(response.data.token);
+      purgeLegacyRefreshToken();
+      return response.data.user;
+    } catch (error) {
+      throw new Error(
+        (axios.isAxiosError(error) && error.response?.data?.detail) || 'Invalid verification code'
       );
     }
   }

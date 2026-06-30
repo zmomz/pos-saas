@@ -5,8 +5,22 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
-import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check } from 'lucide-react';
-import { changePassword, getUserPreferences, saveUserPreferences, getActiveSessions, type NotificationPrefs, type SessionInfo } from '@/lib/api';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
+import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check, KeyRound, Monitor } from 'lucide-react';
+import {
+  changePassword,
+  getUserPreferences,
+  saveUserPreferences,
+  getActiveSessions,
+  revokeSession,
+  getMfaStatus,
+  enrollMfa,
+  activateMfa,
+  type NotificationPrefs,
+  type SessionInfo,
+  type MfaStatus,
+  type MfaEnrollResult,
+} from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 
@@ -21,8 +35,17 @@ function deviceLabel(ua?: string | null): string | null {
 
 export default function UserProfile() {
   const { language, setLanguage, t, tt } = useLanguage();
-  const [currentSession, setCurrentSession] = useState<SessionInfo | null>(null);
+  const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionLoading, setSessionLoading] = useState(true);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
+  // MFA (#202): status drives the security panel; an in-flight enrollment holds
+  // the pending secret until a code is verified; recoveryCodes is shown once.
+  const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
+  const [mfaEnroll, setMfaEnroll] = useState<MfaEnrollResult | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaRecoveryCodes, setMfaRecoveryCodes] = useState<string[] | null>(null);
+  const [mfaBusy, setMfaBusy] = useState(false);
+  const [mfaError, setMfaError] = useState<string | null>(null);
   const { theme, toggleTheme, isDark } = useTheme();
   const [displayName, setDisplayName] = useState('');
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>({
@@ -73,18 +96,27 @@ export default function UserProfile() {
     };
   }, []);
 
+  // Load all active sessions for the management list (#202, parity #2). Kept in
+  // a callable so a revoke can refresh it.
+  async function loadSessions() {
+    try {
+      const data = await getActiveSessions();
+      setSessions(data.sessions);
+    } catch {
+      setSessions([]);
+    } finally {
+      setSessionLoading(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
-    // Real current-session details replace the old hardcoded "Active now" row.
     getActiveSessions()
       .then((data) => {
-        if (cancelled) return;
-        const current = data.sessions.find((s) => s.current) ?? null;
-        setCurrentSession(current);
+        if (!cancelled) setSessions(data.sessions);
       })
       .catch(() => {
-        if (cancelled) return;
-        setCurrentSession(null);
+        if (!cancelled) setSessions([]);
       })
       .finally(() => {
         if (!cancelled) setSessionLoading(false);
@@ -93,6 +125,63 @@ export default function UserProfile() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Whether MFA is already on drives the security panel (#202, parity #1).
+    getMfaStatus()
+      .then((status) => {
+        if (!cancelled) setMfaStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setMfaStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleRevokeSession(id: string) {
+    setRevokingId(id);
+    try {
+      await revokeSession(id);
+      await loadSessions();
+    } finally {
+      setRevokingId(null);
+    }
+  }
+
+  async function handleEnrollMfa() {
+    setMfaError(null);
+    setMfaBusy(true);
+    try {
+      const result = await enrollMfa();
+      setMfaEnroll(result);
+      setMfaCode('');
+    } catch (err) {
+      setMfaError(err instanceof Error ? err.message : t('change_password_failed'));
+    } finally {
+      setMfaBusy(false);
+    }
+  }
+
+  async function handleActivateMfa() {
+    setMfaError(null);
+    setMfaBusy(true);
+    try {
+      const result = await activateMfa(mfaCode);
+      setMfaRecoveryCodes(result.recovery_codes);
+      setMfaStatus({ enabled: true, recovery_codes_remaining: result.recovery_codes.length });
+      setMfaEnroll(null);
+      setMfaCode('');
+    } catch (err) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setMfaError(detail || tt('mfa_invalid_code', 'Invalid verification code. Try again.'));
+    } finally {
+      setMfaBusy(false);
+    }
+  }
 
   async function handleSaveProfile() {
     setSaving(true);
@@ -270,35 +359,157 @@ export default function UserProfile() {
             <Shield className="h-5 w-5 text-danger" />
             {tt('security_and_sessions', 'Security & Sessions')}
           </h2>
-          {sessionLoading ? (
-            <div className="flex items-center justify-between py-2">
-              <p className="text-muted-foreground text-xs animate-pulse">{t('loading')}</p>
-            </div>
-          ) : currentSession ? (
-            <div className="flex items-center justify-between py-2">
-              <div className="min-w-0">
-                <p className="text-foreground text-sm font-medium">{tt('current_session', 'Current Session')}</p>
-                <p className="text-muted-foreground text-xs truncate">
-                  {[
-                    deviceLabel(currentSession.user_agent),
-                    currentSession.created_at
-                      ? `${tt('signed_in', 'Signed in')} ${formatDate(currentSession.created_at, language)}`
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ') || tt('active_now', 'Active now')}
+          {/* Two-factor authentication (#202, parity #1) */}
+          <div className="space-y-3 py-2">
+            <p className="dxr-eyebrow flex items-center gap-2">
+              <KeyRound className="h-4 w-4" />
+              {tt('two_factor_auth', 'Two-factor authentication')}
+            </p>
+
+            {mfaRecoveryCodes ? (
+              <div className="space-y-2">
+                <p className="text-sm text-success">
+                  {tt('mfa_enabled_now', 'Two-factor authentication is now on.')}
                 </p>
+                <p className="text-muted-foreground text-xs">
+                  {tt(
+                    'mfa_save_recovery',
+                    'Save these recovery codes somewhere safe — each can be used once if you lose your authenticator.'
+                  )}
+                </p>
+                <ul className="grid grid-cols-2 gap-2 font-mono text-sm">
+                  {mfaRecoveryCodes.map((code) => (
+                    <li key={code} className="dxr-tile px-3 py-1.5 text-center">
+                      {code}
+                    </li>
+                  ))}
+                </ul>
+                <Button size="sm" variant="outline" onClick={() => setMfaRecoveryCodes(null)}>
+                  {tt('done', 'Done')}
+                </Button>
               </div>
-              <Badge className="pill-success">{tt('active', 'Active')}</Badge>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between py-2">
-              <div>
-                <p className="text-foreground text-sm font-medium">{tt('current_session', 'Current Session')}</p>
-                <p className="text-muted-foreground text-xs">{tt('session_unavailable', 'Session details unavailable')}</p>
+            ) : mfaEnroll ? (
+              <div className="space-y-3">
+                <p className="text-muted-foreground text-xs">
+                  {tt(
+                    'mfa_enroll_hint',
+                    'Add this secret to your authenticator app, then enter the 6-digit code it shows.'
+                  )}
+                </p>
+                <code
+                  data-testid="mfa-secret"
+                  className="dxr-tile inline-block px-3 py-1.5 font-mono text-sm break-all"
+                >
+                  {mfaEnroll.secret}
+                </code>
+                <InputOTP
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={setMfaCode}
+                  aria-label={tt('mfa_code_label', 'Verification code')}
+                >
+                  <InputOTPGroup>
+                    {[0, 1, 2, 3, 4, 5].map((i) => (
+                      <InputOTPSlot key={i} index={i} />
+                    ))}
+                  </InputOTPGroup>
+                </InputOTP>
+                {mfaError && <p className="text-sm text-danger">{mfaError}</p>}
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={handleActivateMfa}
+                    disabled={mfaBusy || mfaCode.length < 6}
+                  >
+                    {mfaBusy ? t('saving') : tt('mfa_activate', 'Activate')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setMfaEnroll(null);
+                      setMfaError(null);
+                      setMfaCode('');
+                    }}
+                  >
+                    {tt('cancel', 'Cancel')}
+                  </Button>
+                </div>
               </div>
-            </div>
-          )}
+            ) : mfaStatus?.enabled ? (
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-foreground text-sm font-medium">
+                    {tt('mfa_on', 'Two-factor authentication is on')}
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    {tt('mfa_recovery_remaining', 'Recovery codes remaining')}:{' '}
+                    {mfaStatus.recovery_codes_remaining}
+                  </p>
+                </div>
+                <Badge className="pill-success shrink-0">{tt('active', 'Active')}</Badge>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-muted-foreground text-xs">
+                  {tt('mfa_off_hint', 'Add a second factor for stronger account security.')}
+                </p>
+                <Button size="sm" className="shrink-0" onClick={handleEnrollMfa} disabled={mfaBusy}>
+                  {tt('enable_mfa', 'Enable two-factor authentication')}
+                </Button>
+              </div>
+            )}
+            {mfaError && !mfaEnroll && <p className="text-sm text-danger">{mfaError}</p>}
+          </div>
+
+          {/* Active sessions (#202, parity #2) */}
+          <div className="space-y-2 py-2 border-t border-border">
+            <p className="dxr-eyebrow flex items-center gap-2">
+              <Monitor className="h-4 w-4" />
+              {tt('active_sessions', 'Active sessions')}
+            </p>
+            {sessionLoading ? (
+              <p className="text-muted-foreground text-xs animate-pulse">{t('loading')}</p>
+            ) : sessions.length === 0 ? (
+              <p className="text-muted-foreground text-xs">
+                {tt('session_unavailable', 'Session details unavailable')}
+              </p>
+            ) : (
+              <ul className="space-y-1">
+                {sessions.map((s) => (
+                  <li
+                    key={s.id}
+                    className="flex items-center justify-between gap-3 py-1.5 border-b border-border last:border-0"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-foreground text-sm font-medium truncate">
+                        {deviceLabel(s.user_agent) || tt('unknown_device', 'Unknown device')}
+                      </p>
+                      <p className="text-muted-foreground text-xs truncate">
+                        {s.created_at
+                          ? `${tt('signed_in', 'Signed in')} ${formatDate(s.created_at, language)}`
+                          : tt('active_now', 'Active now')}
+                      </p>
+                    </div>
+                    {s.current ? (
+                      <Badge className="pill-success shrink-0">{tt('active', 'Active')}</Badge>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0"
+                        onClick={() => handleRevokeSession(s.id)}
+                        disabled={revokingId === s.id}
+                      >
+                        {revokingId === s.id ? t('loading') : tt('revoke', 'Revoke')}
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="py-2 border-t border-border space-y-3">
             <p className="text-foreground text-sm font-medium">{t('change_password')}</p>
             <Input

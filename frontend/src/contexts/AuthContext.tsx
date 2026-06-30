@@ -5,7 +5,7 @@ import React, {
   useEffect,
   ReactNode,
 } from 'react';
-import { authApi } from '../lib/auth';
+import { authApi, isMfaChallenge, type LoginResult } from '../lib/auth';
 import { getRole } from '../lib/api';
 
 interface User {
@@ -21,7 +21,8 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<LoginResult>;
+  completeMfaLogin: (mfaToken: string, code: string) => Promise<void>;
   loginWithPin: (merchantEmail: string, pin: string) => Promise<void>;
   register: (email: string, password: string, name?: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -95,9 +96,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<LoginResult> => {
     setError(null);
-    const userData = await authApi.login(email, password);
+    const result = await authApi.login(email, password);
+    // An MFA-enabled account is not yet signed in: hand the challenge back so
+    // the caller can collect a second factor and call completeMfaLogin.
+    if (isMfaChallenge(result)) {
+      return result;
+    }
+    const role = await resolveTenancyRole();
+    setUser({ ...result, role });
+    return result;
+  };
+
+  const completeMfaLogin = async (mfaToken: string, code: string) => {
+    setError(null);
+    const userData = await authApi.completeMfaLogin(mfaToken, code);
     const role = await resolveTenancyRole();
     setUser({ ...userData, role });
   };
@@ -136,6 +150,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loading,
     error,
     login,
+    completeMfaLogin,
     loginWithPin,
     register,
     logout,

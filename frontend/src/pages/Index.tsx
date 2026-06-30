@@ -3,8 +3,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
 import AuthLayout from '@/components/auth/AuthLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { isMfaChallenge } from '@/lib/auth';
 import { useLanguage } from '@/lib/i18n';
 
 const roleToPath: Record<string, string> = {
@@ -15,8 +17,8 @@ const roleToPath: Record<string, string> = {
 
 export default function Index() {
   const navigate = useNavigate();
-  const { t, isRTL } = useLanguage();
-  const { user, loading, login, loginWithPin, register } = useAuth();
+  const { t, tt, isRTL } = useLanguage();
+  const { user, loading, login, completeMfaLogin, loginWithPin, register } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
   // Within login mode the merchant's team can sign in by password or by PIN
@@ -28,6 +30,10 @@ export default function Index() {
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #202 — when a password login returns an MFA challenge, hold the ticket and
+  // switch the form to second-factor entry until it is verified.
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState('');
 
   // Once authenticated, route to the role-specific dashboard.
   useEffect(() => {
@@ -45,11 +51,33 @@ export default function Index() {
         if (method === 'pin') {
           await loginWithPin(email, pin);
         } else {
-          await login(email, password);
+          const result = await login(email, password);
+          // An MFA-enabled account is not signed in yet — switch to the
+          // second-factor step and keep the ticket to complete it.
+          if (isMfaChallenge(result)) {
+            setMfaToken(result.mfaToken);
+            setMfaCode('');
+            return;
+          }
         }
       } else {
         await register(email, password, name || undefined);
       }
+      // Navigation happens in the effect above once `user` is set.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('auth_failed'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleVerifyMfa(e: React.FormEvent) {
+    e.preventDefault();
+    if (!mfaToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await completeMfaLogin(mfaToken, mfaCode);
       // Navigation happens in the effect above once `user` is set.
     } catch (err) {
       setError(err instanceof Error ? err.message : t('auth_failed'));
@@ -86,6 +114,52 @@ export default function Index() {
         </button>
       }
     >
+      {mfaToken ? (
+        <form onSubmit={handleVerifyMfa} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="mfa-code" className="text-foreground/90">
+              {tt('mfa_code_label', 'Verification code')}
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              {tt(
+                'mfa_code_hint',
+                'Enter the 6-digit code from your authenticator app, or a recovery code.'
+              )}
+            </p>
+            <InputOTP
+              id="mfa-code"
+              maxLength={6}
+              value={mfaCode}
+              onChange={setMfaCode}
+              aria-label={tt('mfa_code_label', 'Verification code')}
+              autoFocus
+            >
+              <InputOTPGroup>
+                {[0, 1, 2, 3, 4, 5].map((i) => (
+                  <InputOTPSlot key={i} index={i} />
+                ))}
+              </InputOTPGroup>
+            </InputOTP>
+          </div>
+
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
+          <Button type="submit" disabled={submitting} className="w-full">
+            {submitting ? t('loading') : tt('mfa_verify', 'Verify')}
+          </Button>
+          <button
+            type="button"
+            onClick={() => {
+              setMfaToken(null);
+              setMfaCode('');
+              setError(null);
+            }}
+            className="text-sm text-muted-foreground hover:text-foreground underline"
+          >
+            {tt('mfa_back_to_login', 'Back to login')}
+          </button>
+        </form>
+      ) : (
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {mode === 'login' && (
           <div className="dxr-seg grid grid-cols-2" role="tablist" aria-label={t('login')}>
@@ -175,6 +249,7 @@ export default function Index() {
           {submitting ? t('loading') : mode === 'login' ? t('login') : t('create_account')}
         </Button>
       </form>
+      )}
     </AuthLayout>
   );
 }
