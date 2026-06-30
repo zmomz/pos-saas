@@ -17,7 +17,12 @@ class UserProfile(Base):
     display_name = Column(String(255), nullable=True)
     # Notification channel/category toggles. Defaults mirror the previous
     # frontend defaults so behaviour is unchanged for users who never saved.
+    # ``email_alerts`` / ``whatsapp_alerts`` / ``push_alerts`` are the per-channel
+    # master switches (M10 / parity #8); the new channels default off so an
+    # upgrade never opts a user into a channel they never chose.
     email_alerts = Column(Boolean, nullable=False, default=True, server_default="true")
+    whatsapp_alerts = Column(Boolean, nullable=False, default=False, server_default="false")
+    push_alerts = Column(Boolean, nullable=False, default=False, server_default="false")
     low_stock_alerts = Column(Boolean, nullable=False, default=True, server_default="true")
     daily_summary = Column(Boolean, nullable=False, default=False, server_default="false")
     transaction_alerts = Column(Boolean, nullable=False, default=True, server_default="true")
