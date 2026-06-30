@@ -6,8 +6,9 @@ for itself; absent an override the chain rate applies. Every read/write is scope
 to the caller's ``client_id`` (SEC-02), so one tenant's branch tax rates never
 leak into another's.
 
-Sale-time enforcement (resolving this rate at checkout) is the "then expand"
-follow-up; this service resolves the rate only, mirroring ``branch_pricing``.
+``resolve_tax_rate`` is wired into checkout (``POST /pos/transaction``): a sale
+rung up at a branch is taxed at the branch's resolved rate (#220 sale-time
+enforcement). Branch-level *price* enforcement remains the next "then expand".
 """
 import logging
 from typing import Optional
@@ -76,13 +77,15 @@ async def delete_branch_tax_rate(
 
 
 async def resolve_tax_rate(
-    db: AsyncSession, client_id: int, branch_id: int
+    db: AsyncSession, client_id: int, branch_id: int, requested: Optional[float] = None
 ) -> dict:
     """Resolve the effective VAT rate for a branch.
 
     Returns ``{"branch_id", "vat_rate", "is_override"}``: the branch override rate
-    when one exists, else the chain-wide effective rate (master global rate, else
-    the statutory default).
+    when one exists, else the chain-wide effective rate. ``requested`` is the
+    legacy per-request rate; it only matters in the no-override fallback, where it
+    is threaded into ``get_effective_tax_rate`` so the master global rate (MA-05)
+    still wins but a request rate is honoured on installs with no global rate.
     """
     row = await _get_row(db, client_id, branch_id)
     if row is not None:
@@ -91,7 +94,7 @@ async def resolve_tax_rate(
             "vat_rate": row.vat_rate,
             "is_override": True,
         }
-    chain_rate = await get_effective_tax_rate(db)
+    chain_rate = await get_effective_tax_rate(db, requested)
     return {
         "branch_id": branch_id,
         "vat_rate": chain_rate,

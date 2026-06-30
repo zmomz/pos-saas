@@ -695,8 +695,17 @@ async def create_transaction(
 
     taxable_amount = quantize_money(subtotal - discount_amount)
     # MA-05: the master's global VAT rate is authoritative; the request rate is
-    # only a fallback for installs with no global rate configured.
-    vat_rate = await get_effective_tax_rate(db, data.vat_rate)
+    # only a fallback for installs with no global rate configured. (#220) When the
+    # sale is rung up at a branch, the branch's own VAT override wins over the
+    # chain rate; absent an override it resolves to the same chain effective rate.
+    if data.branch_id:
+        from services.branch_tax import resolve_tax_rate
+
+        vat_rate = (
+            await resolve_tax_rate(db, client.id, int(data.branch_id), data.vat_rate)
+        )["vat_rate"]
+    else:
+        vat_rate = await get_effective_tax_rate(db, data.vat_rate)
     vat_amount = quantize_money(taxable_amount * (to_decimal(vat_rate) / Decimal(100)))
     total_amount = quantize_money(taxable_amount + vat_amount)
 
