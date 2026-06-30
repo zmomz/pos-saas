@@ -12,10 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from services.customers import CustomersService
 from services.production import fire_event_background
+from services.store_credit import StoreCreditError, StoreCreditService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from models.audit_logs import Audit_logs
 from models.transactions import Transactions
+# Eager import so the store-credit ledger table registers on Base.metadata at
+# startup (mirrors the gift-card ledger / branch-table pattern), #221.
+from models.store_credit_ledger import StoreCreditLedger  # noqa: F401
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -717,3 +721,104 @@ async def delete_customers(
     except Exception as e:
         logger.error(f"Error deleting customers {id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+# ---------- M5·CRM (#221) — per-customer store-credit ledger ----------
+class StoreCreditEntry(BaseModel):
+    """One movement row in a customer's store-credit ledger."""
+    id: int
+    entry_type: str
+    amount: float
+    balance_after: float
+    transaction_id: Optional[int] = None
+    note: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class StoreCreditResponse(BaseModel):
+    """A customer's current store-credit balance + its movement history."""
+    customer_id: int
+    balance: float
+    history: List[StoreCreditEntry]
+
+
+class StoreCreditMovementResponse(BaseModel):
+    """The result of posting a store-credit movement: new balance + the booked row."""
+    customer_id: int
+    balance: float
+    entry: StoreCreditEntry
+
+
+class StoreCreditMovementData(BaseModel):
+    """Body for granting or redeeming store credit. ``amount`` is a positive
+    magnitude; the sign is derived server-side from ``entry_type``."""
+    entry_type: str  # grant | redeem | adjust | refund
+    amount: float
+    note: Optional[str] = None
+    transaction_id: Optional[int] = None
+
+
+async def _owned_customer_or_404(service: CustomersService, customer_id: int, *, user_id):
+    """Resolve a customer within the caller's tenancy or 404 (SEC-02)."""
+    customer = await service.get_by_id(customer_id, user_id=user_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customers not found")
+    return customer
+
+
+@router.get("/{id}/store-credit", response_model=StoreCreditResponse)
+async def get_store_credit(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """A customer's store-credit balance + ledger history (CRM, #221).
+
+    Owner-scoped (SEC-02): a foreign/unknown customer id → 404."""
+    await _owned_customer_or_404(CustomersService(db), id, user_id=scope.owner_user_id)
+    credit = StoreCreditService(db)
+    rows = await credit.history(id, user_id=scope.owner_user_id)
+    balance = await credit.balance(id, user_id=scope.owner_user_id)
+    return {
+        "customer_id": id,
+        "balance": float(balance),
+        "history": [StoreCreditEntry.model_validate(r) for r in rows],
+    }
+
+
+@router.post("/{id}/store-credit", response_model=StoreCreditMovementResponse, status_code=201)
+async def post_store_credit(
+    id: int,
+    data: StoreCreditMovementData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Grant or redeem store credit for a customer (CRM, #221).
+
+    The server is authoritative: a redemption is validated against the live balance
+    so it can never overdraw (400). Owner-scoped (SEC-02): a foreign customer → 404."""
+    await _owned_customer_or_404(CustomersService(db), id, user_id=scope.owner_user_id)
+    credit = StoreCreditService(db)
+    try:
+        row = await credit.post(
+            id,
+            user_id=scope.owner_user_id,
+            client_id=scope.client_id,
+            entry_type=data.entry_type,
+            amount=data.amount,
+            note=data.note,
+            transaction_id=data.transaction_id,
+        )
+    except StoreCreditError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    balance = await credit.balance(id, user_id=scope.owner_user_id)
+    return {
+        "customer_id": id,
+        "balance": float(balance),
+        "entry": StoreCreditEntry.model_validate(row),
+    }
