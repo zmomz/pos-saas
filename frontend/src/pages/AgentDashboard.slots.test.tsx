@@ -43,7 +43,14 @@ describe('AgentDashboard remaining-slots tile (ISSUE-023)', () => {
       http.get(`${BASE}/api/v1/tenant/agent/branding`, () => HttpResponse.json({})),
       http.get(`${BASE}/api/v1/tenant/agent/revenue`, () => HttpResponse.json({ collected: 0, payments: 0, by_client: [] })),
       http.get(`${BASE}/api/v1/tenant/agent/quota`, () => HttpResponse.json({ quota_price: 80, quota_cycle: 'monthly', quota_status: 'active', has_card: false, has_moyasar_account: false, payments: [] })),
-      http.get(`${BASE}/api/v1/tenant/agent/commission/statements`, () => HttpResponse.json({ statements: [] }))
+      http.get(`${BASE}/api/v1/tenant/agent/commission/statements`, () => HttpResponse.json({ statements: [] })),
+      // The right-rail feature panel hydrates the default client's real flags.
+      http.get(`${BASE}/api/v1/tenant/agent/clients/:clientId/features`, ({ params }) =>
+        HttpResponse.json({
+          client_id: Number(params.clientId),
+          features: { inventory: true, discounts: true, loyalty: true, zatca: true, email_receipts: true },
+        })
+      )
     );
     renderPage();
 

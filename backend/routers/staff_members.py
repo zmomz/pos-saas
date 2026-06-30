@@ -5,13 +5,18 @@ from typing import List, Optional
 
 from datetime import datetime, date
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from services.auth import AuthService
 from services.staff_members import Staff_membersService
+from services.staff_lifecycle import (
+    StaffLifecycleService,
+    attendance_to_dict,
+    shift_to_dict,
+)
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
@@ -52,6 +57,8 @@ class Staff_membersResponse(BaseModel):
     phone: Optional[str] = None
     role: str
     is_active: Optional[bool] = None
+    # Issue #216 — lifecycle state (active / suspended / terminated).
+    status: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     # Set only on creation when a login was freshly provisioned: the one-time temp
@@ -441,3 +448,243 @@ async def delete_staff_members(
     except Exception as e:
         logger.error(f"Error deleting staff_members {id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+# ============================================================================
+# Issue #216 — Staff lifecycle: suspend/terminate, attendance, shifts, PIN.
+# ============================================================================
+
+
+class PinSetRequest(BaseModel):
+    """Set a staff member's numeric login PIN (4–8 digits)."""
+    pin: str
+
+
+class AttendanceClockInRequest(BaseModel):
+    branch_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class AttendanceResponse(BaseModel):
+    id: int
+    staff_id: int
+    branch_id: Optional[int] = None
+    clock_in: Optional[datetime] = None
+    clock_out: Optional[datetime] = None
+    hours: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class ShiftAssignRequest(BaseModel):
+    starts_at: datetime
+    ends_at: datetime
+    branch_id: Optional[int] = None
+    role: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ShiftResponse(BaseModel):
+    id: int
+    staff_id: int
+    branch_id: Optional[int] = None
+    starts_at: Optional[datetime] = None
+    ends_at: Optional[datetime] = None
+    role: Optional[str] = None
+    notes: Optional[str] = None
+    status: str
+
+
+async def _set_status_or_404(
+    db: AsyncSession, staff_id: int, owner_user_id: str, status_value: str
+) -> Staff_membersResponse:
+    """Shared body for the suspend/terminate/reactivate endpoints."""
+    service = StaffLifecycleService(db)
+    staff = await service.set_status(staff_id, owner_user_id, status_value)
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff_members not found")
+    return Staff_membersResponse.model_validate(staff)
+
+
+@router.post("/{id}/suspend", response_model=Staff_membersResponse)
+async def suspend_staff_member(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Suspend a staff member — reversible access revocation (#216).
+
+    Live tokens for their login are dropped immediately and every subsequent
+    request is blocked until they are reactivated.
+    """
+    return await _set_status_or_404(db, id, scope.owner_user_id, "suspended")
+
+
+@router.post("/{id}/terminate", response_model=Staff_membersResponse)
+async def terminate_staff_member(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Terminate (off-board) a staff member — permanent access revocation (#216)."""
+    return await _set_status_or_404(db, id, scope.owner_user_id, "terminated")
+
+
+@router.post("/{id}/reactivate", response_model=Staff_membersResponse)
+async def reactivate_staff_member(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Restore a suspended/terminated staff member to active (#216)."""
+    return await _set_status_or_404(db, id, scope.owner_user_id, "active")
+
+
+@router.put("/{id}/pin", response_model=Staff_membersResponse)
+async def set_staff_pin(
+    id: int,
+    data: PinSetRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set a staff member's numeric PIN for on-terminal PIN login (#216)."""
+    service = StaffLifecycleService(db)
+    try:
+        staff = await service.set_pin(id, scope.owner_user_id, data.pin)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff_members not found")
+    return Staff_membersResponse.model_validate(staff)
+
+
+@router.delete("/{id}/pin", response_model=Staff_membersResponse)
+async def clear_staff_pin(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a staff member's PIN (disables PIN login for them) (#216)."""
+    service = StaffLifecycleService(db)
+    staff = await service.set_pin(id, scope.owner_user_id, None)
+    if not staff:
+        raise HTTPException(status_code=404, detail="Staff_members not found")
+    return Staff_membersResponse.model_validate(staff)
+
+
+@router.post("/{id}/attendance/clock-in", response_model=AttendanceResponse, status_code=201)
+async def clock_in_staff_member(
+    id: int,
+    data: AttendanceClockInRequest = Body(default=AttendanceClockInRequest()),
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clock a staff member in, opening an attendance record (#216)."""
+    service = StaffLifecycleService(db)
+    try:
+        rec = await service.clock_in(id, scope.owner_user_id, data.branch_id, data.notes)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return AttendanceResponse(**attendance_to_dict(rec))
+
+
+@router.post("/{id}/attendance/clock-out", response_model=AttendanceResponse)
+async def clock_out_staff_member(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clock a staff member out, closing their open attendance record (#216)."""
+    service = StaffLifecycleService(db)
+    try:
+        rec = await service.clock_out(id, scope.owner_user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return AttendanceResponse(**attendance_to_dict(rec))
+
+
+@router.get("/{id}/attendance", response_model=List[AttendanceResponse])
+async def list_staff_attendance(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """List a staff member's attendance records, most recent first (#216)."""
+    service = StaffLifecycleService(db)
+    records = await service.list_attendance(scope.owner_user_id, staff_id=id)
+    return [AttendanceResponse(**attendance_to_dict(r)) for r in records]
+
+
+@router.post("/{id}/shifts", response_model=ShiftResponse, status_code=201)
+async def assign_staff_shift(
+    id: int,
+    data: ShiftAssignRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Roster a staff member to a planned shift window (#216)."""
+    service = StaffLifecycleService(db)
+    try:
+        shift = await service.assign_shift(
+            id,
+            scope.owner_user_id,
+            starts_at=data.starts_at,
+            ends_at=data.ends_at,
+            branch_id=data.branch_id,
+            role=data.role,
+            notes=data.notes,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return ShiftResponse(**shift_to_dict(shift))
+
+
+@router.get("/{id}/shifts", response_model=List[ShiftResponse])
+async def list_staff_shifts(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """List a staff member's scheduled shifts (#216)."""
+    service = StaffLifecycleService(db)
+    shifts = await service.list_shifts(scope.owner_user_id, staff_id=id)
+    return [ShiftResponse(**shift_to_dict(s)) for s in shifts]
+
+
+@router.delete("/shifts/{shift_id}", response_model=ShiftResponse)
+async def cancel_staff_shift(
+    shift_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel a scheduled shift assignment (#216)."""
+    service = StaffLifecycleService(db)
+    shift = await service.cancel_shift(shift_id, scope.owner_user_id)
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    return ShiftResponse(**shift_to_dict(shift))
+
+
+@router.get("/attendance/export")
+async def export_staff_attendance_csv(
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export the merchant's attendance/hours as CSV for payroll (export only) (#216)."""
+    service = StaffLifecycleService(db)
+    csv_text = await service.attendance_csv(scope.owner_user_id)
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="attendance.csv"'},
+    )

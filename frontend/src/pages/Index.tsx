@@ -16,11 +16,15 @@ const roleToPath: Record<string, string> = {
 export default function Index() {
   const navigate = useNavigate();
   const { t, isRTL } = useLanguage();
-  const { user, loading, login, register } = useAuth();
+  const { user, loading, login, loginWithPin, register } = useAuth();
 
   const [mode, setMode] = useState<'login' | 'register'>('login');
+  // Within login mode the merchant's team can sign in by password or by PIN
+  // (#216, on-terminal staff login). Register only ever uses a password.
+  const [method, setMethod] = useState<'password' | 'pin'>('password');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [pin, setPin] = useState('');
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +42,11 @@ export default function Index() {
     setError(null);
     try {
       if (mode === 'login') {
-        await login(email, password);
+        if (method === 'pin') {
+          await loginWithPin(email, pin);
+        } else {
+          await login(email, password);
+        }
       } else {
         await register(email, password, name || undefined);
       }
@@ -79,6 +87,35 @@ export default function Index() {
       }
     >
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {mode === 'login' && (
+          <div className="dxr-seg grid grid-cols-2" role="tablist" aria-label={t('login')}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={method === 'password'}
+              data-active={method === 'password'}
+              onClick={() => {
+                setMethod('password');
+                setError(null);
+              }}
+            >
+              {t('password')}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={method === 'pin'}
+              data-active={method === 'pin'}
+              onClick={() => {
+                setMethod('pin');
+                setError(null);
+              }}
+            >
+              {t('pin_login')}
+            </button>
+          </div>
+        )}
+
         {mode === 'register' && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="name" className="text-foreground/90">{t('name')}</Label>
@@ -86,7 +123,9 @@ export default function Index() {
           </div>
         )}
         <div className="flex flex-col gap-2">
-          <Label htmlFor="email" className="text-foreground/90">{t('email')}</Label>
+          <Label htmlFor="email" className="text-foreground/90">
+            {mode === 'login' && method === 'pin' ? t('pin_merchant_email') : t('email')}
+          </Label>
           <Input
             id="email"
             type="email"
@@ -95,24 +134,40 @@ export default function Index() {
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="password" className="text-foreground/90">{t('password')}</Label>
-          <Input
-            id="password"
-            type="password"
-            required
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          {mode === 'login' && (
-            <Link
-              to="/auth/password/forgot"
-              className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground self-end"
-            >
-              {t('forgot_password_link')}
-            </Link>
-          )}
-        </div>
+        {mode === 'login' && method === 'pin' ? (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="pin" className="text-foreground/90">{t('pin')}</Label>
+            <Input
+              id="pin"
+              type="password"
+              inputMode="numeric"
+              autoComplete="off"
+              required
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+              placeholder="••••"
+            />
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <Label htmlFor="password" className="text-foreground/90">{t('password')}</Label>
+            <Input
+              id="password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {mode === 'login' && (
+              <Link
+                to="/auth/password/forgot"
+                className="text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground self-end"
+              >
+                {t('forgot_password_link')}
+              </Link>
+            )}
+          </div>
+        )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 

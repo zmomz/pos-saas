@@ -24,14 +24,20 @@ import {
   deleteStaffMember,
   getStaffPermissions,
   setStaffPermission,
+  exportStaffAttendanceCsv,
   type StaffPermission,
 } from '@/lib/api';
+import StaffWorkforceDialog, {
+  StatusPill,
+  staffStatus,
+  type WorkforceStaff,
+} from '@/components/staff/StaffWorkforceDialog';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
-import { Plus, UserCheck, UserX, Users } from 'lucide-react';
+import { Download, Plus, UserCheck, UserX, Users } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface StaffMember {
@@ -41,6 +47,7 @@ interface StaffMember {
   phone?: string;
   role: string;
   is_active?: boolean;
+  status?: string;
   created_at?: string;
 }
 
@@ -76,6 +83,9 @@ export default function StaffManagement() {
   const [perms, setPerms] = useState<StaffPermission[]>([]);
   const [permsHasLogin, setPermsHasLogin] = useState(true);
   const [permsLoading, setPermsLoading] = useState(false);
+  const [workforceOpen, setWorkforceOpen] = useState(false);
+  const [workforceStaff, setWorkforceStaff] = useState<WorkforceStaff | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const { t, isRTL } = useLanguage();
 
@@ -107,8 +117,37 @@ export default function StaffManagement() {
     }
   }
 
-  const activeCount = staff.filter((s) => s.is_active !== false).length;
-  const inactiveCount = staff.filter((s) => s.is_active === false).length;
+  const activeCount = staff.filter((s) => staffStatus(s) === 'active').length;
+  const inactiveCount = staff.filter((s) => staffStatus(s) !== 'active').length;
+
+  function openWorkforce(member: StaffMember) {
+    setWorkforceStaff({
+      id: member.id,
+      name: member.name,
+      status: member.status,
+      is_active: member.is_active,
+    });
+    setWorkforceOpen(true);
+  }
+
+  async function handleExportAttendance() {
+    setExporting(true);
+    try {
+      const csv = await exportStaffAttendanceCsv();
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'attendance.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to export attendance:', err);
+      toast.error(t('stf_export_failed'));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function handleFormChange(field: keyof StaffFormData, value: string) {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -173,15 +212,6 @@ export default function StaffManagement() {
       console.error('Failed to update staff:', err);
     } finally {
       setSubmitting(false);
-    }
-  }
-
-  async function toggleStatus(member: StaffMember) {
-    try {
-      await updateStaffMember(member.id, { is_active: member.is_active === false });
-      await loadStaff();
-    } catch (err) {
-      console.error('Failed to toggle staff status:', err);
     }
   }
 
@@ -325,15 +355,26 @@ export default function StaffManagement() {
           title={t('staff')}
           subtitle={`${staff.length} ${t('stf_total_staff')}`}
         >
-          <DialogTrigger asChild>
+          <div className="flex items-center gap-2">
             <Button
-              onClick={() => setFormData(emptyForm)}
-              className="h-11 rounded-[10px] shadow-brand"
+              variant="outline"
+              onClick={handleExportAttendance}
+              disabled={exporting}
+              className="h-11 rounded-[10px]"
             >
-              <Plus className="h-4 w-4" />
-              {t('stf_add_staff')}
+              <Download className="h-4 w-4" />
+              {exporting ? t('loading') : t('stf_export_attendance')}
             </Button>
-          </DialogTrigger>
+            <DialogTrigger asChild>
+              <Button
+                onClick={() => setFormData(emptyForm)}
+                className="h-11 rounded-[10px] shadow-brand"
+              >
+                <Plus className="h-4 w-4" />
+                {t('stf_add_staff')}
+              </Button>
+            </DialogTrigger>
+          </div>
         </PageHeading>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -380,21 +421,17 @@ export default function StaffManagement() {
                     <span className="pill-muted">{t(`role_${member.role}`)}</span>
                   </td>
                   <td className="p-3">
-                    {member.is_active !== false ? (
-                      <span className="pill-success">{t('active')}</span>
-                    ) : (
-                      <span className="pill-muted">{t('inactive')}</span>
-                    )}
+                    <StatusPill status={staffStatus(member)} />
                   </td>
                   <td className="p-3">
                     <div className="flex gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => toggleStatus(member)}
+                        onClick={() => openWorkforce(member)}
                         className="text-xs"
                       >
-                        {member.is_active !== false ? t('stf_deactivate') : t('stf_activate')}
+                        {t('stf_workforce')}
                       </Button>
                       <Button
                         size="sm"
@@ -540,6 +577,14 @@ export default function StaffManagement() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Workforce: lifecycle / attendance / schedule / PIN (#216) */}
+      <StaffWorkforceDialog
+        open={workforceOpen}
+        onOpenChange={setWorkforceOpen}
+        staff={workforceStaff}
+        onChanged={loadStaff}
+      />
     </div>
   );
 }

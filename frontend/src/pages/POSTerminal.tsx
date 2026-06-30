@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, productImageSrc, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
+import { getProducts, createTransaction, refundTransaction, voidTransaction, getTransactions, validateDiscount, getEscposReceipt, syncOfflineTransactions, getMyPermissions, canUse, downloadInvoicePdf, emailReceipt, smsReceipt, getCustomers, getBranches, getClientBranding, holdSale, getHeldSales, recallSale, resolveBarcode, listTerminals, productImageSrc, type MyPermissions, type TenderInfo, type HeldTicket, type HeldItem, type Terminal } from '@/lib/api';
 import { CUSTOMER_DISPLAY_KEY, buildCustomerDisplayPayload, paidCustomerDisplayPayload } from '@/lib/customerDisplay';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatMoneyAr, formatDateTime } from '@/lib/format';
@@ -11,8 +11,10 @@ import { enqueueTransaction, registerAutoFlush, isOnline } from '@/lib/offlineQu
 import { printEscPos, isThermalPrintSupported } from '@/lib/thermalPrint';
 import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { notifyError } from '@/lib/notify';
+import { toast } from 'sonner';
 import ErrorState from '@/components/states/ErrorState';
-import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Mail, MessageSquare, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon } from 'lucide-react';
 
 export interface Product {
   id: number;
@@ -262,6 +264,11 @@ export default function POSTerminal() {
   const [voidProcessing, setVoidProcessing] = useState(false);
   // ISSUE-075: reprint-in-progress flag for the selected past sale.
   const [reprinting, setReprinting] = useState(false);
+  // Parity #6 (#198): send a finished receipt by email/SMS. `sendChannel` is the
+  // open dialog's channel (null = closed); `sendTo` is the typed recipient.
+  const [sendChannel, setSendChannel] = useState<'email' | 'sms' | null>(null);
+  const [sendTo, setSendTo] = useState('');
+  const [sendingReceipt, setSendingReceipt] = useState(false);
   const [voidError, setVoidError] = useState('');
   // POS-07: per-line quantity to return, keyed by the line's index in the
   // selected transaction. Defaults to the full sold quantity (whole-invoice
@@ -978,6 +985,35 @@ export default function POSTerminal() {
     }
   }
 
+  // Parity #6 (#198): send the just-finished receipt by email or SMS. Both
+  // channels are sold as feature flags (email_receipts / sms_receipts); the
+  // backend gates and delivers. We surface the outcome honestly — a backend that
+  // only *logged* the message (no provider configured) reports delivered:false,
+  // so we warn rather than claim it was sent.
+  async function handleSendReceipt() {
+    if (!receipt?.id || !sendChannel) return;
+    const to = sendTo.trim();
+    if (!to) return;
+    setSendingReceipt(true);
+    try {
+      const result =
+        sendChannel === 'email'
+          ? await emailReceipt(receipt.id, to)
+          : await smsReceipt(receipt.id, to);
+      if (result?.delivered) {
+        toast.success(t('receipt_sent') || 'Receipt sent');
+      } else {
+        toast.warning(t('receipt_logged') || 'Receipt recorded, but delivery isn’t set up yet');
+      }
+      setSendChannel(null);
+      setSendTo('');
+    } catch (err) {
+      notifyError(err, t('send_receipt_failed') || 'Couldn’t send the receipt');
+    } finally {
+      setSendingReceipt(false);
+    }
+  }
+
   // POS-07: select a sale for refund and default every line's return quantity to
   // its full sold quantity (whole-invoice refund as the starting point).
   function selectTransactionForRefund(txn: Transaction) {
@@ -1268,6 +1304,30 @@ export default function POSTerminal() {
                   <Printer className="w-4 h-4" />
                 </Button>
               )}
+              {/* Parity #6 (#198): send the receipt by email / SMS. Both are
+                  sold feature flags; the backend enforces entitlement. */}
+              {receipt.id && (
+                <Button
+                  variant="outline"
+                  onClick={() => { setSendChannel('email'); setSendTo(''); }}
+                  className="border-border text-foreground hover:bg-muted"
+                  title={t('email_receipt') || 'Email receipt'}
+                  aria-label={t('email_receipt') || 'Email receipt'}
+                >
+                  <Mail className="w-4 h-4" />
+                </Button>
+              )}
+              {receipt.id && (
+                <Button
+                  variant="outline"
+                  onClick={() => { setSendChannel('sms'); setSendTo(''); }}
+                  className="border-border text-foreground hover:bg-muted"
+                  title={t('sms_receipt') || 'SMS receipt'}
+                  aria-label={t('sms_receipt') || 'SMS receipt'}
+                >
+                  <MessageSquare className="w-4 h-4" />
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => navigate('/client')}
@@ -1278,6 +1338,51 @@ export default function POSTerminal() {
             </div>
           </div>
         </div>
+
+        {/* Parity #6 (#198): recipient prompt shared by the email/SMS actions. */}
+        <Dialog
+          open={sendChannel !== null}
+          onOpenChange={(open) => { if (!open) { setSendChannel(null); setSendTo(''); } }}
+        >
+          <DialogContent className="bg-card border-border text-foreground sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-foreground">
+                {sendChannel === 'sms' ? (t('sms_receipt') || 'SMS receipt') : (t('email_receipt') || 'Email receipt')}
+              </DialogTitle>
+              <DialogDescription>
+                {(t('invoice_number') || 'Invoice #')} {receipt.invoice_number}
+              </DialogDescription>
+            </DialogHeader>
+            <form
+              onSubmit={(e) => { e.preventDefault(); handleSendReceipt(); }}
+              className="space-y-4"
+            >
+              <Input
+                type={sendChannel === 'sms' ? 'tel' : 'email'}
+                inputMode={sendChannel === 'sms' ? 'tel' : 'email'}
+                dir="ltr"
+                autoFocus
+                value={sendTo}
+                onChange={(e) => setSendTo(e.target.value)}
+                placeholder={sendChannel === 'sms' ? '+9665XXXXXXXX' : 'name@example.com'}
+                aria-label={sendChannel === 'sms' ? (t('recipient_phone') || 'Recipient phone') : (t('recipient_email') || 'Recipient email')}
+              />
+              <DialogFooter className="gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-border text-foreground hover:bg-muted"
+                  onClick={() => { setSendChannel(null); setSendTo(''); }}
+                >
+                  {t('cancel')}
+                </Button>
+                <Button type="submit" disabled={sendingReceipt || !sendTo.trim()}>
+                  {sendingReceipt ? (t('loading') || '…') : (t('send_receipt') || 'Send receipt')}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }
