@@ -469,6 +469,189 @@ async def receive_purchase_order(
     )
 
 
+class BranchAllocationInput(BaseModel):
+    """One branch's slice of a central PO distribution (#220 central purchasing)."""
+    branch_id: int
+    lines: List[ReceiveLineInput]
+
+
+class DistributePurchaseOrderRequest(BaseModel):
+    """Distribute a central PO's received goods across several branches at once.
+
+    Each allocation lands its ``lines`` into that branch's per-branch stock ledger
+    (``product_branch_stock``). The outstanding-balance guard and the
+    partial→received status walk are applied against the *sum* of every allocation,
+    so a chain buys once centrally and splits the delivery across its branches.
+    """
+    allocations: List[BranchAllocationInput]
+
+
+class DistributePurchaseOrderResponse(BaseModel):
+    id: int
+    status: str
+    received_date: Optional[str] = None
+    branches: int
+    received_items: int
+    message: str
+
+
+@router.post("/{id}/distribute", response_model=DistributePurchaseOrderResponse)
+async def distribute_purchase_order(
+    id: int,
+    request: DistributePurchaseOrderRequest = Body(...),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Central purchasing (#220): receive a central PO and distribute its goods
+    across multiple branches in one operation.
+
+    Mirrors ``/receive`` but fans the delivery out: each allocation's lines land in
+    that branch's ledger (``product_branch_stock``), the combined receipt is folded
+    into the PO's ``items_json`` (so the order walks ``partially_received`` →
+    ``received`` exactly once across successive distributions), over-allocating past
+    the outstanding balance for any product is rejected wholesale, and ``cost_price``
+    is re-weighted by a moving average over the destinations being replenished.
+    """
+    from sqlalchemy import select
+
+    from models.products import Products
+    from models.purchase_orders import Purchase_orders
+
+    po = (
+        await db.execute(
+            select(Purchase_orders).where(
+                Purchase_orders.id == id,
+                Purchase_orders.user_id == owner_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not po:
+        raise HTTPException(status_code=404, detail="Purchase_orders not found")
+    if (po.status or "").lower() == "received":
+        raise HTTPException(status_code=400, detail="Purchase order already received")
+
+    try:
+        items = json.loads(po.items_json) if po.items_json else []
+    except (ValueError, TypeError):
+        items = []
+    if not isinstance(items, list):
+        items = []
+
+    remaining_by_pid = _remaining_by_product(items)
+    if not remaining_by_pid:
+        raise HTTPException(status_code=400, detail="This purchase order has no stock lines to distribute")
+
+    # Total requested per product across *all* branches must fit the outstanding
+    # balance — central purchasing cannot over-receive any line.
+    total_by_pid: dict = {}
+    for alloc in request.allocations:
+        for line in alloc.lines:
+            if line.quantity is None or line.quantity <= 0:
+                continue
+            total_by_pid[line.product_id] = total_by_pid.get(line.product_id, 0) + int(line.quantity)
+    if not total_by_pid:
+        raise HTTPException(status_code=400, detail="No quantities to distribute")
+    for pid, qty in total_by_pid.items():
+        if qty > remaining_by_pid.get(pid, 0):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot distribute {qty} unit(s) of product {pid}: only "
+                    f"{remaining_by_pid.get(pid, 0)} remaining on this order"
+                ),
+            )
+
+    # Default per-product cost = the PO line's cost (overridable per allocation line).
+    cost_by_pid: dict = {}
+    for line in items:
+        pid = line.get("product_id")
+        if pid is not None and line.get("cost") is not None:
+            cost_by_pid[pid] = line.get("cost")
+
+    # Fold the combined receipt into the PO lines once (drives the status walk).
+    applied = _apply_received_to_lines(items, total_by_pid)
+
+    from routers.pos import get_client_for_user
+    from services.branch_stock import get_or_init_row
+
+    client = await get_client_for_user(db, owner_id)
+
+    # Accumulate the moving-average inputs per product across every destination.
+    ma_prior_qty: dict = {}
+    ma_prior_cost: dict = {}
+    ma_in_qty: dict = {}
+    ma_in_value: dict = {}
+    branches_touched = set()
+    for alloc in request.allocations:
+        for line in alloc.lines:
+            if line.quantity is None or line.quantity <= 0:
+                continue
+            product = (
+                await db.execute(
+                    select(Products).where(
+                        Products.id == line.product_id, Products.user_id == owner_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if not product:
+                continue
+            row = await get_or_init_row(db, owner_id, client.id, alloc.branch_id, product)
+            prior_qty = row.quantity or 0
+            row.quantity = prior_qty + int(line.quantity)
+            branches_touched.add(alloc.branch_id)
+
+            cost = line.cost if line.cost is not None else cost_by_pid.get(line.product_id)
+            if cost is not None:
+                ma_prior_qty[line.product_id] = ma_prior_qty.get(line.product_id, 0) + prior_qty
+                ma_prior_cost.setdefault(line.product_id, product.cost_price or 0)
+                ma_in_qty[line.product_id] = ma_in_qty.get(line.product_id, 0) + int(line.quantity)
+                ma_in_value[line.product_id] = ma_in_value.get(line.product_id, 0) + int(line.quantity) * cost
+
+    # Moving-average cost (INV-09): re-weight by the on-hand at the destinations
+    # being replenished, never a flat overwrite.
+    for pid, in_qty in ma_in_qty.items():
+        product = (
+            await db.execute(
+                select(Products).where(Products.id == pid, Products.user_id == owner_id)
+            )
+        ).scalar_one_or_none()
+        if not product:
+            continue
+        prior_qty = ma_prior_qty.get(pid, 0)
+        denom = prior_qty + in_qty
+        product.cost_price = (
+            ((prior_qty * ma_prior_cost.get(pid, 0)) + ma_in_value.get(pid, 0)) / denom
+            if denom > 0
+            else None
+        )
+
+    fully_received = all(
+        int(line.get("received") or 0) >= int(line.get("quantity") or 0)
+        for line in items
+        if line.get("product_id") is not None
+    )
+    new_status = "received" if fully_received else "partially_received"
+    received_date = date.today().isoformat() if fully_received else po.received_date
+
+    po.items_json = json.dumps(items)
+    po.status = new_status
+    po.received_date = received_date
+    await db.commit()
+
+    received_items = sum(1 for q in applied.values() if q > 0)
+    return DistributePurchaseOrderResponse(
+        id=id,
+        status=new_status,
+        received_date=received_date,
+        branches=len(branches_touched),
+        received_items=received_items,
+        message=(
+            f"Distributed {received_items} line(s) across {len(branches_touched)} branch(es)"
+            + ("" if fully_received else "; order partially received")
+        ),
+    )
+
+
 @router.post("/batch", response_model=List[Purchase_ordersResponse], status_code=201)
 async def create_purchase_orderss_batch(
     request: Purchase_ordersBatchCreateRequest,
