@@ -24,6 +24,12 @@ class Products(Base):
     # reorder_quantity is the order amount the auto-PO suggestion proposes.
     reorder_point = Column(Integer, nullable=True, default=0, server_default='0')
     reorder_quantity = Column(Integer, nullable=True, default=0, server_default='0')
+    # ISSUE-223 (M4 Product): ``brand`` is the marketing name a shopper recognises
+    # (e.g. "Panadol"); ``manufacturer`` is the legal maker, which differs from the
+    # brand in pharmacy/electronics verticals (e.g. brand "Panadol" / maker "GSK").
+    # Both are optional free-text — NULL means "unspecified".
+    brand = Column(String, nullable=True)
+    manufacturer = Column(String, nullable=True)
     category = Column(String, nullable=True)
     # H7 (ISSUE-038): link a product to the merchant's category tree. The legacy
     # free-text ``category`` above is kept (denormalised) for display continuity;

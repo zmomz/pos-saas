@@ -77,6 +77,9 @@ class ProductCreateRequest(BaseModel):
     # INV-08 (F-035): per-product reorder point + suggested order amount.
     reorder_point: Optional[int] = 0
     reorder_quantity: Optional[int] = 0
+    # ISSUE-223 (M4 Product): brand (marketing name) / manufacturer (legal maker).
+    brand: Optional[str] = None
+    manufacturer: Optional[str] = None
     category: Optional[str] = None
     # H7 (ISSUE-038): assign a real category from the merchant's tree.
     category_id: Optional[int] = None
@@ -96,6 +99,9 @@ class ProductUpdateRequest(BaseModel):
     quantity: Optional[float] = None
     reorder_point: Optional[int] = None
     reorder_quantity: Optional[int] = None
+    # ISSUE-223 (M4 Product): brand (marketing name) / manufacturer (legal maker).
+    brand: Optional[str] = None
+    manufacturer: Optional[str] = None
     category: Optional[str] = None
     # H7 (ISSUE-038): reassign the linked category.
     category_id: Optional[int] = None
@@ -118,6 +124,9 @@ class ProductResponse(BaseModel):
     quantity: float
     reorder_point: int = 0
     reorder_quantity: int = 0
+    # ISSUE-223 (M4 Product): brand (marketing name) / manufacturer (legal maker).
+    brand: Optional[str] = None
+    manufacturer: Optional[str] = None
     category: Optional[str] = None
     # H7 (ISSUE-038): the linked category id (None when uncategorised).
     category_id: Optional[int] = None
@@ -241,6 +250,8 @@ async def list_products(
             quantity=p.quantity or 0,
             reorder_point=p.reorder_point or 0,
             reorder_quantity=p.reorder_quantity or 0,
+            brand=p.brand,
+            manufacturer=p.manufacturer,
             category=p.category,
             category_id=p.category_id,
             vat_rate=p.vat_rate,
@@ -287,6 +298,8 @@ async def create_product(
         quantity=data.quantity or 0,
         reorder_point=data.reorder_point or 0,
         reorder_quantity=data.reorder_quantity or 0,
+        brand=data.brand,
+        manufacturer=data.manufacturer,
         category=linked_name if data.category_id is not None else data.category,
         category_id=data.category_id,
         vat_rate=data.vat_rate if data.vat_rate is not None else 15.0,
@@ -311,6 +324,8 @@ async def create_product(
         quantity=product.quantity or 0,
         reorder_point=product.reorder_point or 0,
         reorder_quantity=product.reorder_quantity or 0,
+        brand=product.brand,
+        manufacturer=product.manufacturer,
         category=product.category,
         category_id=product.category_id,
         vat_rate=product.vat_rate,
@@ -375,6 +390,8 @@ async def update_product(
         quantity=product.quantity or 0,
         reorder_point=product.reorder_point or 0,
         reorder_quantity=product.reorder_quantity or 0,
+        brand=product.brand,
+        manufacturer=product.manufacturer,
         category=product.category,
         category_id=product.category_id,
         vat_rate=product.vat_rate,
@@ -472,6 +489,8 @@ async def upload_product_image(
         quantity=product.quantity or 0,
         reorder_point=product.reorder_point or 0,
         reorder_quantity=product.reorder_quantity or 0,
+        brand=product.brand,
+        manufacturer=product.manufacturer,
         category=product.category,
         category_id=product.category_id,
         vat_rate=product.vat_rate,
@@ -565,6 +584,8 @@ async def restore_product(
         quantity=product.quantity or 0,
         reorder_point=product.reorder_point or 0,
         reorder_quantity=product.reorder_quantity or 0,
+        brand=product.brand,
+        manufacturer=product.manufacturer,
         category=product.category,
         category_id=product.category_id,
         vat_rate=product.vat_rate,
@@ -622,6 +643,8 @@ async def duplicate_product(
         quantity=0,
         reorder_point=original.reorder_point or 0,
         reorder_quantity=original.reorder_quantity or 0,
+        brand=original.brand,
+        manufacturer=original.manufacturer,
         category=original.category,
         category_id=original.category_id,
         vat_rate=original.vat_rate,
@@ -646,6 +669,8 @@ async def duplicate_product(
         quantity=copy.quantity or 0,
         reorder_point=copy.reorder_point or 0,
         reorder_quantity=copy.reorder_quantity or 0,
+        brand=copy.brand,
+        manufacturer=copy.manufacturer,
         category=copy.category,
         category_id=copy.category_id,
         vat_rate=copy.vat_rate,
@@ -701,6 +726,8 @@ async def get_low_stock_products(
             quantity=p.quantity or 0,
             reorder_point=p.reorder_point or 0,
             reorder_quantity=p.reorder_quantity or 0,
+            brand=p.brand,
+            manufacturer=p.manufacturer,
             category=p.category,
             vat_rate=p.vat_rate,
             is_active=True,
@@ -893,6 +920,8 @@ async def get_inventory_alerts(
             quantity=p.quantity or 0,
             reorder_point=p.reorder_point or 0,
             reorder_quantity=p.reorder_quantity or 0,
+            brand=p.brand,
+            manufacturer=p.manufacturer,
             category=p.category,
         )
         for p in products
