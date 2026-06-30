@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, getAuditLogs, type MasterEconomics } from '@/lib/api';
+import { getMasterAgents, toggleAgent, getPackages, createAgent, addAgentSlots, getTaxRate, setGlobalTaxRate, getMasterEconomics, getAuditLogs, getAgentSuspendImpact, type MasterEconomics, type AgentSuspendImpact } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -71,6 +71,12 @@ export default function MasterDashboard() {
   const [creating, setCreating] = useState(false);
   const [slotDialog, setSlotDialog] = useState<{ agentId: number; company: string } | null>(null);
   const [slotAmount, setSlotAmount] = useState('1');
+  // #236 (A4): suspend-cascade preview — the agent pending suspension and its
+  // blast radius (merchants + staff blocked at auth), shown before confirm.
+  const [suspendDialog, setSuspendDialog] = useState<{ agentId: number; company: string } | null>(null);
+  const [suspendImpact, setSuspendImpact] = useState<AgentSuspendImpact | null>(null);
+  const [suspendLoading, setSuspendLoading] = useState(false);
+  const [suspending, setSuspending] = useState(false);
   const [taxDialogOpen, setTaxDialogOpen] = useState(false);
   const [taxInput, setTaxInput] = useState('15');
   const [savingTax, setSavingTax] = useState(false);
@@ -117,6 +123,42 @@ export default function MasterDashboard() {
       setAgents((prev) => prev.map((a) => (a.id === agentId ? { ...a, is_active: !a.is_active } : a)));
     } catch (err) {
       console.error('Toggle failed:', err);
+    }
+  }
+
+  // #236 (A4): open the suspend confirmation and fetch the cascade preview in
+  // isolation — a failed preview degrades to "—" rather than blocking the confirm.
+  async function openSuspendConfirm(agentId: number, company: string) {
+    setSuspendDialog({ agentId, company });
+    setSuspendImpact(null);
+    setSuspendLoading(true);
+    try {
+      setSuspendImpact(await getAgentSuspendImpact(agentId));
+    } catch (err) {
+      console.error('Suspend impact failed:', err);
+      setSuspendImpact(null);
+    } finally {
+      setSuspendLoading(false);
+    }
+  }
+
+  async function confirmSuspend() {
+    if (!suspendDialog) return;
+    const { agentId } = suspendDialog;
+    setSuspending(true);
+    try {
+      await toggleAgent(agentId);
+      setAgents((prev) => prev.map((a) => (a.id === agentId ? { ...a, is_active: false } : a)));
+      setEconomics((prev) => prev && ({
+        ...prev,
+        by_agent: prev.by_agent.map((a) => (a.agent_id === agentId ? { ...a, is_active: false } : a)),
+      }));
+      setSuspendDialog(null);
+      setSuspendImpact(null);
+    } catch (err) {
+      console.error('Suspend failed:', err);
+    } finally {
+      setSuspending(false);
     }
   }
 
@@ -348,7 +390,21 @@ export default function MasterDashboard() {
                       <td className="py-3 pe-3 tabular-nums text-muted-foreground">{a.active_clients}/{a.total_clients}</td>
                       <td className="py-3 pe-3 font-extrabold tabular-nums">{formatMoney(a.mrr, language)}</td>
                       <td className="py-3 pe-3"><div className="w-[90px]"><Bar pct={topMrr > 0 ? Math.round((a.mrr / topMrr) * 100) : 0} /></div></td>
-                      <td className="py-3"><span className={a.is_active ? 'pill-success' : 'pill-danger'}><span className="h-1.5 w-1.5 rounded-full bg-current" />{a.is_active ? t('active') : t('inactive')}</span></td>
+                      <td className="py-3">
+                        <div className="flex items-center gap-2">
+                          <span className={a.is_active ? 'pill-success' : 'pill-danger'}><span className="h-1.5 w-1.5 rounded-full bg-current" />{a.is_active ? t('active') : t('inactive')}</span>
+                          {a.is_active && (
+                            <button
+                              type="button"
+                              data-testid={`suspend-agent-${a.agent_id}`}
+                              onClick={() => openSuspendConfirm(a.agent_id, a.company_name)}
+                              className="rounded-lg px-2 py-1 text-[11px] font-semibold text-danger transition-colors hover:bg-danger/10"
+                            >
+                              {tt('suspend', 'Suspend')}
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -532,6 +588,30 @@ export default function MasterDashboard() {
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setSlotDialog(null)}>{t('cancel')}</Button>
               <Button onClick={handleAddSlots}>{tt('add_slots', 'Add Slots')}</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* #236 (A4): suspend-cascade preview before confirming. */}
+      <Dialog open={!!suspendDialog} onOpenChange={(open) => { if (!open) { setSuspendDialog(null); setSuspendImpact(null); } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{tt('suspend_agent', 'Suspend agent')} — {suspendDialog?.company}</DialogTitle></DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">{tt('suspend_agent_warning', 'Suspending this agent blocks his login and cascades to everyone under him:')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+                <div data-testid="suspend-impact-merchants" className="text-xl font-extrabold tabular-nums">{suspendLoading ? '…' : suspendImpact ? suspendImpact.merchant_count : '—'}</div>
+                <div className="text-xs text-muted-foreground">{tt('merchants_blocked', 'merchants blocked')}</div>
+              </div>
+              <div className="rounded-xl border border-border bg-muted/40 px-3 py-2.5">
+                <div data-testid="suspend-impact-staff" className="text-xl font-extrabold tabular-nums">{suspendLoading ? '…' : suspendImpact ? suspendImpact.staff_count : '—'}</div>
+                <div className="text-xs text-muted-foreground">{tt('staff_blocked', 'staff blocked')}</div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => { setSuspendDialog(null); setSuspendImpact(null); }}>{t('cancel')}</Button>
+              <Button variant="danger" data-testid="suspend-confirm" disabled={suspending} onClick={confirmSuspend}>{suspending ? t('loading') : tt('suspend', 'Suspend')}</Button>
             </div>
           </div>
         </DialogContent>

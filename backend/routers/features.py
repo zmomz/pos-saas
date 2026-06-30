@@ -3932,6 +3932,41 @@ async def update_package(
     )
 
 
+class PackageImpactResponse(BaseModel):
+    """A3 (#236): how many agents are still provisioned on a package, so the
+    confirmation messaging can warn before archiving (deactivating) an in-use one.
+    ``active_agent_count`` is the subset whose accounts are live."""
+    package_id: int
+    agent_count: int
+    active_agent_count: int
+
+
+@router.get("/api/v1/packages/{package_id}/impact", response_model=PackageImpactResponse)
+async def package_impact(
+    package_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Report the agents currently on a package (master admin only, read-only)."""
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "master":
+        raise HTTPException(status_code=403, detail="Only master admin can manage packages")
+
+    total_result = await db.execute(
+        select(func.count(Agents.id)).where(Agents.package_id == package_id)
+    )
+    active_result = await db.execute(
+        select(func.count(Agents.id)).where(
+            Agents.package_id == package_id, Agents.is_active.isnot(False)
+        )
+    )
+    return PackageImpactResponse(
+        package_id=package_id,
+        agent_count=int(total_result.scalar() or 0),
+        active_agent_count=int(active_result.scalar() or 0),
+    )
+
+
 @router.delete("/api/v1/packages/{package_id}")
 async def delete_package(
     package_id: int,

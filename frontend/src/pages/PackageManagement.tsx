@@ -13,7 +13,7 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
 import { toast } from 'sonner';
-import { getPackagesList, createPackage, updatePackage } from '@/lib/api';
+import { getPackagesList, createPackage, updatePackage, getPackageImpact } from '@/lib/api';
 
 const FEATURE_KEYS = [
   'email_receipts', 'sms_receipts', 'loyalty', 'restaurant', 'inventory', 'discounts', 'zatca', 'omnichannel',
@@ -42,7 +42,7 @@ const emptyForm: PackageFormData = {
 };
 
 export default function PackageManagement() {
-  const { language, t, isRTL } = useLanguage();
+  const { language, t, tt, isRTL } = useLanguage();
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -52,6 +52,10 @@ export default function PackageManagement() {
   const [form, setForm] = useState<PackageFormData>(emptyForm);
   const [saving, setSaving] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  // #236 (A3): the affected-agents count for the package pending deactivation, so
+  // archiving an in-use package warns with its blast radius before it runs.
+  const [deactivateImpact, setDeactivateImpact] = useState<number | null>(null);
+  const [impactLoading, setImpactLoading] = useState(false);
 
   useEffect(() => {
     fetchPackages();
@@ -123,10 +127,34 @@ export default function PackageManagement() {
   // The button is labelled "Deactivate", so deactivate it — flip is_active via the
   // update endpoint and report the real result. Inactive packages can be
   // reactivated the same way, so the toggle never strands a package off.
+  // #236 (A3): open the deactivate confirmation and fetch its blast radius — how
+  // many agents are still provisioned on this package — in isolation, so a failed
+  // preview degrades to "no count shown" rather than blocking the confirm.
+  async function openDeactivateConfirm(id: number) {
+    setConfirmDeleteId(id);
+    setDeactivateImpact(null);
+    setImpactLoading(true);
+    try {
+      const impact = await getPackageImpact(id);
+      setDeactivateImpact(impact?.agent_count ?? null);
+    } catch {
+      setDeactivateImpact(null);
+    } finally {
+      setImpactLoading(false);
+    }
+  }
+
+  function cancelDeactivate() {
+    setConfirmDeleteId(null);
+    setDeactivateImpact(null);
+    setImpactLoading(false);
+  }
+
   async function handleSetActive(id: number, isActive: boolean) {
     try {
       await updatePackage(id, { is_active: isActive });
       setConfirmDeleteId(null);
+      setDeactivateImpact(null);
       toast.success(isActive ? t('package_activated') : t('package_deactivated'));
       await fetchPackages();
     } catch (err) {
@@ -196,26 +224,38 @@ export default function PackageManagement() {
                 )}
               </div>
 
-              <div className="mt-auto flex gap-2 pt-4">
-                <Button variant="outline" size="sm" onClick={() => openEditDialog(pkg)} className="flex-1">
-                  <Edit2 className="h-3.5 w-3.5" />
-                  {t('edit')}
-                </Button>
-                {!pkg.is_active ? (
-                  <Button variant="outline" size="sm" onClick={() => handleSetActive(pkg.id, true)} className="flex-1 border-success/40 text-success hover:bg-success/10">
-                    {t('activate')}
-                  </Button>
-                ) : confirmDeleteId === pkg.id ? (
-                  <div className="flex flex-1 gap-1">
-                    <Button size="sm" variant="danger" onClick={() => handleSetActive(pkg.id, false)} className="flex-1">{t('yes')}</Button>
-                    <Button size="sm" variant="outline" onClick={() => setConfirmDeleteId(null)} className="flex-1">{t('no')}</Button>
-                  </div>
-                ) : (
-                  <Button variant="outline" size="sm" onClick={() => setConfirmDeleteId(pkg.id)} className="flex-1 border-danger/40 text-danger hover:bg-danger/10">
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {t('deactivate')}
-                  </Button>
+              <div className="mt-auto pt-4">
+                {/* #236 (A3): blast-radius warning for deactivating an in-use package. */}
+                {confirmDeleteId === pkg.id && pkg.is_active && impactLoading && (
+                  <p className="mb-2 text-xs text-muted-foreground">{tt('checking_impact', 'Checking impact…')}</p>
                 )}
+                {confirmDeleteId === pkg.id && pkg.is_active && !impactLoading && deactivateImpact != null && deactivateImpact > 0 && (
+                  <div data-testid="pkg-deactivate-impact" className="mb-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground/90">
+                    <span className="font-bold tabular-nums">{deactivateImpact}</span>{' '}
+                    {tt('pkg_deactivate_affected', 'agents are still on this package. They keep their current slots and features, but it can no longer be assigned to new agents.')}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => openEditDialog(pkg)} className="flex-1">
+                    <Edit2 className="h-3.5 w-3.5" />
+                    {t('edit')}
+                  </Button>
+                  {!pkg.is_active ? (
+                    <Button variant="outline" size="sm" onClick={() => handleSetActive(pkg.id, true)} className="flex-1 border-success/40 text-success hover:bg-success/10">
+                      {t('activate')}
+                    </Button>
+                  ) : confirmDeleteId === pkg.id ? (
+                    <div className="flex flex-1 gap-1">
+                      <Button size="sm" variant="danger" onClick={() => handleSetActive(pkg.id, false)} className="flex-1">{t('yes')}</Button>
+                      <Button size="sm" variant="outline" onClick={cancelDeactivate} className="flex-1">{t('no')}</Button>
+                    </div>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => openDeactivateConfirm(pkg.id)} className="flex-1 border-danger/40 text-danger hover:bg-danger/10">
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {t('deactivate')}
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           ))}

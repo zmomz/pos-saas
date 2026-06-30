@@ -212,6 +212,17 @@ class ToggleResponse(BaseModel):
     is_active: bool
 
 
+class AgentSuspendImpactResponse(BaseModel):
+    """A4 (#236): blast radius of suspending an agent — the merchants and staff
+    that would be newly blocked at auth by the suspension cascade (SEC-02). Both
+    counts are of *currently active* rows: already-suspended merchants / off-boarded
+    staff don't change, so they aren't part of the "will be blocked" preview."""
+    agent_id: int
+    company_name: str
+    merchant_count: int
+    staff_count: int
+
+
 class CreateAgentRequest(BaseModel):
     company_name: str
     email: str
@@ -388,6 +399,58 @@ async def toggle_agent(
     await invalidate_brand(agent_id, agent.custom_domain)
 
     return ToggleResponse(success=True, is_active=new_status)
+
+
+@router.get("/master/agents/{agent_id}/suspend-impact", response_model=AgentSuspendImpactResponse)
+async def agent_suspend_impact(
+    agent_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Master: preview the suspend cascade for an agent (A4 / #236).
+
+    Read-only — surfaces the "N merchants, M staff will be blocked" counts the
+    confirmation dialog shows before the master suspends an agent. A suspension
+    (``Agents.is_active=False``) cascades at the auth layer to every merchant
+    under the agent and, transitively, their staff logins (SEC-02), so the
+    preview counts the still-active rows that would newly go dark.
+    """
+    from models.staff_members import Staff_members
+
+    role_info = await get_user_role(db, str(current_user.id))
+    if role_info["role"] != "master":
+        raise HTTPException(status_code=403, detail="Only master can access this endpoint")
+
+    result = await db.execute(select(Agents).where(Agents.id == agent_id))
+    agent = result.scalar_one_or_none()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Merchants under this agent that are currently reachable (would be blocked).
+    merchant_rows = await db.execute(
+        select(Clients.user_id).where(
+            Clients.agent_id == agent_id, Clients.is_active.isnot(False)
+        )
+    )
+    owner_ids = [row[0] for row in merchant_rows.all()]
+    merchant_count = len(owner_ids)
+
+    staff_count = 0
+    if owner_ids:
+        staff_result = await db.execute(
+            select(func.count(Staff_members.id)).where(
+                Staff_members.user_id.in_(owner_ids),
+                Staff_members.status == "active",
+            )
+        )
+        staff_count = int(staff_result.scalar() or 0)
+
+    return AgentSuspendImpactResponse(
+        agent_id=agent_id,
+        company_name=agent.company_name,
+        merchant_count=merchant_count,
+        staff_count=staff_count,
+    )
 
 
 @router.post("/master/agents", response_model=CreateAgentResponse, status_code=201)

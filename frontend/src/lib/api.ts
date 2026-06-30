@@ -32,6 +32,23 @@ export async function toggleAgent(agentId: number) {
   return response.data;
 }
 
+// #236 (A4): blast-radius preview for suspending an agent — the merchants and
+// staff the suspension cascade (SEC-02) would block at auth, shown before confirm.
+export interface AgentSuspendImpact {
+  agent_id: number;
+  company_name: string;
+  merchant_count: number;
+  staff_count: number;
+}
+export async function getAgentSuspendImpact(agentId: number): Promise<AgentSuspendImpact> {
+  const response = await client.apiCall.invoke<AgentSuspendImpact>({
+    url: `/api/v1/tenant/master/agents/${agentId}/suspend-impact`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // MA-08 / RSL-08 / RPT-09 (F-023): platform-wide economics for the master operator
 // console — MRR (yearly plans normalized to fee/12), churn (suspended share),
 // active merchants, and a revenue-by-agent leaderboard. `collected` is the agent's
@@ -2305,6 +2322,22 @@ export async function deleteClient(
 export async function getPackagesList() {
   const response = await client.apiCall.invoke({
     url: '/api/v1/packages/list',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// #236 (A3): how many agents are still on a package, so deactivating an in-use
+// one can warn with the affected-agents count/consequence before it runs.
+export interface PackageImpact {
+  package_id: number;
+  agent_count: number;
+  active_agent_count: number;
+}
+export async function getPackageImpact(packageId: number): Promise<PackageImpact> {
+  const response = await client.apiCall.invoke<PackageImpact>({
+    url: `/api/v1/packages/${packageId}/impact`,
     method: 'GET',
     data: {},
   });
