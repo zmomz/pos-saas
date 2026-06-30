@@ -39,3 +39,11 @@ greenlet
 python-jose[cryptography]>=3.3.0
 
 # payment module dependencies
+
+# Job queue + event bus (ISSUE-218, M10). Only needed for the Redis-backed
+# queue backend (JOB_QUEUE_BACKEND=redis): `arq` is the async worker/scheduler
+# and pulls in `redis`. Under the default in-process "memory" backend neither is
+# imported, so dev/CI run without Redis. Run the worker with
+# `arq worker.WorkerSettings`.
+arq>=0.25
+redis>=5.0
