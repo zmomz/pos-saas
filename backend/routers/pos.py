@@ -31,6 +31,7 @@ from models.zatca_documents import ZatcaDocuments
 from models.product_branch_stock import Product_branch_stock  # noqa: F401
 from models.product_branch_price import Product_branch_price  # noqa: F401
 from models.branch_tax_rate import Branch_tax_rate  # noqa: F401
+from models.branch_promotion_override import Branch_promotion_override  # noqa: F401
 # Imported so the variant table registers on Base.metadata at startup
 # (services.product_variants is only imported lazily inside handlers).
 from models.product_variants import Product_variants  # noqa: F401
@@ -2417,6 +2418,68 @@ async def delete_branch_tax_rate_endpoint(
     if not removed:
         raise HTTPException(status_code=404, detail="Branch tax-rate override not found")
     return {"branch_id": branch_id, "removed": True}
+
+
+# ---------- Branch-level promotions (#220 multi-branch) ----------
+class BranchPromotionSetRequest(BaseModel):
+    is_enabled: bool
+
+
+@router.get("/branches/{branch_id}/promotions/resolve")
+async def resolve_branch_promotions_endpoint(
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve the promotions effective at a branch — every active chain promotion
+    the branch has not opted out of, plus the ids it has disabled (#220 branch
+    promotions)."""
+    from services.branch_promotions import resolve_branch_promotions
+
+    client = await get_client_for_user(db, owner_id)
+    return await resolve_branch_promotions(db, owner_id, client.id, branch_id)
+
+
+@router.put("/branches/{branch_id}/promotions/{promotion_id}")
+async def set_branch_promotion_endpoint(
+    branch_id: int,
+    promotion_id: int,
+    data: BranchPromotionSetRequest,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Enable/disable a chain promotion at one branch (#220)."""
+    from services.branch_promotions import set_branch_promotion
+
+    client = await get_client_for_user(db, owner_id)
+    row = await set_branch_promotion(
+        db, owner_id, client.id, branch_id, promotion_id, data.is_enabled
+    )
+    return {
+        "branch_id": branch_id,
+        "promotion_id": promotion_id,
+        "is_enabled": row.is_enabled,
+    }
+
+
+@router.delete("/branches/{branch_id}/promotions/{promotion_id}")
+async def delete_branch_promotion_endpoint(
+    branch_id: int,
+    promotion_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a branch's promotion override so it falls back to running (#220)."""
+    from services.branch_promotions import delete_branch_promotion
+
+    client = await get_client_for_user(db, owner_id)
+    removed = await delete_branch_promotion(db, client.id, branch_id, promotion_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Branch promotion override not found")
+    return {"branch_id": branch_id, "promotion_id": promotion_id, "removed": True}
 
 
 # ---------- Cross-branch sales reporting (#220 multi-branch) ----------

@@ -2754,6 +2754,55 @@ export async function deleteBranchTaxRate(branchId: number) {
   return response.data;
 }
 
+// Per-branch promotion opt-outs (#220 multi-branch: branch-level promotions). A
+// chain's auto-applied promotions run at every branch by default; a branch may
+// opt out of a specific promotion. `resolveBranchPromotions` returns the active
+// promotions effective at the branch and the ids it has disabled.
+export interface BranchPromotionSummary {
+  promotion_id: number;
+  name: string;
+  kind: string;
+}
+
+export interface BranchPromotionResolution {
+  branch_id: number;
+  promotions: BranchPromotionSummary[];
+  disabled_promotion_ids: number[];
+}
+
+export async function resolveBranchPromotions(branchId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/promotions/resolve`,
+    method: 'GET',
+  });
+  return response.data as BranchPromotionResolution;
+}
+
+export async function setBranchPromotion(
+  branchId: number,
+  promotionId: number,
+  isEnabled: boolean,
+) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/promotions/${promotionId}`,
+    method: 'PUT',
+    data: { is_enabled: isEnabled },
+  });
+  return response.data as {
+    branch_id: number;
+    promotion_id: number;
+    is_enabled: boolean;
+  };
+}
+
+export async function deleteBranchPromotion(branchId: number, promotionId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/branches/${branchId}/promotions/${promotionId}`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
 // Cross-branch sales reporting (#220 multi-branch). Rolls each branch's net sales
 // and sale count up side by side for the chain; refunds (credit notes) net out and
 // held/voided rows are excluded. Optional ISO start/end bound the window.
