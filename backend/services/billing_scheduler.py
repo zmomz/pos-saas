@@ -59,7 +59,10 @@ async def run_billing_sweep_once() -> dict:
     platform collects from the agent). Returns the combined summary keyed by rail.
     """
     from core.database import db_manager
-    from services.aggregator import recover_stuck_aggregator_claims
+    from services.aggregator import (
+        record_omnichannel_sweep_run,
+        recover_stuck_aggregator_claims,
+    )
     from services.dunning import run_global_dunning
     from services.quota_billing import run_global_quota_dunning
 
@@ -72,6 +75,8 @@ async def run_billing_sweep_once() -> dict:
     # threshold — a freshly locked claim is a settle in flight, not a crash.
     async with db_manager.async_session_maker() as db:
         reopened = await recover_stuck_aggregator_claims(db)
+        # #237: record this run so operators can see when the sweep last ran + recovered.
+        await record_omnichannel_sweep_run(db, reopened)
     return {
         "merchant_subscriptions": merchant,
         "agent_quota": quota,

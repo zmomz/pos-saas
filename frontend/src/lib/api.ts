@@ -4952,6 +4952,27 @@ export async function getChannelOrders(page = 1, pageSize = 20): Promise<Channel
   return res.data;
 }
 
+// #237: health of the stuck-claim crash-recovery sweep (REV-05). A non-zero
+// stuck_count means a settler crashed and the bounded sweep has not recovered the
+// claim yet (un-healthy); last_run_at / last_reopened report the last unattended run.
+export interface OmnichannelSweepStatus {
+  last_run_at?: string | null;
+  last_reopened?: number | null;
+  stuck_count: number;
+  oldest_stuck_age_seconds?: number | null;
+  threshold_seconds: number;
+  healthy: boolean;
+}
+
+export async function getOmnichannelSweepStatus(): Promise<OmnichannelSweepStatus> {
+  const res = await client.apiCall.invoke<OmnichannelSweepStatus>({
+    url: '/api/v1/omnichannel/sweep-status',
+    method: 'GET',
+    data: {},
+  });
+  return res.data;
+}
+
 // ---------- Aggregator — Deliverect-class delivery middleware (F-060) ----------
 // Connect the restaurant's aggregator middleware location (Jahez / HungerStation
 // arrive only through a Deliverect / Delivery-Hero POS-partner middleware). Ingested

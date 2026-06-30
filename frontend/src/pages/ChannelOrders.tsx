@@ -13,13 +13,23 @@ import {
   getAggregatorConnection,
   connectAggregator,
   getChannelOrders,
+  getOmnichannelSweepStatus,
   type SallaConnection,
   type AggregatorConnection,
   type ChannelOrder,
+  type OmnichannelSweepStatus,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDateTime } from '@/lib/format';
-import { Globe, ShoppingCart, RefreshCw, Link2, CheckCircle2 } from 'lucide-react';
+import {
+  Globe,
+  ShoppingCart,
+  RefreshCw,
+  Link2,
+  CheckCircle2,
+  Activity,
+  AlertTriangle,
+} from 'lucide-react';
 
 // Channel-order status → badge styling. The OMN order line is
 // received → imported → fulfilled.
@@ -30,10 +40,15 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export default function ChannelOrders() {
-  const { t, language } = useLanguage();
+  const { t, tt, language } = useLanguage();
 
   const [connection, setConnection] = useState<SallaConnection | null>(null);
   const [orders, setOrders] = useState<ChannelOrder[]>([]);
+
+  // #237: crash-recovery sweep health. Fetched in isolation so a failure degrades
+  // only this card (UX-02 / FE-05), never the connection cards or order list.
+  const [sweep, setSweep] = useState<OmnichannelSweepStatus | null>(null);
+  const [sweepError, setSweepError] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -66,6 +81,15 @@ export default function ChannelOrders() {
       setAggregator(agg);
       setLocationId(agg.location_id || '');
       setOrders(Array.isArray(list.items) ? list.items : []);
+      // Sweep health is non-critical: isolate its fetch so a failure shows "—" on the
+      // health card alone and never blocks the orders/connections from rendering.
+      setSweepError(false);
+      try {
+        setSweep(await getOmnichannelSweepStatus());
+      } catch {
+        setSweep(null);
+        setSweepError(true);
+      }
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status;
       // 403 means the account is not a client tenancy (omnichannel is client-scoped).
@@ -221,6 +245,60 @@ export default function ChannelOrders() {
           <RefreshCw className="h-4 w-4 me-2" /> {t('refresh')}
         </Button>
       </PageHeading>
+
+      {/* Stuck-claim sweep health (#237) */}
+      <Card className="bg-card border-border" data-testid="sweep-health">
+        <CardContent className="p-4 space-y-2">
+          <div className="flex items-center gap-2 text-foreground font-semibold">
+            <Activity className="h-5 w-5 text-brand-400" />
+            {tt('omnichannel_sweep_health', 'Order-sync health')}
+            {sweepError ? (
+              <Badge className="pill-muted">—</Badge>
+            ) : sweep ? (
+              sweep.healthy ? (
+                <Badge className="pill-success">
+                  <CheckCircle2 className="h-3.5 w-3.5 me-1" />
+                  {tt('omnichannel_sweep_healthy', 'Healthy')}
+                </Badge>
+              ) : (
+                <Badge className="pill-warning">
+                  <AlertTriangle className="h-3.5 w-3.5 me-1" />
+                  {tt('omnichannel_sweep_stuck', 'Needs attention')}
+                </Badge>
+              )
+            ) : (
+              <Badge className="pill-muted">—</Badge>
+            )}
+          </div>
+          {sweepError ? (
+            <p className="text-muted-foreground text-sm">
+              {tt('omnichannel_sweep_unavailable', 'Sync health is unavailable right now.')}
+            </p>
+          ) : sweep ? (
+            <div className="text-sm space-y-1">
+              {!sweep.healthy && (
+                <p className="text-warning">
+                  {sweep.stuck_count}{' '}
+                  {tt('omnichannel_sweep_stuck_orders', 'order(s) stuck mid-import — the recovery sweep is catching up.')}
+                </p>
+              )}
+              <p className="text-muted-foreground">
+                {sweep.last_run_at
+                  ? `${tt('omnichannel_sweep_last_run', 'Last checked')}: ${formatDateTime(sweep.last_run_at, language)}`
+                  : tt('omnichannel_sweep_never_run', 'The recovery sweep has not run yet.')}
+              </p>
+              {sweep.last_reopened != null && sweep.last_run_at && (
+                <p className="text-muted-foreground">
+                  {sweep.last_reopened}{' '}
+                  {tt('omnichannel_sweep_recovered', 'recovered on the last run')}
+                </p>
+              )}
+            </div>
+          ) : (
+            <p className="text-muted-foreground text-sm">—</p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Salla connection (OMN-01) */}
       <Card className="bg-card border-border">

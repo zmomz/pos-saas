@@ -30,6 +30,7 @@ from dependencies.features import is_feature_enabled, require_feature
 from models.channel_orders import Channel_orders
 from models.clients import Clients
 from schemas.auth import UserResponse
+from services.aggregator import omnichannel_sweep_status
 from services.omnichannel import ingest_salla_order, verify_salla_signature
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,17 @@ class ChannelOrderListResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+class SweepStatusResponse(BaseModel):
+    """Health of the stuck-claim crash-recovery sweep (REV-05) for this merchant."""
+
+    last_run_at: Optional[str] = None
+    last_reopened: Optional[int] = None
+    stuck_count: int
+    oldest_stuck_age_seconds: Optional[float] = None
+    threshold_seconds: int
+    healthy: bool
 
 
 # ---------- Helper: resolve the caller's client ----------
@@ -240,3 +252,19 @@ async def list_channel_orders(
         for r in rows
     ]
     return ChannelOrderListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
+# ---------- Back-office: stuck-claim sweep health (#237) ----------
+@router.get("/sweep-status", response_model=SweepStatusResponse)
+async def get_sweep_status(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Report the crash-recovery sweep's health for the caller's channel orders.
+
+    Surfaces live stuck-claim count (claims whose settler crashed and the bounded sweep
+    has not recovered yet, owner-scoped) plus the last unattended sweep run (when + how
+    many it recovered) so operators can see the omnichannel pipeline is healthy."""
+    client = await _client_for_user(db, str(current_user.id))
+    status = await omnichannel_sweep_status(db, client.id)
+    return SweepStatusResponse(**status)

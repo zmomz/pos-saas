@@ -38,6 +38,7 @@ from models.channel_orders import Channel_orders
 from models.clients import Clients
 from models.products import Products
 from models.restaurant import OrderTickets
+from models.system_settings import System_settings
 
 logger = logging.getLogger(__name__)
 
@@ -544,9 +545,18 @@ async def ingest_aggregator_order(
 
 
 # ---------- Bounded crash-recovery sweep (REV-05) ----------
+# How long a claim may hold the ``settling`` lock before the sweep treats its settler
+# as crashed and re-opens it. Shared by the recovery sweep and the operator-facing
+# status read so the UI's "stuck" definition matches exactly what the sweep recovers.
+STUCK_CLAIM_THRESHOLD_SECONDS = 600
+
+# system_settings KV key holding the last unattended sweep run (JSON: ran_at, reopened).
+SWEEP_STATUS_KEY = "omnichannel_sweep_last_run"
+
+
 async def recover_stuck_aggregator_claims(
     db: AsyncSession,
-    threshold_seconds: int = 600,
+    threshold_seconds: int = STUCK_CLAIM_THRESHOLD_SECONDS,
     now: Optional[datetime] = None,
 ) -> int:
     """Re-open aggregator claims whose settler crashed mid-flight (#179).
@@ -592,3 +602,95 @@ async def recover_stuck_aggregator_claims(
     if reopened:
         await db.commit()
     return reopened
+
+
+# ---------- Operator-facing sweep status (#237) ----------
+async def record_omnichannel_sweep_run(
+    db: AsyncSession,
+    reopened: int,
+    now: Optional[datetime] = None,
+) -> None:
+    """Persist the last unattended sweep run so the UI can show when it last ran.
+
+    Written once per scheduler tick (after :func:`recover_stuck_aggregator_claims`)
+    into the platform-wide ``system_settings`` KV — no migration, one row per key.
+    Stores ``ran_at`` (ISO) and ``reopened`` (how many stuck claims were recovered).
+    """
+    now = now or datetime.now(timezone.utc)
+    payload = json.dumps({"ran_at": now.isoformat(), "reopened": int(reopened)})
+    row = (
+        await db.execute(
+            select(System_settings).where(System_settings.key == SWEEP_STATUS_KEY)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        db.add(System_settings(key=SWEEP_STATUS_KEY, value=payload))
+    else:
+        row.value = payload
+    await db.commit()
+
+
+async def omnichannel_sweep_status(
+    db: AsyncSession,
+    client_id: int,
+    *,
+    threshold_seconds: int = STUCK_CLAIM_THRESHOLD_SECONDS,
+    now: Optional[datetime] = None,
+) -> dict:
+    """Report stuck-claim health for one client plus the last unattended sweep run.
+
+    A claim is *stuck* when it has held the ``settling`` lock past ``threshold_seconds``
+    — the exact condition :func:`recover_stuck_aggregator_claims` recovers, so a non-zero
+    count means a settler crashed and the sweep has not caught up yet (un-healthy). A
+    freshly locked claim (settle genuinely in flight) is healthy. Owner-scoped to
+    ``client_id`` (SEC-02). The age check runs in Python so it is dialect-agnostic
+    (SQLite naive stamps are read as UTC), mirroring the recovery sweep.
+    """
+    now = now or datetime.now(timezone.utc)
+    stamps = (
+        await db.execute(
+            select(Channel_orders.settling_at).where(
+                Channel_orders.client_id == client_id,
+                Channel_orders.status == "settling",
+            )
+        )
+    ).scalars().all()
+
+    stuck = 0
+    oldest: Optional[float] = None
+    for stamped in stamps:
+        if stamped is None:
+            # A ``settling`` row with no stamp should not happen; treat it as stuck.
+            age = float(threshold_seconds) + 1.0
+        else:
+            if stamped.tzinfo is None:
+                stamped = stamped.replace(tzinfo=timezone.utc)
+            age = (now - stamped).total_seconds()
+        if age >= threshold_seconds:
+            stuck += 1
+            if oldest is None or age > oldest:
+                oldest = age
+
+    last_run_at: Optional[str] = None
+    last_reopened: Optional[int] = None
+    row = (
+        await db.execute(
+            select(System_settings).where(System_settings.key == SWEEP_STATUS_KEY)
+        )
+    ).scalar_one_or_none()
+    if row and row.value:
+        try:
+            data = json.loads(row.value)
+            last_run_at = data.get("ran_at")
+            last_reopened = data.get("reopened")
+        except (ValueError, TypeError):  # pragma: no cover - corrupt KV row
+            pass
+
+    return {
+        "last_run_at": last_run_at,
+        "last_reopened": last_reopened,
+        "stuck_count": stuck,
+        "oldest_stuck_age_seconds": oldest,
+        "threshold_seconds": threshold_seconds,
+        "healthy": stuck == 0,
+    }
