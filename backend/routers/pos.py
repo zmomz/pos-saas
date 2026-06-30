@@ -32,6 +32,7 @@ from models.product_branch_stock import Product_branch_stock  # noqa: F401
 from models.product_branch_price import Product_branch_price  # noqa: F401
 from models.branch_tax_rate import Branch_tax_rate  # noqa: F401
 from models.branch_promotion_override import Branch_promotion_override  # noqa: F401
+from models.staff_branch_access import Staff_branch_access  # noqa: F401
 # Imported so the variant table registers on Base.metadata at startup
 # (services.product_variants is only imported lazily inside handlers).
 from models.product_variants import Product_variants  # noqa: F401
@@ -2313,6 +2314,105 @@ async def set_branch_stock_endpoint(
         "branch_id": branch_id,
         "product_id": row.product_id,
         "quantity": row.quantity,
+    }
+
+
+# ---------- Per-branch staff access scoping (#220 multi-branch: branch permissions) ----------
+async def _assert_staff_owned(db: AsyncSession, owner_id: str, staff_id: int) -> None:
+    """404 unless the staff row belongs to the caller's tenant (SEC-02)."""
+    from models.staff_members import Staff_members
+
+    owned = (
+        await db.execute(
+            select(Staff_members.id).where(
+                Staff_members.id == staff_id, Staff_members.user_id == owner_id
+            )
+        )
+    ).scalar_one_or_none()
+    if owned is None:
+        raise HTTPException(status_code=404, detail="Staff member not found")
+
+
+@router.get("/staff/{staff_id}/branches")
+async def get_staff_branches(
+    staff_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """List a staff member's branch grants (#220 branch permissions).
+
+    ``scoped`` is False when there are no grants — the staff member then has
+    chain-wide access (every branch)."""
+    from services.branch_permissions import list_staff_branches
+
+    client = await get_client_for_user(db, owner_id)
+    await _assert_staff_owned(db, owner_id, staff_id)
+    branch_ids = await list_staff_branches(db, client.id, staff_id)
+    return {
+        "staff_id": staff_id,
+        "scoped": bool(branch_ids),
+        "branch_ids": branch_ids,
+    }
+
+
+@router.put("/staff/{staff_id}/branches/{branch_id}")
+async def assign_staff_branch(
+    staff_id: int,
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Grant a staff member access to a branch (idempotent upsert) (#220)."""
+    from services.branch_permissions import assign_branch
+
+    client = await get_client_for_user(db, owner_id)
+    await _assert_staff_owned(db, owner_id, staff_id)
+    await assign_branch(db, owner_id, client.id, staff_id, branch_id)
+    return {"staff_id": staff_id, "branch_id": branch_id, "assigned": True}
+
+
+@router.delete("/staff/{staff_id}/branches/{branch_id}")
+async def revoke_staff_branch(
+    staff_id: int,
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Remove a staff member's branch grant; revoking the last one restores
+    chain-wide access (#220)."""
+    from services.branch_permissions import revoke_branch
+
+    client = await get_client_for_user(db, owner_id)
+    await _assert_staff_owned(db, owner_id, staff_id)
+    removed = await revoke_branch(db, client.id, staff_id, branch_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Branch grant not found")
+    return {"staff_id": staff_id, "branch_id": branch_id, "removed": True}
+
+
+@router.get("/staff/{staff_id}/branches/{branch_id}/access")
+async def resolve_staff_branch_access(
+    staff_id: int,
+    branch_id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Resolve whether a staff member may act at a branch (#220).
+
+    Unscoped (no grants) ⇒ access to every branch; scoped ⇒ only granted ones."""
+    from services.branch_permissions import has_branch_access, is_scoped
+
+    client = await get_client_for_user(db, owner_id)
+    await _assert_staff_owned(db, owner_id, staff_id)
+    return {
+        "staff_id": staff_id,
+        "branch_id": branch_id,
+        "scoped": await is_scoped(db, client.id, staff_id),
+        "has_access": await has_branch_access(db, client.id, staff_id, branch_id),
     }
 
 
