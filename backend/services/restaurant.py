@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.products import Products
+from models.staff_members import Staff_members
 from models.restaurant import (
     BillOfMaterials,
     Combos,
@@ -867,6 +868,39 @@ class RestaurantService:
         except Exception as e:
             await self.db.rollback()
             logger.error(f"Error transferring ticket {ticket_id}: {str(e)}")
+            raise
+
+    async def transfer_waiter(
+        self, ticket_id: int, server_id: int, user_id: str
+    ) -> Optional[OrderTickets]:
+        """Reassign the waiter (server) responsible for a ticket (F-045).
+
+        The new ``server`` must be one of the caller's own staff members (SEC-02);
+        the ticket's ``server_id`` is set and ``server_name`` snapshots the staff
+        member's name so the floor renders who is responsible without a join.
+        Raises ``ValueError`` if the staff member isn't the caller's (so a waiter
+        can't be transferred to another tenant's employee) or the ticket is already
+        settled/void (a closed bill has no working section). Returns ``None`` if the
+        ticket isn't found (caller maps to 404).
+        """
+        ticket = await self.get_ticket(ticket_id, user_id)
+        if not ticket:
+            return None
+        if (ticket.status or "open") in CLOSED_TICKET_STATUSES:
+            raise ValueError("Cannot transfer the waiter on a settled or voided ticket")
+        member = await self._owned_staff(server_id, user_id)
+        if member is None:
+            raise ValueError("Server not found")
+        try:
+            ticket.server_id = member.id
+            ticket.server_name = member.name
+            await self.db.commit()
+            await self.db.refresh(ticket)
+            logger.info(f"Transferred ticket {ticket_id} to waiter {member.id}")
+            return ticket
+        except Exception as e:
+            await self.db.rollback()
+            logger.error(f"Error transferring waiter on ticket {ticket_id}: {str(e)}")
             raise
 
     async def merge_tickets(
@@ -2401,6 +2435,15 @@ class RestaurantService:
     async def _owned_product(self, product_id: int, user_id: str) -> Optional[Products]:
         result = await self.db.execute(
             select(Products).where(Products.id == product_id, Products.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def _owned_staff(self, staff_id: int, user_id: str) -> Optional[Staff_members]:
+        """A staff member owned by the caller (the tenancy owner), or None (SEC-02)."""
+        result = await self.db.execute(
+            select(Staff_members).where(
+                Staff_members.id == staff_id, Staff_members.user_id == user_id
+            )
         )
         return result.scalar_one_or_none()
 

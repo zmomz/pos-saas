@@ -93,6 +93,12 @@ class OrderTickets(Base):
     course_state = Column(String, nullable=True, default="{}", server_default="{}")
     customer_name = Column(String, nullable=True)
     party_size = Column(Integer, nullable=True)
+    # The staff member currently serving this ticket's section (F-045 "transfer
+    # waiter"). ``server_id`` references the owner's own ``staff_members`` row;
+    # ``server_name`` snapshots that staff member's name so the floor renders who
+    # is responsible without a join. Both null until a waiter is assigned.
+    server_id = Column(Integer, nullable=True, index=True)
+    server_name = Column(String, nullable=True)
     notes = Column(String, nullable=True)
     opened_at = Column(DateTime(timezone=True), default=datetime.now)
     created_at = Column(DateTime(timezone=True), default=datetime.now)

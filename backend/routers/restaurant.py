@@ -193,6 +193,10 @@ class OrderTicketResponse(BaseModel):
     customer_name: Optional[str] = None
     party_size: Optional[int] = None
     notes: Optional[str] = None
+    # The staff member currently serving the ticket's section (F-045 "transfer
+    # waiter"); both null until a waiter is assigned.
+    server_id: Optional[int] = None
+    server_name: Optional[str] = None
     # Optional service-charge % applied to the bill, outside the VAT base (F-061).
     service_charge_pct: Optional[float] = None
 
@@ -264,6 +268,12 @@ class FireCourseRequest(BaseModel):
 
 class TransferRequest(BaseModel):
     target_table_id: int
+
+
+class TransferWaiterRequest(BaseModel):
+    """Reassign the waiter (server) responsible for a ticket (F-045)."""
+
+    server_id: int
 
 
 class MergeRequest(BaseModel):
@@ -1100,6 +1110,30 @@ async def transfer_ticket(
         ticket = await service.transfer_ticket(ticket_id, data.target_table_id, user_id=client.user_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Order ticket not found")
+    return ticket
+
+
+@router.post("/order-tickets/{ticket_id}/transfer-waiter", response_model=OrderTicketResponse)
+async def transfer_waiter(
+    ticket_id: int,
+    data: TransferWaiterRequest,
+    client: Clients = Depends(get_restaurant_client),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reassign the waiter (server) responsible for a ticket (F-045).
+
+    The new server must be one of the caller's own staff members. Rejected once
+    the ticket is settled/void (409); an unknown/foreign staff member is a bad
+    request (400).
+    """
+    service = RestaurantService(db)
+    try:
+        ticket = await service.transfer_waiter(ticket_id, data.server_id, user_id=client.user_id)
+    except ValueError as e:
+        status = 409 if "settled or voided" in str(e) else 400
+        raise HTTPException(status_code=status, detail=str(e))
     if ticket is None:
         raise HTTPException(status_code=404, detail="Order ticket not found")
     return ticket
