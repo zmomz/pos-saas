@@ -1,7 +1,7 @@
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import List, Optional
 
@@ -116,6 +116,11 @@ class CartItem(BaseModel):
     # batch-tracked product (``Products.track_batch``). The sale is rejected when a
     # tracked line arrives without one (enforced in ``create_transaction``).
     batch_number: Optional[str] = None
+    # ISSUE-223 (M4 Product): the dispensed lot's expiry date ("YYYY-MM-DD"),
+    # captured at the point of sale for a batch-tracked product. The server is
+    # authoritative: an expired lot (date strictly before today) is rejected (400)
+    # before anything is booked. Persisted onto the sale line for traceability.
+    expiry_date: Optional[str] = None
 
 
 class PaymentEntry(BaseModel):
@@ -622,6 +627,31 @@ async def create_transaction(
                 status_code=400,
                 detail="A batch number is required to sell this product.",
             )
+
+        # Expiry enforced at sale: a batch-tracked lot whose captured expiry date is
+        # strictly before today is expired stock and cannot be dispensed. Only
+        # batch-tracked lines are checked (expiry is a property of the tracked lot);
+        # a blank/absent expiry is allowed (capture stays optional per lot).
+        if batch_tracked_pids:
+            today = datetime.now(timezone.utc).date()
+            for it in data.items:
+                if it.product_id not in batch_tracked_pids:
+                    continue
+                raw = (it.expiry_date or "").strip()
+                if not raw:
+                    continue
+                try:
+                    expiry = date.fromisoformat(raw)
+                except ValueError:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid expiry date; expected YYYY-MM-DD.",
+                    )
+                if expiry < today:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="This lot has expired and cannot be sold.",
+                    )
 
     # ---- Branch-level pricing (#220): enforce the branch price at sale time ----
     # A catalog line rung up at a branch is charged that branch's effective price:
