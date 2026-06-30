@@ -14,6 +14,7 @@ from services.customers import CustomersService
 from services.production import fire_event_background
 from services.store_credit import StoreCreditError, StoreCreditService
 from services.customer_groups import CustomerGroupsService
+from services.campaigns import CampaignsService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from models.audit_logs import Audit_logs
@@ -23,6 +24,8 @@ from models.transactions import Transactions
 from models.store_credit_ledger import StoreCreditLedger  # noqa: F401
 # Eager import so the customer_groups table registers on Base.metadata too (#221).
 from models.customer_groups import CustomerGroup  # noqa: F401
+# Eager import so the campaigns table registers on Base.metadata too (#221).
+from models.campaigns import Campaign  # noqa: F401
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -305,6 +308,87 @@ async def create_customer_group(
         discount_percent=data.discount_percent,
     )
     return CustomerGroupResponse.model_validate(group)
+
+
+# ---------- M5·CRM (#221) — marketing campaigns ----------
+# Declared BEFORE the `/{id}` routes so the literal `/campaigns` collection path is
+# matched ahead of the int path-param (which would otherwise 422 on "campaigns").
+class CampaignData(BaseModel):
+    """Body for creating a marketing campaign."""
+    name: str
+    channel: str = "sms"
+    message: Optional[str] = None
+    target_group_id: Optional[int] = None
+
+
+class CampaignResponse(BaseModel):
+    """A marketing campaign with its channel, target group and resolved audience."""
+    id: int
+    user_id: str
+    client_id: Optional[int] = None
+    name: str
+    channel: str
+    message: Optional[str] = None
+    target_group_id: Optional[int] = None
+    status: str
+    audience_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CampaignListResponse(BaseModel):
+    """List of the owner's campaigns."""
+    items: List[CampaignResponse]
+    total: int
+
+
+@router.get("/campaigns", response_model=CampaignListResponse)
+async def list_campaigns(
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """List this merchant's marketing campaigns (CRM, #221). Owner-scoped (SEC-02)."""
+    service = CampaignsService(db)
+    campaigns = await service.get_list(user_id=scope.owner_user_id)
+    items = []
+    for c in campaigns:
+        resp = CampaignResponse.model_validate(c)
+        resp.audience_count = await service.audience_count(c, user_id=scope.owner_user_id)
+        items.append(resp)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/campaigns", response_model=CampaignResponse, status_code=201)
+async def create_campaign(
+    data: CampaignData,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a marketing campaign, optionally targeting a group (CRM, #221).
+
+    Owner-scoped (SEC-02): a foreign/unknown ``target_group_id`` → 404."""
+    if not (data.name or "").strip():
+        raise HTTPException(status_code=400, detail="Campaign name is required")
+    service = CampaignsService(db)
+    owner = scope.owner_user_id or str(current_user.id)
+    campaign = await service.create(
+        user_id=owner,
+        client_id=scope.client_id,
+        name=data.name,
+        channel=data.channel,
+        message=data.message,
+        target_group_id=data.target_group_id,
+    )
+    if campaign is None:
+        raise HTTPException(status_code=404, detail="Target group not found")
+    resp = CampaignResponse.model_validate(campaign)
+    resp.audience_count = await service.audience_count(campaign, user_id=owner)
+    return resp
 
 
 @router.get("/{id}", response_model=CustomersResponse)
