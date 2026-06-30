@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///./app.db"
 
+    # Read-replica posture (M9 reporting). Optional connection URL for a read-only
+    # replica that heavy analytics/report queries are routed to (see
+    # core.database.get_read_db) so they never contend with the sale path's write
+    # pool. Empty / unset → reporting reuses the primary database (safe default for
+    # single-DB deployments). Same driver-normalization as DATABASE_URL applies.
+    read_replica_url: str = ""
+
     # JWT / local authentication
     jwt_secret_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
@@ -121,6 +128,14 @@ class Settings(BaseSettings):
     billing_scheduler_enabled: bool = False
     billing_scheduler_interval_seconds: int = 3600
 
+    # Caching layer (M10 / issue #219). When REDIS_URL is set, hot reads
+    # (brand resolution, feature entitlements, the global tax rate, dashboard
+    # aggregates) are cached in Redis — shared across every API worker so an
+    # invalidation on write is seen everywhere. When unset, the cache degrades
+    # to a process-local in-memory store (correct per-process), so dev/CI need no
+    # Redis. See core/cache.py.
+    redis_url: str = ""
+
     # Object storage (OSS) — ISSUE-030. When both are set, StorageService talks
     # to the external object-storage gateway. When either is absent the service
     # degrades to a clear 503 (never an unhandled 500), and storage-backed
@@ -133,6 +148,26 @@ class Settings(BaseSettings):
     # observability is a no-op. See core/observability.py.
     sentry_dsn: str = ""
     sentry_traces_sample_rate: float = 0.0
+
+    # Job queue + internal event bus (ISSUE-218, M10 / §6.2). Background work
+    # (webhook-delivery retries, ZATCA reconcile, report materialization,
+    # notifications, exports) is funnelled through one ``services.job_queue``
+    # seam. The default backend "memory" runs each queued job inline in the
+    # originating process — no broker, so dev/CI need nothing extra and existing
+    # behaviour is preserved. Set JOB_QUEUE_BACKEND=redis (with REDIS_URL) to
+    # enqueue onto a real Redis-backed Arq queue drained by a separate worker
+    # process (see ``worker.py``), so the work survives a crash and runs
+    # out-of-band of the request that triggered it.
+    job_queue_backend: str = "memory"
+    redis_url: str = ""
+    # Per-job durable retry budget for the queue (webhook delivery, reconcile,
+    # …). The memory backend retries inline with exponential backoff; the Redis
+    # backend maps this onto Arq's ``max_tries``.
+    job_max_retries: int = 5
+    # Arq cron cadence: how often the worker re-enqueues the platform-wide ZATCA
+    # reconcile + report-materialization sweeps. Only meaningful under the redis
+    # backend; 0 disables the periodic enqueue.
+    queue_sweep_interval_seconds: int = 900
 
     @property
     def backend_url(self) -> str:

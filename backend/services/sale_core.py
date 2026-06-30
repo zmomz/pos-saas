@@ -31,6 +31,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cache import invalidate_dashboard
 from models.clients import Clients
 from models.payment_tenders import PaymentTenders
 from models.products import Products
@@ -667,6 +668,12 @@ async def execute_sale(db: AsyncSession, cart: NormalizedCart) -> SaleResult:
 
     await db.commit()
     await db.refresh(transaction)
+
+    # M10/#219: a booked sale changes this client's dashboard aggregates
+    # (total/today sales + transaction counts), so drop the cached snapshot now
+    # that the sale is committed. Every POS / offline-sync / aggregator sale path
+    # funnels through here, so this is the single invalidation point for sales.
+    await invalidate_dashboard(client.id)
 
     return SaleResult(
         transaction=transaction,

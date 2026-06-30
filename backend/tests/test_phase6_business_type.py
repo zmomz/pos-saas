@@ -100,3 +100,41 @@ async def test_client_only_changes_own_business_type(client):
     p2 = await client.get("/api/v1/tenant/client/profile", headers=auth_headers(token2))
     assert p1.json()["business_type"] == "restaurant"
     assert p2.json()["business_type"] == "retail"
+
+
+@pytest.mark.asyncio
+async def test_change_type_recomputes_restaurant_feature_without_data_loss(client):
+    """Issue #201 change-type flow: switching business_type recomputes the
+    type-driven ``restaurant`` feature flag in lock-step, and switching back
+    restores access — no data is deleted, only the flag is realigned.
+
+    A ``both`` client reaches the restaurant vertical (type ok + feature
+    enabled-by-default). Switching to ``retail`` blocks it; switching back to
+    ``both`` must re-enable the feature the recompute disabled, otherwise the
+    left-behind ``is_enabled=False`` row would keep 403-ing by feature even
+    though the type now allows it.
+    """
+    _user, token, _cid = await make_client_account(client, business_type="both")
+    headers = auth_headers(token)
+
+    # Reachable to start with.
+    assert (await client.get("/api/v1/restaurant/tables", headers=headers)).status_code == 200
+
+    # Switch to retail → type gate blocks it.
+    r = await client.post(
+        "/api/v1/tenant/client/business-type",
+        json={"business_type": "retail"},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert (await client.get("/api/v1/restaurant/tables", headers=headers)).status_code == 403
+
+    # Switch back to both → the recompute must re-enable the restaurant feature
+    # flag it disabled, so access is restored.
+    r = await client.post(
+        "/api/v1/tenant/client/business-type",
+        json={"business_type": "both"},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert (await client.get("/api/v1/restaurant/tables", headers=headers)).status_code == 200

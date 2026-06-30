@@ -19,6 +19,7 @@ from schemas.auth import (
     MfaEnrollResponse,
     MfaLoginRequest,
     MfaStatusResponse,
+    PinLoginRequest,
     PasswordResetConfirm,
     PasswordResetRequest,
     PasswordResetRequestResponse,
@@ -31,6 +32,7 @@ from schemas.auth import (
     UserResponse,
 )
 from services.auth import AuthService
+from services.staff_lifecycle import StaffLifecycleService
 from utils.password_policy import enforce_password_complexity
 from services.password_reset import PasswordResetService
 from services.login_throttle import (
@@ -293,6 +295,64 @@ async def login_mfa(
 
     await clear_login_attempts(db, throttle_subject, client_ip)
     result = await _issue_login_response(service, user, request)
+    _set_refresh_cookie(response, result.refresh_token)
+    return result
+
+
+@router.post("/login/pin")
+async def login_pin(
+    payload: PinLoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    """Authenticate a staff member by ``(merchant, PIN)`` from a shared terminal (#216).
+
+    PINs are only unique within a merchant, so the merchant's own login email
+    scopes the lookup. A correct PIN belonging to an **active**, login-bound staff
+    member mints the same token pair as a password login — for the staff member's
+    own login, so their permissions/tenancy resolve exactly as usual.
+
+    Repeated wrong PINs for the same (merchant, IP) are throttled in their own
+    namespace, blunting the small PIN key-space against brute force.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    throttle_subject = f"pin:{payload.merchant_email.strip().lower()}"
+
+    try:
+        await assert_login_allowed(db, throttle_subject, client_ip)
+    except LoginLockedOut as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed PIN attempts. Please try again later.",
+            headers={"Retry-After": str(exc.retry_after)},
+        )
+
+    service = AuthService(db)
+    merchant = await service.get_user_by_email(payload.merchant_email)
+    staff = None
+    if merchant is not None:
+        # The owning merchant's tenancy id is its own user id (clients scope to
+        # ``owner_user_id == user_id``); staff rows hang off that id.
+        staff = await StaffLifecycleService(db).authenticate_pin(merchant.id, payload.pin)
+
+    if staff is None or not staff.login_user_id:
+        await register_failed_login(db, throttle_subject, client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid PIN",
+        )
+
+    login_user = await service.get_user_by_id(staff.login_user_id)
+    if login_user is None:
+        await register_failed_login(db, throttle_subject, client_ip)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid PIN",
+        )
+
+    await clear_login_attempts(db, throttle_subject, client_ip)
+    result = await _issue_login_response(service, login_user, request)
     _set_refresh_cookie(response, result.refresh_token)
     return result
 

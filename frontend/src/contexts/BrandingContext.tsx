@@ -133,16 +133,25 @@ export function hexToHslTriple(hex: string): string | null {
   return `${H} ${S}% ${L}%`;
 }
 
-/** Relative luminance to pick a readable foreground for the primary color. */
-function readableForeground(hex: string): string {
+// Dark ink used as the foreground on a pale brand (so white-on-pale never ships).
+const DARK_INK = '222.2 47.4% 11.2%';
+
+/** Relative luminance of a hex color, or null when it can't be parsed. */
+function luminance(hex: string): number | null {
   let h = hex.trim().replace('#', '');
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-  if (h.length !== 6) return '0 0% 100%';
+  if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return null;
   const r = parseInt(h.slice(0, 2), 16) / 255;
   const g = parseInt(h.slice(2, 4), 16) / 255;
   const b = parseInt(h.slice(4, 6), 16) / 255;
-  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return lum > 0.6 ? '222.2 47.4% 11.2%' : '0 0% 100%';
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** Relative luminance to pick a readable foreground for the primary color. */
+function readableForeground(hex: string): string {
+  const lum = luminance(hex);
+  if (lum == null) return '0 0% 100%';
+  return lum > 0.6 ? DARK_INK : '0 0% 100%';
 }
 
 /** Apply branding to the document root so the whole UI is white-labeled. */
@@ -153,7 +162,16 @@ export function applyBranding(branding: Branding): void {
   if (hsl) {
     root.style.setProperty('--primary', hsl);
     root.style.setProperty('--ring', hsl);
-    root.style.setProperty('--primary-foreground', readableForeground(branding.primary_color));
+    const fg = readableForeground(branding.primary_color);
+    root.style.setProperty('--primary-foreground', fg);
+    // H1 (contrast guard): a pale brand auto-flips its foreground to dark ink so
+    // `text-primary-foreground` chrome (POS checkout, CTAs) stays legible. Warn so
+    // the operator knows white-on-brand can't be used as-is for this tenant.
+    if (fg === DARK_INK) {
+      console.warn(
+        `[branding] Primary color ${branding.primary_color} is pale; flipping foreground to dark ink for contrast.`,
+      );
+    }
   }
   const secondaryHsl = hexToHslTriple(branding.secondary_color);
   if (secondaryHsl) {
