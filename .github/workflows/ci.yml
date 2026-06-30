@@ -47,6 +47,12 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Lint
         run: pnpm run lint
+      - name: i18n key-parity gate (deep-review sweep 3 · ISSUE-196/#238)
+        # Pre-merge regression gate: fails when any locale (ar/hi/ur) is short of
+        # `en`. Also runs inside `build` below, but is invoked explicitly here so
+        # the sweep is enforced and visible independent of build ordering.
+        # See .github/REGRESSION_CHECKLIST.md.
+        run: pnpm run i18n:check
       - name: Type-check (API contract type-tests)
         run: pnpm run typecheck
       - name: Unit tests (Vitest, with coverage ratchet)
