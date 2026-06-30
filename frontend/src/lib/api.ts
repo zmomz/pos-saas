@@ -1210,9 +1210,31 @@ export async function changePassword(currentPassword: string, newPassword: strin
   return response.data;
 }
 
+// Active login sessions for the current user (auth/sessions). Used to show the
+// real current-session details on the profile instead of a hardcoded row.
+export interface SessionInfo {
+  id: string;
+  current: boolean;
+  user_agent?: string | null;
+  ip_address?: string | null;
+  created_at?: string | null;
+  last_used_at?: string | null;
+}
+
+export async function getActiveSessions() {
+  const response = await client.apiCall.invoke({
+    url: '/api/v1/auth/sessions',
+    method: 'GET',
+    data: {},
+  });
+  return response.data as { sessions: SessionInfo[] };
+}
+
 // Per-user profile + notification preferences (ISSUE-078, persisted server-side)
 export interface NotificationPrefs {
   email_alerts: boolean;
+  whatsapp_alerts: boolean;
+  push_alerts: boolean;
   low_stock_alerts: boolean;
   daily_summary: boolean;
   transaction_alerts: boolean;
@@ -1620,6 +1642,88 @@ export async function getDiscountReport(days = 30): Promise<DiscountReport> {
   return response.data;
 }
 
+// M9 (F-068): Profit & Loss statement — net revenue (ex-VAT) − COGS (rolled up
+// from the bill of materials) − operating expenses = net profit, for the window.
+export interface PnlExpenseRow {
+  category: string;
+  amount: number;
+}
+
+export interface PnlReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  gross_sales: number;
+  discounts: number;
+  net_revenue: number;
+  vat: number;
+  cogs: number;
+  gross_profit: number;
+  gross_margin_pct: number;
+  expenses: PnlExpenseRow[];
+  total_expenses: number;
+  net_profit: number;
+  net_margin_pct: number;
+  csv_content: string;
+}
+
+export async function getPnlReport(days = 30): Promise<PnlReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/pnl?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// M9 (F-068): Cash Flow statement — cash-basis receipts (net of refunds) − cash
+// operating expenses = net operating cash flow, with a receipts-by-tender split
+// and the drawer movement totals (pay-in/pay-out/cash-drop) for traceability.
+export interface CashFlowLine {
+  label: string;
+  amount: number;
+}
+
+export interface CashFlowTender {
+  tender_type: string;
+  collected: number;
+  refunds: number;
+  net: number;
+}
+
+export interface CashFlowDrawer {
+  pay_in: number;
+  pay_out: number;
+  cash_drop: number;
+  net_drawer: number;
+}
+
+export interface CashFlowReport {
+  days: number;
+  from_date: string;
+  to_date: string;
+  receipts_collected: number;
+  receipts_refunds: number;
+  receipts_net: number;
+  by_tender: CashFlowTender[];
+  expenses: PnlExpenseRow[];
+  total_expenses: number;
+  inflows: CashFlowLine[];
+  outflows: CashFlowLine[];
+  net_cash_flow: number;
+  drawer_movements: CashFlowDrawer;
+  csv_content: string;
+}
+
+export async function getCashFlowReport(days = 30): Promise<CashFlowReport> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/reports/cash-flow?days=${days}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // RPT-06 / PRN-05: fetch a shift's Z-report (closed shift) / X-report (open) —
 // sales by tender, VAT, discounts, voids, refunds + cash variance. Omit shiftId
 // for the current open shift.
@@ -1724,6 +1828,40 @@ export async function markNotificationRead(notificationId: string) {
     url: '/api/v1/notifications/mark-read',
     method: 'POST',
     data: { notification_id: notificationId },
+  });
+  return response.data;
+}
+
+// Operator-composed notification (M10 / parity #8, ISSUE-214). Sends over the
+// chosen channel; a future `scheduled_at` (ISO string) defers delivery and the
+// server acknowledges it as `scheduled` rather than `sent`.
+export type NotificationChannel = 'email' | 'whatsapp' | 'push';
+
+export interface ComposeNotificationInput {
+  channel: NotificationChannel;
+  to: string;
+  subject?: string;
+  body: string;
+  scheduled_at?: string | null;
+}
+
+export interface ComposeNotificationResult {
+  channel: NotificationChannel;
+  to: string;
+  subject: string;
+  status: string; // sent | logged | scheduled
+  scheduled_at?: string;
+  delivered?: boolean;
+  message_id?: string;
+}
+
+export async function sendNotification(
+  input: ComposeNotificationInput,
+): Promise<ComposeNotificationResult> {
+  const response = await client.apiCall.invoke<ComposeNotificationResult>({
+    url: '/api/v1/production/notifications/send',
+    method: 'POST',
+    data: input,
   });
   return response.data;
 }
@@ -2189,6 +2327,124 @@ export async function deleteStaffMember(id: string) {
   await client.entities.staff_members.delete({ id });
 }
 
+// ---------------------------------------------------------------------------
+// Staff lifecycle (#216): suspend/terminate, attendance, shifts, PIN.
+// ---------------------------------------------------------------------------
+const STAFF_BASE = '/api/v1/entities/staff_members';
+
+export type StaffLifecycleAction = 'suspend' | 'terminate' | 'reactivate';
+
+/** Move a staff member through the lifecycle (suspend/terminate revoke access). */
+export async function setStaffLifecycle(id: string | number, action: StaffLifecycleAction) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/${action}`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+/** Set a staff member's numeric login PIN (4–8 digits). */
+export async function setStaffPin(id: string | number, pin: string) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/pin`,
+    method: 'PUT',
+    data: { pin },
+  });
+  return response.data;
+}
+
+/** Remove a staff member's PIN (disables their PIN login). */
+export async function clearStaffPin(id: string | number) {
+  const response = await client.apiCall.invoke({
+    url: `${STAFF_BASE}/${id}/pin`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
+export interface StaffAttendance {
+  id: number;
+  staff_id: number;
+  branch_id?: number | null;
+  clock_in?: string | null;
+  clock_out?: string | null;
+  hours?: number | null;
+  notes?: string | null;
+}
+
+export async function clockInStaff(id: string | number, notes?: string) {
+  const response = await client.apiCall.invoke<StaffAttendance>({
+    url: `${STAFF_BASE}/${id}/attendance/clock-in`,
+    method: 'POST',
+    data: { notes },
+  });
+  return response.data;
+}
+
+export async function clockOutStaff(id: string | number) {
+  const response = await client.apiCall.invoke<StaffAttendance>({
+    url: `${STAFF_BASE}/${id}/attendance/clock-out`,
+    method: 'POST',
+  });
+  return response.data;
+}
+
+export async function getStaffAttendance(id: string | number): Promise<StaffAttendance[]> {
+  const response = await client.apiCall.invoke<StaffAttendance[]>({
+    url: `${STAFF_BASE}/${id}/attendance`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export interface StaffShift {
+  id: number;
+  staff_id: number;
+  branch_id?: number | null;
+  starts_at?: string | null;
+  ends_at?: string | null;
+  role?: string | null;
+  notes?: string | null;
+  status: string;
+}
+
+export async function assignStaffShift(
+  id: string | number,
+  shift: { starts_at: string; ends_at: string; role?: string; notes?: string },
+): Promise<StaffShift> {
+  const response = await client.apiCall.invoke<StaffShift>({
+    url: `${STAFF_BASE}/${id}/shifts`,
+    method: 'POST',
+    data: shift,
+  });
+  return response.data;
+}
+
+export async function getStaffShifts(id: string | number): Promise<StaffShift[]> {
+  const response = await client.apiCall.invoke<StaffShift[]>({
+    url: `${STAFF_BASE}/${id}/shifts`,
+    method: 'GET',
+  });
+  return response.data;
+}
+
+export async function cancelStaffShift(shiftId: string | number): Promise<StaffShift> {
+  const response = await client.apiCall.invoke<StaffShift>({
+    url: `${STAFF_BASE}/shifts/${shiftId}`,
+    method: 'DELETE',
+  });
+  return response.data;
+}
+
+/** Fetch the merchant's attendance export as CSV text (payroll hand-off). */
+export async function exportStaffAttendanceCsv(): Promise<string> {
+  const response = await client.apiCall.invoke<string>({
+    url: `${STAFF_BASE}/attendance/export`,
+    method: 'GET',
+  });
+  return typeof response.data === 'string' ? response.data : String(response.data ?? '');
+}
+
 // ISSUE-035: owner-scoped staff-permission editor. `override` is the explicit
 // grant/deny row (null = no override → the role default applies); `effective`
 // is what `has_permission` resolves to.
@@ -2383,6 +2639,18 @@ export async function setGlobalTaxRate(taxRate: number) {
     data: { tax_rate: taxRate },
   });
   return response.data;
+}
+
+// Agent: read the resolved per-client feature flags (AG-03). Every canonical key
+// with its effective on/off state (default-on unless explicitly disabled), so the
+// dashboard hydrates real toggle state per client instead of fabricating one.
+export async function getClientFeatures(clientId: number) {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/tenant/agent/clients/${clientId}/features`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data as { client_id: number; features: Record<string, boolean> };
 }
 
 // Agent: toggle a per-client feature flag at runtime (AG-03)
@@ -2644,12 +2912,41 @@ export async function downloadReportPdf(
   URL.revokeObjectURL(url);
 }
 
+// Result shared by the email/SMS receipt actions. `delivered` is false when the
+// backend only *logged* the message (no SMTP/Twilio configured) — the UI must
+// not claim "sent" in that case (parity #6).
+export interface ReceiptDeliveryResult {
+  status: 'sent' | 'logged' | string;
+  to: string;
+  delivered: boolean;
+  message_id?: string;
+  subject?: string;
+  invoice_number?: string;
+}
+
 // POS-04: email a receipt for a transaction
-export async function emailReceipt(transactionId: number, toEmail: string) {
+export async function emailReceipt(
+  transactionId: number,
+  toEmail: string,
+): Promise<ReceiptDeliveryResult> {
   const response = await client.apiCall.invoke({
     url: `/api/v1/pos/transactions/${transactionId}/email`,
     method: 'POST',
     data: { to_email: toEmail },
+  });
+  return response.data;
+}
+
+// Parity #6: SMS a receipt for a transaction. Sibling of `emailReceipt`; the
+// backend gates it behind the `sms_receipts` feature flag and expects `to_number`.
+export async function smsReceipt(
+  transactionId: number,
+  toNumber: string,
+): Promise<ReceiptDeliveryResult> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/transactions/${transactionId}/sms`,
+    method: 'POST',
+    data: { to_number: toNumber },
   });
   return response.data;
 }

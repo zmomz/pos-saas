@@ -122,6 +122,27 @@ class LocalAuthApi {
   }
 
   /**
+   * On-terminal staff PIN login (#216). The PIN is scoped to a merchant by the
+   * merchant's own login email; a match mints tokens for the staff member's own
+   * login, so their permissions/tenancy resolve exactly as a password login.
+   */
+  async loginWithPin(merchantEmail: string, pin: string): Promise<AuthUser> {
+    try {
+      const response = await this.client.post<LoginResponse>(
+        `${this.getBaseURL()}/api/v1/auth/login/pin`,
+        { merchant_email: merchantEmail, pin }
+      );
+      setToken(response.data.token);
+      purgeLegacyRefreshToken();
+      return response.data.user;
+    } catch (error) {
+      throw new Error(
+        (axios.isAxiosError(error) && error.response?.data?.detail) || 'Invalid PIN'
+      );
+    }
+  }
+
+  /**
    * Mint a fresh access token. The refresh token is no longer held in JS — it
    * rides the HttpOnly cookie, so we send an empty body with credentials and let
    * the backend read it from there. Gated on an existing access token so a

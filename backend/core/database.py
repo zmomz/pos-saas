@@ -26,6 +26,13 @@ class DatabaseManager:
         self.engine = None
         self._initialized = False
         self.async_session_maker = None
+        # Read-replica posture (M9 reporting): a second, read-only engine pointed
+        # at a replica so heavy analytics queries never contend with the write
+        # (sale) path's connection pool. When no replica is configured these fall
+        # back to the primary engine/session maker, so the read path is always
+        # usable — the replica is a deployment optimization, not a hard dependency.
+        self.read_engine = None
+        self.read_session_maker = None
         self._init_lock = asyncio.Lock()  # Protect initialization process
         self._table_creation_lock = asyncio.Lock()  # Protect table creation process
 
@@ -137,10 +144,57 @@ class DatabaseManager:
             self.async_session_maker = async_sessionmaker(self.engine, class_=AsyncSession, expire_on_commit=False)
             logger.info("Async session maker created successfully")
 
+            # Read-replica posture (M9): if a distinct replica URL is configured,
+            # stand up a separate, smaller read-only pool for analytics so report
+            # aggregation never starves the sale path of write connections. When
+            # unset (or pointing at the same DB) the read path simply reuses the
+            # primary, so nothing breaks in a single-database deployment.
+            self._init_read_replica(database_url)
+
             logger.info("Database connection initialized successfully")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}", exc_info=True)
             raise
+
+    def _init_read_replica(self, primary_url: str) -> None:
+        """Stand up the read-only replica engine, or fall back to the primary.
+
+        Resolves ``READ_REPLICA_URL`` (settings.read_replica_url). When it is unset
+        or resolves to the same URL as the primary, the read session maker is just
+        the primary's — analytics share the one pool. When a distinct replica is
+        configured, a separate engine with a smaller pool is created so reporting
+        load is isolated from the write path. Best-effort: any failure logs and
+        falls back to the primary so a bad replica URL never blocks boot.
+        """
+        replica_url = (getattr(settings, "read_replica_url", "") or "").strip()
+        if not replica_url:
+            self.read_session_maker = self.async_session_maker
+            return
+        try:
+            normalized = self._normalize_async_database_url(replica_url)
+            if normalized == primary_url:
+                # Same database — no point in a second pool.
+                self.read_session_maker = self.async_session_maker
+                return
+            self.read_engine = create_async_engine(
+                normalized,
+                echo=settings.debug,
+                pool_pre_ping=True,
+                pool_size=5,
+                max_overflow=10,
+                pool_recycle=3600,
+                pool_timeout=30,
+            )
+            self.read_session_maker = async_sessionmaker(
+                self.read_engine, class_=AsyncSession, expire_on_commit=False
+            )
+            logger.info("Read-replica engine initialized for reporting/analytics")
+        except Exception as exc:  # pragma: no cover - defensive: never block boot
+            logger.warning(
+                "Read-replica init failed (%s); analytics will use the primary.", exc
+            )
+            self.read_engine = None
+            self.read_session_maker = self.async_session_maker
 
     async def close_db(self):
         """Close database connection and dispose engine
@@ -154,12 +208,18 @@ class DatabaseManager:
         try:
             await self.engine.dispose()
             logger.info("Database connection closed and engine disposed")
+            # Dispose the distinct read-replica engine too (if one was created).
+            if self.read_engine is not None and self.read_engine is not self.engine:
+                await self.read_engine.dispose()
+                logger.info("Read-replica engine disposed")
         except Exception as e:
             logger.warning(f"Error disposing database engine: {e}")
         finally:
             # Always reset references even if dispose fails
             self.engine = None
             self.async_session_maker = None
+            self.read_engine = None
+            self.read_session_maker = None
             self._initialized = False  # Reset initialization flag
 
     async def create_tables(self):
@@ -544,3 +604,33 @@ async def get_db() -> AsyncSession:
     except Exception as e:
         logger.error(f"Failed to create database session: {e}", exc_info=True)
         raise
+
+
+async def get_read_db() -> AsyncSession:
+    """FastAPI dependency for a READ-ONLY session, routed to the read replica.
+
+    Reporting/analytics endpoints (M9) depend on this instead of :func:`get_db`
+    so their heavy SQL aggregation runs against the replica pool and never
+    contends with the sale path's primary connections. When no replica is
+    configured the replica session maker *is* the primary's, so this is a safe
+    drop-in everywhere. Callers must treat the session as read-only (no commit).
+    """
+    # Ensure initialization (and therefore that read_session_maker is wired).
+    if not db_manager.read_session_maker:
+        try:
+            await db_manager.ensure_initialized()
+        except Exception as e:
+            logger.error(f"Failed to ensure database initialization: {e}", exc_info=True)
+            raise RuntimeError("Database initialization failed") from e
+
+    # Fall back to the primary if the replica maker is somehow still unset.
+    session_maker = db_manager.read_session_maker or db_manager.async_session_maker
+    if not session_maker:
+        raise RuntimeError("Database not initialized")
+
+    async with session_maker() as session:
+        try:
+            yield session
+        except Exception as e:
+            logger.error(f"Read database session error: {e}", exc_info=True)
+            raise

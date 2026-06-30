@@ -33,6 +33,17 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class PinLoginRequest(BaseModel):
+    """Request body for on-terminal staff PIN login (#216).
+
+    ``merchant_email`` scopes the PIN to a single merchant's staff (PINs are only
+    unique within a merchant); ``pin`` is the staff member's numeric PIN.
+    """
+
+    merchant_email: EmailStr
+    pin: str
+
+
 class LoginResponse(BaseModel):
     """Response body for a successful login/registration."""
 
@@ -119,9 +130,17 @@ class RevokeSessionsResponse(BaseModel):
 
 
 class NotificationPrefs(BaseModel):
-    """Per-user notification toggles. Defaults mirror the prior frontend defaults."""
+    """Per-user notification toggles. Defaults mirror the prior frontend defaults.
+
+    ``email_alerts`` / ``whatsapp_alerts`` / ``push_alerts`` are the per-channel
+    master switches (M10 / parity #8); the others are per-category switches. New
+    channels default off so an upgrade never starts messaging a user over a
+    channel they never opted into.
+    """
 
     email_alerts: bool = True
+    whatsapp_alerts: bool = False
+    push_alerts: bool = False
     low_stock_alerts: bool = True
     daily_summary: bool = False
     transaction_alerts: bool = True
