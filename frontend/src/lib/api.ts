@@ -1484,6 +1484,42 @@ export async function saveUserPreferences(prefs: {
   return response.data;
 }
 
+// Account profile (#203, parity #4) — the user's own identity fields, editable on
+// the profile screen. Distinct from UserPreferences (display_name + notification
+// channels): this is the account record (name/email/phone) behind /users/profile.
+export interface UserAccountProfile {
+  id: string;
+  email: string;
+  name: string | null;
+  phone: string | null;
+  role: string;
+}
+
+export async function getUserProfile(): Promise<UserAccountProfile> {
+  const response = await client.apiCall.invoke<UserAccountProfile>({
+    url: '/api/v1/users/profile',
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+// PATCH-like: only the fields passed are sent, so the backend leaves omitted
+// fields untouched. Throws on a 409 (email already in use); the caller surfaces
+// `response.data.detail`.
+export async function updateUserProfile(fields: {
+  name?: string;
+  email?: string;
+  phone?: string;
+}): Promise<UserAccountProfile> {
+  const response = await client.apiCall.invoke<UserAccountProfile>({
+    url: '/api/v1/users/profile',
+    method: 'PUT',
+    data: fields,
+  });
+  return response.data;
+}
+
 // Merchant store settings (ISSUE-079) — the store-level identity + operational
 // defaults that feed every receipt/invoice: VAT/CR numbers, receipt footer, the
 // branch profile and business hours. Persisted server-side at

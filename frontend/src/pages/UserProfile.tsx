@@ -16,6 +16,8 @@ import {
   getMfaStatus,
   enrollMfa,
   activateMfa,
+  getUserProfile,
+  updateUserProfile,
   type NotificationPrefs,
   type SessionInfo,
   type MfaStatus,
@@ -47,6 +49,12 @@ export default function UserProfile() {
   const [mfaBusy, setMfaBusy] = useState(false);
   const [mfaError, setMfaError] = useState<string | null>(null);
   const { theme, toggleTheme, isDark } = useTheme();
+  // Account identity (#203, parity #4): the user's own name/email/phone, loaded
+  // from GET /users/profile and saved via PUT on the same Save button.
+  const [accountName, setAccountName] = useState('');
+  const [accountEmail, setAccountEmail] = useState('');
+  const [accountPhone, setAccountPhone] = useState('');
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState('');
   const [notifPrefs, setNotifPrefs] = useState<NotificationPrefs>({
     email_alerts: true,
@@ -90,6 +98,25 @@ export default function UserProfile() {
             // use defaults
           }
         }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Load the account identity fields (#203). On failure leave them blank rather
+    // than guessing — the inputs stay editable and a save will surface any error.
+    getUserProfile()
+      .then((profile) => {
+        if (cancelled) return;
+        setAccountName(profile.name || '');
+        setAccountEmail(profile.email || '');
+        setAccountPhone(profile.phone || '');
+      })
+      .catch(() => {
+        /* keep fields blank; save still works */
       });
     return () => {
       cancelled = true;
@@ -184,14 +211,31 @@ export default function UserProfile() {
   }
 
   async function handleSaveProfile() {
+    setProfileError(null);
+    // Validate the account email client-side before any network call (#203).
+    const trimmedEmail = accountEmail.trim();
+    if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+      setProfileError(tt('invalid_email', 'Please enter a valid email address.'));
+      return;
+    }
     setSaving(true);
     try {
+      // Persist the account identity (#203) and the preferences in one Save.
+      await updateUserProfile({
+        name: accountName.trim(),
+        email: trimmedEmail,
+        phone: accountPhone.trim(),
+      });
       await saveUserPreferences({ display_name: displayName, notification_prefs: notifPrefs });
       // Keep a local cache for instant paint / offline fallback.
       localStorage.setItem('pos-display-name', displayName);
       localStorage.setItem('pos-notification-prefs', JSON.stringify(notifPrefs));
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      const detail =
+        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setProfileError(detail || (err instanceof Error ? err.message : tt('save_failed', 'Could not save your changes.')));
     } finally {
       setSaving(false);
     }
@@ -249,15 +293,59 @@ export default function UserProfile() {
               <User className="h-8 w-8 text-brand-400" />
             </div>
             <div className="flex-1">
-              <label className="text-sm text-muted-foreground mb-1 block">{tt('display_name', 'Display Name')}</label>
+              <label htmlFor="account-name" className="text-sm text-muted-foreground mb-1 block">
+                {tt('full_name', 'Full name')}
+              </label>
               <Input
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder={tt('your_name', 'Your name')}
+                id="account-name"
+                value={accountName}
+                onChange={(e) => setAccountName(e.target.value)}
+                placeholder={tt('your_full_name', 'Your full name')}
                 className="max-w-sm"
               />
             </div>
           </div>
+          {/* Account contact fields (#203, parity #4) */}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="account-email" className="text-sm text-muted-foreground mb-1 block">
+                {tt('email', 'Email')}
+              </label>
+              <Input
+                id="account-email"
+                type="email"
+                value={accountEmail}
+                onChange={(e) => setAccountEmail(e.target.value)}
+                placeholder="you@example.com"
+              />
+            </div>
+            <div>
+              <label htmlFor="account-phone" className="text-sm text-muted-foreground mb-1 block">
+                {tt('phone', 'Phone')}
+              </label>
+              <Input
+                id="account-phone"
+                type="tel"
+                value={accountPhone}
+                onChange={(e) => setAccountPhone(e.target.value)}
+                placeholder="+966 5X XXX XXXX"
+              />
+            </div>
+          </div>
+          {/* Display name remains a separate notification/profile preference (ISSUE-078). */}
+          <div>
+            <label htmlFor="display-name" className="text-sm text-muted-foreground mb-1 block">
+              {tt('display_name', 'Display Name')}
+            </label>
+            <Input
+              id="display-name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder={tt('your_name', 'Your name')}
+              className="max-w-sm"
+            />
+          </div>
+          {profileError && <p className="text-sm text-danger">{profileError}</p>}
         </div>
 
         {/* Language Preference */}

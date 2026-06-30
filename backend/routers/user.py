@@ -12,7 +12,7 @@ from schemas.auth import (
     UserPreferencesResponse,
     UserResponse,
 )
-from services.user import PasswordError, UserService
+from services.user import EmailConflictError, PasswordError, UserService
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils.password_policy import enforce_password_complexity
 
@@ -20,7 +20,12 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 
 class UpdateProfileRequest(BaseModel):
+    # All optional + PATCH-like: only the fields actually present in the body are
+    # applied (see ``model_fields_set`` below), so a name-only edit never wipes
+    # the phone and vice versa (#203, parity #4).
     name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
 
 
 @router.get("/profile", response_model=UserResponse)
@@ -38,8 +43,13 @@ async def update_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Update current user profile"""
-    profile = await UserService.update_user_profile(db, current_user.id, profile_data.name)
+    """Update current user profile (name/email/phone — only fields sent are applied)."""
+    supplied = profile_data.model_fields_set
+    kwargs = {f: getattr(profile_data, f) for f in ("name", "email", "phone") if f in supplied}
+    try:
+        profile = await UserService.update_user_profile(db, current_user.id, **kwargs)
+    except EmailConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     if not profile:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
     return profile

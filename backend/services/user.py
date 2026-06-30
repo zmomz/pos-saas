@@ -25,6 +25,15 @@ class PasswordError(Exception):
     """Raised when a password change fails validation (wrong current password)."""
 
 
+class EmailConflictError(Exception):
+    """Raised when a profile edit would take an email already used by another account."""
+
+
+# Sentinel marking "caller did not supply this field" so a profile PUT can leave
+# an omitted field untouched while still allowing an explicit clear (None/"").
+_UNSET = object()
+
+
 class UserService:
     @staticmethod
     async def get_user_profile(db: AsyncSession, user_id: str) -> Optional[User]:
@@ -39,21 +48,46 @@ class UserService:
         return user
 
     @staticmethod
-    async def update_user_profile(db: AsyncSession, user_id: str, name: Optional[str] = None) -> Optional[User]:
-        """Update user profile."""
-        start_time = time.time()
-        logger.debug(f"[DB_OP] Starting update_user_profile - user_id: {user_id}")
+    async def update_user_profile(
+        db: AsyncSession,
+        user_id: str,
+        name=_UNSET,
+        email=_UNSET,
+        phone=_UNSET,
+    ) -> Optional[User]:
+        """Update the caller's own name/email/phone (#203, parity #4).
+
+        Each field uses an ``_UNSET`` sentinel so an omitted field is left
+        untouched (PATCH-like) while an explicit ``None``/``""`` clears it. Email
+        is the login identifier, so a change is normalized (trim + lowercase) and
+        rejected with :class:`EmailConflictError` if another account owns it.
+        """
         result = await db.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
-        logger.debug(f"[DB_OP] User lookup completed in {time.time() - start_time:.4f}s - found: {user is not None}")
+        if not user:
+            return None
 
-        if user and name is not None:
-            start_time_update = time.time()
-            logger.debug("[DB_OP] Starting user profile update")
+        changed = False
+        if name is not _UNSET:
             user.name = name
+            changed = True
+        if email is not _UNSET and email is not None:
+            normalized = email.strip().lower()
+            if normalized and normalized != (user.email or "").lower():
+                clash = await db.execute(
+                    select(User.id).where(User.email == normalized, User.id != user_id)
+                )
+                if clash.scalar_one_or_none() is not None:
+                    raise EmailConflictError("Email already in use")
+                user.email = normalized
+                changed = True
+        if phone is not _UNSET:
+            user.phone = (phone or "").strip() or None
+            changed = True
+
+        if changed:
             await db.commit()
             await db.refresh(user)
-            logger.debug(f"[DB_OP] User profile update completed in {time.time() - start_time_update:.4f}s")
 
         return user
 

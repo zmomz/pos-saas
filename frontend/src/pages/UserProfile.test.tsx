@@ -27,9 +27,18 @@ function renderPage() {
 }
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-// The security section reads the real current session on mount.
+// The security section reads the real current session + MFA status on mount, and
+// the profile tile reads the account identity (#203).
 beforeEach(() =>
-  server.use(http.get(`${BASE}/auth/sessions`, () => HttpResponse.json({ sessions: [] })))
+  server.use(
+    http.get(`${BASE}/auth/sessions`, () => HttpResponse.json({ sessions: [] })),
+    http.get(`${BASE}/auth/mfa/status`, () =>
+      HttpResponse.json({ enabled: false, recovery_codes_remaining: 0 })
+    ),
+    http.get(`${BASE}/users/profile`, () =>
+      HttpResponse.json({ id: 'u1', email: 'me@b.com', name: 'Me', phone: '', role: 'user' })
+    )
+  )
 );
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
@@ -74,7 +83,10 @@ describe('UserProfile server persistence', () => {
       http.put(PREFS_URL, async ({ request }) => {
         putBody = await request.json();
         return HttpResponse.json(putBody);
-      })
+      }),
+      http.put(`${BASE}/users/profile`, () =>
+        HttpResponse.json({ id: 'u1', email: 'me@b.com', name: 'Me', phone: '', role: 'user' })
+      )
     );
 
     renderPage();

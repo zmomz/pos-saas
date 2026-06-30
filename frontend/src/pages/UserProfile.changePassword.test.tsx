@@ -35,6 +35,12 @@ afterAll(() => server.close());
 function stubPrefs() {
   server.use(
     http.get(`${BASE}/auth/sessions`, () => HttpResponse.json({ sessions: [] })),
+    http.get(`${BASE}/auth/mfa/status`, () =>
+      HttpResponse.json({ enabled: false, recovery_codes_remaining: 0 })
+    ),
+    http.get(`${BASE}/users/profile`, () =>
+      HttpResponse.json({ id: 'u1', email: 'me@b.com', name: 'Me', phone: '', role: 'user' })
+    ),
     http.get(PREFS_URL, () =>
       HttpResponse.json({
         display_name: '',
