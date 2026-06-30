@@ -2676,12 +2676,41 @@ export async function downloadReportPdf(
   URL.revokeObjectURL(url);
 }
 
+// Result shared by the email/SMS receipt actions. `delivered` is false when the
+// backend only *logged* the message (no SMTP/Twilio configured) — the UI must
+// not claim "sent" in that case (parity #6).
+export interface ReceiptDeliveryResult {
+  status: 'sent' | 'logged' | string;
+  to: string;
+  delivered: boolean;
+  message_id?: string;
+  subject?: string;
+  invoice_number?: string;
+}
+
 // POS-04: email a receipt for a transaction
-export async function emailReceipt(transactionId: number, toEmail: string) {
+export async function emailReceipt(
+  transactionId: number,
+  toEmail: string,
+): Promise<ReceiptDeliveryResult> {
   const response = await client.apiCall.invoke({
     url: `/api/v1/pos/transactions/${transactionId}/email`,
     method: 'POST',
     data: { to_email: toEmail },
+  });
+  return response.data;
+}
+
+// Parity #6: SMS a receipt for a transaction. Sibling of `emailReceipt`; the
+// backend gates it behind the `sms_receipts` feature flag and expects `to_number`.
+export async function smsReceipt(
+  transactionId: number,
+  toNumber: string,
+): Promise<ReceiptDeliveryResult> {
+  const response = await client.apiCall.invoke({
+    url: `/api/v1/pos/transactions/${transactionId}/sms`,
+    method: 'POST',
+    data: { to_number: toNumber },
   });
   return response.data;
 }
