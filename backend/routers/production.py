@@ -56,6 +56,7 @@ from services.production import (
     performance_monitor,
     rate_limiter,
 )
+from services.audit import write_audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,12 @@ class ShiftOpenRequest(BaseModel):
 class ShiftCloseRequest(BaseModel):
     closing_cash: float
     notes: Optional[str] = None
+
+
+class ShiftReopenRequest(BaseModel):
+    # Issue #210 — reopen a closed shift to correct a premature/miscounted close.
+    # ``reason`` is the why-it-was-reopened, recorded in the audit trail.
+    reason: Optional[str] = None
 
 
 class CashMovementRequest(BaseModel):
@@ -907,6 +914,106 @@ async def close_shift(
         "total_sales": shift.total_sales,
         "total_transactions": shift.total_transactions,
         "reconciliation": "balanced" if abs(cash_difference) < 0.01 else ("over" if cash_difference > 0 else "short"),
+    }
+
+
+@router.post("/shifts/{shift_id}/reopen")
+async def reopen_shift(
+    shift_id: int,
+    data: ShiftReopenRequest,
+    background_tasks: BackgroundTasks,
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reopen a closed shift so a premature/miscounted close can be corrected.
+
+    Only a *closed* shift can be reopened (POS-* operational workflows, F-reopen),
+    and never while another shift is open — the merchant may only have one open
+    drawer at a time. The reopen clears the prior close-time reconciliation
+    (``end_time``/``closing_cash``/``expected_cash``/``cash_difference``) so a
+    fresh close recomputes them from scratch, and is recorded in the tamper-evident
+    audit trail (``shift.reopened``) so the correction is never silent."""
+    from models.shifts import Shifts
+
+    result = await db.execute(
+        select(Shifts).where(
+            Shifts.id == shift_id,
+            Shifts.user_id == owner_id,
+        )
+    )
+    shift = result.scalar_one_or_none()
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+    if shift.status != "closed":
+        raise HTTPException(status_code=400, detail="Only a closed shift can be reopened")
+
+    # Guard the single-open-drawer invariant: reopening must not create a second
+    # concurrently-open shift (mirrors the open_shift guard, F-009).
+    other_open = await db.execute(
+        select(Shifts).where(
+            Shifts.user_id == owner_id,
+            Shifts.status == "open",
+        )
+    )
+    if other_open.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail="Another shift is already open. Close it before reopening this one.",
+        )
+
+    reason = (data.reason or "").strip()
+    reopen_note = f"Reopened: {reason}" if reason else "Reopened"
+    new_notes = f"{shift.notes}\n{reopen_note}" if shift.notes else reopen_note
+
+    await db.execute(
+        update(Shifts)
+        .where(Shifts.id == shift.id)
+        .values(
+            status="open",
+            end_time=None,
+            closing_cash=None,
+            expected_cash=None,
+            cash_difference=None,
+            notes=new_notes,
+        )
+    )
+    await db.commit()
+
+    # Tamper-evident audit trail (ISSUE-019): the actor, the affected shift, and
+    # the stated reason are persisted so a reopen can never be a silent edit.
+    await write_audit_log(
+        user_id=current_user.id,
+        action="shift.reopened",
+        details=reopen_note,
+        entity_type="shift",
+        entity_id=shift.id,
+        changes=json.dumps({"status": {"from": "closed", "to": "open"}, "reason": reason or None}),
+    )
+
+    # Domain webhook (ISSUE-051, H25): notify subscribers the shift reopened.
+    background_tasks.add_task(
+        fire_event_background,
+        owner_id,
+        "shift.reopened",
+        {
+            "shift_id": shift.id,
+            "branch_id": shift.branch_id,
+            "staff_name": shift.staff_name,
+            "reason": reason or None,
+        },
+    )
+
+    return {
+        "id": shift.id,
+        "status": "open",
+        "start_time": shift.start_time,
+        "end_time": None,
+        "opening_cash": shift.opening_cash,
+        "closing_cash": None,
+        "staff_name": shift.staff_name,
+        "branch_id": shift.branch_id,
+        "notes": new_notes,
     }
 
 

@@ -22,7 +22,7 @@ import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDate } from '@/lib/format';
-import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle } from 'lucide-react';
+import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle, RotateCcw } from 'lucide-react';
 
 interface Shift {
   id: string;
@@ -87,6 +87,10 @@ export default function ShiftManagement() {
   const [movementAmount, setMovementAmount] = useState('');
   const [movementReason, setMovementReason] = useState('');
   const [movementError, setMovementError] = useState<string | null>(null);
+  // Issue #210: reopen a closed shift to correct a premature/miscounted close.
+  const [reopenShiftId, setReopenShiftId] = useState<number | null>(null);
+  const [reopenReason, setReopenReason] = useState('');
+  const [reopenError, setReopenError] = useState<string | null>(null);
 
   const { t, tt, isRTL, language } = useLanguage();
 
@@ -241,6 +245,38 @@ export default function ShiftManagement() {
     } catch (err) {
       console.error('Failed to record cash movement:', err);
       setMovementError(t('movement_failed'));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function openReopenDialog(shiftId: number) {
+    setReopenShiftId(shiftId);
+    setReopenReason('');
+    setReopenError(null);
+  }
+
+  async function handleReopenShift() {
+    if (reopenShiftId == null) return;
+    const reason = reopenReason.trim();
+    if (!reason) {
+      setReopenError(tt('sm_reopen_reason_required', 'A reason is required to reopen a shift.'));
+      return;
+    }
+    setSubmitting(true);
+    setReopenError(null);
+    try {
+      await client.apiCall.invoke({
+        url: `/api/v1/production/shifts/${reopenShiftId}/reopen`,
+        method: 'POST',
+        data: { reason },
+      });
+      setReopenShiftId(null);
+      setReopenReason('');
+      await loadShiftData();
+    } catch (err) {
+      console.error('Failed to reopen shift:', err);
+      setReopenError(tt('sm_reopen_failed', 'Could not reopen the shift. Make sure no other shift is open.'));
     } finally {
       setSubmitting(false);
     }
@@ -440,14 +476,28 @@ export default function ShiftManagement() {
                       <td className="p-3 text-foreground font-medium tabular-nums">{formatMoney(shift.sales_total || 0, language)}</td>
                       <td className="p-3">{shift.transaction_count || 0}</td>
                       <td className="p-3">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => printZReport(Number(shift.id))}
-                          className="text-brand hover:bg-muted"
-                        >
-                          <Receipt className="h-4 w-4 me-1" /> {t('z_report')}
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => printZReport(Number(shift.id))}
+                            className="text-brand hover:bg-muted"
+                          >
+                            <Receipt className="h-4 w-4 me-1" /> {t('z_report')}
+                          </Button>
+                          {/* Issue #210: reopen only when no other shift is open
+                              (the single-open-drawer invariant). */}
+                          {!currentShift && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openReopenDialog(Number(shift.id))}
+                              className="text-foreground/80 hover:bg-muted"
+                            >
+                              <RotateCcw className="h-4 w-4 me-1" /> {tt('sm_reopen', 'Reopen')}
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -534,6 +584,36 @@ export default function ShiftManagement() {
             )}
             <Button variant="destructive" onClick={handleCloseShift} disabled={submitting} className="w-full">
               {submitting ? t('loading') : t('sm_close_shift')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reopen Shift Dialog (issue #210) */}
+      <Dialog open={reopenShiftId != null} onOpenChange={(open) => { if (!open) setReopenShiftId(null); }}>
+        <DialogContent className="bg-card border-border text-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-foreground">{tt('sm_reopen_shift', 'Reopen Shift')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-muted-foreground text-sm">
+              {tt('sm_reopen_hint', 'Reopening clears the prior close. The reason is recorded in the audit trail.')}
+            </p>
+            <div>
+              <label htmlFor="reopen-reason" className="text-sm text-muted-foreground mb-1 block">
+                {tt('sm_reopen_reason', 'Reason for reopening')}
+              </label>
+              <Input
+                id="reopen-reason"
+                value={reopenReason}
+                onChange={(e) => setReopenReason(e.target.value)}
+                placeholder={tt('sm_reopen_reason_placeholder', 'e.g. miscounted the drawer')}
+                className="bg-muted border-input text-foreground"
+              />
+            </div>
+            {reopenError && <p className="text-danger text-sm">{reopenError}</p>}
+            <Button onClick={handleReopenShift} disabled={submitting} className="w-full" variant="success">
+              {submitting ? t('loading') : tt('sm_reopen_confirm', 'Confirm Reopen')}
             </Button>
           </div>
         </DialogContent>
