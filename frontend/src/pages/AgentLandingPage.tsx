@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import NotFoundState from '@/components/states/NotFoundState';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getAgentPublicProfile } from '@/lib/api';
+import { readableTextColor } from '@/lib/contrast';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import {
   Store, ShieldCheck, ArrowRight, Eye, CheckCircle2, Coffee, Croissant, Drumstick,
   Sparkles, Shirt, QrCode, Zap, Box, Globe, TrendingUp, Repeat, MapPin, Headphones,
-  Lock, CreditCard, Check, X, Phone, Mail, Package,
+  Lock, CreditCard, Check, X, Phone, Mail, Package, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 
 interface AgentProfile {
@@ -32,6 +34,9 @@ const content = {
     not_found_title: 'Distributor Not Found',
     not_found_desc: "This distributor page doesn't exist or has been deactivated.",
     go_main: 'Go to Main Site',
+    error_title: "Couldn't load this page",
+    error_desc: 'Something went wrong while loading this distributor. Please check your connection and try again.',
+    retry: 'Try again',
     authorized_provider: 'AUTHORIZED PROVIDER',
     features: 'Features', pricing: 'Pricing', support: 'Support', login: 'Login',
     nav_cta: 'Start Free Trial',
@@ -79,6 +84,9 @@ const content = {
     not_found_title: 'الموزع غير موجود',
     not_found_desc: 'هذه الصفحة غير موجودة أو تم إلغاء تفعيلها.',
     go_main: 'الذهاب للموقع الرئيسي',
+    error_title: 'تعذّر تحميل الصفحة',
+    error_desc: 'حدث خطأ أثناء تحميل هذا الموزع. يرجى التحقق من اتصالك والمحاولة مرة أخرى.',
+    retry: 'حاول مجدداً',
     authorized_provider: 'مزود معتمد',
     features: 'المميزات', pricing: 'الأسعار', support: 'الدعم', login: 'تسجيل الدخول',
     nav_cta: 'ابدأ تجربة مجانية',
@@ -126,6 +134,9 @@ const content = {
     not_found_title: 'डिस्ट्रीब्यूटर नहीं मिला',
     not_found_desc: 'यह पेज मौजूद नहीं है या निष्क्रिय कर दिया गया है।',
     go_main: 'मुख्य साइट पर जाएं',
+    error_title: 'यह पेज लोड नहीं हो सका',
+    error_desc: 'इस डिस्ट्रीब्यूटर को लोड करते समय कुछ गलत हुआ। कृपया अपना कनेक्शन जांचें और पुनः प्रयास करें।',
+    retry: 'पुनः प्रयास करें',
     authorized_provider: 'अधिकृत प्रदाता',
     features: 'सुविधाएं', pricing: 'मूल्य', support: 'सहायता', login: 'लॉगिन',
     nav_cta: 'मुफ्त ट्रायल शुरू करें',
@@ -173,6 +184,9 @@ const content = {
     not_found_title: 'ڈسٹریبیوٹر نہیں ملا',
     not_found_desc: 'یہ صفحہ موجود نہیں ہے یا غیر فعال کر دیا گیا ہے۔',
     go_main: 'مرکزی سائٹ پر جائیں',
+    error_title: 'یہ صفحہ لوڈ نہیں ہو سکا',
+    error_desc: 'اس ڈسٹریبیوٹر کو لوڈ کرتے ہوئے کچھ غلط ہو گیا۔ براہ کرم اپنا کنکشن چیک کریں اور دوبارہ کوشش کریں۔',
+    retry: 'دوبارہ کوشش کریں',
     authorized_provider: 'مجاز فراہم کنندہ',
     features: 'خصوصیات', pricing: 'قیمتیں', support: 'سپورٹ', login: 'لاگ ان',
     nav_cta: 'مفت ٹرائل شروع کریں',
@@ -229,7 +243,10 @@ export default function AgentLandingPage() {
   const { agentId } = useParams<{ agentId: string }>();
   const [profile, setProfile] = useState<AgentProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  // Honest error states (M2 Fix): a genuine 404 means the agent is truly absent
+  // ('notfound'); anything else — a network blip or a 5xx — is transient and gets
+  // a retry, never the misleading "Distributor Not Found" takeover.
+  const [errorKind, setErrorKind] = useState<'notfound' | 'transient' | null>(null);
   const navigate = useNavigate();
   const { language, setLanguage, isRTL } = useLanguage();
   const c = content[language] || content.en;
@@ -239,11 +256,16 @@ export default function AgentLandingPage() {
   }, [agentId]);
 
   async function loadProfile(id: string) {
+    setLoading(true);
+    setErrorKind(null);
     try {
       const data = await getAgentPublicProfile(id);
       setProfile(data);
-    } catch {
-      setError(true);
+    } catch (err) {
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      // Only a real 404 is the agent being absent. A network error (no response,
+      // status undefined) or any 5xx is transient → offer a retry.
+      setErrorKind(status === 404 ? 'notfound' : 'transient');
     } finally {
       setLoading(false);
     }
@@ -260,7 +282,7 @@ export default function AgentLandingPage() {
     );
   }
 
-  if (error || !profile) {
+  if (errorKind === 'notfound') {
     return (
       <NotFoundState
         code=""
@@ -272,7 +294,33 @@ export default function AgentLandingPage() {
     );
   }
 
+  if (errorKind || !profile) {
+    return (
+      <div
+        dir={isRTL ? 'rtl' : 'ltr'}
+        className={`min-h-screen bg-white flex items-center justify-center p-6 ${isRTL ? 'font-arabic' : ''}`}
+      >
+        <div role="alert" className="text-center max-w-md space-y-4">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-warning/10">
+            <AlertTriangle className="h-8 w-8 text-warning" />
+          </div>
+          <h1 className="text-xl font-semibold text-slate-900">{c.error_title}</h1>
+          <p className="text-sm text-slate-500">{c.error_desc}</p>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <Button onClick={() => agentId && loadProfile(agentId)}>
+              <RefreshCw className="h-4 w-4 me-2" />{c.retry}
+            </Button>
+            <Button variant="outline" onClick={() => navigate('/')}>{c.go_main}</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const brand = profile.primary_color || '#006C35';
+  // Contrast guard: white-on-pale never ships — a pale brand flips CTA text to
+  // dark ink (shared luminance heuristic, lib/contrast).
+  const onBrand = readableTextColor(brand);
   // Derived brand shades (work for any hex via color-mix).
   const brand700 = `color-mix(in srgb, ${brand}, #000 22%)`;
   const brandDark = `color-mix(in srgb, ${brand} 60%, #0a0a0a)`;
@@ -341,7 +389,7 @@ export default function AgentLandingPage() {
                 ))}
               </SelectContent>
             </Select>
-            <Button onClick={() => navigate('/login')} className="text-white font-semibold h-9 px-4" style={{ backgroundColor: brand }}>{c.nav_cta}</Button>
+            <Button onClick={() => navigate('/login')} className="font-semibold h-9 px-4" style={{ backgroundColor: brand, color: onBrand }}>{c.nav_cta}</Button>
           </div>
         </div>
       </nav>
@@ -359,7 +407,7 @@ export default function AgentLandingPage() {
             </h1>
             <p className="text-lg md:text-[19px] text-slate-600 leading-relaxed mt-5 max-w-xl">{subtitle}</p>
             <div className="flex flex-wrap gap-3 mt-8">
-              <Button onClick={() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })} className="text-white px-6 py-6 text-base font-semibold" style={{ backgroundColor: brand, boxShadow: `0 10px 30px ${tint('30')}` }}>
+              <Button onClick={() => document.getElementById('pricing')?.scrollIntoView({ behavior: 'smooth' })} className="px-6 py-6 text-base font-semibold" style={{ backgroundColor: brand, color: onBrand, boxShadow: `0 10px 30px ${tint('30')}` }}>
                 {c.hero_cta}<ArrowRight className={`w-5 h-5 ms-2 ${isRTL ? 'rotate-180' : ''}`} />
               </Button>
               <Button variant="outline" onClick={() => navigate('/login')} className="px-6 py-6 text-base font-semibold border-slate-300 !bg-white" style={{ color: brand700 }}>
@@ -499,7 +547,7 @@ export default function AgentLandingPage() {
                   ))}
                 </ul>
                 {plan.feat ? (
-                  <Button onClick={() => navigate('/login')} className="w-full py-6 font-semibold text-base text-white" style={{ backgroundColor: brand }}>{c.trial_cta}</Button>
+                  <Button onClick={() => navigate('/login')} className="w-full py-6 font-semibold text-base" style={{ backgroundColor: brand, color: onBrand }}>{c.trial_cta}</Button>
                 ) : (
                   <Button variant="outline" onClick={() => navigate('/login')} className="w-full py-6 font-semibold text-base border-slate-300 !bg-white" style={{ color: brand700 }}>{c.trial_cta}</Button>
                 )}
@@ -515,7 +563,7 @@ export default function AgentLandingPage() {
           <h2 className="text-[32px] md:text-[40px] font-bold text-white">{c.cta_title}</h2>
           <p className="text-lg text-white/80 mt-4 mb-7 max-w-[540px] mx-auto">{c.cta_sub}</p>
           <div className="flex flex-wrap justify-center gap-3 mb-6">
-            <Button onClick={() => navigate('/login')} className="text-white px-7 py-6 text-base font-semibold" style={{ backgroundColor: brand }}>{c.hero_cta}</Button>
+            <Button onClick={() => navigate('/login')} className="px-7 py-6 text-base font-semibold" style={{ backgroundColor: brand, color: onBrand }}>{c.hero_cta}</Button>
             {profile.contact_phone && (
               <Button onClick={() => window.open(`https://wa.me/${phone.replace(/\D/g, '')}`)} className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-7 py-6 text-base font-semibold">
                 <Phone className="w-5 h-5 me-2" />{c.cta_whatsapp}
