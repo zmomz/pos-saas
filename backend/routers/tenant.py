@@ -36,6 +36,17 @@ from models.agent_features import Agent_features
 from models.client_features import Client_features
 from models.subscription_payments import Subscription_payments
 from models.agent_quota_payments import Agent_quota_payments
+from core.cache import (
+    TTL_BRAND,
+    TTL_DASHBOARD,
+    brand_agent_key,
+    brand_domain_key,
+    cache,
+    dashboard_key,
+    invalidate_brand,
+    invalidate_features,
+    invalidate_tax,
+)
 from models.audit_logs import Audit_logs
 from models.processed_webhook_events import Processed_webhook_events
 from services.system_settings import (
@@ -143,6 +154,27 @@ class BrandingResponse(BaseModel):
     # OWN branding read (never leaked to clients / the public by-domain lookup).
     email_template_subject: Optional[str] = None
     email_template_body: Optional[str] = None
+
+
+def _public_branding_payload(agent: Agents) -> dict:
+    """The public, brandable agent fields as a plain dict (cache-friendly, M10/#219).
+
+    Shared by the two *hot* brand reads — the public by-domain lookup and a
+    client's branding read — so both cache and emit an identical shape. The
+    private provisioning-email template is deliberately excluded; only the agent's
+    own (rarely-hit, uncached) read surfaces it.
+    """
+    return {
+        "logo_url": agent.logo_url,
+        "primary_color": agent.primary_color or "#3B82F6",
+        "secondary_color": agent.secondary_color or "#1E40AF",
+        "font_family": agent.font_family or "Inter",
+        "button_radius": agent.button_radius or "8px",
+        "company_name": agent.company_name,
+        "default_language": agent.default_language or "en",
+        "custom_domain": getattr(agent, "custom_domain", None),
+    }
+
 
 class CreateClientRequest(BaseModel):
     business_name: str
@@ -351,6 +383,9 @@ async def toggle_agent(
         update(Agents).where(Agents.id == agent_id).values(is_active=new_status)
     )
     await db.commit()
+    # M10/#219: the public by-domain lookup only resolves *active* agents, so an
+    # activate/deactivate must clear this agent's cached brand (by agent + domain).
+    await invalidate_brand(agent_id, agent.custom_domain)
 
     return ToggleResponse(success=True, is_active=new_status)
 
@@ -535,6 +570,9 @@ async def set_tax_rate(
 
     await set_setting(db, GLOBAL_TAX_RATE_KEY, str(data.tax_rate))
     await db.commit()
+    # M10/#219: clear the cached rate AFTER commit so a concurrent reader can't
+    # repopulate the cache with the pre-write value between flush and commit.
+    await invalidate_tax()
     return TaxRateResponse(tax_rate=data.tax_rate, is_global=True)
 
 
@@ -1050,26 +1088,25 @@ async def get_branding_by_domain(
     if not normalized:
         raise HTTPException(status_code=404, detail="No branding for this domain")
 
-    result = await db.execute(
-        select(Agents).where(
-            func.lower(Agents.custom_domain) == normalized, Agents.is_active == True  # noqa: E712
+    # M10/#219: this unauthenticated lookup is hit on every login/funnel page load
+    # served on an agent's custom domain, so the resolved (public) brand is cached
+    # by domain. A miss (no agent claims the domain) is NOT cached — it returns 404
+    # straight from the DB so a probe for arbitrary hosts can't fill the cache.
+    async def _load() -> Optional[dict]:
+        result = await db.execute(
+            select(Agents).where(
+                func.lower(Agents.custom_domain) == normalized, Agents.is_active == True  # noqa: E712
+            )
         )
-    )
-    agent = result.scalar_one_or_none()
-    if not agent:
+        agent = result.scalar_one_or_none()
+        return _public_branding_payload(agent) if agent else None
+
+    payload = await cache.get_or_load(brand_domain_key(normalized), TTL_BRAND, _load)
+    if payload is None:
         raise HTTPException(status_code=404, detail="No branding for this domain")
 
-    return BrandingResponse(
-        logo_url=agent.logo_url,
-        primary_color=agent.primary_color or "#3B82F6",
-        secondary_color=agent.secondary_color or "#1E40AF",
-        font_family=agent.font_family or "Inter",
-        button_radius=agent.button_radius or "8px",
-        company_name=agent.company_name,
-        default_language=agent.default_language or "en",
-        custom_domain=getattr(agent, "custom_domain", None),
-        # email_template_* deliberately omitted — not public.
-    )
+    # email_template_* deliberately omitted — not public.
+    return BrandingResponse(**payload)
 
 
 # Agent logo upload (AG-01). Stored locally and served from /uploads; the cloud
@@ -1131,6 +1168,14 @@ async def upload_agent_logo(
         update(Agents).where(Agents.id == role_info["entity_id"]).values(logo_url=logo_url)
     )
     await db.commit()
+    # M10/#219: a new logo changes the cached brand for both the by-domain and the
+    # by-agent reads, so clear both for this agent (and its custom domain, if any).
+    domain = (
+        await db.execute(
+            select(Agents.custom_domain).where(Agents.id == role_info["entity_id"])
+        )
+    ).scalar_one_or_none()
+    await invalidate_brand(role_info["entity_id"], domain)
     return LogoUploadResponse(logo_url=logo_url)
 
 
@@ -1969,6 +2014,10 @@ async def set_client_feature(
     else:
         row.is_enabled = data.is_enabled
     await db.commit()
+    # M10/#219: drop this client's cached entitlements so the gate re-reads the
+    # new flag on the next request (invalidate after commit to avoid a re-cache
+    # race against the old value).
+    await invalidate_features(client_id)
 
     return FeatureToggleResponse(
         client_id=client_id,
@@ -2025,25 +2074,22 @@ async def get_client_branding(
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access this endpoint")
 
-    # Get the agent who owns this client
-    result = await db.execute(
-        select(Agents).where(Agents.id == role_info["agent_id"])
-    )
-    agent = result.scalar_one_or_none()
-    if not agent:
+    # Get the agent who owns this client. M10/#219: a client loads its agent's
+    # branding on every app boot, so the resolved (public) brand is cached by agent
+    # id and invalidated when the agent edits branding / uploads a logo.
+    agent_id = role_info["agent_id"]
+
+    async def _load() -> Optional[dict]:
+        result = await db.execute(select(Agents).where(Agents.id == agent_id))
+        agent = result.scalar_one_or_none()
+        return _public_branding_payload(agent) if agent else None
+
+    payload = await cache.get_or_load(brand_agent_key(agent_id), TTL_BRAND, _load)
+    if payload is None:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    return BrandingResponse(
-        logo_url=agent.logo_url,
-        primary_color=agent.primary_color or "#3B82F6",
-        secondary_color=agent.secondary_color or "#1E40AF",
-        font_family=agent.font_family or "Inter",
-        button_radius=agent.button_radius or "8px",
-        company_name=agent.company_name,
-        default_language=agent.default_language or "en",
-        custom_domain=getattr(agent, "custom_domain", None),
-        # email_template_* deliberately omitted — a client never sees it.
-    )
+    # email_template_* deliberately omitted — a client never sees it.
+    return BrandingResponse(**payload)
 
 
 # ---------- Subscription (CL-03 / CL-04) ----------
@@ -3207,46 +3253,55 @@ async def get_client_dashboard(
 
     client_id = role_info["entity_id"]
 
-    # Total sales
-    total_result = await db.execute(
-        select(func.coalesce(func.sum(Transactions.total_amount), 0))
-        .where(Transactions.client_id == client_id)
-    )
-    total_sales = float(total_result.scalar() or 0)
+    # M10/#219: the dashboard fans out four aggregate scans + a count on every
+    # load; cache the computed snapshot per client with a short TTL. A sale clears
+    # it explicitly (services.sale_core.execute_sale -> invalidate_dashboard), and
+    # the short TTL bounds staleness for the rarer catalog-count change and the
+    # midnight "today" rollover.
+    async def _load() -> dict:
+        # Total sales
+        total_result = await db.execute(
+            select(func.coalesce(func.sum(Transactions.total_amount), 0))
+            .where(Transactions.client_id == client_id)
+        )
+        total_sales = float(total_result.scalar() or 0)
 
-    # Total transactions
-    count_result = await db.execute(
-        select(func.count(Transactions.id)).where(Transactions.client_id == client_id)
-    )
-    total_transactions = count_result.scalar() or 0
+        # Total transactions
+        count_result = await db.execute(
+            select(func.count(Transactions.id)).where(Transactions.client_id == client_id)
+        )
+        total_transactions = count_result.scalar() or 0
 
-    # Today's transactions
-    today = datetime.now(timezone.utc).date()
-    today_count_result = await db.execute(
-        select(func.count(Transactions.id))
-        .where(Transactions.client_id == client_id)
-        .where(func.date(Transactions.created_at) == today)
-    )
-    today_transactions = today_count_result.scalar() or 0
+        # Today's transactions
+        today = datetime.now(timezone.utc).date()
+        today_count_result = await db.execute(
+            select(func.count(Transactions.id))
+            .where(Transactions.client_id == client_id)
+            .where(func.date(Transactions.created_at) == today)
+        )
+        today_transactions = today_count_result.scalar() or 0
 
-    # Today's sales
-    today_sales_result = await db.execute(
-        select(func.coalesce(func.sum(Transactions.total_amount), 0))
-        .where(Transactions.client_id == client_id)
-        .where(func.date(Transactions.created_at) == today)
-    )
-    today_sales = float(today_sales_result.scalar() or 0)
+        # Today's sales
+        today_sales_result = await db.execute(
+            select(func.coalesce(func.sum(Transactions.total_amount), 0))
+            .where(Transactions.client_id == client_id)
+            .where(func.date(Transactions.created_at) == today)
+        )
+        today_sales = float(today_sales_result.scalar() or 0)
 
-    # Products count
-    products_result = await db.execute(
-        select(func.count(Products.id)).where(Products.client_id == client_id)
-    )
-    products_count = products_result.scalar() or 0
+        # Products count
+        products_result = await db.execute(
+            select(func.count(Products.id)).where(Products.client_id == client_id)
+        )
+        products_count = products_result.scalar() or 0
 
-    return DashboardStatsResponse(
-        total_sales=total_sales,
-        total_transactions=total_transactions,
-        today_transactions=today_transactions,
-        today_sales=today_sales,
-        products_count=products_count,
-    )
+        return {
+            "total_sales": total_sales,
+            "total_transactions": total_transactions,
+            "today_transactions": today_transactions,
+            "today_sales": today_sales,
+            "products_count": products_count,
+        }
+
+    stats = await cache.get_or_load(dashboard_key(client_id), TTL_DASHBOARD, _load)
+    return DashboardStatsResponse(**stats)
