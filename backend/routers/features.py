@@ -291,6 +291,65 @@ async def list_products(
     return ProductListResponse(items=items, total=total)
 
 
+class ProductLabelResponse(BaseModel):
+    """A rendered product label ready to stream to a label printer (ISSUE-230)."""
+
+    format: str  # "zpl" — the label language of ``payload``
+    product_id: int
+    copies: int
+    payload: str
+
+
+@router.get("/api/v1/products/{product_id}/label", response_model=ProductLabelResponse)
+async def get_product_label(
+    product_id: int,
+    format: str = Query("zpl", description="Label language (only 'zpl' today)"),
+    copies: int = Query(1, ge=1, le=100),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render a shelf/price label for one of the caller's products (ISSUE-230).
+
+    The second hardware-integration slice for #230 (after the retail-scale
+    barcode): a **label printer** speaks ZPL, so this hands back a ZPL program the
+    front end streams to the device. Owner-scoped (SEC-02) — only the caller's own
+    catalog is addressable — and only ZPL is supported today (any other ``format``
+    is an explicit 400 rather than a silently wrong payload).
+    """
+    fmt = (format or "").strip().lower()
+    if fmt != "zpl":
+        raise HTTPException(status_code=400, detail=f"Unsupported label format: {format}")
+
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can print product labels")
+    client_id = role_info["entity_id"]
+
+    result = await db.execute(
+        select(Products).where(
+            and_(Products.id == product_id, Products.client_id == client_id)
+        )
+    )
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    from services.product_label import render_product_label
+
+    payload = render_product_label(
+        name=product.name,
+        price=product.price or 0,
+        barcode=product.barcode,
+        unit_label=product.unit_label,
+        is_weighted=bool(product.is_weighted),
+        copies=copies,
+    )
+    return ProductLabelResponse(
+        format="zpl", product_id=product.id, copies=copies, payload=payload
+    )
+
+
 @router.post("/api/v1/products/create", response_model=ProductResponse)
 async def create_product(
     data: ProductCreateRequest,

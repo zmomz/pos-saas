@@ -1630,6 +1630,25 @@ export async function resolveBarcode(barcode: string): Promise<BarcodeResolution
   return response.data;
 }
 
+// ISSUE-230 (Integrations): a label printer speaks ZPL. `getProductLabel` fetches
+// a rendered shelf/price label (name, price, Code 128 barcode) the caller streams
+// to the device. `copies` sets the ZPL print quantity; only 'zpl' is supported.
+export interface ProductLabel {
+  format: 'zpl';
+  product_id: number;
+  copies: number;
+  payload: string;
+}
+
+export async function getProductLabel(productId: number, copies = 1): Promise<ProductLabel> {
+  const response = await client.apiCall.invoke<ProductLabel>({
+    url: `/api/v1/products/${productId}/label?copies=${encodeURIComponent(String(copies))}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // Inventory Management
 export async function deductInventory(items: { product_id: number; quantity: number }[]) {
   const response = await client.apiCall.invoke({
