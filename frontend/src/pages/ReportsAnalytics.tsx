@@ -629,54 +629,56 @@ export default function ReportsAnalytics() {
           ) : paymentTenders.length === 0 ? (
             <p className="text-muted-foreground text-center py-8">{tr('no_data')}</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="border-border hover:bg-card">
-                  <TableHead className="text-muted-foreground">{tr('method')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('collected')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('refunds')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('net')}</TableHead>
-                  <TableHead className="text-muted-foreground text-end">{tr('txns')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paymentTenders.map((t) => (
-                  <TableRow
-                    key={t.tender_type}
-                    className="border-border hover:bg-muted"
-                  >
-                    <TableCell className="text-foreground font-medium">
-                      {tenderLabel(t.tender_type)}
-                    </TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">
-                      {formatMoney(t.collected, language)}
-                    </TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">
-                      {t.refunds > 0 ? `- ${formatMoney(t.refunds, language)}` : '—'}
-                    </TableCell>
-                    <TableCell className="text-foreground text-end font-medium tabular-nums">
-                      {formatMoney(t.net, language)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-end tabular-nums">{t.count}</TableCell>
-                  </TableRow>
-                ))}
-                <TableRow className="border-border bg-card font-semibold">
-                  <TableCell className="text-foreground">{tr('total')}</TableCell>
-                  <TableCell className="text-foreground text-end tabular-nums">
-                    {formatMoney(paymentTenders.reduce((s, t) => s + t.collected, 0), language)}
-                  </TableCell>
-                  <TableCell className="text-foreground text-end tabular-nums">
-                    {formatMoney(paymentTenders.reduce((s, t) => s + t.refunds, 0), language)}
-                  </TableCell>
-                  <TableCell className="text-foreground text-end tabular-nums">
-                    {formatMoney(paymentTenders.reduce((s, t) => s + t.net, 0), language)}
-                  </TableCell>
-                  <TableCell className="text-muted-foreground text-end tabular-nums">
-                    {paymentTenders.reduce((s, t) => s + t.count, 0)}
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
+            <div className="w-full overflow-x-auto">
+              {/* ISSUE-208: one shared table voice — the `.dxr-tbl` primitive.
+                  This panel keeps a raw <table> (rather than the config-driven
+                  <DataTable>) because of its summary total footer row. */}
+              <table className="dxr-tbl">
+                <thead>
+                  <tr>
+                    <th>{tr('method')}</th>
+                    <th className="text-end">{tr('collected')}</th>
+                    <th className="text-end">{tr('refunds')}</th>
+                    <th className="text-end">{tr('net')}</th>
+                    <th className="text-end">{tr('txns')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paymentTenders.map((t) => (
+                    <tr key={t.tender_type}>
+                      <td className="text-foreground font-medium">
+                        {tenderLabel(t.tender_type)}
+                      </td>
+                      <td className="text-foreground/90 text-end tabular-nums">
+                        {formatMoney(t.collected, language)}
+                      </td>
+                      <td className="text-foreground/90 text-end tabular-nums">
+                        {t.refunds > 0 ? `- ${formatMoney(t.refunds, language)}` : '—'}
+                      </td>
+                      <td className="text-foreground text-end font-medium tabular-nums">
+                        {formatMoney(t.net, language)}
+                      </td>
+                      <td className="text-muted-foreground text-end tabular-nums">{t.count}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-card font-semibold">
+                    <td className="text-foreground">{tr('total')}</td>
+                    <td className="text-foreground text-end tabular-nums">
+                      {formatMoney(paymentTenders.reduce((s, t) => s + t.collected, 0), language)}
+                    </td>
+                    <td className="text-foreground text-end tabular-nums">
+                      {formatMoney(paymentTenders.reduce((s, t) => s + t.refunds, 0), language)}
+                    </td>
+                    <td className="text-foreground text-end tabular-nums">
+                      {formatMoney(paymentTenders.reduce((s, t) => s + t.net, 0), language)}
+                    </td>
+                    <td className="text-muted-foreground text-end tabular-nums">
+                      {paymentTenders.reduce((s, t) => s + t.count, 0)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           )}
         </CardContent>
       </Card>
