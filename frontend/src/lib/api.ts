@@ -1453,6 +1453,41 @@ export async function getCohortRetention(lookback = 365): Promise<CohortRetentio
   return response.data;
 }
 
+// ---- Checkout conversion funnel (#229 M9·Analytics) ----
+// "Of every ticket we open, how many convert to a kept sale, and where do we
+// lose them?". A ticket walks three ordered stages, each read off the status
+// composition of the window: started (opened) → completed (finalised sale) →
+// retained (revenue kept). biggest_dropoff names the leakiest transition (null
+// when there are no tickets).
+export interface FunnelStage {
+  stage: string; // started | completed | retained
+  label: string;
+  count: number;
+  conversion_rate: number; // count / started (top of funnel)
+  step_rate: number; // count / previous stage
+}
+export interface FunnelDropoff {
+  from_stage: string;
+  to_stage: string;
+  lost: number;
+  rate: number; // lost / from-stage count
+}
+export interface SalesFunnelResponse {
+  method: string;
+  lookback_days: number;
+  total_tickets: number; // = the started stage count
+  stages: FunnelStage[];
+  biggest_dropoff: FunnelDropoff | null;
+}
+export async function getSalesFunnel(lookback = 30): Promise<SalesFunnelResponse> {
+  const response = await client.apiCall.invoke<SalesFunnelResponse>({
+    url: `/api/v1/reports/sales-funnel?lookback=${lookback}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // ---- In-app assistant (#228 M9·AI) ----
 // The conversational surface over the tenant's own data. This first slice is a
 // rule-based intent router server-side; the client just passes the question and

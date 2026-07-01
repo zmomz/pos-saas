@@ -1319,6 +1319,52 @@ class CohortRetentionResponse(BaseModel):
     cohorts: List[CohortRow]
 
 
+class FunnelStage(BaseModel):
+    """One ordered stage of the checkout funnel (issue #229 — analytics)."""
+
+    stage: str  # started | completed | retained
+    label: str  # human-readable stage name
+    count: int  # tickets that reached this stage
+    conversion_rate: float  # count / top-of-funnel (started), 0..1, 0 when empty
+    step_rate: float  # count / previous stage's count (1.0 for the first stage)
+
+
+class FunnelDropoff(BaseModel):
+    """The tickets lost across one funnel transition (issue #229 — analytics)."""
+
+    from_stage: str
+    to_stage: str
+    lost: int  # absolute tickets lost across this transition
+    rate: float  # lost / from-stage count, 0..1
+
+
+class SalesFunnelResponse(BaseModel):
+    """Checkout conversion funnel (issue #229 — M9 Analytics).
+
+    Walks a ticket through three ordered stages, each derived purely from the
+    transaction ``status`` composition in the window:
+
+    * ``started``   — every ticket opened at the POS. A credit note is a refund
+      *document*, not an opened ticket, so it is excluded.
+    * ``completed`` — tickets that became a finalised sale; ``held`` (parked) and
+      ``voided`` (cancelled) tickets drop out here.
+    * ``retained``  — sales whose revenue we kept; ``refunded`` /
+      ``partial_refunded`` gave the money back and drop out here.
+
+    ``biggest_dropoff`` names the transition losing the most tickets — the raw
+    material for a "where are we leaking sales" callout (null when there are no
+    tickets). Tenant-scoped and server-side aggregated (OPS-05): a single
+    group-by-status query, so peak memory is O(distinct statuses), never
+    O(transactions). Legacy NULL-status rows count as completed sales.
+    """
+
+    method: str
+    lookback_days: int
+    total_tickets: int  # = the ``started`` stage count
+    stages: List[FunnelStage]
+    biggest_dropoff: Optional[FunnelDropoff] = None
+
+
 # ============================================================
 # REPORT → PDF EXPORT (RPT-10, F-072)
 # ============================================================
@@ -2294,6 +2340,121 @@ async def get_cohort_retention(
         lookback_days=lookback,
         total_customers=len(active_months),
         cohorts=cohorts,
+    )
+
+
+# Which statuses drop a ticket out of the funnel at each stage. A credit note is
+# a refund document (never an opened ticket); a held/voided ticket never became a
+# finalised sale; a refunded/partial-refunded sale gave its revenue back.
+_FUNNEL_NON_TICKET = {"credit_note"}
+_FUNNEL_ABANDONED = {"held", "voided"}
+_FUNNEL_REFUNDED = {"refunded", "partial_refunded"}
+
+
+@router.get("/api/v1/reports/sales-funnel", response_model=SalesFunnelResponse)
+async def get_sales_funnel(
+    lookback: int = Query(30, ge=1, le=3650),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Checkout conversion funnel (issue #229 — analytics).
+
+    Answers "of every ticket we open, how many convert to a kept sale, and where
+    do we lose them?" by walking a ticket through three ordered stages
+    (started → completed → retained), each read off the tenant's transaction
+    ``status`` composition in the window. See ``SalesFunnelResponse`` for the
+    exact stage semantics and exclusions.
+
+    Tenant-scoped and server-side aggregated (OPS-05): one group-by-status query,
+    so peak memory is O(distinct statuses), never O(transactions). Legacy
+    NULL-status rows are counted as completed sales, mirroring the POS read path.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    rows = (
+        await db.execute(
+            select(Transactions.status, func.count())
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                )
+            )
+            .group_by(Transactions.status)
+        )
+    ).all()
+
+    # NULL status is a legacy completed sale (see pos.py read path).
+    counts: dict[str, int] = {}
+    for status, n in rows:
+        key = status or "completed"
+        counts[key] = counts.get(key, 0) + int(n or 0)
+
+    started = sum(n for s, n in counts.items() if s not in _FUNNEL_NON_TICKET)
+    completed = sum(
+        n
+        for s, n in counts.items()
+        if s not in _FUNNEL_NON_TICKET and s not in _FUNNEL_ABANDONED
+    )
+    retained = sum(
+        n
+        for s, n in counts.items()
+        if s not in _FUNNEL_NON_TICKET
+        and s not in _FUNNEL_ABANDONED
+        and s not in _FUNNEL_REFUNDED
+    )
+
+    def _rate(part: int, whole: int) -> float:
+        return round(part / whole, 4) if whole else 0.0
+
+    ordered = [
+        ("started", "Tickets started", started),
+        ("completed", "Completed sales", completed),
+        ("retained", "Revenue retained", retained),
+    ]
+    stages: List[FunnelStage] = []
+    prev_count: Optional[int] = None
+    for stage, label, count in ordered:
+        stages.append(
+            FunnelStage(
+                stage=stage,
+                label=label,
+                count=count,
+                conversion_rate=_rate(count, started),
+                # The first stage has no predecessor: it is 100% of itself.
+                step_rate=1.0 if prev_count is None else _rate(count, prev_count),
+            )
+        )
+        prev_count = count
+
+    # The transition that loses the most tickets; the earliest wins a tie so the
+    # callout points at the first leak in the flow. Null when there are no tickets.
+    biggest_dropoff: Optional[FunnelDropoff] = None
+    if started:
+        transitions = [
+            ("started", "completed", started - completed, started),
+            ("completed", "retained", completed - retained, completed),
+        ]
+        best = max(transitions, key=lambda t: t[2])
+        biggest_dropoff = FunnelDropoff(
+            from_stage=best[0],
+            to_stage=best[1],
+            lost=best[2],
+            rate=_rate(best[2], best[3]),
+        )
+
+    return SalesFunnelResponse(
+        method="checkout_funnel",
+        lookback_days=lookback,
+        total_tickets=started,
+        stages=stages,
+        biggest_dropoff=biggest_dropoff,
     )
 
 
