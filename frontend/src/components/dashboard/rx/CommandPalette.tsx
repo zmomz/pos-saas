@@ -1,11 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type ElementType } from 'react';
-import { Search } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ElementType } from 'react';
+import { Search, Clock } from 'lucide-react';
 
 export interface PaletteItem {
   icon: ElementType;
   label: string;
   kbd?: string;
   onSelect?: () => void;
+  /**
+   * By default selecting an item closes the palette. Recent-search chips set
+   * this so activating one refills the query and re-runs the search *in place*
+   * instead of dismissing the palette.
+   */
+  keepOpen?: boolean;
 }
 export interface PaletteGroup {
   label: string;
@@ -30,10 +36,34 @@ interface CommandPaletteProps {
   searchingLabel?: string;
   /** shown when an onSearch request rejects */
   searchErrorLabel?: string;
+  /**
+   * localStorage key for the recent-searches history (#231). When supplied, the
+   * query a viewer acts on is remembered and, on the next blank open, the past
+   * terms surface under a "Recent" group so a frequent search re-runs in one
+   * click. Omit it and no history is kept.
+   */
+  recentSearchesKey?: string;
+  /** header for the recent-searches group */
+  recentLabel?: string;
 }
 
 // Debounce so a fast typist fires one /search call, not one per keystroke.
 const SEARCH_DEBOUNCE_MS = 180;
+
+// Keep the recent list short so it stays a shortcut, not a scroll.
+const MAX_RECENT = 6;
+
+// Read the persisted recent-search terms, tolerating a missing/corrupt entry.
+function readRecent(key?: string): string[] {
+  if (!key) return [];
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((t): t is string => typeof t === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 /**
  * ⌘K / Ctrl-K command palette. Renders the trigger pill (for the page command
@@ -49,12 +79,15 @@ export default function CommandPalette({
   onSearch,
   searchingLabel = 'Searching…',
   searchErrorLabel = 'Search failed',
+  recentSearchesKey,
+  recentLabel = 'Recent',
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [resultGroups, setResultGroups] = useState<PaletteGroup[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(false);
+  const [recent, setRecent] = useState<string[]>(() => readRecent(recentSearchesKey));
   // Monotonic request id: a slow response for a stale query is discarded so the
   // list always reflects the latest keystroke, never an out-of-order reply.
   const reqIdRef = useRef(0);
@@ -76,6 +109,7 @@ export default function CommandPalette({
   useEffect(() => {
     if (!open) {
       reqIdRef.current++;
+      setQ('');
       setResultGroups([]);
       setSearching(false);
       setSearchError(false);
@@ -115,6 +149,44 @@ export default function CommandPalette({
     return () => clearTimeout(timer);
   }, [q, open, onSearch]);
 
+  // Commit a term the viewer acted on to the front of the history (case-
+  // insensitive dedup, capped, most-recent-first), persisting it so it
+  // survives a reload. No-op unless the caller opted into a history key.
+  const recordSearch = useCallback(
+    (term: string) => {
+      if (!recentSearchesKey) return;
+      const trimmed = term.trim();
+      if (!trimmed) return;
+      setRecent((prev) => {
+        const next = [trimmed, ...prev.filter((t) => t.toLowerCase() !== trimmed.toLowerCase())].slice(
+          0,
+          MAX_RECENT,
+        );
+        try {
+          localStorage.setItem(recentSearchesKey, JSON.stringify(next));
+        } catch {
+          /* storage full / unavailable — keep the in-memory list anyway */
+        }
+        return next;
+      });
+    },
+    [recentSearchesKey],
+  );
+
+  // Recent-search group: only on a blank query, and only once there's history.
+  const recentGroup = useMemo<PaletteGroup | null>(() => {
+    if (q.trim() || recent.length === 0) return null;
+    return {
+      label: recentLabel,
+      items: recent.map((term) => ({
+        icon: Clock,
+        label: term,
+        keepOpen: true,
+        onSelect: () => setQ(term),
+      })),
+    };
+  }, [q, recent, recentLabel]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return groups;
@@ -123,8 +195,12 @@ export default function CommandPalette({
       .filter((g) => g.items.length > 0);
   }, [q, groups]);
 
-  // Live backend hits first, then the filtered static nav/quick-action groups.
-  const displayGroups = useMemo(() => [...resultGroups, ...filtered], [resultGroups, filtered]);
+  // Recent searches (blank query only), then live backend hits, then the
+  // filtered static nav/quick-action groups.
+  const displayGroups = useMemo(
+    () => [...(recentGroup ? [recentGroup] : []), ...resultGroups, ...filtered],
+    [recentGroup, resultGroups, filtered],
+  );
 
   return (
     <>
@@ -191,8 +267,11 @@ export default function CommandPalette({
                         key={it.label}
                         type="button"
                         onClick={() => {
+                          // A committed action on a non-blank query is a "real"
+                          // search worth remembering (#231).
+                          recordSearch(q);
                           it.onSelect?.();
-                          setOpen(false);
+                          if (!it.keepOpen) setOpen(false);
                         }}
                         className="flex w-full items-center gap-3 rounded-[11px] px-3 py-2.5 text-start text-sm font-semibold text-foreground transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10"
                       >

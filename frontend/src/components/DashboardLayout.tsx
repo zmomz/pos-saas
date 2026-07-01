@@ -510,6 +510,8 @@ const Shell: React.FC = () => {
             onSearch={searchEverything}
             searchingLabel={t('loading')}
             searchErrorLabel={t('ops_load_error')}
+            recentSearchesKey="pos_recent_searches"
+            recentLabel={t('recent_searches')}
           />
 
           <button
