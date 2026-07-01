@@ -348,7 +348,10 @@ const Shell: React.FC = () => {
             otherwise compute overflow-x to `auto` too (CSS spec coupling) and
             the rail would scroll horizontally toward the portalled tooltips. */}
         <TooltipProvider delayDuration={0}>
-          <nav className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden px-2 py-1">
+          <nav
+            aria-label={t('primary_navigation')}
+            className="flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto overflow-x-hidden px-2 py-1"
+          >
             {navSections.map((section) => (
               <div
                 key={section.section || 'home'}
