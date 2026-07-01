@@ -1422,6 +1422,37 @@ export async function getPeakHours(lookback = 365): Promise<PeakHoursResponse> {
   return response.data;
 }
 
+// ---- Cohort retention (#229 M9·Analytics) ----
+// Attributable customers grouped by the calendar month of their first purchase
+// (their cohort), each tracked forward month by month for what fraction return —
+// the retention triangle behind a cohort heatmap. cohorts are oldest-first; each
+// cell's month_offset is months since the cohort month (0 = that month, always
+// 100% retained). Mirrors the Pydantic models in backend/routers/features.py.
+export interface CohortCell {
+  month_offset: number; // 0 = the cohort's own month
+  active_customers: number;
+  retention_rate: number; // active_customers / cohort_size
+}
+export interface CohortRow {
+  cohort_month: string; // YYYY-MM
+  cohort_size: number;
+  cells: CohortCell[];
+}
+export interface CohortRetentionResponse {
+  method: string;
+  lookback_days: number;
+  total_customers: number;
+  cohorts: CohortRow[];
+}
+export async function getCohortRetention(lookback = 365): Promise<CohortRetentionResponse> {
+  const response = await client.apiCall.invoke<CohortRetentionResponse>({
+    url: `/api/v1/reports/cohorts?lookback=${lookback}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // ---- In-app assistant (#228 M9·AI) ----
 // The conversational surface over the tenant's own data. This first slice is a
 // rule-based intent router server-side; the client just passes the question and

@@ -1279,6 +1279,46 @@ class PeakHoursResponse(BaseModel):
     cells: List[PeakHoursCell]
 
 
+class CohortCell(BaseModel):
+    """One month-offset of a cohort's retention (issue #229 — analytics)."""
+
+    month_offset: int  # months since the cohort's first-purchase month (0 = that month)
+    active_customers: int  # cohort members who bought again in this offset month
+    retention_rate: float  # active_customers / cohort_size (offset 0 is always 1.0)
+
+
+class CohortRow(BaseModel):
+    """One first-purchase cohort and its forward retention (issue #229 — analytics)."""
+
+    cohort_month: str  # YYYY-MM of the cohort's first purchase
+    cohort_size: int  # customers whose first attributable purchase fell in this month
+    cells: List[CohortCell]  # non-empty retention offsets, earliest (0) first
+
+
+class CohortRetentionResponse(BaseModel):
+    """Monthly cohort-retention triangle (issue #229 — M9 Analytics).
+
+    Every attributable customer is placed in the cohort of the calendar month of
+    their first purchase, then tracked forward: for each later month we count how
+    many of that cohort came back. ``cohorts`` is the retention triangle (oldest
+    cohort first), the raw material for a cohort heatmap; offset 0 is the cohort's
+    own month and is 100% retained by construction.
+
+    Customers are keyed on ``customer_phone`` (the only stable buyer identity a
+    sale carries — anonymous walk-ins can't be attributed). Held/voided tickets
+    and credit-note refunds are not selling activity, so they neither seed a
+    cohort nor count as a return. Tenant-scoped; grouping happens in SQL keyed on
+    (phone, year, month), so peak memory is O(distinct customer-months), never
+    O(transactions). Buckets use the stored UTC timestamp; per-tenant-timezone
+    localisation is a later slice.
+    """
+
+    method: str
+    lookback_days: int
+    total_customers: int  # distinct attributed customers in the window
+    cohorts: List[CohortRow]
+
+
 # ============================================================
 # REPORT → PDF EXPORT (RPT-10, F-072)
 # ============================================================
@@ -2153,6 +2193,107 @@ async def get_peak_hours(
         total_revenue=round(total_revenue, 2),
         busiest=busiest,
         cells=cells,
+    )
+
+
+@router.get("/api/v1/reports/cohorts", response_model=CohortRetentionResponse)
+async def get_cohort_retention(
+    lookback: int = Query(365, ge=1, le=3650),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Monthly cohort-retention analysis (issue #229 — analytics).
+
+    Groups the tenant's attributable customers by the month of their first
+    purchase (their cohort) and tracks each cohort forward month by month to see
+    what fraction return — the retention triangle behind a cohort heatmap.
+
+    Attribution and exclusion mirror the sibling analytics reports: customers are
+    keyed on ``customer_phone`` (anonymous no-phone sales can't be attributed);
+    held/voided tickets and credit-note refunds are not selling activity, so they
+    neither seed a cohort nor count as a return. Tenant-scoped and server-side
+    aggregated (OPS-05): SQL groups by (phone, year, month), so peak memory is
+    O(distinct customer-months), never O(transactions). Buckets use the stored
+    UTC timestamp; per-tenant-timezone localisation is a later slice.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    year = extract("year", Transactions.created_at)
+    month = extract("month", Transactions.created_at)
+
+    rows = (
+        await db.execute(
+            select(Transactions.customer_phone, year, month)
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    # Only sales carrying a buyer identity can be attributed.
+                    Transactions.customer_phone.isnot(None),
+                    Transactions.customer_phone != "",
+                    # A held ticket is parked, a voided sale is cancelled, and a
+                    # credit note is a refund — none is a purchase that seeds a
+                    # cohort or counts as a return.
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                    Transactions.status.is_distinct_from("credit_note"),
+                )
+            )
+            .group_by(Transactions.customer_phone, year, month)
+        )
+    ).all()
+
+    # Per customer, the set of month-indices (year*12 + month-1) they purchased in.
+    active_months: dict[str, set[int]] = {}
+    for phone, y, m in rows:
+        month_index = int(float(y)) * 12 + (int(float(m)) - 1)
+        active_months.setdefault(phone, set()).add(month_index)
+
+    # Each customer's cohort is the month-index of their *first* purchase; group
+    # customers by that cohort, and within a cohort tally returns by month offset.
+    cohort_members: dict[int, list[str]] = {}
+    for phone, months in active_months.items():
+        cohort_members.setdefault(min(months), []).append(phone)
+
+    cohorts: List[CohortRow] = []
+    for cohort_index in sorted(cohort_members):
+        members = cohort_members[cohort_index]
+        cohort_size = len(members)
+        # offset -> set of members active that many months after the cohort month.
+        offset_members: dict[int, set[str]] = {}
+        for phone in members:
+            for month_index in active_months[phone]:
+                offset = month_index - cohort_index
+                offset_members.setdefault(offset, set()).add(phone)
+
+        cells = [
+            CohortCell(
+                month_offset=offset,
+                active_customers=len(offset_members[offset]),
+                retention_rate=round(len(offset_members[offset]) / cohort_size, 4),
+            )
+            for offset in sorted(offset_members)
+        ]
+        cohort_year, cohort_month_num = divmod(cohort_index, 12)
+        cohorts.append(
+            CohortRow(
+                cohort_month=f"{cohort_year:04d}-{cohort_month_num + 1:02d}",
+                cohort_size=cohort_size,
+                cells=cells,
+            )
+        )
+
+    return CohortRetentionResponse(
+        method="monthly_retention",
+        lookback_days=lookback,
+        total_customers=len(active_months),
+        cohorts=cohorts,
     )
 
 
