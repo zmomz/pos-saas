@@ -2698,7 +2698,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | sales_today | average_order | payment_mix | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | unknown
+    intent: str  # top_product | top_margin | sales_today | average_order | payment_mix | vat_owed | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2795,6 +2795,13 @@ _ASSISTANT_INTENTS = [
                      "cash vs card", "card vs cash", "cash or card", "tender mix",
                      "how do they pay", "way they pay", "طرق الدفع", "طريقة الدفع",
                      "نقد أم بطاقة", "نقدا أم بطاقة", "وسائل الدفع"]),
+    # Checked before ``sales_today`` so a "how much VAT/tax have I collected" routes
+    # to the tax read rather than today's takings. Its cues are the vocabulary of
+    # *tax owed to the authority* (VAT, ZATCA), distinct from gross takings — a
+    # first-class question for a KSA-first POS where 15% VAT is remitted.
+    ("vat_owed", ["vat", "v.a.t", "tax owed", "tax do i owe", "tax i owe",
+                  "tax collected", "how much tax", "sales tax", "zatca",
+                  "ضريبة", "القيمة المضافة", "ضريبة القيمة المضافة"]),
     ("sales_today", ["today", "revenue today", "sold today", "sales today",
                      "takings", "اليوم", "مبيعات اليوم"]),
 ]
@@ -2805,6 +2812,7 @@ _ASSISTANT_SUGGESTIONS = [
     "How much did I sell today?",
     "What is my average order value?",
     "How do my customers pay?",
+    "How much VAT have I collected?",
     "What is my sales forecast for next week?",
     "Is business up or down this week?",
     "When are we busiest?",
@@ -3007,6 +3015,58 @@ async def _assistant_average_order_value(db: AsyncSession, client_id: int) -> di
     orders = int(row[1] or 0)
     avg = round(net_sales / orders, 2) if orders else 0.0
     return {"net_sales": net_sales, "order_count": orders, "average_order_value": avg}
+
+
+async def _assistant_vat_owed(db: AsyncSession, client_id: int, lookback: int = 30) -> dict:
+    """Net VAT collected over the last ``lookback`` days — the tax remittable to
+    the authority — grounded in the tenant's own ``vat_amount`` figures (#228).
+
+    Uses the same money rule as the financial reports: a credit note nets its VAT
+    (and takings) back out, since refunding a sale returns the tax with it, but is
+    not itself an order; held/voided tickets are not selling activity. The
+    ``effective_rate`` is VAT ÷ the taxable base (net takings − VAT), so a KSA
+    merchant can sanity-check it against the 15% headline rate. An empty window
+    yields zeroed figures rather than a divide-by-zero.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    is_credit_note = Transactions.status == "credit_note"
+    net_vat = func.coalesce(
+        func.sum(
+            case((is_credit_note, -Transactions.vat_amount), else_=Transactions.vat_amount)
+        ),
+        0.0,
+    )
+    net_value = func.coalesce(
+        func.sum(
+            case((is_credit_note, -Transactions.total_amount), else_=Transactions.total_amount)
+        ),
+        0.0,
+    )
+    order_count = func.coalesce(func.sum(case((is_credit_note, 0), else_=1)), 0)
+    row = (
+        await db.execute(
+            select(net_vat, net_value, order_count).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+        )
+    ).one()
+    vat_collected = round(float(row[0] or 0.0), 2)
+    net_sales = round(float(row[1] or 0.0), 2)
+    taxable_base = round(net_sales - vat_collected, 2)
+    effective_rate = round(vat_collected / taxable_base, 4) if taxable_base else 0.0
+    return {
+        "vat_collected": vat_collected,
+        "net_sales": net_sales,
+        "taxable_base": taxable_base,
+        "effective_rate": effective_rate,
+        "order_count": int(row[2] or 0),
+        "lookback_days": lookback,
+    }
 
 
 async def _assistant_payment_mix(db: AsyncSession, client_id: int) -> dict:
@@ -3688,6 +3748,26 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=pm, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "vat_owed":
+        vat = await _assistant_vat_owed(db, client_id)
+        if vat["order_count"]:
+            answer = (
+                f"You've collected {vat['vat_collected']:.2f} in VAT over the last "
+                f"{vat['lookback_days']} days on a taxable base of "
+                f"{vat['taxable_base']:.2f} (effective rate "
+                f"{vat['effective_rate'] * 100:.1f}%), across {vat['order_count']} "
+                f"order(s)."
+            )
+        else:
+            answer = (
+                f"No sales in the last {vat['lookback_days']} days yet, so there's no "
+                f"VAT to report."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=vat, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "sales_forecast":

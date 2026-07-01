@@ -22,7 +22,7 @@ from models.transactions import Transactions
 
 async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: float,
                      items, status: str = "completed", idx: int = 0,
-                     payment_method: str = "cash"):
+                     payment_method: str = "cash", vat: float = 0.0):
     """Insert one transaction carrying ``items`` (list of {product_id, quantity})."""
     import json as _json
 
@@ -33,8 +33,8 @@ async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: fl
                 user_id=user_id,
                 client_id=client_id,
                 invoice_number=f"INV-AS-{client_id}-{status}-{payment_method}-{idx}",
-                subtotal=total,
-                vat_amount=0.0,
+                subtotal=total - vat,
+                vat_amount=vat,
                 discount_amount=0.0,
                 total_amount=total,
                 payment_method=payment_method,
@@ -864,3 +864,62 @@ async def test_assistant_payment_mix_handles_empty_window(client):
     assert body["data"]["methods"] == []
     assert body["data"]["dominant"] is None
     assert body["data"]["order_count"] == 0
+
+
+async def test_assistant_reports_vat_collected(client):
+    """"How much VAT have I collected?" → net VAT over the last 30 days, grounded
+    in the tenant's own ``vat_amount`` figures. Credit notes net their VAT back
+    out (a refund returns the tax too); held/voided and out-of-window tickets
+    never count. The effective rate is VAT ÷ the taxable base."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Two taxable sales: 115 total = 100 base + 15 VAT, and 230 = 200 + 30.
+    await _seed_sale(client_id, user["id"], days_ago=2, total=115.0, items=[],
+                     vat=15.0, idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=230.0, items=[],
+                     vat=30.0, idx=2)
+    # A credit note nets its VAT back out: -46 total, -6 VAT.
+    await _seed_sale(client_id, user["id"], days_ago=4, total=46.0, items=[],
+                     vat=6.0, status="credit_note", idx=3)
+    # Held/voided and out-of-window tickets must never count.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     vat=130.0, status="held", idx=4)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     vat=130.0, status="voided", idx=5)
+    await _seed_sale(client_id, user["id"], days_ago=40, total=999.0, items=[],
+                     vat=130.0, idx=6)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much VAT have I collected", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "vat_owed"
+    data = body["data"]
+    # 15 + 30 − 6 = 39 net VAT across two orders (the refund is not an order).
+    assert abs(data["vat_collected"] - 39.0) < 0.01
+    assert data["order_count"] == 2
+    # Net takings 115 + 230 − 46 = 299; taxable base = 299 − 39 = 260.
+    assert abs(data["net_sales"] - 299.0) < 0.01
+    assert abs(data["taxable_base"] - 260.0) < 0.01
+    assert abs(data["effective_rate"] - (39.0 / 260.0)) < 0.001
+    assert "39" in body["answer"]
+
+
+async def test_assistant_vat_handles_empty_window(client):
+    """No sales in the window → graceful message, zeroed figures, HTTP 200."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much tax do I owe", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "vat_owed"
+    assert body["data"]["vat_collected"] == 0.0
+    assert body["data"]["order_count"] == 0
+    assert body["data"]["effective_rate"] == 0.0
