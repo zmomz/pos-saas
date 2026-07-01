@@ -150,6 +150,22 @@ const OnboardingTour: React.FC = () => {
     setIsVisible(false);
   };
 
+  // Keyboard parity with the click-the-backdrop dismissal (WCAG 2.1.1): while
+  // the tour is open, Escape finishes it. Registered on the document so it
+  // fires regardless of where focus currently sits.
+  useEffect(() => {
+    if (!isVisible) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        handleFinish();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible]);
+
   if (!isVisible) return null;
 
   const step = steps[currentStep];
@@ -162,6 +178,9 @@ const OnboardingTour: React.FC = () => {
 
       {/* Tooltip */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="onboarding-tour-title"
         className="absolute z-[10000] w-[320px] bg-white dark:bg-card rounded-xl shadow-2xl border border-border dark:border-input p-5 animate-in fade-in duration-300"
         style={{ top: tooltipPosition.top, left: tooltipPosition.left }}
       >
@@ -187,7 +206,10 @@ const OnboardingTour: React.FC = () => {
         </div>
 
         {/* Content */}
-        <h3 className="text-base font-semibold text-foreground dark:text-foreground mb-2">
+        <h3
+          id="onboarding-tour-title"
+          className="text-base font-semibold text-foreground dark:text-foreground mb-2"
+        >
           {t(step.titleKey)}
         </h3>
         <p className="text-sm text-muted-foreground dark:text-foreground/90 mb-4 leading-relaxed">
