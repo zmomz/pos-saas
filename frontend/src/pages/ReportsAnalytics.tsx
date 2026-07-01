@@ -17,6 +17,7 @@ import {
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import Bar from '@/components/dashboard/rx/Bar';
+import ForecastInsights from '@/components/dashboard/ForecastInsights';
 
 interface SalesDataPoint {
   period: string;
@@ -1759,6 +1760,10 @@ export default function ReportsAnalytics() {
           )}
         </CardContent>
       </Card>
+
+      {/* AI forecasting surface (#228, M9·AI): sales projection, smart reorder,
+          dynamic pricing — each panel owns its own load/error state. */}
+      <ForecastInsights />
     </div>
   );
 }

@@ -1301,6 +1301,92 @@ export async function getReorderSuggestions(): Promise<{
   return response.data;
 }
 
+// ---- AI forecasting / smart-reorder / dynamic pricing (#228, M9·AI) ----
+// Read-only, tenant-scoped surfaces over the /reports/* forecast endpoints in
+// backend/routers/features.py. Types mirror the Pydantic response models there.
+export interface SalesForecastPoint {
+  date: string; // projected day, YYYY-MM-DD
+  forecast_sales: number;
+}
+export interface SalesForecastResponse {
+  method: string;
+  lookback_days: number;
+  horizon_days: number;
+  history_total: number;
+  avg_daily_sales: number;
+  points: SalesForecastPoint[];
+}
+export async function getSalesForecast(
+  lookback = 30,
+  horizon = 7
+): Promise<SalesForecastResponse> {
+  const response = await client.apiCall.invoke<SalesForecastResponse>({
+    url: `/api/v1/reports/sales-forecast?lookback=${lookback}&horizon=${horizon}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+export interface InventoryForecastItem {
+  product_id: number;
+  name: string;
+  name_ar?: string | null;
+  on_hand: number;
+  avg_daily_units: number;
+  projected_demand: number;
+  days_of_cover: number | null;
+  will_stock_out: boolean;
+  suggested_reorder_quantity: number;
+}
+export interface InventoryForecastResponse {
+  method: string;
+  lookback_days: number;
+  horizon_days: number;
+  items: InventoryForecastItem[];
+  total: number;
+}
+export async function getInventoryForecast(
+  lookback = 30,
+  horizon = 14
+): Promise<InventoryForecastResponse> {
+  const response = await client.apiCall.invoke<InventoryForecastResponse>({
+    url: `/api/v1/reports/inventory-forecast?lookback=${lookback}&horizon=${horizon}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
+export interface DynamicPriceItem {
+  product_id: number;
+  name: string;
+  name_ar?: string | null;
+  on_hand: number;
+  avg_daily_units: number;
+  days_of_cover: number | null;
+  signal: 'markup' | 'markdown';
+  current_price: number;
+  suggested_price: number;
+  adjustment_pct: number;
+}
+export interface DynamicPricingResponse {
+  method: string;
+  lookback_days: number;
+  low_cover_days: number;
+  high_cover_days: number;
+  items: DynamicPriceItem[];
+  total: number;
+}
+export async function getDynamicPricing(lookback = 30): Promise<DynamicPricingResponse> {
+  const response = await client.apiCall.invoke<DynamicPricingResponse>({
+    url: `/api/v1/reports/dynamic-pricing?lookback=${lookback}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // ---- Product variants / matrix (INV-04, F-033) ----
 // Each variant is a sellable SKU of a parent product with its own barcode, price
 // and stock. Managed via the generic entity triad at /api/v1/entities/product_variants.
