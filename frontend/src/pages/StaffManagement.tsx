@@ -35,6 +35,7 @@ import StaffWorkforceDialog, {
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { Download, Plus, UserCheck, UserX, Users } from 'lucide-react';
@@ -267,6 +268,61 @@ export default function StaffManagement() {
     }
   }
 
+  const staffColumns: DataTableColumn<StaffMember>[] = [
+    {
+      key: 'name',
+      header: t('name'),
+      cell: (member) => <span className="font-medium text-foreground">{member.name}</span>,
+    },
+    { key: 'email', header: t('email'), cell: (member) => member.email || '—' },
+    { key: 'phone', header: t('phone'), cell: (member) => member.phone || '—' },
+    {
+      key: 'role',
+      header: t('role'),
+      cell: (member) => <span className="pill-muted">{t(`role_${member.role}`)}</span>,
+    },
+    {
+      key: 'status',
+      header: t('status'),
+      cell: (member) => <StatusPill status={staffStatus(member)} />,
+    },
+    {
+      key: 'actions',
+      header: t('actions'),
+      cell: (member) => (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openWorkforce(member)}
+            className="text-xs"
+          >
+            {t('stf_workforce')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openPermissions(member)}
+            className="text-xs"
+          >
+            {t('permissions')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => openEdit(member)} className="text-xs">
+            {t('edit')}
+          </Button>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => openDelete(member)}
+            className="text-xs"
+          >
+            {t('delete')}
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   function renderForm(onSubmit: () => void, submitLabel: string) {
     return (
       <div className="space-y-4">
@@ -392,79 +448,13 @@ export default function StaffManagement() {
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full text-sm">
-          <thead className="bg-card">
-            <tr className="text-muted-foreground">
-              <th className="p-3 text-start">{t('name')}</th>
-              <th className="p-3 text-start">{t('email')}</th>
-              <th className="p-3 text-start">{t('phone')}</th>
-              <th className="p-3 text-start">{t('role')}</th>
-              <th className="p-3 text-start">{t('status')}</th>
-              <th className="p-3 text-start">{t('actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {staff.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="p-6 text-center text-muted-foreground">
-                  {t('stf_none')}
-                </td>
-              </tr>
-            ) : (
-              staff.map((member) => (
-                <tr key={member.id} className="border-t border-border text-foreground/90">
-                  <td className="p-3 text-foreground font-medium">{member.name}</td>
-                  <td className="p-3">{member.email || '—'}</td>
-                  <td className="p-3">{member.phone || '—'}</td>
-                  <td className="p-3">
-                    <span className="pill-muted">{t(`role_${member.role}`)}</span>
-                  </td>
-                  <td className="p-3">
-                    <StatusPill status={staffStatus(member)} />
-                  </td>
-                  <td className="p-3">
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openWorkforce(member)}
-                        className="text-xs"
-                      >
-                        {t('stf_workforce')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openPermissions(member)}
-                        className="text-xs"
-                      >
-                        {t('permissions')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEdit(member)}
-                        className="text-xs"
-                      >
-                        {t('edit')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => openDelete(member)}
-                        className="text-xs"
-                      >
-                        {t('delete')}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        className="dxr-tile p-0"
+        columns={staffColumns}
+        rows={staff}
+        rowKey={(member) => member.id}
+        empty={t('stf_none')}
+      />
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
