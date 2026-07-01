@@ -2174,7 +2174,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | sales_today | average_order | sales_forecast | sales_trend | smart_reorder | dynamic_pricing | low_stock | unknown
+    intent: str  # top_product | sales_today | average_order | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2223,6 +2223,14 @@ _ASSISTANT_INTENTS = [
                      "compared with last week", "this week", "how is business",
                      "how's business", "how are we doing", "الاتجاه",
                      "مقارنة بالأسبوع"]),
+    # Checked before ``sales_today`` so a "when are we busiest / what's our peak
+    # hour" routes to the staffing read rather than today's takings. Its cues are
+    # the vocabulary of *timing* ("busiest", "peak hour", "rush"), distinct from
+    # the how-much intents above.
+    ("peak_hours", ["busiest", "peak hour", "peak hours", "peak time", "peak times",
+                    "rush hour", "when are we busy", "when do we sell",
+                    "what time do we", "quietest", "ساعات الذروة", "الذروة",
+                    "أكثر الأوقات", "أزحم"]),
     ("sales_today", ["today", "revenue today", "sold today", "sales today",
                      "takings", "اليوم", "مبيعات اليوم"]),
 ]
@@ -2233,10 +2241,16 @@ _ASSISTANT_SUGGESTIONS = [
     "What is my average order value?",
     "What is my sales forecast for next week?",
     "Is business up or down this week?",
+    "When are we busiest?",
     "What should I reorder?",
     "Which products should I discount?",
     "Which products are low on stock?",
 ]
+
+# Day-of-week names indexed to match Postgres ``extract('dow')`` / SQLite ``%w``
+# (0 = Sunday). Used to render the busiest-hours answer in plain language.
+_DOW_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+              "Saturday"]
 
 
 def _route_assistant_intent(q: str) -> str:
@@ -2437,6 +2451,54 @@ async def _assistant_sales_trend(db: AsyncSession, client_id: int) -> dict:
         "direction": direction,
         "change_pct": change_pct,
     }
+
+
+async def _assistant_peak_hours(db: AsyncSession, client_id: int, lookback: int = 30) -> dict:
+    """Busiest (day-of-week, hour) cell over the last ``lookback`` days (#228).
+
+    The assistant surface over the peak-hours heatmap (issue #229): it buckets the
+    tenant's completed sales by ``extract(dow)``/``extract(hour)`` and names the
+    single hottest cell — the one operators ask about in plain language ("when are
+    we busiest?") to time their staffing. Held/voided tickets and credit-note
+    refunds are not selling activity and are excluded, exactly like the heatmap it
+    draws on. An empty window yields ``busiest = None`` (no cells to rank) so the
+    answer degrades gracefully rather than crashing on ``max()`` of nothing.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    dow = extract("dow", Transactions.created_at)
+    hour = extract("hour", Transactions.created_at)
+
+    rows = (
+        await db.execute(
+            select(dow, hour, func.count(), func.sum(Transactions.total_amount))
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                    Transactions.status.is_distinct_from("credit_note"),
+                )
+            )
+            .group_by(dow, hour)
+        )
+    ).all()
+
+    cells = [
+        {
+            "day_of_week": int(float(d)),
+            "hour": int(float(h)),
+            "order_count": int(count or 0),
+            "revenue": round(float(revenue or 0.0), 2),
+        }
+        for d, h, count, revenue in rows
+    ]
+    total_orders = sum(c["order_count"] for c in cells)
+    # The hottest cell — most orders, higher revenue breaking a tie.
+    busiest = (
+        max(cells, key=lambda c: (c["order_count"], c["revenue"])) if cells else None
+    )
+    return {"lookback_days": lookback, "total_orders": total_orders, "busiest": busiest}
 
 
 async def _assistant_low_stock(db: AsyncSession, client_id: int) -> dict:
@@ -2783,6 +2845,27 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=tr, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "peak_hours":
+        ph = await _assistant_peak_hours(db, client_id)
+        busiest = ph["busiest"]
+        if busiest:
+            day = (
+                _DOW_NAMES[busiest["day_of_week"]]
+                if 0 <= busiest["day_of_week"] < len(_DOW_NAMES)
+                else "?"
+            )
+            answer = (
+                f"You're busiest on {day} at {busiest['hour']:02d}:00 — "
+                f"{busiest['order_count']} order(s) in that hour over the last "
+                f"{ph['lookback_days']} days. Staff up then."
+            )
+        else:
+            answer = "No sales in the last 30 days yet, so there's no busiest time to report."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=ph, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "low_stock":

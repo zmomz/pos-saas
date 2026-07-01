@@ -481,6 +481,93 @@ async def test_assistant_is_tenant_scoped(client):
     assert "Widget" not in body["answer"]
 
 
+async def _seed_sale_at(client_id: int, user_id: str, *, created_at, total: float,
+                        status: str = "completed", idx: int = 0):
+    """One transaction stamped at an explicit ``created_at`` (UTC) — the peak-hours
+    intent buckets by the hour of the timestamp, so the tests need control over it
+    (the relative ``_seed_sale`` only fixes the day)."""
+    import json as _json
+
+    async with db_manager.async_session_maker() as db:
+        db.add(
+            Transactions(
+                user_id=user_id,
+                client_id=client_id,
+                invoice_number=f"INV-PH-{client_id}-{status}-{idx}",
+                subtotal=total,
+                vat_amount=0.0,
+                discount_amount=0.0,
+                total_amount=total,
+                payment_method="cash",
+                status=status,
+                items_json=_json.dumps([]),
+                created_at=created_at,
+            )
+        )
+        await db.commit()
+
+
+def _dow(dt):
+    """0=Sunday .. 6=Saturday — matches Postgres extract('dow') and SQLite %w."""
+    return int(dt.strftime("%w"))
+
+
+async def test_assistant_reports_busiest_time(client):
+    """"When are we busiest?" → the (day, hour) cell with the most orders, so a
+    merchant knows when to staff up. Held tickets are not selling activity and
+    never enter the heatmap."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # A "hot" cell: three completed sales two days ago at 09:00.
+    hot = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
+        hour=9, minute=0, second=0, microsecond=0
+    )
+    await _seed_sale_at(client_id, user["id"], created_at=hot, total=10.0, idx=1)
+    await _seed_sale_at(client_id, user["id"], created_at=hot, total=20.0, idx=2)
+    await _seed_sale_at(client_id, user["id"], created_at=hot, total=30.0, idx=3)
+    # A quieter cell: one sale three days ago at 14:00.
+    quiet = (datetime.now(timezone.utc) - timedelta(days=3)).replace(
+        hour=14, minute=0, second=0, microsecond=0
+    )
+    await _seed_sale_at(client_id, user["id"], created_at=quiet, total=99.0, idx=4)
+    # A held ticket shares the hot cell but is parked, not sold — it must not tip
+    # the count.
+    await _seed_sale_at(client_id, user["id"], created_at=hot, total=999.0,
+                        status="held", idx=5)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=when are we busiest", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "peak_hours"
+    assert body["data"]["total_orders"] == 4  # the held ticket is excluded
+    busiest = body["data"]["busiest"]
+    assert busiest["order_count"] == 3
+    assert busiest["hour"] == 9
+    assert busiest["day_of_week"] == _dow(hot)
+    assert "3" in body["answer"]
+
+
+async def test_assistant_busiest_time_handles_no_sales(client):
+    """No sales in the window → a graceful "no busiest time" answer, not a crash on
+    an empty grid."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my busiest hour", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "peak_hours"
+    assert body["data"]["busiest"] is None
+    assert body["data"]["total_orders"] == 0
+
+
 async def test_assistant_rejects_non_clients(client):
     """A master (non-client) account cannot reach the assistant (403), like reports."""
     from conftest import make_master_account
