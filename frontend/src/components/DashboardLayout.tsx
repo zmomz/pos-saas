@@ -291,6 +291,16 @@ const Shell: React.FC = () => {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      {/* Skip link (#226 · WCAG 2.4.1): first focusable element so keyboard/SR
+          users can bypass the icon rail + header. Visually hidden until it
+          receives focus, then it paints as a real button over the chrome. */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:start-4 focus:top-4 focus:z-[100] focus:rounded-[14px] focus:bg-brand focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white focus:shadow-brand focus:outline-none focus:ring-2 focus:ring-brand-700"
+      >
+        {t('skip_to_content')}
+      </a>
+
       {/* Mobile drawer overlay */}
       {drawerOpen && (
         <div
@@ -499,8 +509,10 @@ const Shell: React.FC = () => {
         {/* Global offline banner (UX-02 / F-051) — covers every back-office page. */}
         <OfflineBanner />
 
-        {/* Page content */}
-        <main className="flex-1 overflow-auto p-4 sm:p-6">
+        {/* Page content — skip-link target (#226). tabIndex=-1 makes it a
+            programmatic focus target so activating the in-page anchor moves
+            keyboard focus here, not just the scroll position. */}
+        <main id="main-content" tabIndex={-1} className="flex-1 overflow-auto p-4 sm:p-6 focus:outline-none">
           <Outlet />
         </main>
       </div>
