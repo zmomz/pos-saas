@@ -384,6 +384,65 @@ async def test_assistant_dynamic_pricing_handles_nothing_to_discount(client):
     assert body["data"]["products"] == []
 
 
+async def test_assistant_reports_week_over_week_trend(client):
+    """"Is business up or down this week?" → this week's net takings compared to
+    last week's, with a direction and a percent change (the assistant surface over
+    a simple week-over-week trend)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # This week (0–7 days ago): 300 + 100 = 400 net; a credit note nets it down
+    # to 360 like the other money metrics.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=300.0, items=[], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=100.0, items=[], idx=2)
+    await _seed_sale(client_id, user["id"], days_ago=2, total=40.0, items=[],
+                     status="credit_note", idx=3)
+    # Last week (7–14 days ago): 300 in takings → a +20% week-over-week move.
+    await _seed_sale(client_id, user["id"], days_ago=9, total=300.0, items=[], idx=4)
+    # A held ticket is not revenue, and a sale older than 14 days is out of both
+    # windows (it must not become the baseline).
+    await _seed_sale(client_id, user["id"], days_ago=5, total=999.0, items=[],
+                     status="held", idx=5)
+    await _seed_sale(client_id, user["id"], days_ago=20, total=999.0, items=[], idx=6)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=is business up or down this week", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "sales_trend"
+    assert body["data"]["period_days"] == 7
+    assert abs(body["data"]["current_period_sales"] - 360.0) < 0.01
+    assert abs(body["data"]["previous_period_sales"] - 300.0) < 0.01
+    assert body["data"]["direction"] == "up"
+    assert abs(body["data"]["change_pct"] - 20.0) < 0.01
+    assert "up" in body["answer"].lower()
+    assert "20" in body["answer"]
+
+
+async def test_assistant_trend_handles_no_prior_week(client):
+    """Sales this week but none last week → a graceful "no baseline" answer with a
+    null percent change, not a divide-by-zero."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=150.0, items=[], idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how is business this week compared to last week",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "sales_trend"
+    assert abs(body["data"]["current_period_sales"] - 150.0) < 0.01
+    assert body["data"]["previous_period_sales"] == 0.0
+    assert body["data"]["change_pct"] is None
+    assert body["data"]["direction"] == "up"
+
+
 async def test_assistant_unroutable_question_degrades_gracefully(client):
     """A question it can't map is an ``unknown`` answer with suggestions, not a 400/500."""
     user, token, client_id = await make_client_account(client)

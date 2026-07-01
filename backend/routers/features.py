@@ -2174,7 +2174,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | sales_today | average_order | sales_forecast | smart_reorder | dynamic_pricing | low_stock | unknown
+    intent: str  # top_product | sales_today | average_order | sales_forecast | sales_trend | smart_reorder | dynamic_pricing | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2214,6 +2214,15 @@ _ASSISTANT_INTENTS = [
     ("sales_forecast", ["forecast", "projection", "projected", "next week",
                         "next 7 days", "next seven days", "will i sell",
                         "expect to sell", "on track to", "توقع", "الأسبوع القادم"]),
+    # Checked before ``sales_today`` so a backward-looking "how is business this
+    # week vs last week" routes to the momentum read rather than today's takings.
+    # Its cues are the vocabulary of comparison ("vs last week", "up or down"),
+    # distinct from the forward-looking forecast cues above.
+    ("sales_trend", ["trend", "up or down", "week over week", "week-over-week",
+                     "vs last week", "versus last week", "compared to last week",
+                     "compared with last week", "this week", "how is business",
+                     "how's business", "how are we doing", "الاتجاه",
+                     "مقارنة بالأسبوع"]),
     ("sales_today", ["today", "revenue today", "sold today", "sales today",
                      "takings", "اليوم", "مبيعات اليوم"]),
 ]
@@ -2223,6 +2232,7 @@ _ASSISTANT_SUGGESTIONS = [
     "How much did I sell today?",
     "What is my average order value?",
     "What is my sales forecast for next week?",
+    "Is business up or down this week?",
     "What should I reorder?",
     "Which products should I discount?",
     "Which products are low on stock?",
@@ -2367,6 +2377,65 @@ async def _assistant_sales_forecast(db: AsyncSession, client_id: int) -> dict:
         "horizon_days": horizon,
         "avg_daily_sales": round(avg_daily, 2),
         "projected_sales": round(projected, 2),
+    }
+
+
+async def _net_revenue_between(db: AsyncSession, client_id: int, lo, hi) -> float:
+    """Signed net takings for ``lo <= created_at [< hi]`` for one tenant.
+
+    The same money rule the other assistant metrics use (sales_today / AOV): a
+    credit note nets *down* revenue, held/voided tickets are not revenue at all.
+    Collapsed to a single ``SUM`` (O(1)). ``hi`` is optional (open upper bound).
+    """
+    is_credit_note = Transactions.status == "credit_note"
+    net_value = func.coalesce(
+        func.sum(
+            case((is_credit_note, -Transactions.total_amount), else_=Transactions.total_amount)
+        ),
+        0.0,
+    )
+    conds = [
+        Transactions.client_id == client_id,
+        Transactions.created_at >= lo,
+        Transactions.status.is_distinct_from("held"),
+        Transactions.status.is_distinct_from("voided"),
+    ]
+    if hi is not None:
+        conds.append(Transactions.created_at < hi)
+    result = await db.execute(select(net_value).where(and_(*conds)))
+    return float(result.scalar_one() or 0.0)
+
+
+async def _assistant_sales_trend(db: AsyncSession, client_id: int) -> dict:
+    """Week-over-week trend: this week's net takings vs the prior week's (#228).
+
+    A simple, grounded momentum read the operator asks in plain language ("is
+    business up or down?"). Both windows use the same signed-revenue money rule as
+    the other metrics. The percent change is ``None`` when there's no prior-week
+    baseline (a zero divisor), so the answer degrades to "no baseline" rather than
+    crashing; the direction is still reported from the raw movement.
+    """
+    period = 7
+    now = datetime.now(timezone.utc)
+    current_start = now - timedelta(days=period)
+    previous_start = now - timedelta(days=period * 2)
+    current = await _net_revenue_between(db, client_id, current_start, None)
+    previous = await _net_revenue_between(db, client_id, previous_start, current_start)
+
+    if current > previous:
+        direction = "up"
+    elif current < previous:
+        direction = "down"
+    else:
+        direction = "flat"
+    change_pct = round((current - previous) / previous * 100, 1) if previous > 0 else None
+
+    return {
+        "period_days": period,
+        "current_period_sales": round(current, 2),
+        "previous_period_sales": round(previous, 2),
+        "direction": direction,
+        "change_pct": change_pct,
     }
 
 
@@ -2694,6 +2763,26 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=dp, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "sales_trend":
+        tr = await _assistant_sales_trend(db, client_id)
+        if tr["change_pct"] is not None:
+            answer = (
+                f"Sales are {tr['direction']} {abs(tr['change_pct'])}% this week: "
+                f"{tr['current_period_sales']:.2f} vs {tr['previous_period_sales']:.2f} "
+                f"last week."
+            )
+        elif tr["current_period_sales"] > 0:
+            answer = (
+                f"You've taken {tr['current_period_sales']:.2f} this week — no sales "
+                f"in the prior week to compare against."
+            )
+        else:
+            answer = "No sales this week or last week yet, so there's no trend to report."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=tr, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "low_stock":

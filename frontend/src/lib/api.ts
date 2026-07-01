@@ -1430,7 +1430,7 @@ export async function getPeakHours(lookback = 365): Promise<PeakHoursResponse> {
 export interface AssistantAnswer {
   method: string;
   query: string;
-  intent: string; // top_product | sales_today | average_order | sales_forecast | smart_reorder | dynamic_pricing | low_stock | unknown
+  intent: string; // top_product | sales_today | average_order | sales_forecast | sales_trend | smart_reorder | dynamic_pricing | low_stock | unknown
   answer: string;
   data: Record<string, unknown>;
   suggestions: string[];
