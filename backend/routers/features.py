@@ -1139,9 +1139,11 @@ class SalesForecastResponse(BaseModel):
     """Naive sales-revenue forecast (issue #228 — AI/forecasting tracer bullet).
 
     ``method`` names the model so the response is self-describing as it grows
-    (moving-average today; trend/seasonal later). ``avg_daily_sales`` is the mean
-    daily take over the lookback window and is the value projected forward for
-    every ``points`` entry.
+    (``moving_average`` — a flat projection of the mean daily take; or
+    ``linear_trend`` — that mean, tilted by the slope between the older and recent
+    halves of the window). ``avg_daily_sales`` is always the flat mean daily take
+    over the lookback window; ``trend_per_day`` is the projected day-over-day
+    change (0.0 for the flat moving average) so the direction is inspectable.
     """
 
     method: str
@@ -1149,6 +1151,7 @@ class SalesForecastResponse(BaseModel):
     horizon_days: int
     history_total: float
     avg_daily_sales: float
+    trend_per_day: float = 0.0
     points: List[SalesForecastPoint]
 
 
@@ -1591,64 +1594,108 @@ async def get_top_products(
     return resp
 
 
+async def _revenue_sum_between(db, client_id, lo, hi):
+    """Signed revenue ``SUM`` for ``lo <= created_at [< hi]`` for one tenant.
+
+    Collapsed to a single database ``SUM`` (OPS-05: O(1), never O(transactions)).
+    Held/voided tickets are excluded exactly as the sibling revenue reports do.
+    ``hi`` is optional (open-ended upper bound when ``None``).
+    """
+    conds = [
+        Transactions.client_id == client_id,
+        Transactions.created_at >= lo,
+        Transactions.status.is_distinct_from("held"),
+        Transactions.status.is_distinct_from("voided"),
+    ]
+    if hi is not None:
+        conds.append(Transactions.created_at < hi)
+    result = await db.execute(
+        select(func.coalesce(func.sum(Transactions.total_amount), 0.0)).where(and_(*conds))
+    )
+    return float(result.scalar_one() or 0.0)
+
+
 @router.get("/api/v1/reports/sales-forecast", response_model=SalesForecastResponse)
 async def get_sales_forecast(
     lookback: int = Query(30, ge=1, le=365),
     horizon: int = Query(7, ge=1, le=90),
+    method: str = Query("moving_average"),
     current_user: UserResponse = Depends(get_current_user),
     owner_id: str = Depends(get_owner_id),
     db: AsyncSession = Depends(get_db),
 ):
     """Project the next ``horizon`` days of sales revenue (issue #228).
 
-    The first slice of the forecasting epic: a moving-average baseline. We take
-    the mean daily take over the last ``lookback`` days and project it flat over
-    the horizon. It is the classic naive forecast — cheap, explainable, and
-    actionable enough to inform staffing and reorder timing — and a deliberate
-    starting point that later iterations extend (trend, seasonality, per-product
-    inventory forecasts, smart-reorder tie-in).
+    Two self-describing models share this endpoint, selected by ``method``:
+
+    * ``moving_average`` (default) — the mean daily take over the last
+      ``lookback`` days, projected flat over the horizon. The classic naive
+      forecast: cheap, explainable, and actionable enough to inform staffing and
+      reorder timing.
+    * ``linear_trend`` — that same mean, tilted by the direction the business is
+      moving. The window is split into an older and a recent half; the change in
+      average daily take between the two halves' centres gives a per-day slope,
+      which is projected forward. A shop whose takings are climbing forecasts a
+      rising line; a sinking one, a falling line (never below zero).
 
     Tenant-scoped and server-side aggregated (OPS-05): the history is collapsed to
-    a single ``SUM`` in the database — the result is O(1), never O(transactions).
-    Held/voided sales are excluded exactly as the sibling revenue reports do.
+    at most two ``SUM``s in the database — O(1), never O(transactions). Held/voided
+    sales are excluded exactly as the sibling revenue reports do.
     """
+    if method not in ("moving_average", "linear_trend"):
+        raise HTTPException(
+            status_code=400,
+            detail="method must be 'moving_average' or 'linear_trend'",
+        )
+
     role_info = await get_user_role(db, owner_id)
     if role_info["role"] != "client":
         raise HTTPException(status_code=403, detail="Only clients can access reports")
 
     client_id = role_info["entity_id"]
-    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    now = datetime.now(timezone.utc)
+    start_date = now - timedelta(days=lookback)
 
-    result = await db.execute(
-        select(func.coalesce(func.sum(Transactions.total_amount), 0.0)).where(
-            and_(
-                Transactions.client_id == client_id,
-                Transactions.created_at >= start_date,
-                # POS-10/POS-08: parked (held) tickets and voided sales are not
-                # revenue, so they must not distort the forecast basis.
-                Transactions.status.is_distinct_from("held"),
-                Transactions.status.is_distinct_from("voided"),
-            )
-        )
-    )
-    history_total = float(result.scalar_one() or 0.0)
+    history_total = await _revenue_sum_between(db, client_id, start_date, None)
     avg_daily = history_total / lookback if lookback > 0 else 0.0
 
-    today = datetime.now(timezone.utc).date()
+    # ``base`` is the level projected from at day offset 0 (today); ``trend`` is
+    # the per-day change added for each subsequent day. The moving average is the
+    # degenerate flat case (base = mean, trend = 0).
+    base = avg_daily
+    trend = 0.0
+    if method == "linear_trend":
+        # Split the window at its midpoint into two equal halves and compare their
+        # average daily take. Each half spans ``lookback/2`` days; the centres of
+        # the two halves are ``lookback/2`` days apart, so the day-over-day slope
+        # is the change in average-daily-take across that centre gap.
+        half_days = lookback / 2.0
+        midpoint = now - timedelta(days=half_days)
+        recent_total = await _revenue_sum_between(db, client_id, midpoint, None)
+        older_total = history_total - recent_total
+        recent_avg = recent_total / half_days if half_days > 0 else 0.0
+        older_avg = older_total / half_days if half_days > 0 else 0.0
+        trend = (recent_avg - older_avg) / half_days if half_days > 0 else 0.0
+        # ``recent_avg`` represents the recent half's centre, ``lookback/4`` days
+        # before now; carry it forward to today so offset 1 is one day beyond.
+        base = recent_avg + trend * (lookback / 4.0)
+
+    today = now.date()
     points = [
         SalesForecastPoint(
             date=(today + timedelta(days=offset)).strftime("%Y-%m-%d"),
-            forecast_sales=round(avg_daily, 2),
+            forecast_sales=round(max(base + trend * offset, 0.0), 2),
         )
         for offset in range(1, horizon + 1)
     ]
 
     return SalesForecastResponse(
-        method="moving_average",
+        method=method,
         lookback_days=lookback,
         horizon_days=horizon,
         history_total=round(history_total, 2),
         avg_daily_sales=round(avg_daily, 2),
+        trend_per_day=round(trend, 2),
         points=points,
     )
 
