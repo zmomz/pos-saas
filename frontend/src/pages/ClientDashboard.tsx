@@ -325,7 +325,7 @@ export default function ClientDashboard() {
         <button onClick={openPos} className="dxr-tile flex flex-col justify-between bg-gradient-to-br from-brand to-brand-700 text-start text-white lg:col-span-4 lg:row-span-2">
           <div className="flex items-center justify-between">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15"><Monitor className="h-5 w-5" /></span>
-            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/15"><ArrowRight className="h-5 w-5" /></span>
+            <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/15"><ArrowRight className="h-5 w-5 rtl:-scale-x-100" /></span>
           </div>
           <div>
             <div className="text-[22px] font-extrabold tracking-tight">{t('go_to_pos') || 'Open POS'}</div>
@@ -519,7 +519,7 @@ export default function ClientDashboard() {
         <div className="dxr-tile p-0">
           <div className="flex items-center justify-between px-5 pb-3 pt-5">
             <h2 className="text-[16px] font-extrabold tracking-tight">{t('recent_transactions') || 'Recent Transactions'}</h2>
-            <button onClick={() => navigate('/reports')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{t('view_all') || 'View all'} <ArrowRight className="h-[15px] w-[15px]" /></button>
+            <button onClick={() => navigate('/reports')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{t('view_all') || 'View all'} <ArrowRight className="h-[15px] w-[15px] rtl:-scale-x-100" /></button>
           </div>
           <div className="overflow-x-auto px-2 pb-2">
             <table className="w-full text-sm">

@@ -390,7 +390,7 @@ export default function MasterDashboard() {
         <section className="dxr-tile lg:col-span-8 lg:row-span-4">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-[16px] font-extrabold tracking-tight">{tt('revenue_by_agent', 'Revenue by Agent')}</h2>
-            <button onClick={() => navigate('/audit')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{tt('view_all', 'View all')} <ArrowRight className="h-[15px] w-[15px]" /></button>
+            <button onClick={() => navigate('/audit')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{tt('view_all', 'View all')} <ArrowRight className="h-[15px] w-[15px] rtl:-scale-x-100" /></button>
           </div>
           {ecoLoading ? (
             <div className="animate-pulse py-10 text-center text-muted-foreground">{t('loading')}</div>
@@ -461,7 +461,7 @@ export default function MasterDashboard() {
                   <div className="text-[13.5px] font-bold">{a.company_name} {tt('paused', 'paused')}</div>
                   <div className="text-[12px] text-muted-foreground">{tt('reactivate_account', 'Tap to reactivate account')}</div>
                 </div>
-                <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground" />
+                <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground rtl:-scale-x-100" />
               </div>
             ))}
             {nearCap.slice(0, 2).map((a) => (
@@ -471,7 +471,7 @@ export default function MasterDashboard() {
                   <div className="text-[13.5px] font-bold">{a.company_name} {tt('near_slot_cap', 'near slot cap')}</div>
                   <div className="text-[12px] text-muted-foreground">{a.used_slots}/{a.package_type} {tt('slots_used', 'slots used')} · {tt('add_slots', 'add slots')}</div>
                 </div>
-                <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground" />
+                <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground rtl:-scale-x-100" />
               </div>
             ))}
             <div className="dxr-insight cursor-pointer" onClick={openTaxDialog}>
@@ -480,7 +480,7 @@ export default function MasterDashboard() {
                 <div className="text-[13.5px] font-bold">{tt('review_tax_rate', 'Review global tax rate')}</div>
                 <div className="text-[12px] text-muted-foreground">{tt('vat_compliance', 'VAT applied platform-wide')}</div>
               </div>
-              <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground" />
+              <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground rtl:-scale-x-100" />
             </div>
             {suspended.length === 0 && nearCap.length === 0 && (
               <p className="px-1 py-4 text-[13px] text-muted-foreground">{tt('all_systems_operational', 'All systems operational.')}</p>
@@ -493,7 +493,7 @@ export default function MasterDashboard() {
         <section className="dxr-tile lg:col-span-8 lg:row-span-3">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-[16px] font-extrabold tracking-tight">{tt('recent_activity', 'Recent Activity')}</h2>
-            <button onClick={() => navigate('/audit')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{tt('audit_log', 'Audit log')} <ArrowRight className="h-[15px] w-[15px]" /></button>
+            <button onClick={() => navigate('/audit')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{tt('audit_log', 'Audit log')} <ArrowRight className="h-[15px] w-[15px] rtl:-scale-x-100" /></button>
           </div>
           {auditEntries.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">{tt('no_recent_activity', 'No recent activity.')}</p>
