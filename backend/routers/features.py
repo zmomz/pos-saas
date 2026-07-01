@@ -1181,6 +1181,39 @@ class InventoryForecastResponse(BaseModel):
     total: int
 
 
+class DynamicPriceItem(BaseModel):
+    """A single product's demand-driven price-adjustment suggestion (#228)."""
+
+    product_id: int
+    name: str
+    name_ar: Optional[str] = None
+    on_hand: int
+    avg_daily_units: float  # sales velocity over the lookback window
+    days_of_cover: Optional[float]  # on_hand / velocity; None when no recent sales
+    signal: str  # "markup" (scarce fast mover) | "markdown" (overstock/dead stock)
+    current_price: float
+    suggested_price: float
+    adjustment_pct: float  # signed percentage applied (+markup / −markdown)
+
+
+class DynamicPricingResponse(BaseModel):
+    """Demand-driven dynamic-pricing suggestions (issue #228 — AI slice).
+
+    ``method`` names the model (demand-elasticity proxy today; true elasticity /
+    competitor-aware models later). Only actionable items (a markup or markdown
+    signal) are returned — balanced products are held and omitted — so the surface
+    mirrors ``/products/reorder-suggestions``. Items are ordered most-urgent first:
+    scarce markups (soonest stock-out) ahead of overstock markdowns.
+    """
+
+    method: str
+    lookback_days: int
+    low_cover_days: int
+    high_cover_days: int
+    items: List[DynamicPriceItem]
+    total: int
+
+
 # ============================================================
 # REPORT → PDF EXPORT (RPT-10, F-072)
 # ============================================================
@@ -1692,6 +1725,142 @@ async def get_inventory_forecast(
         horizon_days=horizon,
         items=forecast,
         total=len(forecast),
+    )
+
+
+@router.get("/api/v1/reports/dynamic-pricing", response_model=DynamicPricingResponse)
+async def get_dynamic_pricing(
+    lookback: int = Query(30, ge=1, le=365),
+    low_cover_days: int = Query(7, ge=1, le=365),
+    high_cover_days: int = Query(60, ge=1, le=3650),
+    markup_pct: float = Query(10.0, ge=0.0, le=100.0),
+    markdown_pct: float = Query(15.0, ge=0.0, le=100.0),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Turn per-product demand into a dynamic price-adjustment signal (#228).
+
+    Reuses the same velocity + days-of-cover basis as ``/reports/inventory-forecast``
+    but reads it as a *pricing* lever rather than a reorder one:
+
+    * days-of-cover ≤ ``low_cover_days`` → the product is scarce relative to demand,
+      so a **markup** (``+markup_pct``) protects margin and paces depletion;
+    * days-of-cover ≥ ``high_cover_days`` — or on-hand with no recent sales at all
+      (infinite cover) — → the product is overstocked / dead, so a **markdown**
+      (``−markdown_pct``) stimulates demand and clears inventory;
+    * anything between the two is balanced and **held** (omitted from the response).
+
+    Tenant-scoped. Velocity is folded from each transaction's ``items_json`` via a
+    server-side cursor keyed by product (peak memory O(distinct products), never
+    O(transactions)), exactly like ``/reports/inventory-forecast``. Held/voided
+    tickets are not demand and are excluded; digital products carry no physical
+    stock, so scarcity pricing never applies to them.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    # Physical-stock catalogue for this tenant (digital products excluded up front —
+    # no physical stock means no scarcity signal to price against).
+    prod_result = await db.execute(
+        select(Products).where(
+            and_(
+                Products.client_id == client_id,
+                Products.is_active == True,
+                Products.is_digital.is_distinct_from(True),
+            )
+        )
+    )
+    products = {p.id: p for p in prod_result.scalars().all()}
+
+    # Fold units sold per product across the window (OPS-05: stream only the JSON
+    # column; accumulate into a bounded dict, never materialize the whole period).
+    units_sold: dict = {}
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                # POS-10/POS-08: parked (held) and voided tickets are not demand.
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id", 0)
+            if pid not in products:
+                continue  # unknown / digital / other-tenant product → skip
+            units_sold[pid] = units_sold.get(pid, 0) + (item.get("quantity", 0) or 0)
+
+    suggestions: list = []
+    for pid, p in products.items():
+        on_hand = int(p.quantity or 0)
+        sold = units_sold.get(pid, 0)
+        velocity = sold / lookback if lookback > 0 else 0.0
+        days_of_cover = round(on_hand / velocity, 1) if velocity > 0 else None
+        price = float(p.price or 0.0)
+
+        # Overstock / dead stock (infinite cover, or cover past the ceiling) → markdown;
+        # scarce fast mover (cover at/under the floor) → markup; otherwise hold.
+        if velocity <= 0:
+            signal = "markdown" if on_hand > 0 else "hold"
+        elif days_of_cover is not None and days_of_cover <= low_cover_days:
+            signal = "markup"
+        elif days_of_cover is not None and days_of_cover >= high_cover_days:
+            signal = "markdown"
+        else:
+            signal = "hold"
+
+        if signal == "hold":
+            continue
+
+        adjustment = markup_pct if signal == "markup" else -markdown_pct
+        suggested_price = round(price * (1 + adjustment / 100.0), 2)
+        suggestions.append(
+            DynamicPriceItem(
+                product_id=pid,
+                name=p.name,
+                name_ar=p.name_ar,
+                on_hand=on_hand,
+                avg_daily_units=round(velocity, 4),
+                days_of_cover=days_of_cover,
+                signal=signal,
+                current_price=round(price, 2),
+                suggested_price=suggested_price,
+                adjustment_pct=round(adjustment, 2),
+            )
+        )
+
+    # Most urgent first: markups (scarce, soonest stock-out) ahead of markdowns;
+    # within markups by ascending cover, markdowns by descending cover (deadest first).
+    def _rank(s: DynamicPriceItem):
+        if s.signal == "markup":
+            return (0, s.days_of_cover if s.days_of_cover is not None else 0.0)
+        # markdown: no-sales (None cover) is the deadest → sort it last-of-first via -inf trick
+        cover = s.days_of_cover if s.days_of_cover is not None else float("inf")
+        return (1, -cover)
+
+    suggestions.sort(key=_rank)
+
+    return DynamicPricingResponse(
+        method="demand_elasticity",
+        lookback_days=lookback,
+        low_cover_days=low_cover_days,
+        high_cover_days=high_cover_days,
+        items=suggestions,
+        total=len(suggestions),
     )
 
 
