@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from services.audit_logs import Audit_logsService
+from services.audit import build_regulatory_audit_export
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from schemas.auth import UserResponse
@@ -47,6 +48,41 @@ class Audit_logsListResponse(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class RegulatoryExportIntegrity(BaseModel):
+    """Reconcile status of the audit trail (outcome of ``verify_audit_chain``)."""
+    verified: bool
+    checked: int
+    broken_id: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class RegulatoryAuditRecord(BaseModel):
+    """A raw audit row, chain hashes included, for independent re-verification."""
+    id: int
+    user_id: str
+    owner_user_id: Optional[str] = None
+    action: str
+    details: Optional[str] = None
+    ip_address: Optional[str] = None
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    changes: Optional[str] = None
+    prev_hash: Optional[str] = None
+    row_hash: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class RegulatoryAuditExportResponse(BaseModel):
+    """A self-describing, independently verifiable regulatory audit artifact."""
+    artifact_type: str
+    format_version: str
+    generated_at: datetime
+    owner_user_id: Optional[str] = None
+    record_count: int
+    integrity: RegulatoryExportIntegrity
+    records: List[RegulatoryAuditRecord]
 
 
 # ---------- Routes ----------
@@ -127,6 +163,28 @@ async def query_audit_logss_all(
         raise
     except Exception as e:
         logger.error(f"Error querying audit_logss: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.get("/regulatory-export", response_model=RegulatoryAuditExportResponse)
+async def regulatory_audit_export(
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Produce a compliant regulatory audit-trail artifact for the caller's tenant.
+
+    Owner-scoped (SEC-02): a tenant gets only its own audit rows (the platform
+    master gets the whole store). The artifact carries the raw compliance rows
+    with their tamper-evidence hash chain and surfaces the store's reconcile
+    status so it attests whether the trail is intact. Declared before ``/{id}``
+    so the literal segment isn't parsed as an audit-row id.
+    """
+    logger.debug("Building regulatory audit export for owner=%s", scope.owner_user_id)
+    try:
+        return await build_regulatory_audit_export(db, owner_user_id=scope.owner_user_id)
+    except Exception as e:
+        logger.error(f"Error building regulatory audit export: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 

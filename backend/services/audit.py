@@ -155,3 +155,67 @@ async def verify_audit_chain(db: AsyncSession) -> AuditChainResult:
         checked += 1
 
     return AuditChainResult(True, None, None, checked)
+
+
+# The export artifact's schema version, bumped when its shape changes so an
+# external verifier can key its parser off a stable field.
+REGULATORY_EXPORT_FORMAT_VERSION = "1.0"
+
+
+def _export_record(row: Audit_logs) -> dict:
+    """The raw compliance content of one audit row, including its chain hashes.
+
+    Unlike the AuditLog read-projection (which normalizes ``action`` to a verb and
+    resolves the actor email for display), the regulatory artifact carries the
+    stored fields verbatim plus ``prev_hash``/``row_hash`` so an external auditor
+    can independently re-derive ``compute_row_hash`` and re-walk the chain.
+    """
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "owner_user_id": row.owner_user_id,
+        "action": row.action,
+        "details": row.details,
+        "ip_address": row.ip_address,
+        "entity_type": row.entity_type,
+        "entity_id": row.entity_id,
+        "changes": row.changes,
+        "prev_hash": row.prev_hash,
+        "row_hash": row.row_hash,
+        "created_at": row.created_at,
+    }
+
+
+async def build_regulatory_audit_export(
+    db: AsyncSession, owner_user_id: Optional[str] = None
+) -> dict:
+    """Build a self-describing, independently verifiable audit-trail artifact.
+
+    Owner-scoped (SEC-02): a tenant caller (``owner_user_id`` set) gets only their
+    own rows; the platform master (``None``) gets the whole store. The artifact
+    surfaces the *reconcile status* — the outcome of ``verify_audit_chain`` over
+    the (globally chained) store — so it attests whether the trail is intact.
+    """
+    query = select(Audit_logs).order_by(Audit_logs.id.asc())
+    if owner_user_id:
+        query = query.where(Audit_logs.owner_user_id == owner_user_id)
+    rows = (await db.execute(query)).scalars().all()
+
+    # The hash chain links every row across the store, so integrity is a
+    # store-wide attestation (re-walked over the full chain, not the scoped slice).
+    chain = await verify_audit_chain(db)
+
+    return {
+        "artifact_type": "regulatory_audit_export",
+        "format_version": REGULATORY_EXPORT_FORMAT_VERSION,
+        "generated_at": datetime.now(),
+        "owner_user_id": owner_user_id,
+        "record_count": len(rows),
+        "integrity": {
+            "verified": chain.ok,
+            "checked": chain.checked,
+            "broken_id": chain.broken_id,
+            "reason": chain.reason,
+        },
+        "records": [_export_record(r) for r in rows],
+    }
