@@ -20,6 +20,7 @@ import { getDiscounts, createDiscount, updateDiscount, deleteDiscount } from '@/
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
@@ -350,6 +351,110 @@ export default function DiscountManagement() {
     );
   }
 
+  const discountColumns: DataTableColumn<Discount>[] = [
+    {
+      key: 'code',
+      header: t('code'),
+      cell: (discount) => (
+        <code className="bg-muted px-2 py-0.5 rounded text-brand-700 font-mono text-xs" dir="ltr">
+          {discount.code}
+        </code>
+      ),
+    },
+    {
+      key: 'type',
+      header: t('discount_type'),
+      cell: (discount) =>
+        discount.type === 'percentage' ? t('discount_percentage') : t('discount_fixed'),
+    },
+    {
+      key: 'value',
+      header: t('discount_value'),
+      className: 'font-medium text-foreground tabular-nums',
+      cell: (discount) =>
+        discount.type === 'percentage'
+          ? `${discount.value}%`
+          : formatMoney(discount.value, language),
+    },
+    {
+      key: 'min_purchase',
+      header: t('min_purchase'),
+      className: 'tabular-nums',
+      cell: (discount) =>
+        discount.min_purchase ? formatMoney(discount.min_purchase, language) : '—',
+    },
+    {
+      key: 'usage',
+      header: t('usage'),
+      className: 'tabular-nums',
+      cell: (discount) =>
+        `${discount.usage_count ?? 0}${discount.max_uses ? ` / ${discount.max_uses}` : ' / ∞'}`,
+    },
+    {
+      key: 'validity',
+      header: t('validity_window'),
+      cell: (discount) =>
+        !discount.starts_at && !discount.ends_at ? (
+          <span className="text-muted-foreground">{t('validity_always')}</span>
+        ) : (
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground" dir="ltr">
+              {discount.starts_at ? toLocalInput(discount.starts_at) : '…'}
+              {' → '}
+              {discount.ends_at ? toLocalInput(discount.ends_at) : '…'}
+            </span>
+            {windowState(discount) === 'scheduled' && (
+              <span className="pill-warning w-fit">{t('discount_scheduled')}</span>
+            )}
+            {windowState(discount) === 'expired' && (
+              <span className="pill-danger w-fit">{t('discount_expired')}</span>
+            )}
+          </div>
+        ),
+    },
+    {
+      key: 'status',
+      header: t('status'),
+      cell: (discount) =>
+        discount.is_active !== false ? (
+          <span className="pill-success">{t('active')}</span>
+        ) : (
+          <span className="pill-muted">{t('inactive')}</span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: t('actions'),
+      cell: (discount) => (
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => toggleStatus(discount)}
+            className={`text-xs ${
+              discount.is_active !== false
+                ? 'border-warning/40 text-warning hover:bg-warning/10'
+                : 'border-success/40 text-success hover:bg-success/10'
+            }`}
+          >
+            {discount.is_active !== false ? t('disable') : t('enable')}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => openEdit(discount)} className="text-xs">
+            {t('edit')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openDelete(discount)}
+            className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
+          >
+            {t('delete')}
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div dir={isRTL ? 'rtl' : 'ltr'} className="animate-fade-up space-y-6">
       <PageHeading
@@ -389,122 +494,13 @@ export default function DiscountManagement() {
       </div>
 
       {/* Table */}
-      <div className="dxr-tile overflow-x-auto p-0">
-        <table className="w-full text-sm">
-          <thead className="bg-muted/40">
-            <tr className="text-muted-foreground">
-              <th className="p-3 text-start">{t('code')}</th>
-              <th className="p-3 text-start">{t('discount_type')}</th>
-              <th className="p-3 text-start">{t('discount_value')}</th>
-              <th className="p-3 text-start">{t('min_purchase')}</th>
-              <th className="p-3 text-start">{t('usage')}</th>
-              <th className="p-3 text-start">{t('validity_window')}</th>
-              <th className="p-3 text-start">{t('status')}</th>
-              <th className="p-3 text-start">{t('actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {discounts.length === 0 ? (
-              <tr>
-                <td colSpan={8} className="p-6 text-center text-muted-foreground">
-                  {t('no_discounts')}
-                </td>
-              </tr>
-            ) : (
-              discounts.map((discount) => (
-                <tr key={discount.id} className="border-t border-border text-foreground/90">
-                  <td className="p-3">
-                    <code className="bg-muted px-2 py-0.5 rounded text-brand-700 font-mono text-xs" dir="ltr">
-                      {discount.code}
-                    </code>
-                  </td>
-                  <td className="p-3">
-                    {discount.type === 'percentage' ? t('discount_percentage') : t('discount_fixed')}
-                  </td>
-                  <td className="p-3 font-medium text-foreground tabular-nums">
-                    {discount.type === 'percentage'
-                      ? `${discount.value}%`
-                      : formatMoney(discount.value, language)}
-                  </td>
-                  <td className="p-3 tabular-nums">
-                    {discount.min_purchase ? formatMoney(discount.min_purchase, language) : '—'}
-                  </td>
-                  <td className="p-3 tabular-nums">
-                    {discount.usage_count ?? 0}
-                    {discount.max_uses ? ` / ${discount.max_uses}` : ' / ∞'}
-                  </td>
-                  <td className="p-3">
-                    {!discount.starts_at && !discount.ends_at ? (
-                      <span className="text-muted-foreground">{t('validity_always')}</span>
-                    ) : (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs text-muted-foreground" dir="ltr">
-                          {discount.starts_at ? toLocalInput(discount.starts_at) : '…'}
-                          {' → '}
-                          {discount.ends_at ? toLocalInput(discount.ends_at) : '…'}
-                        </span>
-                        {windowState(discount) === 'scheduled' && (
-                          <span className="pill-warning w-fit">
-                            {t('discount_scheduled')}
-                          </span>
-                        )}
-                        {windowState(discount) === 'expired' && (
-                          <span className="pill-danger w-fit">
-                            {t('discount_expired')}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    {discount.is_active !== false ? (
-                      <span className="pill-success">
-                        {t('active')}
-                      </span>
-                    ) : (
-                      <span className="pill-muted">
-                        {t('inactive')}
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => toggleStatus(discount)}
-                        className={`text-xs ${
-                          discount.is_active !== false
-                            ? 'border-warning/40 text-warning hover:bg-warning/10'
-                            : 'border-success/40 text-success hover:bg-success/10'
-                        }`}
-                      >
-                        {discount.is_active !== false ? t('disable') : t('enable')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEdit(discount)}
-                        className="text-xs"
-                      >
-                        {t('edit')}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openDelete(discount)}
-                        className="border-danger/40 text-danger hover:bg-danger/10 text-xs"
-                      >
-                        {t('delete')}
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        className="dxr-tile p-0"
+        columns={discountColumns}
+        rows={discounts}
+        rowKey={(discount) => discount.id}
+        empty={t('no_discounts')}
+      />
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
