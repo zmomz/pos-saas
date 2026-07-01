@@ -131,18 +131,21 @@ export default function ForceResetPassword() {
         <Input
           type="password"
           placeholder={t('current_temp_password')}
+          aria-label={t('current_temp_password')}
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
         />
         <Input
           type="password"
           placeholder={t('new_password')}
+          aria-label={t('new_password')}
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
         />
         <Input
           type="password"
           placeholder={t('confirm_password')}
+          aria-label={t('confirm_password')}
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
         />
