@@ -462,6 +462,14 @@ export default function KDS() {
                             <span
                               className={`flex items-center gap-1 text-xs ${late ? 'text-danger' : 'text-muted-foreground'}`}
                             >
+                              {/* Color-blind-safe cue (ISSUE-226): lateness is
+                                  carried by an icon + text label, not red alone. */}
+                              {late && (
+                                <span className="inline-flex items-center gap-0.5 font-semibold uppercase">
+                                  <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                                  {t('kds_late')}
+                                </span>
+                              )}
                               <Clock className="h-3 w-3" />
                               {elapsedLabel(card.fired_at, now)}
                             </span>
