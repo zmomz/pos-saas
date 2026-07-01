@@ -21,7 +21,8 @@ from models.transactions import Transactions
 
 
 async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: float,
-                     items, status: str = "completed", idx: int = 0):
+                     items, status: str = "completed", idx: int = 0,
+                     payment_method: str = "cash"):
     """Insert one transaction carrying ``items`` (list of {product_id, quantity})."""
     import json as _json
 
@@ -31,12 +32,12 @@ async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: fl
             Transactions(
                 user_id=user_id,
                 client_id=client_id,
-                invoice_number=f"INV-AS-{client_id}-{status}-{idx}",
+                invoice_number=f"INV-AS-{client_id}-{status}-{payment_method}-{idx}",
                 subtotal=total,
                 vat_amount=0.0,
                 discount_amount=0.0,
                 total_amount=total,
-                payment_method="cash",
+                payment_method=payment_method,
                 status=status,
                 items_json=_json.dumps(items),
                 created_at=created,
@@ -797,3 +798,69 @@ async def test_assistant_dead_stock_handles_all_moving(client):
     assert body["intent"] == "dead_stock"
     assert body["data"]["count"] == 0
     assert body["data"]["products"] == []
+
+
+async def test_assistant_reports_payment_mix(client):
+    """"How do my customers pay?" → a tender breakdown over the last 30 days,
+    ranked by net revenue, with the dominant tender named. Credit notes net
+    against their own tender; held/voided tickets are not selling activity."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Card takes the most money (500), cash next (300 gross − 50 refund = 250).
+    await _seed_sale(client_id, user["id"], days_ago=2, total=300.0, items=[],
+                     payment_method="card", idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=200.0, items=[],
+                     payment_method="card", idx=2)
+    await _seed_sale(client_id, user["id"], days_ago=4, total=300.0, items=[],
+                     payment_method="cash", idx=3)
+    # A cash refund nets that tender down but is not itself an order.
+    await _seed_sale(client_id, user["id"], days_ago=5, total=50.0, items=[],
+                     payment_method="cash", status="credit_note", idx=4)
+    # Held/voided and out-of-window sales must never count.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     payment_method="card", status="held", idx=5)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     payment_method="cash", status="voided", idx=6)
+    await _seed_sale(client_id, user["id"], days_ago=40, total=999.0, items=[],
+                     payment_method="card", idx=7)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how do my customers pay", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "payment_mix"
+    data = body["data"]
+    assert data["order_count"] == 3  # two card + one cash; refund not an order
+    assert abs(data["total_net"] - 750.0) < 0.01  # 500 card + 250 cash
+
+    methods = data["methods"]
+    assert [m["method"] for m in methods] == ["card", "cash"]  # ranked by revenue
+    card, cash = methods
+    assert abs(card["net_sales"] - 500.0) < 0.01
+    assert card["order_count"] == 2
+    assert abs(card["share"] - (500.0 / 750.0)) < 0.001
+    assert abs(cash["net_sales"] - 250.0) < 0.01
+    assert cash["order_count"] == 1
+
+    assert data["dominant"]["method"] == "card"
+    assert "card" in body["answer"].lower()
+
+
+async def test_assistant_payment_mix_handles_empty_window(client):
+    """No sales in the window → graceful message, empty breakdown, HTTP 200."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my cash vs card breakdown", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "payment_mix"
+    assert body["data"]["methods"] == []
+    assert body["data"]["dominant"] is None
+    assert body["data"]["order_count"] == 0

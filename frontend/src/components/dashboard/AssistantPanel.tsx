@@ -113,6 +113,7 @@ const DEFAULT_SUGGESTIONS = [
   'What is my best selling product?',
   'How much did I sell today?',
   'What is my average order value?',
+  'How do my customers pay?',
   'What is my sales forecast for next week?',
   'Is business up or down this week?',
   'When are we busiest?',

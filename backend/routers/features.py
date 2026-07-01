@@ -2698,7 +2698,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | sales_today | average_order | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | unknown
+    intent: str  # top_product | top_margin | sales_today | average_order | payment_mix | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2785,6 +2785,16 @@ _ASSISTANT_INTENTS = [
                     "rush hour", "when are we busy", "when do we sell",
                     "what time do we", "quietest", "ساعات الذروة", "الذروة",
                     "أكثر الأوقات", "أزحم"]),
+    # Checked before ``sales_today`` so a "how do my customers pay / cash vs card"
+    # routes to the tender-mix read rather than today's takings. Its cues are the
+    # vocabulary of *how money comes in* ("payment method", "cash vs card",
+    # "tender"), distinct from the how-much/when intents above.
+    ("payment_mix", ["how do my customers pay", "how do customers pay",
+                     "how are customers paying", "how are people paying",
+                     "payment mix", "payment method", "payment methods",
+                     "cash vs card", "card vs cash", "cash or card", "tender mix",
+                     "how do they pay", "way they pay", "طرق الدفع", "طريقة الدفع",
+                     "نقد أم بطاقة", "نقدا أم بطاقة", "وسائل الدفع"]),
     ("sales_today", ["today", "revenue today", "sold today", "sales today",
                      "takings", "اليوم", "مبيعات اليوم"]),
 ]
@@ -2794,6 +2804,7 @@ _ASSISTANT_SUGGESTIONS = [
     "Which product is most profitable?",
     "How much did I sell today?",
     "What is my average order value?",
+    "How do my customers pay?",
     "What is my sales forecast for next week?",
     "Is business up or down this week?",
     "When are we busiest?",
@@ -2996,6 +3007,72 @@ async def _assistant_average_order_value(db: AsyncSession, client_id: int) -> di
     orders = int(row[1] or 0)
     avg = round(net_sales / orders, 2) if orders else 0.0
     return {"net_sales": net_sales, "order_count": orders, "average_order_value": avg}
+
+
+async def _assistant_payment_mix(db: AsyncSession, client_id: int) -> dict:
+    """Tender mix over the last 30 days — net revenue and order count per payment
+    method, ranked by revenue, with the dominant tender named.
+
+    One grouped pass over the window using the same money rule as the financial
+    reports: a credit note nets against its own tender (so a refund lowers that
+    method's take) but is not itself an order; held/voided tickets are not selling
+    activity. A missing ``payment_method`` folds into ``"unknown"``. An empty
+    window yields an empty breakdown and ``dominant`` ``None`` rather than a crash.
+    """
+    lookback = 30
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    is_credit_note = Transactions.status == "credit_note"
+    net_value = func.coalesce(
+        func.sum(
+            case((is_credit_note, -Transactions.total_amount), else_=Transactions.total_amount)
+        ),
+        0.0,
+    )
+    order_count = func.coalesce(func.sum(case((is_credit_note, 0), else_=1)), 0)
+    rows = (
+        await db.execute(
+            select(Transactions.payment_method, net_value, order_count)
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+            .group_by(Transactions.payment_method)
+        )
+    ).all()
+
+    # Fold any NULL/duplicate-cased tenders into a single labelled bucket.
+    by_method: dict[str, dict] = {}
+    for method, net, count in rows:
+        label = (method or "unknown")
+        bucket = by_method.setdefault(label, {"net": 0.0, "orders": 0})
+        bucket["net"] += float(net or 0.0)
+        bucket["orders"] += int(count or 0)
+
+    total_net = round(sum(b["net"] for b in by_method.values()), 2)
+    # Ranked by net revenue (name tiebreak) — the money-in view a shop owner reads.
+    methods = [
+        {
+            "method": label,
+            "net_sales": round(b["net"], 2),
+            "order_count": b["orders"],
+            "share": round(b["net"] / total_net, 4) if total_net else 0.0,
+        }
+        for label, b in sorted(
+            by_method.items(), key=lambda kv: (-kv[1]["net"], kv[0])
+        )
+    ]
+    order_total = sum(b["orders"] for b in by_method.values())
+    return {
+        "lookback_days": lookback,
+        "total_net": total_net,
+        "order_count": order_total,
+        "methods": methods,
+        "dominant": methods[0] if methods else None,
+    }
 
 
 async def _assistant_sales_forecast(db: AsyncSession, client_id: int) -> dict:
@@ -3589,6 +3666,28 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=aov, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "payment_mix":
+        pm = await _assistant_payment_mix(db, client_id)
+        if pm["methods"]:
+            breakdown = ", ".join(
+                f"{m['method']} {m['net_sales']:.2f} ({m['share'] * 100:.0f}%)"
+                for m in pm["methods"]
+            )
+            dominant = pm["dominant"]
+            answer = (
+                f"Over the last {pm['lookback_days']} days your customers paid mostly "
+                f"by {dominant['method']} ({dominant['share'] * 100:.0f}% of takings). "
+                f"Full mix: {breakdown}."
+            )
+        else:
+            answer = (
+                "No sales in the last 30 days yet, so there's no payment mix to report."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=pm, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "sales_forecast":
