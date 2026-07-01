@@ -1130,6 +1130,28 @@ class TopProductsResponse(BaseModel):
     items: List[TopProductItem]
 
 
+class SalesForecastPoint(BaseModel):
+    date: str  # projected day, YYYY-MM-DD
+    forecast_sales: float
+
+
+class SalesForecastResponse(BaseModel):
+    """Naive sales-revenue forecast (issue #228 — AI/forecasting tracer bullet).
+
+    ``method`` names the model so the response is self-describing as it grows
+    (moving-average today; trend/seasonal later). ``avg_daily_sales`` is the mean
+    daily take over the lookback window and is the value projected forward for
+    every ``points`` entry.
+    """
+
+    method: str
+    lookback_days: int
+    horizon_days: int
+    history_total: float
+    avg_daily_sales: float
+    points: List[SalesForecastPoint]
+
+
 # ============================================================
 # REPORT → PDF EXPORT (RPT-10, F-072)
 # ============================================================
@@ -1474,6 +1496,68 @@ async def get_top_products(
     if format == "pdf":
         return _pdf_top_products(resp)
     return resp
+
+
+@router.get("/api/v1/reports/sales-forecast", response_model=SalesForecastResponse)
+async def get_sales_forecast(
+    lookback: int = Query(30, ge=1, le=365),
+    horizon: int = Query(7, ge=1, le=90),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Project the next ``horizon`` days of sales revenue (issue #228).
+
+    The first slice of the forecasting epic: a moving-average baseline. We take
+    the mean daily take over the last ``lookback`` days and project it flat over
+    the horizon. It is the classic naive forecast — cheap, explainable, and
+    actionable enough to inform staffing and reorder timing — and a deliberate
+    starting point that later iterations extend (trend, seasonality, per-product
+    inventory forecasts, smart-reorder tie-in).
+
+    Tenant-scoped and server-side aggregated (OPS-05): the history is collapsed to
+    a single ``SUM`` in the database — the result is O(1), never O(transactions).
+    Held/voided sales are excluded exactly as the sibling revenue reports do.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    result = await db.execute(
+        select(func.coalesce(func.sum(Transactions.total_amount), 0.0)).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                # POS-10/POS-08: parked (held) tickets and voided sales are not
+                # revenue, so they must not distort the forecast basis.
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    history_total = float(result.scalar_one() or 0.0)
+    avg_daily = history_total / lookback if lookback > 0 else 0.0
+
+    today = datetime.now(timezone.utc).date()
+    points = [
+        SalesForecastPoint(
+            date=(today + timedelta(days=offset)).strftime("%Y-%m-%d"),
+            forecast_sales=round(avg_daily, 2),
+        )
+        for offset in range(1, horizon + 1)
+    ]
+
+    return SalesForecastResponse(
+        method="moving_average",
+        lookback_days=lookback,
+        horizon_days=horizon,
+        history_total=round(history_total, 2),
+        avg_daily_sales=round(avg_daily, 2),
+        points=points,
+    )
 
 
 async def _export_storage_upload_url(object_key: str) -> Optional[str]:
