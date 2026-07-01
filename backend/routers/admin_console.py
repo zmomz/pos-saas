@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.tenancy import TenantScope, get_tenant_scope
+from services.job_queue import queue_stats
 from services.platform_features import get_feature_flags, set_feature_flag
 from services.platform_settings import get_maintenance_state, set_maintenance_state
 
@@ -43,6 +44,13 @@ class FeatureFlag(BaseModel):
 
 class FeatureFlagUpdate(BaseModel):
     enabled: bool
+
+
+class JobQueueStatus(BaseModel):
+    backend: str
+    healthy: bool
+    queued: int
+    registered_jobs: list[str]
 
 
 def _require_master(scope: TenantScope) -> None:
@@ -98,3 +106,12 @@ async def update_feature_flag(
         return await set_feature_flag(db, key, payload.enabled, updated_by=scope.user_id)
     except KeyError:
         raise HTTPException(status_code=400, detail=f"Unknown feature flag: {key}")
+
+
+@router.get("/jobs", response_model=JobQueueStatus)
+async def read_job_queue(
+    scope: TenantScope = Depends(get_tenant_scope),
+):
+    """Read the background job-queue monitor: backend, health, depth, registry (master only)."""
+    _require_master(scope)
+    return JobQueueStatus(**await queue_stats())

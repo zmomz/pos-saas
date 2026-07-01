@@ -158,6 +158,44 @@ async def enqueue(name: str, **kwargs: Any) -> Optional[str]:
     return None
 
 
+async def queue_stats() -> Dict[str, Any]:
+    """Read-only inventory + health of the background-job queue (admin monitor, #225).
+
+    The operator console's job/queue monitor reads this. Every field is *real*,
+    never fabricated:
+
+    * ``registered_jobs`` — the live registry (:data:`_REGISTRY`), sorted. The
+      import below forces job registration (idempotent) so the monitor reflects
+      every declared job even in a process that has not yet scheduled one.
+    * ``backend`` — the active substrate (``memory`` / ``redis``).
+    * Under ``memory`` jobs run inline in the API process: there is no durable
+      queue to fall behind on (``queued`` is 0) and nothing to be down
+      (``healthy`` True).
+    * Under ``redis`` we query the Arq pool for the real pending depth. If the
+      broker is unreachable (or ``REDIS_URL`` is unset) we report ``healthy``
+      False rather than inventing an up-state — the monitor never lies.
+    """
+    # Side-effect import: populate the registry before we read it.
+    import services.jobs  # noqa: F401
+
+    backend = _backend()
+    stats: Dict[str, Any] = {
+        "backend": backend,
+        "healthy": True,
+        "queued": 0,
+        "registered_jobs": sorted(_REGISTRY.keys()),
+    }
+    if backend == "redis":
+        try:
+            pool = await _get_arq_pool()
+            queued = await pool.queued_jobs()
+            stats["queued"] = len(queued)
+        except Exception:  # noqa: BLE001 - broker down / no URL: report, don't raise
+            logger.exception("Job-queue monitor could not reach the redis backend.")
+            stats["healthy"] = False
+    return stats
+
+
 async def close() -> None:
     """Close the Arq pool on shutdown (no-op under the memory backend)."""
     global _arq_pool
