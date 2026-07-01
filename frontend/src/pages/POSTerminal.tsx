@@ -1752,7 +1752,7 @@ export default function POSTerminal() {
         <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
           {customers.length > 0 && (
             <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
-              <SelectTrigger className="bg-card border-border text-foreground">
+              <SelectTrigger aria-label={t('select_customer')} className="bg-card border-border text-foreground">
                 <SelectValue placeholder={t('select_customer')} />
               </SelectTrigger>
               <SelectContent>
@@ -1769,13 +1769,14 @@ export default function POSTerminal() {
               min={0}
               value={redeemPoints}
               onChange={(e) => setRedeemPoints(e.target.value)}
+              aria-label={t('redeem_points')}
               placeholder={t('redeem_points')}
               className="bg-card border-border text-foreground placeholder:text-muted-foreground"
             />
           )}
           {branches.length > 0 && (
             <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
-              <SelectTrigger className="bg-card border-border text-foreground">
+              <SelectTrigger aria-label={t('select_branch')} className="bg-card border-border text-foreground">
                 <SelectValue placeholder={t('select_branch')} />
               </SelectTrigger>
               <SelectContent>
