@@ -29,6 +29,7 @@ import OfflineBanner from '@/components/states/OfflineBanner';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { toast } from 'sonner';
 import { useLanguage } from '@/lib/i18n';
+import { formatDateTime } from '@/lib/format';
 import { CalendarClock, ListOrdered, Plus, Users, Armchair, X } from 'lucide-react';
 
 // Status badge tints — a seated party reads as a positive outcome (success),
@@ -57,7 +58,7 @@ function statusLabel(t: (k: string) => string, status?: string | null): string {
 }
 
 export default function Reservations() {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -309,7 +310,7 @@ export default function Reservations() {
                             {r.customer_name || t('rw_walk_in')}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {tbl ? tbl.name : '—'} · {r.reserved_at?.replace('T', ' ').slice(0, 16)}{' '}
+                            {tbl ? tbl.name : '—'} · {r.reserved_at ? formatDateTime(r.reserved_at, language) : ''}{' '}
                             · <Users className="inline h-3 w-3" /> {r.party_size ?? '—'}
                           </p>
                         </div>

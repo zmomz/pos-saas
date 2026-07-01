@@ -335,7 +335,11 @@ export default function SubscriptionManagement() {
                   return (
                     <tr key={p.id}>
                       <td className="text-muted-foreground">
-                        {p.period_start || (p.created_at ? p.created_at.slice(0, 10) : '—')}
+                        {p.period_start
+                          ? formatDate(p.period_start, language)
+                          : p.created_at
+                            ? formatDate(p.created_at, language)
+                            : '—'}
                       </td>
                       <td className={cn('font-semibold tabular-nums', refund && 'text-danger')}>
                         {formatMoney(p.amount, language)}

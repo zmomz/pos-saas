@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
 import { LanguageProvider } from '@/lib/i18n';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { formatDate } from '@/lib/format';
 import SubscriptionManagement from './SubscriptionManagement';
 
 // #206 — the merchant self-serve subscription page. Loads the subscription + the
@@ -75,6 +76,25 @@ describe('SubscriptionManagement (#206)', () => {
     expect(screen.getByText(/4242/)).toBeInTheDocument();
     expect(screen.getByText(/VISA/)).toBeInTheDocument();
     expect(screen.getByText('Billing history')).toBeInTheDocument();
+  });
+
+  // #208 (M11 FE-Platform) — dates through the shared formatDate path. The invoice
+  // period column used to render `period_start` raw (`.slice(0, 10)` on the fallback),
+  // a bypass that skipped the locale-aware Gregorian/Western-numeral formatting every
+  // other date on the page (and the AgentDashboard payment rows) already uses.
+  it('renders the invoice period through formatDate, not a raw date string (#208)', async () => {
+    server.use(
+      http.get(SUB, () => HttpResponse.json(activeSub)),
+      http.get(`${SUB}/renewal-preview`, () => HttpResponse.json(activePreview))
+    );
+
+    renderPage();
+
+    await waitFor(() => expect(screen.getByText('Billing history')).toBeInTheDocument());
+    // period_start '2026-07-01' localises to '01/07/2026' (en-GB); the raw ISO date
+    // must not survive.
+    expect(screen.getByText(formatDate('2026-07-01', 'en'))).toBeInTheDocument();
+    expect(screen.queryByText('2026-07-01')).not.toBeInTheDocument();
   });
 
   it('pauses billing through the pause endpoint after confirming', async () => {

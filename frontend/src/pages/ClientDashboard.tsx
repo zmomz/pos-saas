@@ -516,7 +516,7 @@ export default function ClientDashboard() {
                 <div className="space-y-1">
                   {subscription.payments.slice(0, 6).map((p) => (
                     <div key={p.id} className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">{p.period_start || (p.created_at ? p.created_at.slice(0, 10) : '')}</span>
+                      <span className="text-muted-foreground">{p.period_start ? formatDate(p.period_start, language) : (p.created_at ? formatDate(p.created_at, language) : '')}</span>
                       <div className="flex items-center gap-3">
                         <span className="font-semibold tabular-nums">{formatMoney(p.amount, language)}</span>
                         <Button type="button" variant="ghost" size="sm" className="h-7 gap-1 px-2" onClick={() => downloadSubscriptionInvoice(p.id)} title={t('download_invoice') || 'Download invoice'}>

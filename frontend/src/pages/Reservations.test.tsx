@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
 import { selectOption } from '../test/selectOption';
 import { LanguageProvider } from '@/lib/i18n';
+import { formatDateTime } from '@/lib/format';
 import Reservations from './Reservations';
 
 // ISSUE-069 — a restaurant host books a table ahead and queues + seats walk-ins.
@@ -65,6 +66,33 @@ describe('Reservations & waitlist', () => {
     expect(posted!.reserved_at).toBe('2026-12-31T19:30');
     expect(posted!.customer_name).toBe('Al-Otaibi');
     expect(await screen.findByText('Al-Otaibi')).toBeInTheDocument();
+  });
+
+  // #208 (M11 FE-Platform) — dates through the shared formatDateTime path. The
+  // upcoming-reservations list rendered `reserved_at` raw via
+  // `.replace('T', ' ').slice(0, 16)`, a bypass that skipped the locale-aware
+  // Gregorian/Western-numeral formatting used everywhere else.
+  it('renders reserved_at through formatDateTime, not a raw slice (#208)', async () => {
+    const RESERVED_AT = '2026-12-31T19:30:00Z';
+    server.use(
+      http.get(`${BASE}/api/v1/restaurant/tables`, () =>
+        HttpResponse.json({ items: TABLES, total: TABLES.length })
+      ),
+      http.get(`${BASE}/api/v1/restaurant/reservations`, () =>
+        HttpResponse.json({
+          items: [{ id: 9, status: 'booked', customer_name: 'Al-Otaibi', party_size: 4, table_id: 1, reserved_at: RESERVED_AT }],
+          total: 1,
+        })
+      ),
+      http.get(`${BASE}/api/v1/restaurant/waitlist`, () => HttpResponse.json({ items: [], total: 0 }))
+    );
+
+    const { container } = renderPage();
+
+    await waitFor(() => expect(screen.getByText('Al-Otaibi')).toBeInTheDocument());
+    expect(container.textContent).toContain(formatDateTime(RESERVED_AT, 'en'));
+    // The raw `T`-stripped slice must not survive.
+    expect(container.textContent).not.toContain('2026-12-31 19:30');
   });
 
   it('seats a queued walk-in to a free table (AC2)', async () => {
