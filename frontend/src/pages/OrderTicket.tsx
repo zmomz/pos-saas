@@ -764,9 +764,22 @@ export default function OrderTicket() {
               const groupSelected = g.modifiers.filter((m) => selectedMods.has(m.id)).length;
               const unmet = g.required && groupSelected === 0;
               return (
-                <div key={g.id} className="rounded-md border border-border p-3">
+                <div
+                  key={g.id}
+                  // Expose each modifier group to assistive tech: a single-select
+                  // group is a radiogroup, a multi-select group is a plain group.
+                  // Either way it is labelled by its heading so a SR user hears the
+                  // group name ("Size"), and required single-select groups carry
+                  // aria-required so the constraint is programmatic, not colour-only.
+                  role={g.max_select === 1 ? 'radiogroup' : 'group'}
+                  aria-labelledby={`modgroup-${g.id}-label`}
+                  aria-required={g.max_select === 1 && g.required ? true : undefined}
+                  className="rounded-md border border-border p-3"
+                >
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-sm text-foreground">{g.name}</span>
+                    <span id={`modgroup-${g.id}-label`} className="text-sm text-foreground">
+                      {g.name}
+                    </span>
                     {g.required && (
                       <Badge className={unmet ? 'pill-danger' : 'pill-success'}>
                         {t('required')}
