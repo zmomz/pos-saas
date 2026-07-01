@@ -148,7 +148,7 @@ export default function ForecastInsights() {
           ) : sales ? (
             <div className="flex flex-wrap gap-8">
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                <p className="text-xs uppercase tracking-wide rtl:tracking-normal text-muted-foreground">
                   {tr('avg_daily_sales')}
                 </p>
                 <p className="text-2xl font-bold tabular-nums text-foreground">
@@ -156,7 +156,7 @@ export default function ForecastInsights() {
                 </p>
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                <p className="text-xs uppercase tracking-wide rtl:tracking-normal text-muted-foreground">
                   {tr('projected_demand')}
                 </p>
                 <p className="text-2xl font-bold tabular-nums text-foreground">
@@ -170,7 +170,7 @@ export default function ForecastInsights() {
                   trend model is selected (moving_average is flat, trend 0). */}
               {sales.method === 'linear_trend' && (
                 <div data-testid="sales-trend">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <p className="text-xs uppercase tracking-wide rtl:tracking-normal text-muted-foreground">
                     {tr('daily_trend')}
                   </p>
                   {(() => {
