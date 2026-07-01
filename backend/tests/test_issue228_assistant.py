@@ -578,3 +578,69 @@ async def test_assistant_rejects_non_clients(client):
         headers=auth_headers(token),
     )
     assert resp.status_code == 403, resp.text
+
+
+async def test_assistant_forecasts_which_products_will_run_out(client):
+    """"Which products will run out soon?" → a velocity/days-of-cover forecast,
+    distinct from the reorder-quantity and static low-stock answers. A fast mover
+    that will burn through its on-hand within the horizon is listed with a
+    days-of-cover estimate; a well-stocked slow mover is not."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Beans: 6 on hand, sold 60 units over the window → 2/day → 3 days of cover;
+    # projected 14-day demand (28) far exceeds on-hand → will run out.
+    beans = await _seed_product(client_id, user["id"], name="Beans", quantity=6)
+    # Cups: 500 on hand, sold 30 → 1/day → 14-day demand (14) < on-hand → safe.
+    cups = await _seed_product(client_id, user["id"], name="Cups", quantity=500)
+    # Gift Card: digital → never a stock-out candidate even at 0 stock.
+    await _seed_product(client_id, user["id"], name="Gift Card", quantity=0,
+                        is_digital=True)
+
+    await _seed_sale(client_id, user["id"], days_ago=3, total=10.0,
+                     items=[{"product_id": beans, "quantity": 60}], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=4, total=10.0,
+                     items=[{"product_id": cups, "quantity": 30}], idx=2)
+    # A held ticket and an out-of-window sale must not inflate velocity.
+    await _seed_sale(client_id, user["id"], days_ago=2, total=10.0,
+                     items=[{"product_id": beans, "quantity": 999}],
+                     status="held", idx=3)
+    await _seed_sale(client_id, user["id"], days_ago=45, total=10.0,
+                     items=[{"product_id": beans, "quantity": 999}], idx=4)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=which products will run out soon", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "stock_out"
+    assert body["data"]["lookback_days"] == 30
+    assert body["data"]["horizon_days"] == 14
+    assert body["data"]["count"] == 1
+    item = body["data"]["products"][0]
+    assert item["product_id"] == beans
+    assert item["on_hand"] == 6
+    assert abs(item["daily_velocity"] - 2.0) < 0.01
+    assert abs(item["days_of_cover"] - 3.0) < 0.01
+    assert "Beans" in body["answer"]
+    # The well-stocked and digital items never appear.
+    assert cups not in [p["product_id"] for p in body["data"]["products"]]
+
+
+async def test_assistant_stock_out_handles_nothing_at_risk(client):
+    """No sales (so no velocity) → nothing will run out, not a crash or bad list."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_product(client_id, user["id"], name="Beans", quantity=5)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=when will my stock run out", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "stock_out"
+    assert body["data"]["count"] == 0
+    assert body["data"]["products"] == []

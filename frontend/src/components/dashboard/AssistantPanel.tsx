@@ -117,6 +117,7 @@ const DEFAULT_SUGGESTIONS = [
   'Is business up or down this week?',
   'When are we busiest?',
   'What should I reorder?',
+  'Which products will run out soon?',
   'Which products should I discount?',
   'Which products are low on stock?',
 ];

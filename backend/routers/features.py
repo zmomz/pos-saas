@@ -2476,7 +2476,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | sales_today | average_order | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | low_stock | unknown
+    intent: str  # top_product | sales_today | average_order | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2487,6 +2487,15 @@ class AssistantAnswer(BaseModel):
 # routes revenue). Bilingual: the app is Arabic-first, so each intent carries a
 # few Arabic cue words alongside the English ones.
 _ASSISTANT_INTENTS = [
+    # Checked before ``smart_reorder``/``low_stock`` so a *timing* question ("when
+    # will X run out", "which products will run out soon", "days of cover") routes
+    # to the velocity/days-of-cover stock-out forecast rather than a reorder
+    # quantity or the static low-stock list. Its cues are the vocabulary of
+    # *running out over time*, distinct from "how much to reorder" and "which are
+    # low right now".
+    ("stock_out", ["run out", "runs out", "run dry", "stock out", "stockout",
+                   "how long will", "days of cover", "days of stock",
+                   "when will i run out", "متى ينفد", "سينفد", "أيام التغطية"]),
     # Checked before ``low_stock`` so an actionable "what/how much should I
     # reorder" routes to the velocity-driven suggestion rather than the static
     # low-stock list. ``low_stock`` keeps the pure "which are low" phrasings.
@@ -2545,6 +2554,7 @@ _ASSISTANT_SUGGESTIONS = [
     "Is business up or down this week?",
     "When are we busiest?",
     "What should I reorder?",
+    "Which products will run out soon?",
     "Which products should I discount?",
     "Which products are low on stock?",
 ]
@@ -2910,6 +2920,93 @@ async def _assistant_smart_reorder(db: AsyncSession, client_id: int) -> dict:
     }
 
 
+async def _assistant_stock_out(db: AsyncSession, client_id: int) -> dict:
+    """Which products will run out soon — the days-of-cover stock-out forecast.
+
+    The conversational surface over ``/reports/inventory-forecast``. Where
+    ``smart_reorder`` sizes a *quantity* to buy and ``low_stock`` lists products
+    below a static reorder point, this answers the *timing* question: at the last
+    30 days' sales pace, which products burn through their on-hand stock within
+    the next ``horizon`` days, and how soon. Each product's velocity (units sold /
+    lookback) yields a days-of-cover figure; a product is at risk when its
+    projected demand over the horizon would exceed on-hand. Held/voided tickets
+    and out-of-window sales are excluded (same rule as ``smart_reorder``); digital
+    products carry no physical stock and never appear; a product with no recent
+    sales has zero velocity and never appears (you can't run out of what isn't
+    selling). Results are soonest-stockout-first, so an empty window yields an
+    empty list rather than a crash.
+    """
+    lookback, horizon = 30, 14
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    prod_result = await db.execute(
+        select(Products.id, Products.name, Products.name_ar, Products.quantity).where(
+            and_(
+                Products.client_id == client_id,
+                Products.is_active == True,
+                Products.is_digital.is_distinct_from(True),
+            )
+        )
+    )
+    catalogue = {
+        pid: {"name": name, "name_ar": name_ar, "on_hand": int(qty or 0)}
+        for pid, name, name_ar, qty in prod_result.all()
+    }
+
+    units_sold: dict = {}
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id", 0)
+            if pid not in catalogue:
+                continue
+            units_sold[pid] = units_sold.get(pid, 0) + (item.get("quantity", 0) or 0)
+
+    at_risk = []
+    for pid, sold in units_sold.items():
+        if sold <= 0:
+            continue
+        velocity = sold / lookback
+        if velocity <= 0:
+            continue
+        on_hand = catalogue[pid]["on_hand"]
+        projected_demand = round(velocity * horizon)
+        if projected_demand <= on_hand:
+            continue  # covered through the horizon → not at risk
+        at_risk.append({
+            "product_id": pid,
+            "name": catalogue[pid]["name"],
+            "name_ar": catalogue[pid]["name_ar"],
+            "on_hand": on_hand,
+            "daily_velocity": round(velocity, 2),
+            "days_of_cover": round(on_hand / velocity, 1),
+            "projected_demand": int(projected_demand),
+        })
+
+    at_risk.sort(key=lambda s: s["days_of_cover"])
+    return {
+        "lookback_days": lookback,
+        "horizon_days": horizon,
+        "count": len(at_risk),
+        "products": at_risk,
+    }
+
+
 async def _assistant_dynamic_pricing(db: AsyncSession, client_id: int) -> dict:
     """Markdown suggestions for overstocked slow-movers — the pricing inverse of
     ``smart_reorder``.
@@ -3091,6 +3188,27 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=fc, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "stock_out":
+        so = await _assistant_stock_out(db, client_id)
+        if so["count"]:
+            lines = ", ".join(
+                f"{p['name']} (~{p['days_of_cover']:g} day(s) left)"
+                for p in so["products"]
+            )
+            answer = (
+                f"At the last 30 days' pace, {so['count']} product(s) will run out "
+                f"within {so['horizon_days']} days: {lines}."
+            )
+        else:
+            answer = (
+                "No products are on track to run out in the next 14 days at your "
+                "current sales pace."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=so, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "smart_reorder":
