@@ -360,7 +360,7 @@ const Shell: React.FC = () => {
                   // Group header: a real text label in the mobile drawer; a
                   // thin divider stands in for it on the 80px desktop icon rail
                   // (the label stays in the a11y tree via sr-only).
-                  <div className="w-full px-2 pt-2 text-[11px] font-bold uppercase tracking-wider text-muted-foreground lg:px-0">
+                  <div className="w-full px-2 pt-2 text-[11px] font-bold uppercase tracking-wider rtl:tracking-normal text-muted-foreground lg:px-0">
                     <span className="lg:sr-only">{t(section.section)}</span>
                     <span aria-hidden="true" className="mx-auto mt-1 hidden h-px w-6 bg-border lg:block" />
                   </div>

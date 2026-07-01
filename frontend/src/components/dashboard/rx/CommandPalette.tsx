@@ -181,7 +181,7 @@ export default function CommandPalette({
               )}
               {displayGroups.map((g) => (
                 <div key={g.label} className="p-1">
-                  <div className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                  <div className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.12em] rtl:tracking-normal text-muted-foreground">
                     {g.label}
                   </div>
                   {g.items.map((it) => {
