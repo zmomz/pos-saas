@@ -2043,6 +2043,220 @@ async def get_customer_analytics(
     )
 
 
+# ============================================================
+# IN-APP ASSISTANT (issue #228 — M9·AI)
+# ============================================================
+# The conversational surface over the same tenant data the /reports/* endpoints
+# expose. This first slice is a deterministic, rule-based intent router: it maps
+# a plain question to one of a small, fixed set of intents and answers each from
+# the merchant's own transactions/catalogue — no external LLM key required, so it
+# is testable and shippable today. ``method`` names the model ("rule_based" now;
+# an LLM-backed router later) so a later slice can swap the engine without moving
+# the surface. Every answer is tenant-scoped and client-only, exactly like the
+# reports it draws on.
+
+
+class AssistantAnswer(BaseModel):
+    """One grounded answer from the in-app assistant (issue #228 — AI slice)."""
+
+    method: str  # "rule_based" today; LLM-backed later
+    query: str  # the question as asked
+    intent: str  # top_product | sales_today | low_stock | unknown
+    answer: str  # human-readable, grounded in the tenant's own data
+    data: dict  # the structured numbers behind the answer
+    suggestions: List[str]  # example questions the assistant can answer
+
+
+# Intent → the phrases that route to it, checked in this order so a more specific
+# intent wins over a broader one (e.g. "low stock" before the bare-"today" that
+# routes revenue). Bilingual: the app is Arabic-first, so each intent carries a
+# few Arabic cue words alongside the English ones.
+_ASSISTANT_INTENTS = [
+    ("low_stock", ["low stock", "low on stock", "running low", "out of stock",
+                   "reorder", "restock", "مخزون", "نفاد", "نفذ"]),
+    ("top_product", ["top product", "top seller", "best seller", "best-seller",
+                     "bestseller", "best selling", "best-selling", "most sold",
+                     "الأكثر", "أفضل منتج", "افضل منتج"]),
+    ("sales_today", ["today", "revenue today", "sold today", "sales today",
+                     "takings", "اليوم", "مبيعات اليوم"]),
+]
+
+_ASSISTANT_SUGGESTIONS = [
+    "What is my best selling product?",
+    "How much did I sell today?",
+    "Which products are low on stock?",
+]
+
+
+def _route_assistant_intent(q: str) -> str:
+    """Map a free-text question to a supported intent (``unknown`` if none)."""
+    text = (q or "").lower()
+    for intent, phrases in _ASSISTANT_INTENTS:
+        if any(phrase in text for phrase in phrases):
+            return intent
+    return "unknown"
+
+
+async def _assistant_top_product(db: AsyncSession, client_id: int) -> dict:
+    """Best-selling product by units over the last 30 days (None-safe)."""
+    start_date = datetime.now(timezone.utc) - timedelta(days=30)
+    # Tenant catalogue keyed by id, so we can name the winner and ignore units
+    # attributed to other tenants' / deleted products.
+    prod_result = await db.execute(
+        select(Products.id, Products.name, Products.name_ar).where(
+            Products.client_id == client_id
+        )
+    )
+    names = {pid: (name, name_ar) for pid, name, name_ar in prod_result.all()}
+
+    units_sold: dict = {}
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id", 0)
+            if pid not in names:
+                continue
+            units_sold[pid] = units_sold.get(pid, 0) + (item.get("quantity", 0) or 0)
+
+    if not units_sold:
+        return {}
+    pid, units = max(units_sold.items(), key=lambda kv: kv[1])
+    name, name_ar = names[pid]
+    return {"product_id": pid, "name": name, "name_ar": name_ar, "units_sold": int(units)}
+
+
+async def _assistant_sales_today(db: AsyncSession, client_id: int) -> dict:
+    """Net takings and completed-order count since 00:00 UTC today.
+
+    A credit note nets against the day's revenue (like the financial reports) but
+    is not a new order; held/voided tickets are not revenue at all.
+    """
+    start_of_day = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    is_credit_note = Transactions.status == "credit_note"
+    net_value = func.coalesce(
+        func.sum(
+            case((is_credit_note, -Transactions.total_amount), else_=Transactions.total_amount)
+        ),
+        0.0,
+    )
+    order_count = func.coalesce(func.sum(case((is_credit_note, 0), else_=1)), 0)
+    row = (
+        await db.execute(
+            select(net_value, order_count).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_of_day,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+        )
+    ).one()
+    return {"net_sales": round(float(row[0] or 0.0), 2), "order_count": int(row[1] or 0)}
+
+
+async def _assistant_low_stock(db: AsyncSession, client_id: int) -> dict:
+    """Reorder-point-aware low-stock products (same rule as /products/low-stock)."""
+    result = await db.execute(
+        select(Products.id, Products.name, Products.name_ar, Products.quantity)
+        .where(
+            and_(
+                Products.client_id == client_id,
+                _low_stock_clause(10),
+                Products.is_active == True,
+                Products.is_digital.is_distinct_from(True),
+            )
+        )
+        .order_by(Products.quantity.asc())
+    )
+    products = [
+        {"product_id": pid, "name": name, "name_ar": name_ar, "on_hand": int(qty or 0)}
+        for pid, name, name_ar, qty in result.all()
+    ]
+    return {"count": len(products), "products": products}
+
+
+@router.get("/api/v1/assistant/query", response_model=AssistantAnswer)
+async def assistant_query(
+    q: str = Query(..., min_length=1, max_length=500),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Answer a plain-language business question from the tenant's own data (#228).
+
+    A deterministic, rule-based tracer for the in-app assistant: the question is
+    routed to one of a small fixed set of intents (top product, today's sales,
+    low stock) and answered from this merchant's transactions/catalogue. An
+    unroutable question degrades to a capability list (still HTTP 200) rather than
+    a 400/500, so the surface always responds. Tenant-scoped and client-only,
+    exactly like the ``/reports/*`` endpoints it draws on.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access the assistant")
+
+    client_id = role_info["entity_id"]
+    intent = _route_assistant_intent(q)
+
+    if intent == "top_product":
+        top = await _assistant_top_product(db, client_id)
+        if top:
+            answer = f"Your best seller is {top['name']} — {top['units_sold']} units sold in the last 30 days."
+        else:
+            answer = "No sales in the last 30 days yet, so there's no best seller to report."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=top, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "sales_today":
+        sales = await _assistant_sales_today(db, client_id)
+        answer = (
+            f"You've taken {sales['net_sales']:.2f} across {sales['order_count']} "
+            f"order(s) so far today."
+        )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=sales, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "low_stock":
+        low = await _assistant_low_stock(db, client_id)
+        if low["count"]:
+            names = ", ".join(p["name"] for p in low["products"])
+            answer = f"{low['count']} product(s) need attention: {names}."
+        else:
+            answer = "Nothing is low on stock right now."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=low, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    return AssistantAnswer(
+        method="rule_based", query=q, intent="unknown",
+        answer="I can't answer that yet. Try one of the questions below.",
+        data={}, suggestions=_ASSISTANT_SUGGESTIONS,
+    )
+
+
 async def _export_storage_upload_url(object_key: str) -> Optional[str]:
     """Best-effort presigned upload URL for archiving an export to object
     storage — the real caller that keeps StorageService from being a façade

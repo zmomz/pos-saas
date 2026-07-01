@@ -1393,6 +1393,29 @@ export async function getDynamicPricing(lookback = 30): Promise<DynamicPricingRe
   return response.data;
 }
 
+// ---- In-app assistant (#228 M9·AI) ----
+// The conversational surface over the tenant's own data. This first slice is a
+// rule-based intent router server-side; the client just passes the question and
+// renders the grounded, self-describing answer. ``method`` names the engine
+// ('rule_based' now; LLM-backed later) and ``intent`` how the question routed.
+export interface AssistantAnswer {
+  method: string;
+  query: string;
+  intent: string; // top_product | sales_today | low_stock | unknown
+  answer: string;
+  data: Record<string, unknown>;
+  suggestions: string[];
+}
+export async function askAssistant(question: string): Promise<AssistantAnswer> {
+  const qs = new URLSearchParams({ q: question }).toString();
+  const response = await client.apiCall.invoke<AssistantAnswer>({
+    url: `/api/v1/assistant/query?${qs}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // ---- Product variants / matrix (INV-04, F-033) ----
 // Each variant is a sellable SKU of a parent product with its own barcode, price
 // and stock. Managed via the generic entity triad at /api/v1/entities/product_variants.
