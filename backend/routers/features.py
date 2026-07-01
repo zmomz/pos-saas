@@ -2174,7 +2174,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | sales_today | average_order | sales_forecast | smart_reorder | low_stock | unknown
+    intent: str  # top_product | sales_today | average_order | sales_forecast | smart_reorder | dynamic_pricing | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2191,6 +2191,14 @@ _ASSISTANT_INTENTS = [
     ("smart_reorder", ["reorder", "restock", "re-order", "re-stock",
                        "what should i order", "what to order", "purchase order",
                        "إعادة طلب", "كمية الطلب"]),
+    # Checked before ``low_stock`` so a pricing-oriented "what should I discount /
+    # mark down" routes to the markdown suggestions rather than a stock list. The
+    # cues are the vocabulary of clearing slow stock, distinct from the reorder
+    # cues above.
+    ("dynamic_pricing", ["dynamic pricing", "markdown", "mark down", "discount",
+                         "price cut", "reduce price", "lower price", "adjust price",
+                         "pricing suggestion", "clearance", "overstock",
+                         "slow moving", "slow-moving", "تخفيض", "تسعير"]),
     ("low_stock", ["low stock", "low on stock", "running low", "out of stock",
                    "مخزون", "نفاد", "نفذ"]),
     ("top_product", ["top product", "top seller", "best seller", "best-seller",
@@ -2216,6 +2224,7 @@ _ASSISTANT_SUGGESTIONS = [
     "What is my average order value?",
     "What is my sales forecast for next week?",
     "What should I reorder?",
+    "Which products should I discount?",
     "Which products are low on stock?",
 ]
 
@@ -2468,6 +2477,115 @@ async def _assistant_smart_reorder(db: AsyncSession, client_id: int) -> dict:
     }
 
 
+async def _assistant_dynamic_pricing(db: AsyncSession, client_id: int) -> dict:
+    """Markdown suggestions for overstocked slow-movers — the pricing inverse of
+    ``smart_reorder``.
+
+    Where ``smart_reorder`` sizes what to *buy* for a fast mover running thin,
+    this sizes what to *cut* for a slow mover sitting on stock. For each active,
+    stockable, priced product it measures the units sold over a 30-day lookback
+    (held/voided tickets and out-of-window sales excluded, exactly like
+    ``smart_reorder``), turns that into a daily velocity, and asks: at this pace,
+    will the on-hand stock clear within ``clear_within`` days? If not, it suggests
+    a tiered markdown — the further the item is from clearing, the deeper the cut,
+    with never-clearing dead stock getting the deepest. A product that will sell
+    through in time (or has no stock, or no listed price) is never suggested, so a
+    healthy catalogue yields an empty list rather than a crash.
+    """
+    lookback, clear_within = 30, 30
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    # Tenant catalogue keyed by id: active, stockable (non-digital) products with
+    # stock on hand and a listed price — the only ones a markdown can act on.
+    prod_result = await db.execute(
+        select(Products.id, Products.name, Products.name_ar,
+               Products.quantity, Products.price).where(
+            and_(
+                Products.client_id == client_id,
+                Products.is_active == True,
+                Products.is_digital.is_distinct_from(True),
+            )
+        )
+    )
+    catalogue = {
+        pid: {"name": name, "name_ar": name_ar,
+              "on_hand": int(qty or 0), "price": float(price or 0.0)}
+        for pid, name, name_ar, qty, price in prod_result.all()
+        if (qty or 0) > 0 and (price or 0.0) > 0
+    }
+
+    units_sold: dict = {}
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id", 0)
+            if pid not in catalogue:
+                continue
+            units_sold[pid] = units_sold.get(pid, 0) + (item.get("quantity", 0) or 0)
+
+    suggestions = []
+    for pid, meta in catalogue.items():
+        sold = units_sold.get(pid, 0)
+        velocity = sold / lookback
+        # Days to sell through the on-hand stock at the current pace; never-clears
+        # (zero velocity) is the deepest-markdown case.
+        days_to_clear = (meta["on_hand"] / velocity) if velocity > 0 else None
+        if days_to_clear is not None and days_to_clear <= clear_within:
+            continue  # sells through in time — leave the price alone
+        # Tier the cut by how far the item is from clearing.
+        if days_to_clear is None:
+            discount_pct = 25
+        elif days_to_clear > 90:
+            discount_pct = 20
+        elif days_to_clear > 60:
+            discount_pct = 15
+        else:
+            discount_pct = 10
+        suggested_price = round(meta["price"] * (1 - discount_pct / 100), 2)
+        suggestions.append({
+            "product_id": pid,
+            "name": meta["name"],
+            "name_ar": meta["name_ar"],
+            "on_hand": meta["on_hand"],
+            "units_sold": int(sold),
+            "daily_velocity": round(velocity, 2),
+            "days_to_clear": round(days_to_clear, 1) if days_to_clear is not None else None,
+            "current_price": round(meta["price"], 2),
+            "suggested_price": suggested_price,
+            "discount_pct": discount_pct,
+        })
+
+    # Most-urgent first: deepest cut, then slowest to clear (dead stock, whose
+    # ``days_to_clear`` is None, sorts ahead of any finite figure). ``product_id``
+    # breaks remaining ties so the order is deterministic.
+    suggestions.sort(
+        key=lambda s: (-s["discount_pct"],
+                       -(s["days_to_clear"] if s["days_to_clear"] is not None else float("inf")),
+                       s["product_id"])
+    )
+    return {
+        "lookback_days": lookback,
+        "clear_within_days": clear_within,
+        "count": len(suggestions),
+        "products": suggestions,
+    }
+
+
 @router.get("/api/v1/assistant/query", response_model=AssistantAnswer)
 async def assistant_query(
     q: str = Query(..., min_length=1, max_length=500),
@@ -2557,6 +2675,25 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=ro, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "dynamic_pricing":
+        dp = await _assistant_dynamic_pricing(db, client_id)
+        if dp["count"]:
+            lines = ", ".join(
+                f"{p['name']} ({p['discount_pct']}% → {p['suggested_price']:.2f})"
+                for p in dp["products"]
+            )
+            answer = (
+                f"{dp['count']} slow-moving product(s) won't clear within "
+                f"{dp['clear_within_days']} days at the current pace — consider a "
+                f"markdown: {lines}."
+            )
+        else:
+            answer = "Nothing needs a markdown — your stock is selling through fine."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=dp, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "low_stock":

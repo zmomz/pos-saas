@@ -46,13 +46,14 @@ async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: fl
 
 
 async def _seed_product(client_id: int, user_id: str, *, name: str, quantity: float,
-                        reorder_point: int = 0, is_digital: bool = False) -> int:
+                        reorder_point: int = 0, is_digital: bool = False,
+                        price: float = 10.0) -> int:
     async with db_manager.async_session_maker() as db:
         p = Products(
             user_id=user_id,
             client_id=client_id,
             name=name,
-            price=10.0,
+            price=price,
             quantity=quantity,
             reorder_point=reorder_point,
             is_active=True,
@@ -295,6 +296,90 @@ async def test_assistant_smart_reorder_handles_nothing_to_reorder(client):
     body = resp.json()
 
     assert body["intent"] == "smart_reorder"
+    assert body["data"]["count"] == 0
+    assert body["data"]["products"] == []
+
+
+async def test_assistant_suggests_dynamic_price_markdowns(client):
+    """"What should I discount?" → tiered markdown suggestions for overstocked
+    slow-movers, sized to clear on-hand stock within the target window. The
+    slower an item sells relative to its stock, the deeper the suggested cut; a
+    fast mover that will clear on its own is never marked down."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Blazer: 120 on hand, sold 30 units over the window → 1/day → 120 days to
+    # clear (> 90) → 20% markdown → 200 → 160.
+    blazer = await _seed_product(client_id, user["id"], name="Blazer",
+                                 quantity=120, price=200.0)
+    # DeadStock: 25 on hand, no sales at all → never clears → deepest 25%
+    # markdown → 40 → 30.
+    dead = await _seed_product(client_id, user["id"], name="DeadStock",
+                               quantity=25, price=40.0)
+    # Bestseller: 10 on hand, sold 300 units → 10/day → clears in a day →
+    # moving fine, never suggested.
+    fast = await _seed_product(client_id, user["id"], name="Bestseller",
+                               quantity=10, price=15.0)
+    # Voucher: digital → no physical stock to clear, never a markdown candidate.
+    await _seed_product(client_id, user["id"], name="Voucher", quantity=500,
+                        price=25.0, is_digital=True)
+
+    await _seed_sale(client_id, user["id"], days_ago=3, total=10.0,
+                     items=[{"product_id": blazer, "quantity": 30}], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=4, total=10.0,
+                     items=[{"product_id": fast, "quantity": 300}], idx=2)
+    # A held ticket's units and a sale older than 30 days must not resurrect the
+    # dead item's velocity (they'd wrongly drop it off the markdown list).
+    await _seed_sale(client_id, user["id"], days_ago=2, total=10.0,
+                     items=[{"product_id": dead, "quantity": 999}],
+                     status="held", idx=3)
+    await _seed_sale(client_id, user["id"], days_ago=45, total=10.0,
+                     items=[{"product_id": dead, "quantity": 999}], idx=4)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what should I discount", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "dynamic_pricing"
+    assert body["data"]["lookback_days"] == 30
+    assert body["data"]["clear_within_days"] == 30
+    assert body["data"]["count"] == 2
+    # Most-urgent (deepest markdown) first: the dead item outranks the slow one.
+    first, second = body["data"]["products"]
+    assert first["product_id"] == dead
+    assert first["discount_pct"] == 25
+    assert first["current_price"] == 40.0
+    assert first["suggested_price"] == 30.0
+    assert first["days_to_clear"] is None  # never clears at zero velocity
+    assert second["product_id"] == blazer
+    assert second["discount_pct"] == 20
+    assert second["current_price"] == 200.0
+    assert second["suggested_price"] == 160.0
+    assert "DeadStock" in body["answer"]
+    # The fast mover and the digital voucher are never marked down.
+    ids = [p["product_id"] for p in body["data"]["products"]]
+    assert fast not in ids
+
+
+async def test_assistant_dynamic_pricing_handles_nothing_to_discount(client):
+    """Everything selling through fast enough → no markdowns, not a crash."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    fast = await _seed_product(client_id, user["id"], name="Bestseller",
+                               quantity=5, price=15.0)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=10.0,
+                     items=[{"product_id": fast, "quantity": 300}], idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=any pricing suggestions", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "dynamic_pricing"
     assert body["data"]["count"] == 0
     assert body["data"]["products"] == []
 
