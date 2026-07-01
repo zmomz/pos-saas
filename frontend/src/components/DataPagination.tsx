@@ -25,7 +25,10 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
   const end = Math.min(page * pageSize, total);
 
   return (
-    <div className="flex items-center justify-between pt-4 text-sm text-muted-foreground">
+    <nav
+      aria-label={t('pagination')}
+      className="flex items-center justify-between pt-4 text-sm text-muted-foreground"
+    >
       <span>
         {start}–{end} {t('of')} {total}
       </span>
@@ -39,7 +42,11 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
         >
           {t('previous')}
         </Button>
-        <span className="px-2">
+        <span
+          className="px-2"
+          aria-live="polite"
+          aria-label={`${t('page')} ${page} ${t('of')} ${pageCount}`}
+        >
           {page} / {pageCount}
         </span>
         <Button
@@ -52,6 +59,6 @@ export function DataPagination({ page, pageSize, total, onPageChange }: DataPagi
           {t('next')}
         </Button>
       </div>
-    </div>
+    </nav>
   );
 }
