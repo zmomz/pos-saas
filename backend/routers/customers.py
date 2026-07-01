@@ -17,6 +17,7 @@ from services.birthday_rewards import BirthdayRewardsService
 from services.customer_groups import CustomerGroupsService
 from services.campaigns import CampaignsService
 from services.customer_notes import CustomerNoteError, CustomerNotesService
+from services.customer_consent import CustomerConsentService
 from dependencies.auth import get_admin_user, get_current_user
 from dependencies.tenancy import TenantScope, get_tenant_scope
 from models.audit_logs import Audit_logs
@@ -30,6 +31,8 @@ from models.customer_groups import CustomerGroup  # noqa: F401
 from models.campaigns import Campaign  # noqa: F401
 # Eager import so the customer_notes table registers on Base.metadata too (#221).
 from models.customer_notes import CustomerNote  # noqa: F401
+# Eager import so the customer_consent_events table registers on Base.metadata (#227).
+from models.customer_consent_events import CustomerConsentEvent  # noqa: F401
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -594,6 +597,11 @@ async def erase_customer_pii(
         if not customer:
             raise HTTPException(status_code=404, detail="Customers not found")
 
+        # PDPL consent trail (#227): erasure withdraws marketing consent — record it
+        # as its own event, but only when consent was actually granted (an already
+        # opted-out / already-erased customer changes nothing, so no spurious row).
+        consent_withdrawn_by_erase = bool(customer.marketing_consent)
+
         # ``name`` is NOT NULL — tombstone it rather than null it.
         customer.name = "[erased]"
         customer.phone = None
@@ -604,6 +612,16 @@ async def erase_customer_pii(
         now = datetime.now()
         customer.consent_updated_at = now
         customer.pii_erased_at = now
+
+        if consent_withdrawn_by_erase:
+            await CustomerConsentService(db).record(
+                customer.id,
+                granted=False,
+                source="erase",
+                user_id=scope.owner_user_id,
+                client_id=scope.client_id,
+                actor=str(current_user.id),
+            )
 
         db.add(
             Audit_logs(
@@ -887,6 +905,21 @@ async def create_customers(
         if not result:
             raise HTTPException(status_code=400, detail="Failed to create customers")
 
+        # PDPL consent trail (#227): when an explicit consent decision was made at
+        # create, append an immutable event behind the snapshot so the merchant can
+        # evidence it later (the ``consent_updated_at`` stamp is overwritten on the
+        # next change).
+        if create_dict.get("marketing_consent") is not None:
+            await CustomerConsentService(db).record(
+                result.id,
+                granted=bool(create_dict["marketing_consent"]),
+                source="create",
+                user_id=owner_id,
+                client_id=scope.client_id,
+                actor=str(current_user.id),
+            )
+            await db.commit()
+
         logger.info(f"Customers created successfully with id: {result.id}")
         # Domain webhook (ISSUE-051, H25): notify subscribers of the new customer.
         background_tasks.add_task(
@@ -977,9 +1010,17 @@ async def update_customers(
         # Only include non-None values for partial updates
         update_dict = {k: v for k, v in data.model_dump().items() if v is not None}
         # PDPL (SEC-05): re-stamp whenever the consent flag is changed (given or
-        # withdrawn) so the merchant can evidence the change.
+        # withdrawn) so the merchant can evidence the change. Capture the prior
+        # value first so we only append a consent-trail event on a real change
+        # (#227) — re-sending the same value must not spawn a spurious row.
+        consent_changed_to = None
         if "marketing_consent" in update_dict:
             update_dict["consent_updated_at"] = datetime.now()
+            existing = await service.get_by_id(id, user_id=scope.owner_user_id)
+            if existing is not None and bool(existing.marketing_consent) != bool(
+                update_dict["marketing_consent"]
+            ):
+                consent_changed_to = bool(update_dict["marketing_consent"])
         # CRM-04 (F-039): a sent ``tags`` list (incl. an empty one to clear) is
         # encoded to the stored JSON string.
         _serialize_tags(update_dict)
@@ -987,7 +1028,19 @@ async def update_customers(
         if not result:
             logger.warning(f"Customers with id {id} not found for update")
             raise HTTPException(status_code=404, detail="Customers not found")
-        
+
+        # PDPL consent trail (#227): append the change behind the snapshot.
+        if consent_changed_to is not None:
+            await CustomerConsentService(db).record(
+                id,
+                granted=consent_changed_to,
+                source="update",
+                user_id=scope.owner_user_id,
+                client_id=scope.client_id,
+                actor=str(current_user.id),
+            )
+            await db.commit()
+
         logger.info(f"Customers {id} updated successfully")
         return result
     except HTTPException:
@@ -1219,6 +1272,49 @@ async def add_customer_note(
     except CustomerNoteError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return CustomerNoteEntry.model_validate(note)
+
+
+# ---------- M7·Compliance (#227) — consent history ----------
+class ConsentEventEntry(BaseModel):
+    """One immutable consent change in a customer's PDPL consent trail."""
+    id: int
+    consent_type: str
+    granted: bool
+    source: str
+    actor: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ConsentHistoryResponse(BaseModel):
+    """A customer's consent trail, newest-first."""
+    customer_id: int
+    items: List[ConsentEventEntry]
+
+
+@router.get("/{id}/consent-history", response_model=ConsentHistoryResponse)
+async def get_consent_history(
+    id: int,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """A customer's PDPL consent trail, newest-first (#227, SEC-05).
+
+    The append-only history behind the ``marketing_consent`` snapshot: every time
+    consent is given or withdrawn (at create, on update, on erasure) a timestamped
+    row is recorded so the merchant can evidence *when* consent changed — the
+    ``consent_updated_at`` stamp only holds the latest change.
+
+    Owner-scoped (SEC-02): a foreign/unknown customer id → 404."""
+    await _owned_customer_or_404(CustomersService(db), id, user_id=scope.owner_user_id)
+    rows = await CustomerConsentService(db).list(id, user_id=scope.owner_user_id)
+    return {
+        "customer_id": id,
+        "items": [ConsentEventEntry.model_validate(r) for r in rows],
+    }
 
 
 # ---------- M5·CRM (#221) — customer blacklist ----------
