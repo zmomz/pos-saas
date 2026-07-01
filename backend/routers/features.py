@@ -1152,6 +1152,35 @@ class SalesForecastResponse(BaseModel):
     points: List[SalesForecastPoint]
 
 
+class InventoryForecastItem(BaseModel):
+    """A single product's demand forecast and smart-reorder signal (#228)."""
+
+    product_id: int
+    name: str
+    name_ar: Optional[str] = None
+    on_hand: int
+    avg_daily_units: float  # sales velocity over the lookback window
+    projected_demand: int  # forecast units demanded over the horizon
+    days_of_cover: Optional[float]  # on_hand / velocity; None when no recent sales
+    will_stock_out: bool  # projected demand exceeds on-hand within the horizon
+    suggested_reorder_quantity: int  # units to cover the projected shortfall
+
+
+class InventoryForecastResponse(BaseModel):
+    """Per-product demand forecast + smart-reorder (issue #228 — AI slice).
+
+    ``method`` names the model (velocity projection today; trend/seasonal later).
+    Items are ordered soonest-stockout-first so the operator sees the products
+    that need a reorder now at the top.
+    """
+
+    method: str
+    lookback_days: int
+    horizon_days: int
+    items: List[InventoryForecastItem]
+    total: int
+
+
 # ============================================================
 # REPORT → PDF EXPORT (RPT-10, F-072)
 # ============================================================
@@ -1557,6 +1586,112 @@ async def get_sales_forecast(
         history_total=round(history_total, 2),
         avg_daily_sales=round(avg_daily, 2),
         points=points,
+    )
+
+
+@router.get("/api/v1/reports/inventory-forecast", response_model=InventoryForecastResponse)
+async def get_inventory_forecast(
+    lookback: int = Query(30, ge=1, le=365),
+    horizon: int = Query(14, ge=1, le=90),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Forecast per-product demand and turn it into a smart-reorder signal (#228).
+
+    Where ``/reports/sales-forecast`` projects revenue, this projects *demand per
+    product*: each product's sales velocity (units sold / ``lookback`` days) is
+    projected over the ``horizon`` and compared to on-hand stock. A product is a
+    smart-reorder candidate when the projected demand would burn through its
+    on-hand before the horizon — regardless of any static reorder point — and the
+    suggested quantity covers exactly that shortfall.
+
+    Tenant-scoped. Velocity is folded from each transaction's ``items_json`` via a
+    server-side cursor keyed by product (peak memory O(distinct products), never
+    O(transactions)), exactly like ``/reports/top-products``. Held/voided tickets
+    are not demand and are excluded; digital products carry no physical stock and
+    are never candidates.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    # Physical-stock catalogue for this tenant, keyed by id. Digital products are
+    # excluded up front (INV: no physical stock → never a reorder candidate).
+    prod_result = await db.execute(
+        select(Products).where(
+            and_(
+                Products.client_id == client_id,
+                Products.is_active == True,
+                Products.is_digital.is_distinct_from(True),
+            )
+        )
+    )
+    products = {p.id: p for p in prod_result.scalars().all()}
+
+    # Fold units sold per product across the window (OPS-05: stream only the JSON
+    # column; accumulate into a bounded dict, never materialize the whole period).
+    units_sold: dict = {}
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                # POS-10/POS-08: parked (held) and voided tickets are not demand.
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id", 0)
+            if pid not in products:
+                continue  # unknown / digital / other-tenant product → skip
+            units_sold[pid] = units_sold.get(pid, 0) + (item.get("quantity", 0) or 0)
+
+    forecast: list = []
+    for pid, sold in units_sold.items():
+        p = products[pid]
+        on_hand = p.quantity or 0
+        velocity = sold / lookback if lookback > 0 else 0.0
+        projected_demand = round(velocity * horizon)
+        will_stock_out = projected_demand > on_hand
+        days_of_cover = round(on_hand / velocity, 1) if velocity > 0 else None
+        suggested = max(projected_demand - on_hand, 0) if will_stock_out else 0
+        forecast.append(
+            InventoryForecastItem(
+                product_id=pid,
+                name=p.name,
+                name_ar=p.name_ar,
+                on_hand=on_hand,
+                avg_daily_units=round(velocity, 4),
+                projected_demand=projected_demand,
+                days_of_cover=days_of_cover,
+                will_stock_out=will_stock_out,
+                suggested_reorder_quantity=suggested,
+            )
+        )
+
+    # Soonest-stockout first: products with a finite cover ordered ascending, then
+    # those with no run-out risk (None cover) last.
+    forecast.sort(key=lambda f: (f.days_of_cover is None, f.days_of_cover or 0.0))
+
+    return InventoryForecastResponse(
+        method="velocity_projection",
+        lookback_days=lookback,
+        horizon_days=horizon,
+        items=forecast,
+        total=len(forecast),
     )
 
 
