@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime, date, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +33,9 @@ from models.campaigns import Campaign  # noqa: F401
 from models.customer_notes import CustomerNote  # noqa: F401
 # Eager import so the customer_consent_events table registers on Base.metadata (#227).
 from models.customer_consent_events import CustomerConsentEvent  # noqa: F401
+# Eager import so the data_retention_policies table registers on Base.metadata (#227).
+from models.data_retention_policy import DataRetentionPolicy  # noqa: F401
+from services.data_retention import DataRetentionService
 from schemas.auth import UserResponse
 
 # Set up logging
@@ -458,6 +461,106 @@ async def run_birthday_rewards(
         "count": len(rewarded),
         "rewarded": rewarded,
     }
+
+
+# ---------- M7·Compliance (#227) — data-retention policy ----------
+# These literal ``/retention-policy`` routes MUST be declared before the ``/{id}``
+# routes below so the path segment isn't swallowed as a customer id.
+class RetentionPolicyBody(BaseModel):
+    """The tenant's dormant-PII retention window, in days (null ⇒ disabled)."""
+    # A positive day count, or null to disable retention. ``gt=0`` rejects a
+    # non-positive window (0 / negative) at validation (422) — silence is not a
+    # zero-day "erase everything now" instruction.
+    customer_pii_retention_days: Optional[int] = Field(default=None, gt=0)
+
+
+class RetentionPolicyResponse(BaseModel):
+    """The tenant's current retention policy."""
+    customer_pii_retention_days: Optional[int] = None
+    updated_at: Optional[datetime] = None
+
+
+class RetentionEnforceResponse(BaseModel):
+    """Result of a retention sweep: which customers had their PII minimized."""
+    erased: List[int]
+    erased_count: int
+
+
+@router.get("/retention-policy", response_model=RetentionPolicyResponse)
+async def get_retention_policy(
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """The tenant's dormant-PII retention window (#227, SEC-05 / PDPL).
+
+    Owner-scoped: a tenant only ever sees its own policy; an unconfigured tenant
+    reads back a null window (retention disabled — keep indefinitely)."""
+    policy = await DataRetentionService(db).get_policy(user_id=scope.owner_user_id)
+    if policy is None:
+        return {"customer_pii_retention_days": None, "updated_at": None}
+    return {
+        "customer_pii_retention_days": policy.customer_pii_retention_days,
+        "updated_at": policy.updated_at,
+    }
+
+
+@router.put("/retention-policy", response_model=RetentionPolicyResponse)
+async def set_retention_policy(
+    body: RetentionPolicyBody,
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Set the tenant's dormant-PII retention window (#227, SEC-05 / PDPL).
+
+    A positive day count arms retention; null disables it. Owner-scoped — the
+    policy is upserted against the caller's tenant only (SEC-02)."""
+    service = DataRetentionService(db)
+    try:
+        policy = await service.set_policy(
+            user_id=scope.owner_user_id,
+            customer_pii_retention_days=body.customer_pii_retention_days,
+            client_id=scope.client_id,
+        )
+        await db.commit()
+        await db.refresh(policy)
+        return {
+            "customer_pii_retention_days": policy.customer_pii_retention_days,
+            "updated_at": policy.updated_at,
+        }
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error setting retention policy: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/retention-policy/enforce", response_model=RetentionEnforceResponse)
+async def enforce_retention_policy(
+    current_user: UserResponse = Depends(get_current_user),
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run a retention sweep (#227, SEC-05 / PDPL data-minimization).
+
+    Applies the PDPL erasure (tombstone name, null phone/email/VAT/notes, withdraw
+    consent, stamp ``pii_erased_at``) to every customer whose PII is still present
+    and whose ``updated_at`` predates the retention window. Erasure — not deletion
+    — keeps the fiscal row intact so ZATCA's 6-year retention still holds. A no-op
+    when no policy is armed. Owner-scoped: never reaches another tenant (SEC-02)."""
+    service = DataRetentionService(db)
+    try:
+        erased = await service.enforce(
+            user_id=scope.owner_user_id,
+            client_id=scope.client_id,
+            actor=str(current_user.id),
+        )
+        await db.commit()
+        return {"erased": erased, "erased_count": len(erased)}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error enforcing retention policy: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @router.get("/{id}", response_model=CustomersResponse)
