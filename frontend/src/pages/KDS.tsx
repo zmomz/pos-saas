@@ -377,8 +377,10 @@ export default function KDS() {
         </div>
       </PageHeading>
 
-      {/* Board view: live line vs. recently-bumped cards to recall (ISSUE-073) */}
-      <div className="dxr-seg">
+      {/* Board view: live line vs. recently-bumped cards to recall (ISSUE-073).
+          Labelled group (ISSUE-226) so a screen reader names what the toggle
+          switches, not just the pressed state of each segment. */}
+      <div className="dxr-seg" role="group" aria-label={t('kds_board_view')}>
         <SegButton onClick={() => setBoardStatus('active')} active={boardStatus === 'active'}>
           {t('kds_active')}
         </SegButton>
@@ -387,9 +389,10 @@ export default function KDS() {
         </SegButton>
       </div>
 
-      {/* Station filter tabs */}
+      {/* Station filter tabs — labelled group (ISSUE-226) so the tabs announce
+          that they scope the board to a prep-station. */}
       {stations.length > 0 && (
-        <div className="dxr-seg flex-wrap">
+        <div className="dxr-seg flex-wrap" role="group" aria-label={t('kds_station_filter')}>
           <SegButton onClick={() => setActiveStation('all')} active={activeStation === 'all'}>
             {t('all_stations')}
           </SegButton>
