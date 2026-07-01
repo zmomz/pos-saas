@@ -1214,6 +1214,37 @@ class DynamicPricingResponse(BaseModel):
     total: int
 
 
+class CustomerAnalyticsItem(BaseModel):
+    """One customer's lifetime value and repeat signal (issue #229 — analytics)."""
+
+    customer_phone: str  # the buyer identity a transaction carries
+    customer_name: Optional[str] = None
+    order_count: int  # completed sales attributed to this customer (credit notes excluded)
+    lifetime_value: float  # net revenue: sales minus credit notes
+    is_repeat: bool  # a returning customer (order_count >= 2)
+
+
+class CustomerAnalyticsResponse(BaseModel):
+    """Customer lifetime value + repeat-purchase rate (issue #229 — M9 Analytics).
+
+    The first slice of the advanced-analytics epic. Customers are keyed on
+    ``customer_phone`` (the only stable buyer identity a sale carries); per
+    customer we net revenue (credit notes subtract) into a lifetime value and
+    count purchases. ``average_clv`` and ``repeat_rate`` are the two headline
+    numbers; ``customers`` is the per-customer breakdown, richest-first. Later
+    slices extend this with cohorts, funnels and peak-hour heatmaps.
+    """
+
+    method: str
+    lookback_days: int
+    total_customers: int
+    repeat_customers: int
+    repeat_rate: float  # repeat_customers / total_customers (0 when no customers)
+    average_clv: float  # mean lifetime_value across customers (0 when none)
+    total_revenue: float  # net revenue attributed to identified customers
+    customers: List[CustomerAnalyticsItem]
+
+
 # ============================================================
 # REPORT → PDF EXPORT (RPT-10, F-072)
 # ============================================================
@@ -1861,6 +1892,107 @@ async def get_dynamic_pricing(
         high_cover_days=high_cover_days,
         items=suggestions,
         total=len(suggestions),
+    )
+
+
+@router.get(
+    "/api/v1/reports/customer-analytics", response_model=CustomerAnalyticsResponse
+)
+async def get_customer_analytics(
+    lookback: int = Query(365, ge=1, le=3650),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Customer lifetime value + repeat-purchase rate (issue #229 — analytics).
+
+    The first slice of the advanced-analytics epic. Sales are attributed to a
+    customer by ``customer_phone`` (the only stable buyer identity a transaction
+    carries — anonymous walk-ins with no phone cannot be attributed and so are
+    excluded). Per customer we net revenue into a lifetime value (a credit note
+    subtracts, exactly like the financial reports) and count purchases (a credit
+    note is a refund, not a new order, so it never inflates ``order_count``).
+
+    Tenant-scoped and server-side aggregated (OPS-05): the grouping happens in
+    SQL, so peak memory is O(distinct customers), never O(transactions).
+    Held/voided tickets are excluded exactly as the sibling revenue reports do.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    # A credit note nets against the customer's value (sign −1) but is not a new
+    # order; every other retained row is a completed sale worth +total, +1 order.
+    is_credit_note = Transactions.status == "credit_note"
+    net_value = func.sum(
+        case((is_credit_note, -Transactions.total_amount), else_=Transactions.total_amount)
+    )
+    order_count = func.sum(case((is_credit_note, 0), else_=1))
+
+    rows = (
+        await db.execute(
+            select(
+                Transactions.customer_phone,
+                func.max(Transactions.customer_name),
+                order_count,
+                net_value,
+            )
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    # Only sales carrying a buyer identity are customer revenue.
+                    Transactions.customer_phone.isnot(None),
+                    Transactions.customer_phone != "",
+                    # POS-10/POS-08: parked (held) tickets and voided sales are not
+                    # revenue, so they never enter a customer's lifetime value.
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+            .group_by(Transactions.customer_phone)
+        )
+    ).all()
+
+    customers = []
+    for phone, name, orders, value in rows:
+        orders = int(orders or 0)
+        # A phone seen only on a credit note (a refund with no retained sale in the
+        # window) has zero orders — it is not a customer for this report.
+        if orders <= 0:
+            continue
+        customers.append(
+            CustomerAnalyticsItem(
+                customer_phone=phone,
+                customer_name=name,
+                order_count=orders,
+                lifetime_value=round(float(value or 0.0), 2),
+                is_repeat=orders >= 2,
+            )
+        )
+
+    # Richest customers first — the analytics surface leads with the highest-value
+    # relationships.
+    customers.sort(key=lambda c: c.lifetime_value, reverse=True)
+
+    total_customers = len(customers)
+    repeat_customers = sum(1 for c in customers if c.is_repeat)
+    total_revenue = sum(c.lifetime_value for c in customers)
+    repeat_rate = repeat_customers / total_customers if total_customers else 0.0
+    average_clv = total_revenue / total_customers if total_customers else 0.0
+
+    return CustomerAnalyticsResponse(
+        method="clv_repeat_rate",
+        lookback_days=lookback,
+        total_customers=total_customers,
+        repeat_customers=repeat_customers,
+        repeat_rate=round(repeat_rate, 4),
+        average_clv=round(average_clv, 2),
+        total_revenue=round(total_revenue, 2),
+        customers=customers,
     )
 
 
