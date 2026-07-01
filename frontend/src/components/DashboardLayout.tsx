@@ -403,7 +403,8 @@ const Shell: React.FC = () => {
           <button
             data-tour="theme-toggle"
             onClick={toggleTheme}
-            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            aria-label={isDark ? t('switch_to_light_mode') : t('switch_to_dark_mode')}
+            title={isDark ? t('switch_to_light_mode') : t('switch_to_dark_mode')}
             className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] text-muted-foreground transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10"
           >
             {isDark ? <Sun className="h-5 w-5 text-gold" /> : <Moon className="h-5 w-5" />}
@@ -413,6 +414,9 @@ const Shell: React.FC = () => {
           <div className="relative">
             <button
               onClick={() => setLangOpen((o) => !o)}
+              aria-label={t('language') || 'Language'}
+              aria-expanded={langOpen}
+              aria-haspopup="listbox"
               title={t('language') || 'Language'}
               className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] text-muted-foreground transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10"
             >
@@ -443,6 +447,7 @@ const Shell: React.FC = () => {
 
           <button
             onClick={handleLogout}
+            aria-label={t('logout')}
             title={t('logout')}
             className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
           >
@@ -495,6 +500,7 @@ const Shell: React.FC = () => {
 
           <button
             onClick={() => navigate('/notifications')}
+            aria-label={t('notifications')}
             title={t('notifications')}
             className="relative flex h-11 w-11 items-center justify-center rounded-[14px] border border-input bg-card text-muted-foreground shadow-sm transition-colors hover:border-brand hover:text-brand-700"
           >
