@@ -48,6 +48,19 @@ class ResizeObserverStub {
 }
 window.ResizeObserver = window.ResizeObserver || (ResizeObserverStub as unknown as typeof ResizeObserver);
 
+// jsdom lacks IntersectionObserver (used by embla-carousel's slides-in-view).
+class IntersectionObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() {
+    return [];
+  }
+}
+window.IntersectionObserver =
+  window.IntersectionObserver ||
+  (IntersectionObserverStub as unknown as typeof IntersectionObserver);
+
 // jsdom doesn't implement scrollIntoView (Radix select/command).
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = vi.fn();

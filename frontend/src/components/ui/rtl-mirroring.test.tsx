@@ -8,6 +8,13 @@ import {
   BreadcrumbSeparator,
 } from './breadcrumb';
 import { Calendar } from './calendar';
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselPrevious,
+  CarouselNext,
+} from './carousel';
 
 // ISSUE-226 (a11y) — RTL layout: directional chevrons/arrows must mirror in
 // right-to-left languages (Arabic/Urdu). A breadcrumb separator and calendar
@@ -45,6 +52,24 @@ describe('RTL directional-icon mirroring (ISSUE-226)', () => {
       classesOf(svg).includes('rtl:rotate-180')
     );
     // Both the previous and next month arrows must be mirrored.
+    expect(navIcons.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('mirrors the carousel previous/next arrows', () => {
+    const { container } = render(
+      <Carousel>
+        <CarouselContent>
+          <CarouselItem>Slide</CarouselItem>
+        </CarouselContent>
+        <CarouselPrevious />
+        <CarouselNext />
+      </Carousel>
+    );
+
+    const navIcons = Array.from(container.querySelectorAll('svg')).filter((svg) =>
+      classesOf(svg).includes('rtl:rotate-180')
+    );
+    // Both the previous and next slide arrows must be mirrored.
     expect(navIcons.length).toBeGreaterThanOrEqual(2);
   });
 });
