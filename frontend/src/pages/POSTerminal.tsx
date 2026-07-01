@@ -1792,6 +1792,7 @@ export default function POSTerminal() {
                 key={cat}
                 type="button"
                 onClick={() => setActiveCat(cat)}
+                aria-pressed={activeCat === cat}
                 className={
                   activeCat === cat
                     ? 'inline-flex items-center rounded-full border border-brand bg-brand px-[15px] py-2 text-[13.5px] font-semibold text-white'
@@ -2122,6 +2123,7 @@ export default function POSTerminal() {
               <button
                 type="button"
                 onClick={() => setSplitMode((v) => !v)}
+                aria-pressed={splitMode}
                 className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition-colors ${
                   splitMode
                     ? 'border-primary bg-primary text-primary-foreground'
@@ -2152,6 +2154,7 @@ export default function POSTerminal() {
                         key={m.v}
                         type="button"
                         onClick={() => setPaymentMethod(m.v)}
+                        aria-pressed={active}
                         className={`inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border px-2 py-2 text-[13px] font-semibold transition-colors ${
                           active
                             ? 'border-brand bg-brand-50 text-brand-700'
@@ -2215,6 +2218,7 @@ export default function POSTerminal() {
                       <button
                         type="button"
                         onClick={() => setSelectedTerminalId('')}
+                        aria-pressed={selectedTerminalId === ''}
                         className={`inline-flex min-h-[44px] items-center rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
                           selectedTerminalId === ''
                             ? 'border-brand bg-brand-50 text-brand-700'
@@ -2230,6 +2234,7 @@ export default function POSTerminal() {
                             key={tm.id}
                             type="button"
                             onClick={() => setSelectedTerminalId(String(tm.id))}
+                            aria-pressed={active}
                             className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
                               active
                                 ? 'border-brand bg-brand-50 text-brand-700'
