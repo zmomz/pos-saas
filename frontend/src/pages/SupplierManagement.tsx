@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SearchField } from '@/components/ui/search-field';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -25,7 +26,7 @@ import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataT
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDate } from '@/lib/format';
-import { Truck, Plus, Search, Package, ClipboardList, CheckCircle } from 'lucide-react';
+import { Truck, Plus, Package, ClipboardList, CheckCircle } from 'lucide-react';
 
 interface Supplier {
   id: string;
@@ -563,10 +564,7 @@ export default function SupplierManagement() {
       {activeTab === 'suppliers' && (
         <>
           {/* Search */}
-          <div className="relative flex-1">
-            <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('search_suppliers')} className="ps-10" />
-          </div>
+          <SearchField value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('search_suppliers')} />
 
           {/* Suppliers Table */}
           <DataTable

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SearchField } from '@/components/ui/search-field';
 import { Label } from '@/components/ui/label';
 import {
   Dialog,
@@ -28,7 +29,7 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney } from '@/lib/format';
-import { Plus, Users, UserPlus, Search, Download, ShieldOff, BarChart3, Tag } from 'lucide-react';
+import { Plus, Users, UserPlus, Download, ShieldOff, BarChart3, Tag } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -573,15 +574,11 @@ export default function CustomerManagement() {
       </div>
 
       {/* Search */}
-      <div className="relative flex-1">
-        <Search className="absolute start-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={tt('search_customers', 'Search by name, phone, or email...')}
-          className="ps-10"
-        />
-      </div>
+      <SearchField
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={tt('search_customers', 'Search by name, phone, or email...')}
+      />
 
       {/* Segment filter (CRM-04 / F-039) — filter the book by tag */}
       {allTags.length > 0 && (
