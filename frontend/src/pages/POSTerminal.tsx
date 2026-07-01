@@ -1426,9 +1426,11 @@ export default function POSTerminal() {
             ) : (
               <div className="space-y-2">
                 {recentTransactions.map((txn, idx) => (
-                  <div
+                  <button
                     key={txn.id || idx}
-                    className={`rounded-2xl border bg-card p-4 cursor-pointer transition-colors ${
+                    type="button"
+                    aria-pressed={selectedTransaction?.invoice_number === txn.invoice_number}
+                    className={`w-full text-start rounded-2xl border bg-card p-4 cursor-pointer transition-colors ${
                       selectedTransaction?.invoice_number === txn.invoice_number
                         ? 'border-brand ring-1 ring-brand'
                         : 'border-border hover:border-input'
@@ -1449,7 +1451,7 @@ export default function POSTerminal() {
                         </span>
                       </div>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}
