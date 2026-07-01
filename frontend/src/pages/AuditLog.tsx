@@ -11,6 +11,7 @@ import { getAuditLogs } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatDateTime } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { Shield, Clock, Filter } from 'lucide-react';
@@ -99,8 +100,8 @@ export default function AuditLog() {
 
   if (loading) {
     return (
-      <div className="flex h-64 items-center justify-center" dir={isRTL ? 'rtl' : 'ltr'}>
-        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
+      <div dir={isRTL ? 'rtl' : 'ltr'}>
+        <LoadingState message={t('loading')} />
       </div>
     );
   }

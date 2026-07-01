@@ -43,6 +43,7 @@ import {
   type CsvImportResult,
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import { DataPagination } from '@/components/DataPagination';
 import { useLanguage } from '@/lib/i18n';
 
@@ -871,11 +872,7 @@ export default function ProductManagement() {
   ];
 
   if (loading && products.length === 0) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState message={t('loading')} />;
   }
 
   return (

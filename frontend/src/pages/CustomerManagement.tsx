@@ -22,6 +22,7 @@ import {
   type CustomerInsights,
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
@@ -405,11 +406,7 @@ export default function CustomerManagement() {
   }
 
   if (loading && customers.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState message={t('loading')} />;
   }
 
   const customerColumns: DataTableColumn<Customer>[] = [

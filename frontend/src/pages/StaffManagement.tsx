@@ -33,6 +33,7 @@ import StaffWorkforceDialog, {
   type WorkforceStaff,
 } from '@/components/staff/StaffWorkforceDialog';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
@@ -379,11 +380,7 @@ export default function StaffManagement() {
   }
 
   if (loading && staff.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState message={t('loading')} />;
   }
 
   // A 403 lacks access; any other failure is a real error — show the in-page

@@ -51,6 +51,7 @@ import { useLanguage } from '@/lib/i18n';
 import { notifyError } from '@/lib/notify';
 import { formatMoney } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import LoadingState from '@/components/states/LoadingState';
 import {
   ClipboardList,
   Plus,
@@ -382,11 +383,7 @@ export default function OrderTicket() {
 
   // ---- Loading state ----
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState message={t('loading')} />;
   }
 
   // ---- Permission-denied state (restaurant mode off / retail business_type) ----
