@@ -2004,7 +2004,7 @@ export default function POSTerminal() {
         <div className="border-t border-border pt-4 mt-4 space-y-3">
           {/* Discount Code Input */}
           <div>
-            <label className="text-muted-foreground text-sm block mb-1">
+            <label htmlFor="pos-discount-code" className="text-muted-foreground text-sm block mb-1">
               <Tag className="w-3 h-3 inline me-1" />
               {t('discount_code')}
             </label>
@@ -2027,6 +2027,7 @@ export default function POSTerminal() {
             ) : (
               <div className="flex gap-2">
                 <Input
+                  id="pos-discount-code"
                   value={discountCode}
                   onChange={(e) => { setDiscountCode(e.target.value); setDiscountError(''); }}
                   onKeyDown={(e) => { if (e.key === 'Enter') handleApplyDiscount(); }}
@@ -2071,9 +2072,10 @@ export default function POSTerminal() {
               VAT base; quick-percent buttons compute off the total, or enter a custom
               amount. The amount due (total + tip) is what the tenders must cover. */}
           <div>
-            <label className="text-muted-foreground text-sm block mb-1">{t('tip')}</label>
+            <label htmlFor="pos-tip-amount" className="text-muted-foreground text-sm block mb-1">{t('tip')}</label>
             <div className="flex gap-2">
               <Input
+                id="pos-tip-amount"
                 type="number"
                 min={0}
                 step="0.01"
