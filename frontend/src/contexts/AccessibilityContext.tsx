@@ -15,7 +15,10 @@ import React, {
  *   - high-contrast mode (a `hc` class on <html> that swaps in higher-contrast
  *     design tokens — see index.css), and
  *   - font scaling (a `data-font-scale` attribute on <html> that steps the base
- *     font size up for low-vision users).
+ *     font size up for low-vision users), and
+ *   - reduce motion (a `reduce-motion` class on <html> that stills animations
+ *     and transitions app-wide — an in-app control for viewers who cannot set
+ *     the OS-level `prefers-reduced-motion` setting, e.g. on a shared terminal).
  *
  * Both are persisted to localStorage and re-applied on load, so a viewer's
  * choice survives a refresh and every worker/tab respects it. Kept separate
@@ -29,6 +32,7 @@ export const FONT_SCALES: readonly FontScale[] = ['normal', 'large', 'x-large'];
 
 const HC_KEY = 'pos_a11y_high_contrast';
 const FONT_KEY = 'pos_a11y_font_scale';
+const REDUCE_MOTION_KEY = 'pos_a11y_reduce_motion';
 
 interface AccessibilityContextType {
   highContrast: boolean;
@@ -37,6 +41,9 @@ interface AccessibilityContextType {
   fontScale: FontScale;
   setFontScale: (scale: FontScale) => void;
   cycleFontScale: () => void;
+  reduceMotion: boolean;
+  toggleReduceMotion: () => void;
+  setReduceMotion: (on: boolean) => void;
 }
 
 const AccessibilityContext = createContext<AccessibilityContextType | null>(null);
@@ -65,6 +72,9 @@ export const AccessibilityProvider: React.FC<AccessibilityProviderProps> = ({ ch
     () => localStorage.getItem(HC_KEY) === 'true',
   );
   const [fontScale, setFontScaleState] = useState<FontScale>(readFontScale);
+  const [reduceMotion, setReduceMotionState] = useState<boolean>(
+    () => localStorage.getItem(REDUCE_MOTION_KEY) === 'true',
+  );
 
   useEffect(() => {
     document.documentElement.classList.toggle('hc', highContrast);
@@ -75,6 +85,11 @@ export const AccessibilityProvider: React.FC<AccessibilityProviderProps> = ({ ch
     document.documentElement.setAttribute('data-font-scale', fontScale);
     localStorage.setItem(FONT_KEY, fontScale);
   }, [fontScale]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('reduce-motion', reduceMotion);
+    localStorage.setItem(REDUCE_MOTION_KEY, String(reduceMotion));
+  }, [reduceMotion]);
 
   const toggleHighContrast = useCallback(() => setHighContrastState((prev) => !prev), []);
   const setHighContrast = useCallback((on: boolean) => setHighContrastState(on), []);
@@ -87,6 +102,8 @@ export const AccessibilityProvider: React.FC<AccessibilityProviderProps> = ({ ch
       }),
     [],
   );
+  const toggleReduceMotion = useCallback(() => setReduceMotionState((prev) => !prev), []);
+  const setReduceMotion = useCallback((on: boolean) => setReduceMotionState(on), []);
 
   return (
     <AccessibilityContext.Provider
@@ -97,6 +114,9 @@ export const AccessibilityProvider: React.FC<AccessibilityProviderProps> = ({ ch
         fontScale,
         setFontScale,
         cycleFontScale,
+        reduceMotion,
+        toggleReduceMotion,
+        setReduceMotion,
       }}
     >
       {children}

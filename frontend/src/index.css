@@ -191,6 +191,21 @@
   html[data-font-scale='x-large'] {
     font-size: 125%;
   }
+
+  /* Reduce motion (ISSUE-226 · a11y modes). A `reduce-motion` class on <html>
+     collapses every animation and transition to a single instantaneous frame,
+     giving an in-app equivalent of `prefers-reduced-motion: reduce` for viewers
+     who cannot (or have not) set it at the OS level — e.g. on a shared POS
+     terminal. Scoped to duration/iteration so it stills motion without
+     stripping layout or focus styling. */
+  html.reduce-motion *,
+  html.reduce-motion *::before,
+  html.reduce-motion *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 @layer base {

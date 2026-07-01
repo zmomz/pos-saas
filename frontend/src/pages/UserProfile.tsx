@@ -7,7 +7,7 @@ import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAccessibility, type FontScale } from '@/contexts/AccessibilityContext';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
-import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check, KeyRound, Monitor, Accessibility, Contrast, ALargeSmall } from 'lucide-react';
+import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check, KeyRound, Monitor, Accessibility, Contrast, ALargeSmall, Zap } from 'lucide-react';
 import {
   changePassword,
   getUserPreferences,
@@ -51,7 +51,8 @@ export default function UserProfile() {
   const [mfaBusy, setMfaBusy] = useState(false);
   const [mfaError, setMfaError] = useState<string | null>(null);
   const { theme, toggleTheme, isDark } = useTheme();
-  const { highContrast, toggleHighContrast, fontScale, setFontScale } = useAccessibility();
+  const { highContrast, toggleHighContrast, fontScale, setFontScale, reduceMotion, toggleReduceMotion } =
+    useAccessibility();
   // Account identity (#203, parity #4): the user's own name/email/phone, loaded
   // from GET /users/profile and saved via PUT on the same Save button.
   const [accountName, setAccountName] = useState('');
@@ -414,6 +415,21 @@ export default function UserProfile() {
               aria-pressed={highContrast}
             >
               {highContrast ? tt('on', 'On') : tt('off', 'Off')}
+            </Button>
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Zap className="h-4 w-4 text-muted-foreground" />
+              <span>{tt('reduce_motion', 'Reduce motion')}</span>
+            </div>
+            <Button
+              onClick={toggleReduceMotion}
+              variant={reduceMotion ? 'default' : 'outline'}
+              aria-pressed={reduceMotion}
+              aria-label={tt('reduce_motion', 'Reduce motion')}
+            >
+              {reduceMotion ? tt('on', 'On') : tt('off', 'Off')}
             </Button>
           </div>
 

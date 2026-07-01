@@ -14,14 +14,18 @@ function Probe() {
     fontScale,
     setFontScale,
     cycleFontScale,
+    reduceMotion,
+    toggleReduceMotion,
   } = useAccessibility();
   return (
     <div>
       <span data-testid="hc">{String(highContrast)}</span>
       <span data-testid="scale">{fontScale}</span>
+      <span data-testid="rm">{String(reduceMotion)}</span>
       <button onClick={toggleHighContrast}>toggle-hc</button>
       <button onClick={() => setFontScale('large')}>set-large</button>
       <button onClick={cycleFontScale}>cycle</button>
+      <button onClick={toggleReduceMotion}>toggle-rm</button>
     </div>
   );
 }
@@ -104,6 +108,35 @@ describe('AccessibilityContext — font scaling', () => {
     expect(screen.getByTestId('scale')).toHaveTextContent('x-large');
     await user.click(screen.getByText('cycle'));
     expect(screen.getByTestId('scale')).toHaveTextContent('normal');
+  });
+});
+
+describe('AccessibilityContext — reduce motion', () => {
+  beforeEach(() => {
+    document.documentElement.className = '';
+    localStorage.clear();
+  });
+
+  it('defaults off, and toggling adds the `reduce-motion` root class and persists it', async () => {
+    const user = userEvent.setup();
+    renderProbe();
+
+    expect(screen.getByTestId('rm')).toHaveTextContent('false');
+    expect(document.documentElement.classList.contains('reduce-motion')).toBe(false);
+
+    await user.click(screen.getByText('toggle-rm'));
+
+    expect(screen.getByTestId('rm')).toHaveTextContent('true');
+    expect(document.documentElement.classList.contains('reduce-motion')).toBe(true);
+    expect(localStorage.getItem('pos_a11y_reduce_motion')).toBe('true');
+  });
+
+  it('restores a persisted reduce-motion preference on mount', () => {
+    localStorage.setItem('pos_a11y_reduce_motion', 'true');
+    renderProbe();
+
+    expect(screen.getByTestId('rm')).toHaveTextContent('true');
+    expect(document.documentElement.classList.contains('reduce-motion')).toBe(true);
   });
 });
 
