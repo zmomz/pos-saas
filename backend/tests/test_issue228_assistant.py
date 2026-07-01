@@ -48,7 +48,8 @@ async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: fl
 
 async def _seed_product(client_id: int, user_id: str, *, name: str, quantity: float,
                         reorder_point: int = 0, is_digital: bool = False,
-                        price: float = 10.0, cost_price=None) -> int:
+                        price: float = 10.0, cost_price=None,
+                        is_active: bool = True) -> int:
     async with db_manager.async_session_maker() as db:
         p = Products(
             user_id=user_id,
@@ -58,7 +59,7 @@ async def _seed_product(client_id: int, user_id: str, *, name: str, quantity: fl
             cost_price=cost_price,
             quantity=quantity,
             reorder_point=reorder_point,
-            is_active=True,
+            is_active=is_active,
             is_digital=is_digital,
         )
         db.add(p)
@@ -948,3 +949,118 @@ async def test_assistant_vat_handles_empty_window(client):
     assert body["data"]["vat_collected"] == 0.0
     assert body["data"]["order_count"] == 0
     assert body["data"]["effective_rate"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# inventory_value — "how much is my stock worth?" (#228 — M9·AI)
+# ---------------------------------------------------------------------------
+
+
+async def test_assistant_values_on_hand_inventory(client):
+    """"How much is my stock worth?" → on-hand valued at cost and at retail."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # 10 @ cost 4 / price 10  +  5 @ cost 20 / price 30.
+    await _seed_product(client_id, user["id"], name="Latte", quantity=10,
+                        price=10.0, cost_price=4.0)
+    await _seed_product(client_id, user["id"], name="Grinder", quantity=5,
+                        price=30.0, cost_price=20.0)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much is my inventory worth", headers=headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["intent"] == "inventory_value"
+    data = body["data"]
+    # cost: 10*4 + 5*20 = 140 ; retail: 10*10 + 5*30 = 250 ; margin: 110.
+    assert data["cost_value"] == 140.0
+    assert data["retail_value"] == 250.0
+    assert data["potential_margin"] == 110.0
+    assert data["sku_count"] == 2
+    assert data["total_units"] == 15
+    assert data["unpriced_count"] == 0
+    assert "140" in body["answer"]
+
+
+async def test_assistant_inventory_value_excludes_digital_and_inactive(client):
+    """Digital goods carry no physical stock; archived products aren't on hand."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_product(client_id, user["id"], name="Beans", quantity=10,
+                        price=10.0, cost_price=4.0)
+    # Digital voucher — excluded even though it has a "quantity" and price.
+    await _seed_product(client_id, user["id"], name="Gift Card", quantity=100,
+                        price=50.0, cost_price=50.0, is_digital=True)
+    # Archived product — no longer on the shelf.
+    await _seed_product(client_id, user["id"], name="Old Mug", quantity=7,
+                        price=8.0, cost_price=3.0, is_active=False)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my stock value", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "inventory_value"
+    data = body["data"]
+    # Only Beans counts: cost 40, retail 100.
+    assert data["cost_value"] == 40.0
+    assert data["retail_value"] == 100.0
+    assert data["sku_count"] == 1
+    assert data["total_units"] == 10
+
+
+async def test_assistant_inventory_value_flags_products_without_cost(client):
+    """A SKU with no cost price can't be valued at cost, but is counted/retailed."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_product(client_id, user["id"], name="Latte", quantity=10,
+                        price=10.0, cost_price=4.0)
+    # No cost_price → excluded from cost_value, surfaced as unpriced.
+    await _seed_product(client_id, user["id"], name="Mystery", quantity=5,
+                        price=12.0, cost_price=None)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much is my inventory worth", headers=headers
+    )
+    body = resp.json()
+    data = body["data"]
+    assert data["cost_value"] == 40.0            # only Latte has a cost
+    assert data["retail_value"] == 160.0         # 10*10 + 5*12
+    assert data["sku_count"] == 2
+    assert data["unpriced_count"] == 1
+
+
+async def test_assistant_inventory_value_empty_catalogue(client):
+    """No stock → zeros and a graceful answer, never a crash."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much is my inventory worth", headers=headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["intent"] == "inventory_value"
+    data = body["data"]
+    assert data["cost_value"] == 0.0
+    assert data["retail_value"] == 0.0
+    assert data["sku_count"] == 0
+
+
+async def test_assistant_inventory_value_routes_in_arabic(client):
+    """Arabic "قيمة المخزون" routes to inventory_value, not the low-stock list."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_product(client_id, user["id"], name="Latte", quantity=10,
+                        price=10.0, cost_price=4.0)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=كم قيمة المخزون", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "inventory_value"
+    assert body["data"]["cost_value"] == 40.0

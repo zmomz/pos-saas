@@ -123,4 +123,5 @@ const DEFAULT_SUGGESTIONS = [
   'Which products should I discount?',
   "Which products aren't selling?",
   'Which products are low on stock?',
+  'How much is my inventory worth?',
 ];

@@ -2714,7 +2714,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | sales_today | average_order | payment_mix | vat_owed | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | unknown
+    intent: str  # top_product | top_margin | sales_today | average_order | payment_mix | vat_owed | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2748,6 +2748,19 @@ _ASSISTANT_INTENTS = [
                          "price cut", "reduce price", "lower price", "adjust price",
                          "pricing suggestion", "clearance", "overstock",
                          "slow moving", "slow-moving", "تخفيض", "تسعير"]),
+    # Checked before ``low_stock`` so a "how much is my stock *worth*" question routes
+    # to the valuation read rather than the low-stock list — and so the Arabic
+    # "قيمة المخزون" isn't swallowed by ``low_stock``'s bare "مخزون" cue. Its
+    # vocabulary is *money tied up on the shelf* (worth/value of on-hand), distinct
+    # from *what's idle* (dead_stock), *few left* (low_stock), and *what to reorder*.
+    ("inventory_value", ["inventory value", "stock value", "stock worth",
+                         "worth of stock", "worth of my stock", "worth of inventory",
+                         "value of my stock", "value of stock", "value of my inventory",
+                         "value of inventory", "inventory worth", "stock is worth",
+                         "inventory is worth", "how much stock do i have",
+                         "how much inventory", "cost of my inventory",
+                         "قيمة المخزون", "قيمة البضاعة", "كم يساوي المخزون",
+                         "قيمة مخزوني"]),
     # Checked before ``low_stock`` so a "what's *not selling* / dead stock" question
     # routes to the idle-inventory read rather than the low-stock list — and so the
     # Arabic "مخزون راكد" isn't swallowed by ``low_stock``'s bare "مخزون" cue. Its
@@ -2837,6 +2850,7 @@ _ASSISTANT_SUGGESTIONS = [
     "Which products should I discount?",
     "Which products aren't selling?",
     "Which products are low on stock?",
+    "How much is my inventory worth?",
 ]
 
 # Day-of-week names indexed to match Postgres ``extract('dow')`` / SQLite ``%w``
@@ -3299,6 +3313,63 @@ async def _assistant_low_stock(db: AsyncSession, client_id: int) -> dict:
         for pid, name, name_ar, qty in result.all()
     ]
     return {"count": len(products), "products": products}
+
+
+async def _assistant_inventory_value(db: AsyncSession, client_id: int) -> dict:
+    """Total on-hand inventory valued at cost and at retail (#228 — AI).
+
+    Answers "how much is my stock worth?" — the capital tied up on the shelf right
+    now. ``cost_value`` is Σ(on-hand × ``cost_price``); ``retail_value`` is
+    Σ(on-hand × ``price``); ``potential_margin`` is the gap between them (what the
+    stock would earn if it all sold at list). This is a *catalogue* read (no sales
+    window) — the value is whatever is physically on hand. Digital products carry no
+    physical stock and archived products are off the shelf, so both are excluded
+    (same rule as ``dead_stock``). A SKU with no ``cost_price`` can't be valued at
+    cost, so it is left out of ``cost_value`` but still counted in ``sku_count`` /
+    ``retail_value`` and surfaced via ``unpriced_count`` so the operator can be
+    nudged to set cost prices rather than see an understated total silently. An
+    empty/zeroed catalogue yields zeros, never a crash.
+    """
+    prod_result = await db.execute(
+        select(Products.quantity, Products.price, Products.cost_price).where(
+            and_(
+                Products.client_id == client_id,
+                Products.is_active == True,
+                Products.is_digital.is_distinct_from(True),
+            )
+        )
+    )
+
+    cost_value = 0.0
+    retail_value = 0.0
+    total_units = 0.0
+    sku_count = 0
+    unpriced_count = 0
+    for qty, price, cost in prod_result.all():
+        on_hand = float(qty or 0.0)
+        if on_hand <= 0:
+            # Nothing on the shelf → no value and not a stocked SKU to count.
+            continue
+        sku_count += 1
+        total_units += on_hand
+        retail_value += on_hand * float(price or 0.0)
+        if cost is None:
+            unpriced_count += 1
+        else:
+            cost_value += on_hand * float(cost)
+
+    cost_value = round(cost_value, 2)
+    retail_value = round(retail_value, 2)
+    # Whole units render cleanly (10, not 10.0); fractional weights keep the point.
+    units = int(total_units) if float(total_units).is_integer() else round(total_units, 3)
+    return {
+        "cost_value": cost_value,
+        "retail_value": retail_value,
+        "potential_margin": round(retail_value - cost_value, 2),
+        "sku_count": sku_count,
+        "total_units": units,
+        "unpriced_count": unpriced_count,
+    }
 
 
 async def _assistant_dead_stock(db: AsyncSession, client_id: int, window: int = 30) -> dict:
@@ -3933,6 +4004,26 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=ds, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "inventory_value":
+        iv = await _assistant_inventory_value(db, client_id)
+        if iv["sku_count"]:
+            answer = (
+                f"Your on-hand stock is worth {iv['cost_value']:.2f} at cost "
+                f"({iv['retail_value']:.2f} at retail — {iv['potential_margin']:.2f} "
+                f"potential margin) across {iv['sku_count']} product(s)."
+            )
+            if iv["unpriced_count"]:
+                answer += (
+                    f" {iv['unpriced_count']} product(s) have no cost price and aren't "
+                    f"in the cost figure — set one for a complete total."
+                )
+        else:
+            answer = "You have no stock on hand right now, so there's nothing to value."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=iv, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "low_stock":
