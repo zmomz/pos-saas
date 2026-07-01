@@ -578,7 +578,7 @@ export default function AgentDashboard() {
 
           <div className="mt-auto">
             {revenueLoading ? (
-              <div className="animate-pulse py-2 text-sm text-white/60">{t('loading')}</div>
+              <LoadingState className="py-2 text-white/60" />
             ) : revenueError ? (
               <div role="alert" className="flex flex-col items-start gap-2">
                 <p className="text-sm text-[hsl(6_70%_80%)]">{t('revenue_load_error') || 'Could not load revenue.'}</p>
@@ -818,7 +818,7 @@ export default function AgentDashboard() {
                     <Button variant="outline" size="sm" onClick={() => loadClientFeatures(panelClient.id)}>{t('retry')}</Button>
                   </div>
                 ) : !featureState[panelClient.id] ? (
-                  <p className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</p>
+                  <LoadingState className="py-4" />
                 ) : (
                   TOGGLEABLE_FEATURES.map((f) => {
                     const meta = FEATURE_META[f];
@@ -877,7 +877,7 @@ export default function AgentDashboard() {
           <span className="text-[12.5px] text-muted-foreground">{t('per_billing_period') || 'Per billing period'}</span>
         </div>
         {statementsLoading ? (
-          <div className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</div>
+          <LoadingState className="py-4" />
         ) : statementsError ? (
           <div role="alert" className="flex flex-col items-start gap-2">
             <p className="text-sm text-danger">{t('statements_load_error') || 'Could not load statements.'}</p>
@@ -933,7 +933,7 @@ export default function AgentDashboard() {
             )}
           </div>
           {quotaLoading ? (
-            <div className="animate-pulse py-4 text-sm text-muted-foreground">{t('loading')}</div>
+            <LoadingState className="py-4" />
           ) : quotaError ? (
             <div role="alert" className="flex flex-col items-start gap-2">
               <p className="text-sm text-danger">{t('quota_load_error') || 'Could not load quota status.'}</p>

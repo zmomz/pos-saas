@@ -390,7 +390,7 @@ export default function MasterDashboard() {
             <button onClick={() => navigate('/audit')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{tt('view_all', 'View all')} <ArrowRight className="h-[15px] w-[15px] rtl:-scale-x-100" /></button>
           </div>
           {ecoLoading ? (
-            <div className="animate-pulse py-10 text-center text-muted-foreground">{t('loading')}</div>
+            <LoadingState className="py-10" />
           ) : ecoError ? (
             <ErrorState onRetry={loadEconomics} />
           ) : leaderboard.length === 0 ? (
