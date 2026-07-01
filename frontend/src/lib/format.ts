@@ -103,6 +103,19 @@ export function formatDate(
   return out;
 }
 
+/** Time-only convenience (L10N-04): locale-aware HH:MM, Western numerals. */
+export function formatTime(
+  value: Date | string | number,
+  lang: Language
+): string {
+  const date = toDate(value);
+  if (isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat(`${LOCALE_BY_LANG[lang]}-u-ca-gregory-nu-latn`, {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 /** Date + time convenience (L10N-04). */
 export function formatDateTime(
   value: Date | string | number,

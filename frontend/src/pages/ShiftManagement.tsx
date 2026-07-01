@@ -21,7 +21,7 @@ import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney, formatDate } from '@/lib/format';
+import { formatMoney, formatDate, formatTime } from '@/lib/format';
 import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle, RotateCcw, CalendarCheck } from 'lucide-react';
 
 interface Shift {
@@ -467,7 +467,7 @@ export default function ShiftManagement() {
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                 <div className="bg-muted/50 rounded-lg p-3">
                   <p className="text-muted-foreground text-xs">{t('sm_started')}</p>
-                  <p className="text-foreground font-medium tabular-nums">{new Date(currentShift.opened_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</p>
+                  <p className="text-foreground font-medium tabular-nums">{formatTime(currentShift.opened_at, language)}</p>
                 </div>
                 <div className="bg-muted/50 rounded-lg p-3">
                   <p className="text-muted-foreground text-xs">{t('sm_duration')}</p>

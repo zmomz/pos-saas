@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDate, formatDateTime } from './format';
+import { formatDate, formatDateTime, formatTime } from './format';
 
 const SAMPLE = new Date('2026-06-03T14:30:00Z');
 
@@ -30,5 +30,20 @@ describe('locale-aware date helper (L10N-04)', () => {
 
   it('returns empty string for an invalid date', () => {
     expect(formatDate('not-a-date', 'en')).toBe('');
+  });
+
+  it('formatTime renders an HH:MM time component', () => {
+    const out = formatTime(SAMPLE, 'en');
+    expect(out).toMatch(/^\d{1,2}:\d{2}$/);
+  });
+
+  it('formatTime uses Western (Latin) numerals for ar — never Arabic-Indic', () => {
+    const out = formatTime(SAMPLE, 'ar');
+    expect(out).toMatch(/[0-9]/);
+    expect(out).not.toMatch(/[٠-٩]/);
+  });
+
+  it('formatTime returns empty string for an invalid date', () => {
+    expect(formatTime('not-a-date', 'en')).toBe('');
   });
 });
