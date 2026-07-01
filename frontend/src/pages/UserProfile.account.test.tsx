@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
 import { LanguageProvider } from '@/lib/i18n';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { AccessibilityProvider } from '@/contexts/AccessibilityContext';
 import UserProfile from './UserProfile';
 
 // #203 (M1·Auth, parity #4) — the profile screen lets a user edit their own
@@ -17,7 +18,9 @@ function renderPage() {
     <MemoryRouter>
       <LanguageProvider>
         <ThemeProvider>
+          <AccessibilityProvider>
           <UserProfile />
+          </AccessibilityProvider>
         </ThemeProvider>
       </LanguageProvider>
     </MemoryRouter>

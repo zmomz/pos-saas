@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
 import { LanguageProvider } from '@/lib/i18n';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { AccessibilityProvider } from '@/contexts/AccessibilityContext';
 import UserProfile from './UserProfile';
 
 // ISSUE-078 — per-user profile + notification preferences are persisted
@@ -19,7 +20,9 @@ function renderPage() {
     <MemoryRouter>
       <LanguageProvider>
         <ThemeProvider>
+          <AccessibilityProvider>
           <UserProfile />
+          </AccessibilityProvider>
         </ThemeProvider>
       </LanguageProvider>
     </MemoryRouter>

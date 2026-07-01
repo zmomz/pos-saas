@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { server, http, HttpResponse } from '../test/msw';
 import { LanguageProvider } from '@/lib/i18n';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { AccessibilityProvider } from '@/contexts/AccessibilityContext';
 import UserProfile from './UserProfile';
 
 // ISSUE-097 — the atoms.dev "Change Password — managed by authentication
@@ -20,7 +21,9 @@ function renderPage() {
     <MemoryRouter>
       <LanguageProvider>
         <ThemeProvider>
+          <AccessibilityProvider>
           <UserProfile />
+          </AccessibilityProvider>
         </ThemeProvider>
       </LanguageProvider>
     </MemoryRouter>

@@ -5,8 +5,9 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { useLanguage, languageOptions, type Language } from '@/lib/i18n';
 import { useTheme } from '@/contexts/ThemeContext';
+import { useAccessibility, type FontScale } from '@/contexts/AccessibilityContext';
 import { InputOTP, InputOTPGroup, InputOTPSlot } from '@/components/ui/input-otp';
-import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check, KeyRound, Monitor } from 'lucide-react';
+import { User, Globe, Bell, Palette, Shield, Sun, Moon, Check, KeyRound, Monitor, Accessibility, Contrast, ALargeSmall } from 'lucide-react';
 import {
   changePassword,
   getUserPreferences,
@@ -49,6 +50,7 @@ export default function UserProfile() {
   const [mfaBusy, setMfaBusy] = useState(false);
   const [mfaError, setMfaError] = useState<string | null>(null);
   const { theme, toggleTheme, isDark } = useTheme();
+  const { highContrast, toggleHighContrast, fontScale, setFontScale } = useAccessibility();
   // Account identity (#203, parity #4): the user's own name/email/phone, loaded
   // from GET /users/profile and saved via PUT on the same Save button.
   const [accountName, setAccountName] = useState('');
@@ -386,6 +388,52 @@ export default function UserProfile() {
             >
               <Moon className="h-4 w-4 me-2" /> {tt('dark', 'Dark')}
             </Button>
+          </div>
+        </div>
+
+        {/* Accessibility (ISSUE-226): high-contrast mode + font scaling, both
+            persisted globally by AccessibilityContext. */}
+        <div className="dxr-tile space-y-4">
+          <h2 className="text-foreground flex items-center gap-2 font-semibold">
+            <Accessibility className="h-5 w-5 text-violet" />
+            {tt('accessibility', 'Accessibility')}
+          </h2>
+
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Contrast className="h-4 w-4 text-muted-foreground" />
+              <span>{tt('high_contrast', 'High contrast')}</span>
+            </div>
+            <Button
+              onClick={toggleHighContrast}
+              variant={highContrast ? 'default' : 'outline'}
+              aria-pressed={highContrast}
+            >
+              {highContrast ? tt('on', 'On') : tt('off', 'Off')}
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <ALargeSmall className="h-4 w-4 text-muted-foreground" />
+              <span>{tt('text_size', 'Text size')}</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {([
+                ['normal', tt('text_size_normal', 'Normal')],
+                ['large', tt('text_size_large', 'Large')],
+                ['x-large', tt('text_size_xlarge', 'Extra large')],
+              ] as [FontScale, string][]).map(([scale, label]) => (
+                <Button
+                  key={scale}
+                  onClick={() => setFontScale(scale)}
+                  variant={fontScale === scale ? 'default' : 'outline'}
+                  aria-pressed={fontScale === scale}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
           </div>
         </div>
 
