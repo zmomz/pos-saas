@@ -432,7 +432,15 @@ export default function KDS() {
           {columns.map((col) => {
             const colCards = visibleCards.filter((c) => c.station_id === col.id);
             return (
-              <div key={col.id ?? 'unrouted'} className="space-y-3">
+              // A11y (ISSUE-226): expose each station column as a labelled
+              // landmark region so a screen-reader cook can navigate to a
+              // station and perceive its outstanding-ticket count — the visual
+              // <h3> + count Badge alone carried no programmatic grouping.
+              <section
+                key={col.id ?? 'unrouted'}
+                className="space-y-3"
+                aria-label={`${col.name}, ${t('kds_tickets_count').replace('{count}', String(colCards.length))}`}
+              >
                 <div className="flex items-center justify-between">
                   <h3 className="text-foreground font-semibold">{col.name}</h3>
                   <Badge className="bg-muted text-foreground/90">{colCards.length}</Badge>
@@ -526,7 +534,7 @@ export default function KDS() {
                     );
                   })
                 )}
-              </div>
+              </section>
             );
           })}
         </div>
