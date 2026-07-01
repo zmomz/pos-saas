@@ -2698,7 +2698,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | sales_today | average_order | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | low_stock | unknown
+    intent: str  # top_product | top_margin | sales_today | average_order | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2732,6 +2732,17 @@ _ASSISTANT_INTENTS = [
                          "price cut", "reduce price", "lower price", "adjust price",
                          "pricing suggestion", "clearance", "overstock",
                          "slow moving", "slow-moving", "تخفيض", "تسعير"]),
+    # Checked before ``low_stock`` so a "what's *not selling* / dead stock" question
+    # routes to the idle-inventory read rather than the low-stock list — and so the
+    # Arabic "مخزون راكد" isn't swallowed by ``low_stock``'s bare "مخزون" cue. Its
+    # vocabulary is *sitting idle* (no recent sale), distinct from *low* (few left),
+    # *what to discount* (dynamic_pricing), and *what to reorder* (smart_reorder).
+    ("dead_stock", ["dead stock", "deadstock", "not selling", "aren't selling",
+                    "isn't selling", "isnt selling", "arent selling", "not moving",
+                    "haven't sold", "hasn't sold", "havent sold", "hasnt sold",
+                    "no recent sales", "gathering dust", "collecting dust",
+                    "sitting on the shelf", "stale stock", "stale inventory",
+                    "راكد", "بضاعة راكدة", "مخزون راكد", "لا يباع", "لا تباع"]),
     ("low_stock", ["low stock", "low on stock", "running low", "out of stock",
                    "مخزون", "نفاد", "نفذ"]),
     # Checked before ``top_product`` so a *profit* question ("most profitable",
@@ -2789,6 +2800,7 @@ _ASSISTANT_SUGGESTIONS = [
     "What should I reorder?",
     "Which products will run out soon?",
     "Which products should I discount?",
+    "Which products aren't selling?",
     "Which products are low on stock?",
 ]
 
@@ -3134,6 +3146,89 @@ async def _assistant_low_stock(db: AsyncSession, client_id: int) -> dict:
         for pid, name, name_ar, qty in result.all()
     ]
     return {"count": len(products), "products": products}
+
+
+async def _assistant_dead_stock(db: AsyncSession, client_id: int, window: int = 30) -> dict:
+    """Dead stock — products carrying on-hand stock that haven't sold in ``window``
+    days, ranked by the capital tied up in them.
+
+    The conversational surface over the inventory-health report's dead-stock section
+    (same rule): a product is dead when it has physical stock on hand yet appears in
+    no completed sale over the trailing window. Where ``low_stock`` answers "what's
+    running out" and ``dynamic_pricing`` answers "what to mark down", this answers
+    "what's sitting idle" — the money frozen on the shelf. Held/voided tickets and
+    out-of-window sales are not selling activity and don't rescue an item from the
+    list (same exclusion as the other assistant metrics); digital products carry no
+    physical stock and never appear; a zero-on-hand product isn't dead stock (there's
+    nothing sitting there). Results are most-capital-first, so a tenant with nothing
+    idle gets an empty list rather than a crash.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=window)
+
+    # Active, stockable (non-digital) catalogue keyed by id, carrying on-hand and
+    # cost so we can value the idle stock.
+    prod_result = await db.execute(
+        select(
+            Products.id, Products.name, Products.name_ar,
+            Products.quantity, Products.cost_price,
+        ).where(
+            and_(
+                Products.client_id == client_id,
+                Products.is_active == True,
+                Products.is_digital.is_distinct_from(True),
+            )
+        )
+    )
+    catalogue = {
+        pid: {
+            "name": name,
+            "name_ar": name_ar,
+            "on_hand": int(qty or 0),
+            "cost": float(cost or 0.0),
+        }
+        for pid, name, name_ar, qty, cost in prod_result.all()
+    }
+
+    # Product ids that appear in any completed, in-window sale (bounded set).
+    sold_recent: set = set()
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id")
+            if pid is not None:
+                sold_recent.add(pid)
+
+    dead = []
+    for pid, prod in catalogue.items():
+        on_hand = prod["on_hand"]
+        if on_hand > 0 and pid not in sold_recent:
+            dead.append({
+                "product_id": pid,
+                "name": prod["name"],
+                "name_ar": prod["name_ar"],
+                "on_hand": on_hand,
+                "cost_price": round(prod["cost"], 2),
+                "stock_value": round(on_hand * prod["cost"], 2),
+            })
+
+    # Most capital tied up first; stable tiebreak on name so ties are deterministic.
+    dead.sort(key=lambda d: (-d["stock_value"], d["name"]))
+    return {"window_days": window, "count": len(dead), "products": dead}
 
 
 async def _assistant_smart_reorder(db: AsyncSession, client_id: int) -> dict:
@@ -3607,6 +3702,28 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=ph, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "dead_stock":
+        ds = await _assistant_dead_stock(db, client_id)
+        if ds["count"]:
+            lines = ", ".join(
+                f"{p['name']} ({p['on_hand']} on hand, {p['stock_value']:.2f} tied up)"
+                for p in ds["products"]
+            )
+            answer = (
+                f"{ds['count']} product(s) haven't sold in the last "
+                f"{ds['window_days']} days: {lines}. Consider clearing them and "
+                f"pausing reorders."
+            )
+        else:
+            answer = (
+                "Nothing is sitting idle — everything on hand has sold in the last "
+                "30 days."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=ds, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "low_stock":

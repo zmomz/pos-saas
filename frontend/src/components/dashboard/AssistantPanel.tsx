@@ -119,5 +119,6 @@ const DEFAULT_SUGGESTIONS = [
   'What should I reorder?',
   'Which products will run out soon?',
   'Which products should I discount?',
+  "Which products aren't selling?",
   'Which products are low on stock?',
 ];

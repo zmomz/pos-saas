@@ -720,3 +720,80 @@ async def test_assistant_top_margin_without_cost_data_degrades_gracefully(client
     assert body["intent"] == "top_margin"
     assert body["data"] == {}
     assert "cost" in body["answer"].lower()
+
+
+async def test_assistant_flags_dead_stock(client):
+    """"Which products aren't selling?" → dead stock: items with stock on hand but
+    no sale in the trailing window, ranked by the capital tied up in them. Distinct
+    from ``low_stock`` (which are *low*) and ``dynamic_pricing`` (what to *discount*):
+    this names what's sitting idle. A recently-sold item is not dead; a digital item
+    (no physical stock) never appears; a zero-on-hand item can't be dead stock; an
+    out-of-window or held/voided sale does not count as "recently sold"."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Latte: 10 on hand, sold 3 days ago → moving, NOT dead.
+    latte = await _seed_product(client_id, user["id"], name="Latte", quantity=10,
+                                cost_price=4.0)
+    # Mug: 20 on hand, never sold → dead. Capital tied up = 20 × 5 = 100.
+    mug = await _seed_product(client_id, user["id"], name="Mug", quantity=20,
+                              cost_price=5.0)
+    # Poster: 3 on hand, only sale is 45 days ago (out of window) → dead. 3 × 8 = 24.
+    poster = await _seed_product(client_id, user["id"], name="Poster", quantity=3,
+                                 cost_price=8.0)
+    # Gift Card: digital → excluded even though it carries a quantity.
+    await _seed_product(client_id, user["id"], name="Gift Card", quantity=5,
+                        is_digital=True, cost_price=1.0)
+    # Sold Out: 0 on hand → can't be dead stock (nothing sitting there).
+    await _seed_product(client_id, user["id"], name="Sold Out", quantity=0,
+                        cost_price=3.0)
+
+    await _seed_sale(client_id, user["id"], days_ago=3, total=10.0,
+                     items=[{"product_id": latte, "quantity": 2}], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=45, total=10.0,
+                     items=[{"product_id": poster, "quantity": 1}], idx=2)
+    # A held ticket for Mug must not count as a sale → Mug stays dead.
+    await _seed_sale(client_id, user["id"], days_ago=2, total=10.0,
+                     items=[{"product_id": mug, "quantity": 1}],
+                     status="held", idx=3)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=which products aren't selling", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "dead_stock"
+    assert body["data"]["window_days"] == 30
+    assert body["data"]["count"] == 2
+    ids = [p["product_id"] for p in body["data"]["products"]]
+    assert latte not in ids
+    # Ranked by capital tied up: Mug (100) before Poster (24).
+    assert ids == [mug, poster]
+    first = body["data"]["products"][0]
+    assert first["product_id"] == mug
+    assert first["on_hand"] == 20
+    assert abs(first["stock_value"] - 100.0) < 0.01
+    assert "Mug" in body["answer"]
+
+
+async def test_assistant_dead_stock_handles_all_moving(client):
+    """Everything on hand has sold recently → no dead stock, a reassuring message
+    and empty data, never a crash."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    latte = await _seed_product(client_id, user["id"], name="Latte", quantity=10,
+                                cost_price=4.0)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=10.0,
+                     items=[{"product_id": latte, "quantity": 2}], idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=which products are dead stock", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "dead_stock"
+    assert body["data"]["count"] == 0
+    assert body["data"]["products"] == []
