@@ -353,6 +353,7 @@ export default function SubscriptionManagement() {
                               size="sm"
                               className="h-8 gap-1 px-2"
                               onClick={() => downloadSubscriptionInvoice(p.id)}
+                              aria-label={t('download_invoice')}
                               title={t('download_invoice')}
                             >
                               <Download className="h-4 w-4" />
@@ -366,6 +367,7 @@ export default function SubscriptionManagement() {
                               className="h-8 gap-1 px-2 text-danger hover:text-danger"
                               disabled={busy}
                               onClick={() => setRefundTarget(p)}
+                              aria-label={t('refund_action')}
                               title={t('refund_action')}
                             >
                               <Undo2 className="h-4 w-4" />
