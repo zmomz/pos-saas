@@ -10,6 +10,7 @@ lives in :mod:`middlewares.maintenance`; this router is only the read/write
 control plane the console drives.
 """
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.tenancy import TenantScope, get_tenant_scope
+from services.admin_logs import list_api_logs
 from services.job_queue import queue_stats
 from services.platform_features import get_feature_flags, set_feature_flag
 from services.platform_settings import get_maintenance_state, set_maintenance_state
@@ -51,6 +53,24 @@ class JobQueueStatus(BaseModel):
     healthy: bool
     queued: int
     registered_jobs: list[str]
+
+
+class ApiLogEntry(BaseModel):
+    id: int
+    user_id: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    endpoint: str
+    method: str
+    status_code: Optional[int] = None
+    response_time_ms: Optional[int] = None
+    created_at: Optional[datetime] = None
+
+
+class ApiLogPage(BaseModel):
+    items: list[ApiLogEntry]
+    total: int
+    skip: int
+    limit: int
 
 
 def _require_master(scope: TenantScope) -> None:
@@ -115,3 +135,21 @@ async def read_job_queue(
     """Read the background job-queue monitor: backend, health, depth, registry (master only)."""
     _require_master(scope)
     return JobQueueStatus(**await queue_stats())
+
+
+@router.get("/logs/api", response_model=ApiLogPage)
+async def read_api_logs(
+    skip: int = 0,
+    limit: int = 50,
+    errors_only: bool = False,
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read the platform-wide per-request API/error log, newest-first (master only).
+
+    ``errors_only`` narrows the viewer to failing requests (status_code >= 400) —
+    the "error log" view. Rows are the real ``api_usage`` entries the request
+    middleware writes; nothing here fabricates state.
+    """
+    _require_master(scope)
+    return await list_api_logs(db, skip=skip, limit=min(limit, 200), errors_only=errors_only)
