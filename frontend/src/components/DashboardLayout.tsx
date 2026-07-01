@@ -517,15 +517,26 @@ const Shell: React.FC = () => {
             recentLabel={t('recent_searches')}
           />
 
+          {/* A11y (#226): the unread state is signalled by a color-only red dot,
+              which SR/color-blind users cannot perceive (WCAG 1.4.1 / 4.1.2).
+              Fold the count into the button's accessible name so the state is
+              announced, not just seen. */}
           <button
             onClick={() => navigate('/notifications')}
-            aria-label={t('notifications')}
+            aria-label={
+              unreadCount > 0
+                ? `${t('notifications')}, ${t('notifications_unread').replace('{count}', String(unreadCount))}`
+                : t('notifications')
+            }
             title={t('notifications')}
             className="relative flex h-11 w-11 items-center justify-center rounded-[14px] border border-input bg-card text-muted-foreground shadow-sm transition-colors hover:border-brand hover:text-brand-700"
           >
             <Bell className="h-[18px] w-[18px]" />
             {unreadCount > 0 && (
-              <span className="absolute end-2.5 top-2.5 h-2 w-2 rounded-full bg-danger ring-2 ring-card" />
+              <span
+                aria-hidden="true"
+                className="absolute end-2.5 top-2.5 h-2 w-2 rounded-full bg-danger ring-2 ring-card"
+              />
             )}
           </button>
 
