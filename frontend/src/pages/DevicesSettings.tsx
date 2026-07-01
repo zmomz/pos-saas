@@ -107,8 +107,9 @@ export default function DevicesSettings() {
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground">{t('terminal_name')} *</Label>
+                <Label htmlFor="terminal-name" className="text-muted-foreground">{t('terminal_name')} *</Label>
                 <Input
+                  id="terminal-name"
                   value={formData.label}
                   onChange={(e) => handleFormChange('label', e.target.value)}
                   placeholder={t('terminal_name')}
@@ -127,16 +128,18 @@ export default function DevicesSettings() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground">{t('terminal_serial')}</Label>
+                <Label htmlFor="terminal-serial" className="text-muted-foreground">{t('terminal_serial')}</Label>
                 <Input
+                  id="terminal-serial"
                   value={formData.serial}
                   onChange={(e) => handleFormChange('serial', e.target.value)}
                   placeholder={t('terminal_serial')}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground">{t('terminal_branch_optional')}</Label>
+                <Label htmlFor="terminal-branch" className="text-muted-foreground">{t('terminal_branch_optional')}</Label>
                 <Input
+                  id="terminal-branch"
                   type="number"
                   value={formData.branch_id}
                   onChange={(e) => handleFormChange('branch_id', e.target.value)}

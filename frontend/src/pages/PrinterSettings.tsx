@@ -139,8 +139,9 @@ export default function PrinterSettings() {
             </DialogHeader>
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground">{t('printer_name')} *</Label>
+                <Label htmlFor="printer-name" className="text-muted-foreground">{t('printer_name')} *</Label>
                 <Input
+                  id="printer-name"
                   value={formData.name}
                   onChange={(e) => handleFormChange('name', e.target.value)}
                   placeholder={t('printer_name')}
@@ -173,8 +174,9 @@ export default function PrinterSettings() {
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground">{t('prep_station_optional')}</Label>
+                <Label htmlFor="printer-station" className="text-muted-foreground">{t('prep_station_optional')}</Label>
                 <Input
+                  id="printer-station"
                   type="number"
                   value={formData.station_id}
                   onChange={(e) => handleFormChange('station_id', e.target.value)}
@@ -182,8 +184,9 @@ export default function PrinterSettings() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-muted-foreground">{t('device_label')}</Label>
+                <Label htmlFor="printer-device" className="text-muted-foreground">{t('device_label')}</Label>
                 <Input
+                  id="printer-device"
                   value={formData.device_id}
                   onChange={(e) => handleFormChange('device_id', e.target.value)}
                   placeholder="usb:0x04b8"
