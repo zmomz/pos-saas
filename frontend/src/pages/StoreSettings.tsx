@@ -150,8 +150,9 @@ export default function StoreSettings() {
         </h2>
         <div className="space-y-4">
           <div>
-            <Label className={labelCls}>{t('store_name')}</Label>
+            <Label htmlFor="store-name" className={labelCls}>{t('store_name')}</Label>
             <Input
+              id="store-name"
               value={storeName}
               onChange={(e) => setStoreName(e.target.value)}
               placeholder={t('store_name')}
@@ -159,16 +160,18 @@ export default function StoreSettings() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <Label className={labelCls}>{t('vat_number')}</Label>
+              <Label htmlFor="vat-number" className={labelCls}>{t('vat_number')}</Label>
               <Input
+                id="vat-number"
                 value={vatNumber}
                 onChange={(e) => setVatNumber(e.target.value)}
                 placeholder={t('vat_number')}
               />
             </div>
             <div>
-              <Label className={labelCls}>{t('cr_number')}</Label>
+              <Label htmlFor="cr-number" className={labelCls}>{t('cr_number')}</Label>
               <Input
+                id="cr-number"
                 value={crNumber}
                 onChange={(e) => setCrNumber(e.target.value)}
                 placeholder={t('cr_number')}
@@ -187,9 +190,9 @@ export default function StoreSettings() {
         <p className="mb-4 text-sm text-muted-foreground">{t('bt_section_desc')}</p>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:items-end">
           <div>
-            <Label className={labelCls}>{t('choose_business_type')}</Label>
+            <Label htmlFor="business-type" className={labelCls}>{t('choose_business_type')}</Label>
             <Select value={currentType} onValueChange={(v) => requestTypeChange(v as BusinessType)}>
-              <SelectTrigger>
+              <SelectTrigger id="business-type" aria-label={t('choose_business_type')}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -210,6 +213,7 @@ export default function StoreSettings() {
           {t('receipt_footer')}
         </h2>
         <Input
+          aria-label={t('receipt_footer')}
           value={receiptFooter}
           onChange={(e) => setReceiptFooter(e.target.value)}
           placeholder={t('receipt_footer')}
@@ -224,8 +228,9 @@ export default function StoreSettings() {
         </h2>
         <div className="space-y-4">
           <div>
-            <Label className={labelCls}>{t('address')}</Label>
+            <Label htmlFor="branch-address" className={labelCls}>{t('address')}</Label>
             <Input
+              id="branch-address"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
               placeholder={t('address')}
@@ -233,16 +238,18 @@ export default function StoreSettings() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <Label className={labelCls}>{t('city')}</Label>
+              <Label htmlFor="branch-city" className={labelCls}>{t('city')}</Label>
               <Input
+                id="branch-city"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
                 placeholder={t('city')}
               />
             </div>
             <div>
-              <Label className={labelCls}>{t('phone')}</Label>
+              <Label htmlFor="branch-phone" className={labelCls}>{t('phone')}</Label>
               <Input
+                id="branch-phone"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder={t('phone')}
