@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from dependencies.tenancy import TenantScope, get_tenant_scope
+from services.platform_features import get_feature_flags, set_feature_flag
 from services.platform_settings import get_maintenance_state, set_maintenance_state
 
 # Import the model so create_all/metadata registers the table (mirrors the
@@ -32,6 +33,16 @@ router = APIRouter(prefix="/api/v1/admin", tags=["admin"])
 class MaintenanceState(BaseModel):
     enabled: bool
     message: Optional[str] = None
+
+
+class FeatureFlag(BaseModel):
+    key: str
+    enabled: bool
+    description: str
+
+
+class FeatureFlagUpdate(BaseModel):
+    enabled: bool
 
 
 def _require_master(scope: TenantScope) -> None:
@@ -62,3 +73,28 @@ async def update_maintenance(
         db, enabled=payload.enabled, message=payload.message, updated_by=scope.user_id
     )
     return MaintenanceState(**state)
+
+
+@router.get("/feature-flags", response_model=list[FeatureFlag])
+async def list_feature_flags(
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """List the declared platform feature flags with their live values (master only)."""
+    _require_master(scope)
+    return await get_feature_flags(db)
+
+
+@router.put("/feature-flags/{key}", response_model=FeatureFlag)
+async def update_feature_flag(
+    key: str,
+    payload: FeatureFlagUpdate,
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Toggle a single declared platform feature flag (master only)."""
+    _require_master(scope)
+    try:
+        return await set_feature_flag(db, key, payload.enabled, updated_by=scope.user_id)
+    except KeyError:
+        raise HTTPException(status_code=400, detail=f"Unknown feature flag: {key}")

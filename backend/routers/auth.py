@@ -32,6 +32,7 @@ from schemas.auth import (
     UserResponse,
 )
 from services.auth import AuthService
+from services.platform_features import is_platform_feature_enabled
 from services.staff_lifecycle import StaffLifecycleService
 from utils.password_policy import enforce_password_complexity
 from services.password_reset import PasswordResetService
@@ -175,6 +176,15 @@ async def register(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Self-registration is disabled. Contact your administrator.",
+        )
+
+    # Runtime kill switch (#225 feature-flag console): a platform master can refuse
+    # self-serve registration from the admin console without a redeploy, even while
+    # the static config above allows it.
+    if not await is_platform_feature_enabled(db, "self_registration"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Self-registration is currently disabled by the platform operator.",
         )
 
     enforce_password_complexity(payload.password)
