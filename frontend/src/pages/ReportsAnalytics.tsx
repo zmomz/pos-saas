@@ -5,6 +5,7 @@ import { formatMoney, formatNumber } from '@/lib/format';
 import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, getPnlReport, getCashFlowReport, downloadReportPdf, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport, type PnlReport, type CashFlowReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableBody,
@@ -524,7 +525,7 @@ export default function ReportsAnalytics() {
           label={tr('total_revenue')}
           value={
             loadingSales ? (
-              <span className="inline-block h-7 w-24 animate-pulse rounded bg-muted align-middle" />
+              <Skeleton className="inline-block h-7 w-24 align-middle" />
             ) : (
               formatMoney(totalRevenue, language)
             )
@@ -536,7 +537,7 @@ export default function ReportsAnalytics() {
           label={tr('total_transactions')}
           value={
             loadingSales ? (
-              <span className="inline-block h-7 w-16 animate-pulse rounded bg-muted align-middle" />
+              <Skeleton className="inline-block h-7 w-16 align-middle" />
             ) : (
               totalTransactions
             )
@@ -548,7 +549,7 @@ export default function ReportsAnalytics() {
           label={tr('avg_order_value')}
           value={
             loadingSales ? (
-              <span className="inline-block h-7 w-24 animate-pulse rounded bg-muted align-middle" />
+              <Skeleton className="inline-block h-7 w-24 align-middle" />
             ) : (
               formatMoney(avgOrderValue, language)
             )
@@ -573,7 +574,7 @@ export default function ReportsAnalytics() {
           {loadingSales ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="h-8 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-8" />
               ))}
             </div>
           ) : salesError ? (
@@ -621,7 +622,7 @@ export default function ReportsAnalytics() {
           {loadingPayments ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : paymentError ? (
@@ -707,7 +708,7 @@ export default function ReportsAnalytics() {
           {loadingPnl ? (
             <div className="space-y-3">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : pnlError ? (
@@ -841,7 +842,7 @@ export default function ReportsAnalytics() {
           {loadingCashFlow ? (
             <div className="space-y-3">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : cashFlowError ? (
@@ -990,7 +991,7 @@ export default function ReportsAnalytics() {
           {loadingJournal ? (
             <div className="space-y-3">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : journalError ? (
@@ -1087,7 +1088,7 @@ export default function ReportsAnalytics() {
           {loadingMargin ? (
             <div className="space-y-3">
               {[1, 2, 3, 4].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : marginError ? (
@@ -1259,7 +1260,7 @@ export default function ReportsAnalytics() {
           {loadingVat ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : vatError ? (
@@ -1356,7 +1357,7 @@ export default function ReportsAnalytics() {
           {loadingInventory ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : inventoryError ? (
@@ -1510,7 +1511,7 @@ export default function ReportsAnalytics() {
           {loadingRefundsVoids ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : refundsVoidsError ? (
@@ -1616,7 +1617,7 @@ export default function ReportsAnalytics() {
           {loadingDiscounts ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : discountsError ? (
@@ -1701,7 +1702,7 @@ export default function ReportsAnalytics() {
           {loadingProducts ? (
             <div className="space-y-3">
               {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                <Skeleton key={i} className="h-10" />
               ))}
             </div>
           ) : productsError ? (
