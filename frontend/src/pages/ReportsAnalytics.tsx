@@ -1018,7 +1018,9 @@ export default function ReportsAnalytics() {
             <>
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs text-muted-foreground">
-                  {journal.from_date} → {journal.to_date}
+                  {journal.from_date}{' '}
+                  <span className="inline-block rtl:-scale-x-100" aria-hidden="true">→</span>{' '}
+                  {journal.to_date}
                 </span>
                 <span className={journal.balanced ? 'pill-success' : 'pill-danger'}>
                   <span className="h-1.5 w-1.5 rounded-full bg-current" />
