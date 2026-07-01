@@ -418,7 +418,7 @@ export default function WebhookManagement() {
                         {webhook.secret_key && (
                           <div className="flex items-center gap-2 mt-1">
                             <span className="text-xs text-muted-foreground font-mono" dir="ltr">{t('webhook_secret_prefix')} {webhook.secret_key.slice(0, 12)}...</span>
-                            <button onClick={() => copySecret(webhook.secret_key!)} className="text-muted-foreground hover:text-foreground">
+                            <button onClick={() => copySecret(webhook.secret_key!)} aria-label={t('copy')} className="text-muted-foreground hover:text-foreground">
                               {copied ? <CheckCircle className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
                             </button>
                           </div>
@@ -431,7 +431,7 @@ export default function WebhookManagement() {
                         <Button size="sm" variant="outline" onClick={() => openEdit(webhook)} className="text-xs">
                           <Edit className="h-3 w-3 me-1" /> {t('edit')}
                         </Button>
-                        <Button size="sm" variant="destructive" onClick={() => { setSelectedWebhook(webhook); setDeleteOpen(true); }} className="text-xs">
+                        <Button size="sm" variant="destructive" aria-label={`${t('webhook_delete')} — ${webhook.name}`} onClick={() => { setSelectedWebhook(webhook); setDeleteOpen(true); }} className="text-xs">
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>

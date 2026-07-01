@@ -273,7 +273,7 @@ export default function QuotationManagement() {
                   <Button size="sm" variant="outline" aria-label={t('view_document')} onClick={() => openDocument(q.id)}>
                     <Eye className="w-4 h-4" />
                   </Button>
-                  <Button size="sm" variant="destructive" onClick={() => handleDelete(q.id)}>
+                  <Button size="sm" variant="destructive" aria-label={`${t('delete')} ${q.quote_number}`} onClick={() => handleDelete(q.id)}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
                 </div>
