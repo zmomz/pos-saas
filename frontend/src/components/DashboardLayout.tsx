@@ -489,6 +489,7 @@ const Shell: React.FC = () => {
           <CommandPalette
             triggerLabel={t('search_everything')}
             placeholder={t('search_or_command')}
+            label={t('command_palette')}
             groups={paletteGroups}
           />
 

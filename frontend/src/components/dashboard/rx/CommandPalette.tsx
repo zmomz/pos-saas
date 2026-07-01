@@ -16,6 +16,8 @@ interface CommandPaletteProps {
   placeholder?: string;
   /** text shown inside the trigger pill in the command bar */
   triggerLabel?: string;
+  /** accessible name announced for the modal dialog */
+  label?: string;
   groups: PaletteGroup[];
 }
 
@@ -27,6 +29,7 @@ interface CommandPaletteProps {
 export default function CommandPalette({
   placeholder = 'Search or run a command…',
   triggerLabel = 'Search or run a command',
+  label = 'Command palette',
   groups,
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
@@ -74,7 +77,12 @@ export default function CommandPalette({
             if (e.target === e.currentTarget) setOpen(false);
           }}
         >
-          <div className="w-full max-w-[560px] overflow-hidden rounded-[18px] border border-border bg-popover shadow-2xl">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={label}
+            className="w-full max-w-[560px] overflow-hidden rounded-[18px] border border-border bg-popover shadow-2xl"
+          >
             <div className="flex items-center gap-3 border-b border-border px-4 py-4">
               <Search className="h-[19px] w-[19px] text-muted-foreground" />
               <input
@@ -82,6 +90,7 @@ export default function CommandPalette({
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 placeholder={placeholder}
+                aria-label={placeholder}
                 className="w-full bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
               />
             </div>
