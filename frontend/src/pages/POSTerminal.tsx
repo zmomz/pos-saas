@@ -2018,6 +2018,7 @@ export default function POSTerminal() {
                   size="sm"
                   variant="ghost"
                   onClick={removeDiscount}
+                  aria-label={t('remove_discount')}
                   className="h-6 w-6 p-0 text-destructive hover:text-destructive hover:bg-transparent"
                 >
                   <X className="w-4 h-4" />
