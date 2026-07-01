@@ -15,6 +15,7 @@ import {
   type GiftCard,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import LoadingState from '@/components/states/LoadingState';
 import { formatMoney, formatDate } from '@/lib/format';
 import { Gift, Plus, RefreshCw } from 'lucide-react';
 
@@ -147,13 +148,7 @@ export default function GiftCardManagement() {
   }
 
   // ---- Loading state ----
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   // ---- Permission-denied state (not a client tenancy) ----
   if (denied) {

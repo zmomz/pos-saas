@@ -21,6 +21,7 @@ import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
+import LoadingState from '@/components/states/LoadingState';
 import { formatMoney, formatDate, formatTime } from '@/lib/format';
 import { Clock, PlayCircle, StopCircle, History, Receipt, ArrowDownCircle, RotateCcw, CalendarCheck } from 'lucide-react';
 
@@ -419,13 +420,7 @@ export default function ShiftManagement() {
     return `${hours}h ${minutes}m`;
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   // A 403 lacks access; any other failure is a real error — show the in-page
   // state rather than a blank shift card (UX-02).

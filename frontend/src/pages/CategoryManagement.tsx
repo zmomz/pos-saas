@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { getCategories, createCategory, updateCategory, deleteCategory } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import LoadingState from '@/components/states/LoadingState';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import ErrorState from '@/components/states/ErrorState';
 import { FolderTree, Folder, FolderOpen, Plus } from 'lucide-react';
@@ -302,13 +303,7 @@ export default function CategoryManagement() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   return (
     <div className="animate-fade-up space-y-6">

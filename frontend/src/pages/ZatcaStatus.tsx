@@ -15,6 +15,7 @@ import {
   type ZatcaDocument,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import LoadingState from '@/components/states/LoadingState';
 import { formatDateTime } from '@/lib/format';
 import {
   ShieldCheck,
@@ -136,13 +137,7 @@ export default function ZatcaStatus() {
   }
 
   // ---- Loading state ----
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   // ---- Permission-denied state (not a client tenancy) ----
   if (denied) {

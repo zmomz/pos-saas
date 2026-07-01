@@ -23,6 +23,7 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
+import LoadingState from '@/components/states/LoadingState';
 import { formatMoney } from '@/lib/format';
 import { Tag, Percent, DollarSign, Plus } from 'lucide-react';
 
@@ -327,13 +328,7 @@ export default function DiscountManagement() {
     );
   }
 
-  if (loading) {
-    return (
-      <div dir={isRTL ? 'rtl' : 'ltr'} className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   if (denied) {
     return (

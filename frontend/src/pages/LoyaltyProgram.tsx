@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog';
 import { client } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import LoadingState from '@/components/states/LoadingState';
 import { formatNumber, formatDate } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
@@ -155,13 +156,7 @@ export default function LoyaltyProgram() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   if (loadError) {
     return <ErrorState message={t('loyalty_load_error')} onRetry={loadData} />;
