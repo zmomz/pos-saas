@@ -23,6 +23,7 @@ from services.admin_logs import list_api_logs
 from services.job_queue import queue_stats
 from services.platform_features import get_feature_flags, set_feature_flag
 from services.platform_settings import get_maintenance_state, set_maintenance_state
+from services.tenant_migration import migrate_tenant
 
 # Import the model so create_all/metadata registers the table (mirrors the
 # suppliers router importing the supplier-credit ledger).
@@ -71,6 +72,19 @@ class ApiLogPage(BaseModel):
     total: int
     skip: int
     limit: int
+
+
+class TenantMigrationRequest(BaseModel):
+    # Address the destination agent by id or by email — either identifies it.
+    target_agent_id: Optional[int] = None
+    target_agent_email: Optional[str] = None
+
+
+class TenantMigrationResponse(BaseModel):
+    success: bool
+    client_id: int
+    from_agent_id: int
+    to_agent_id: int
 
 
 def _require_master(scope: TenantScope) -> None:
@@ -153,3 +167,28 @@ async def read_api_logs(
     """
     _require_master(scope)
     return await list_api_logs(db, skip=skip, limit=min(limit, 200), errors_only=errors_only)
+
+
+@router.post("/tenants/{client_id}/migrate", response_model=TenantMigrationResponse)
+async def migrate_tenant_endpoint(
+    client_id: int,
+    payload: TenantMigrationRequest,
+    scope: TenantScope = Depends(get_tenant_scope),
+    db: AsyncSession = Depends(get_db),
+):
+    """Migrate a tenant (merchant) from its owning agent to another (master only).
+
+    The operator control-plane counterpart of the agent self-serve transfer: the
+    master can move *any* merchant between *any* two agents. Slots move with the
+    merchant (acquired on the destination, freed on the source); the destination
+    must be an active agent different from the source, or the migration is refused
+    with a specific status — nothing here fabricates or silently corrupts state.
+    """
+    _require_master(scope)
+    return await migrate_tenant(
+        db,
+        client_id=client_id,
+        target_agent_id=payload.target_agent_id,
+        target_agent_email=payload.target_agent_email,
+        actor_user_id=scope.user_id,
+    )
