@@ -2317,73 +2317,58 @@ export default function POSTerminal() {
       </div>
 
       {/* POS-10: Held tickets panel — recall a parked sale */}
-      {showHeld && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-          onClick={() => setShowHeld(false)}
-        >
-          <div
-            className="bg-card border border-border rounded-lg w-full max-w-lg max-h-[80vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between p-4 border-b border-border">
-              <h3 className="text-lg font-bold text-foreground flex items-center gap-2">
-                <Pause className="w-5 h-5" />
-                {t('held_tickets')}
-              </h3>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setShowHeld(false)}
-                className="text-muted-foreground hover:text-foreground h-7 w-7 p-0"
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-2">
-              {heldError ? (
-                <div role="alert" className="text-center py-8 text-destructive">
-                  <p>{heldError}</p>
+      <Dialog open={showHeld} onOpenChange={setShowHeld}>
+        <DialogContent className="max-w-lg max-h-[80vh] gap-0 overflow-hidden p-0">
+          <DialogHeader className="border-b border-border p-4">
+            <DialogTitle className="flex items-center gap-2 text-lg font-bold">
+              <Pause className="w-5 h-5" />
+              {t('held_tickets')}
+            </DialogTitle>
+            <DialogDescription className="sr-only">{t('held_tickets')}</DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto p-4 space-y-2">
+            {heldError ? (
+              <div role="alert" className="text-center py-8 text-destructive">
+                <p>{heldError}</p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={loadHeld}
+                  className="mt-3 border-border text-foreground hover:bg-muted"
+                >
+                  {t('retry')}
+                </Button>
+              </div>
+            ) : heldTickets.length === 0 ? (
+              <p className="text-muted-foreground text-center py-8">{t('no_held_tickets')}</p>
+            ) : (
+              heldTickets.map((ticket) => (
+                <div
+                  key={ticket.id}
+                  className="bg-muted rounded-lg p-3 flex items-center justify-between gap-3"
+                >
+                  <div className="min-w-0">
+                    <p className="text-foreground text-sm font-medium truncate">
+                      {ticket.label || ticket.customer_name || `#${ticket.id}`}
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      {ticket.item_count} {t('items')} · {SAR(ticket.total_amount ?? 0)}
+                    </p>
+                  </div>
                   <Button
                     size="sm"
-                    variant="outline"
-                    onClick={loadHeld}
-                    className="mt-3 border-border text-foreground hover:bg-muted"
+                    onClick={() => handleRecall(ticket.id)}
+                    className="whitespace-nowrap"
                   >
-                    {t('retry')}
+                    <Play className="w-4 h-4 me-1" />
+                    {t('recall')}
                   </Button>
                 </div>
-              ) : heldTickets.length === 0 ? (
-                <p className="text-muted-foreground text-center py-8">{t('no_held_tickets')}</p>
-              ) : (
-                heldTickets.map((ticket) => (
-                  <div
-                    key={ticket.id}
-                    className="bg-muted rounded-lg p-3 flex items-center justify-between gap-3"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-foreground text-sm font-medium truncate">
-                        {ticket.label || ticket.customer_name || `#${ticket.id}`}
-                      </p>
-                      <p className="text-muted-foreground text-xs">
-                        {ticket.item_count} {t('items')} · {SAR(ticket.total_amount ?? 0)}
-                      </p>
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={() => handleRecall(ticket.id)}
-                      className="whitespace-nowrap"
-                    >
-                      <Play className="w-4 h-4 me-1" />
-                      {t('recall')}
-                    </Button>
-                  </div>
-                ))
-              )}
-            </div>
+              ))
+            )}
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
