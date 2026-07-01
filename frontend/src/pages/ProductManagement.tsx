@@ -773,6 +773,10 @@ export default function ProductManagement() {
       cell: (product) =>
         isLowStock(product) ? (
           <span className="pill-danger tabular-nums">
+            {/* Non-color cue so a color-blind/SR user perceives the low state
+                that the red pill signals visually (ISSUE-226, WCAG 1.4.1). */}
+            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+            <span className="sr-only">{tt('low_stock', 'Low Stock')}: </span>
             {product.quantity}
             {(product.reorder_point || 0) > 0 && (
               <span className="ms-1 text-[10px] opacity-70">
