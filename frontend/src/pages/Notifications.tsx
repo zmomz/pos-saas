@@ -189,13 +189,32 @@ export default function Notifications() {
         <div className="space-y-3">
           {notifications.map((n) => {
             const isLow = n.type === 'low_stock';
+            // A11y (ISSUE-226): an unread tile is a real control — clicking it
+            // marks it read — so it must be keyboard-reachable and activatable
+            // and carry an accessible name (WCAG 2.1.1 / 4.1.2). A read tile does
+            // nothing on click, so it stays a plain, non-interactive region.
+            const interactive = !n.is_read;
             return (
               <div
                 key={n.id}
-                onClick={() => !n.is_read && handleMarkRead(n.id)}
+                onClick={() => interactive && handleMarkRead(n.id)}
+                role={interactive ? 'button' : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                aria-label={interactive ? `${tt('mark_read', 'Mark as read')}: ${n.message}` : undefined}
+                onKeyDown={
+                  interactive
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleMarkRead(n.id);
+                        }
+                      }
+                    : undefined
+                }
                 className={cn(
-                  'dxr-tile dxr-hover flex items-start gap-4 cursor-pointer p-4',
-                  !n.is_read ? 'border-s-4 border-s-brand' : 'opacity-70'
+                  'dxr-tile dxr-hover flex items-start gap-4 p-4',
+                  interactive ? 'cursor-pointer' : 'opacity-70',
+                  !n.is_read && 'border-s-4 border-s-brand'
                 )}
               >
                 <span className={cn('dxr-sw h-10 w-10', isLow ? 'dxr-sw-warning' : 'dxr-sw-brand')}>
