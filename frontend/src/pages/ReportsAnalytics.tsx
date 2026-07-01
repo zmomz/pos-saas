@@ -1021,48 +1021,50 @@ export default function ReportsAnalytics() {
                   {journal.balanced ? tr('journal_balanced') : tr('journal_unbalanced')}
                 </span>
               </div>
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-card">
-                    <TableHead className="text-muted-foreground">{tr('account_code')}</TableHead>
-                    <TableHead className="text-muted-foreground">{tr('gl_account')}</TableHead>
-                    <TableHead className="text-muted-foreground">{tr('description')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('debit')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('credit')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {journal.lines.map((line, idx) => (
-                    <TableRow
-                      key={`${line.account_code}-${idx}`}
-                      className="border-border hover:bg-muted"
-                    >
-                      <TableCell className="text-muted-foreground font-mono text-xs">
-                        {line.account_code}
-                      </TableCell>
-                      <TableCell className="text-foreground font-medium">{line.account}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">{line.description}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
-                        {line.debit > 0 ? formatMoney(line.debit, language) : '—'}
-                      </TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
-                        {line.credit > 0 ? formatMoney(line.credit, language) : '—'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="border-border bg-card font-semibold">
-                    <TableCell className="text-foreground" colSpan={3}>
-                      {tr('total')}
-                    </TableCell>
-                    <TableCell className="text-foreground text-end tabular-nums">
-                      {formatMoney(journal.total_debit, language)}
-                    </TableCell>
-                    <TableCell className="text-foreground text-end tabular-nums">
-                      {formatMoney(journal.total_credit, language)}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
+              {/* ISSUE-208: one shared table voice — the `.dxr-tbl` primitive
+                  (a raw <table> rather than the config-driven <DataTable>) to
+                  carry the running debit/credit totals summary row. */}
+              <div className="w-full overflow-x-auto">
+                <table className="dxr-tbl">
+                  <thead>
+                    <tr>
+                      <th>{tr('account_code')}</th>
+                      <th>{tr('gl_account')}</th>
+                      <th>{tr('description')}</th>
+                      <th className="text-end">{tr('debit')}</th>
+                      <th className="text-end">{tr('credit')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {journal.lines.map((line, idx) => (
+                      <tr key={`${line.account_code}-${idx}`}>
+                        <td className="text-muted-foreground font-mono text-xs">
+                          {line.account_code}
+                        </td>
+                        <td className="text-foreground font-medium">{line.account}</td>
+                        <td className="text-muted-foreground text-xs">{line.description}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">
+                          {line.debit > 0 ? formatMoney(line.debit, language) : '—'}
+                        </td>
+                        <td className="text-foreground/90 text-end tabular-nums">
+                          {line.credit > 0 ? formatMoney(line.credit, language) : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                    <tr className="bg-card font-semibold">
+                      <td className="text-foreground" colSpan={3}>
+                        {tr('total')}
+                      </td>
+                      <td className="text-foreground text-end tabular-nums">
+                        {formatMoney(journal.total_debit, language)}
+                      </td>
+                      <td className="text-foreground text-end tabular-nums">
+                        {formatMoney(journal.total_credit, language)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </>
           )}
         </CardContent>
