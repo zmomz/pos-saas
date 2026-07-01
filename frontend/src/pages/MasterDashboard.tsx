@@ -306,7 +306,7 @@ export default function MasterDashboard() {
                 {ecoError ? (
                   <span data-testid="mrr-hero-value">—</span>
                 ) : (
-                  <span data-testid="mrr-hero-value"><CountUp value={mrr} prefix="⃁ " /></span>
+                  <span data-testid="mrr-hero-value"><CountUp value={mrr} money lang={language} /></span>
                 )}
               </div>
               <div className="mt-3 flex items-center gap-2.5 text-[13px] text-white/70">
@@ -380,11 +380,11 @@ export default function MasterDashboard() {
 
         {/* KPI chips */}
         <KpiChip label={tt('total_agents', 'Total Agents')} value={<CountUp value={totalAgents} />} delta={{ dir: 'up', text: `${activeAgents} ${tt('active', 'active')}` }} foot={`${totalSlots} ${tt('slots', 'slots')} total`} />
-        <KpiChip label={t('arr')} value={ecoVal(<CountUp value={economics?.arr ?? 0} prefix="⃁ " />)} foot={tt('annual_run_rate', 'annual run-rate')} />
+        <KpiChip label={t('arr')} value={ecoVal(<CountUp value={economics?.arr ?? 0} money lang={language} />)} foot={tt('annual_run_rate', 'annual run-rate')} />
         <KpiChip label={tt('ltv', 'LTV')} value={<span data-testid="kpi-ltv-value">{ltvOk ? formatMoney(economics?.ltv ?? 0, language) : '—'}</span>} foot={tt('lifetime_value', 'per active merchant')} />
         <KpiChip label={tt('cac', 'CAC')} value={<span data-testid="kpi-cac-value">{cacOk ? formatMoney(economics?.cac ?? 0, language) : '—'}</span>} foot={cacOk ? tt('acquisition_cost', 'acquisition cost') : tt('cac_untracked', 'not tracked yet')} />
         <KpiChip label={tt('churn_rate', 'Churn Rate')} value={ecoVal(<CountUp value={(economics?.churn_rate ?? 0) * 100} decimals={1} suffix="%" />)} foot={ecoError ? '—' : `${economics?.churned_clients ?? 0} ${tt('churned', 'churned')}`} />
-        <KpiChip label={tt('collected', 'Collected')} value={ecoVal(<CountUp value={economics?.collected ?? 0} prefix="⃁ " />)} foot={ecoError ? '—' : `${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
+        <KpiChip label={tt('collected', 'Collected')} value={ecoVal(<CountUp value={economics?.collected ?? 0} money lang={language} />)} foot={ecoError ? '—' : `${tt('platform_revenue', 'platform rev')} ${formatMoney(economics?.platform_revenue ?? 0, language)}`} />
 
         {/* Leaderboard */}
         <section className="dxr-tile lg:col-span-8 lg:row-span-4">

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { formatMoney } from '@/lib/format';
+import type { Language } from '@/lib/i18n';
 
 interface CountUpProps {
   value: number;
@@ -7,6 +9,13 @@ interface CountUpProps {
   decimals?: number;
   duration?: number;
   className?: string;
+  /**
+   * ISSUE-208: render the animated value through `formatMoney` (trailing riyal
+   * sign, locale-aware) instead of a bespoke `prefix="⃁ "`. Prefer this so
+   * currency has a single formatting path across the app.
+   */
+  money?: boolean;
+  lang?: Language;
 }
 
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
@@ -22,6 +31,8 @@ export default function CountUp({
   decimals = 0,
   duration = 1100,
   className,
+  money = false,
+  lang = 'en',
 }: CountUpProps) {
   const [display, setDisplay] = useState(value);
   const rafRef = useRef<number>();
@@ -53,13 +64,14 @@ export default function CountUp({
     };
   }, [value, duration]);
 
-  const text =
-    prefix +
-    display.toLocaleString('en-US', {
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }) +
-    suffix;
+  const text = money
+    ? formatMoney(display, lang, decimals)
+    : prefix +
+      display.toLocaleString('en-US', {
+        minimumFractionDigits: decimals,
+        maximumFractionDigits: decimals,
+      }) +
+      suffix;
 
   return <span className={className}>{text}</span>;
 }
