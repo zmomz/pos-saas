@@ -13,7 +13,7 @@ import { useLanguage } from '@/lib/i18n';
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext';
 import { isRetailType, isRestaurantType, SALE_MODES, type SaleMode } from '@/lib/businessType';
 import { notifyError } from '@/lib/notify';
-import { formatMoney, formatDate, currencyLabel } from '@/lib/format';
+import { formatMoney, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
@@ -242,10 +242,6 @@ export default function ClientDashboard() {
   const todaySales = stats?.today_sales || 0;
   const todayTx = stats?.today_transactions || 0;
   const avgTicket = todayTx > 0 ? todaySales / todayTx : 0;
-  // Currency label placement matches formatMoney: trailing in RTL, leading otherwise.
-  const curProps = language === 'ar' || language === 'ur'
-    ? { suffix: ` ${currencyLabel(language)}` }
-    : { prefix: `${currencyLabel(language)} ` };
   const subOverdue = subscription && ['past_due', 'dunning', 'suspended'].includes(subscription.subscription_status);
   const subStatusCls = subscription?.subscription_status === 'active'
     ? 'bg-success/10 text-success'
@@ -331,7 +327,7 @@ export default function ClientDashboard() {
             <div>
               <div className="dxr-eyebrow">{t('today_sales') || "Today's Sales"}</div>
               <div className="mt-2 text-[clamp(30px,3.6vw,44px)] font-extrabold leading-none tracking-tight tabular-nums">
-                <CountUp value={todaySales} {...curProps} />
+                <CountUp value={todaySales} money lang={language} />
               </div>
               <div className="mt-1.5 text-[13px] text-white/65">{todayTx} {t('total_transactions') || 'transactions'} · {t('avg_ticket') || 'avg'} {formatMoney(avgTicket, language)}</div>
             </div>
@@ -367,7 +363,7 @@ export default function ClientDashboard() {
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
           <div className="text-[12.5px] font-semibold text-muted-foreground">{t('total_sales') || 'Total Sales'}</div>
-          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_sales || 0} {...curProps} /></div>
+          <div className="mt-1 text-2xl font-extrabold tracking-tight tabular-nums"><CountUp value={stats?.total_sales || 0} money lang={language} /></div>
           <div className="mt-auto text-[11.5px] text-muted-foreground">{t('all_time') || 'all time'}</div>
         </section>
         <section className="dxr-tile dxr-hover flex flex-col lg:col-span-3 lg:row-span-1">
