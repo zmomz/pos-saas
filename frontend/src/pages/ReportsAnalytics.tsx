@@ -18,6 +18,7 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import Bar from '@/components/dashboard/rx/Bar';
 import ForecastInsights from '@/components/dashboard/ForecastInsights';
+import PeakHoursHeatmap from '@/components/dashboard/PeakHoursHeatmap';
 import AssistantPanel from '@/components/dashboard/AssistantPanel';
 
 interface SalesDataPoint {
@@ -1765,6 +1766,10 @@ export default function ReportsAnalytics() {
       {/* AI forecasting surface (#228, M9·AI): sales projection, smart reorder,
           dynamic pricing — each panel owns its own load/error state. */}
       <ForecastInsights />
+
+      {/* Peak-hours heatmap (#229, M9·Analytics): completed sales bucketed into a
+          day-of-week × hour grid so a merchant can see when to staff up. */}
+      <PeakHoursHeatmap />
 
       {/* In-app assistant (#228, M9·AI): plain-language questions answered from
           the tenant's own data via the rule-based /assistant/query endpoint. */}

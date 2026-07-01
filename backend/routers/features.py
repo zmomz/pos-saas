@@ -10,7 +10,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
-from sqlalchemy import select, func, update, and_, or_, case
+from sqlalchemy import select, func, update, and_, or_, case, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cache import invalidate_brand
@@ -1248,6 +1248,36 @@ class CustomerAnalyticsResponse(BaseModel):
     customers: List[CustomerAnalyticsItem]
 
 
+class PeakHoursCell(BaseModel):
+    """One (day-of-week, hour) bucket of selling activity (issue #229 — analytics)."""
+
+    day_of_week: int  # 0=Sunday .. 6=Saturday
+    hour: int  # 0..23 (of the stored UTC timestamp)
+    order_count: int  # completed sales that fell in this cell
+    revenue: float  # gross revenue taken in this cell
+
+
+class PeakHoursResponse(BaseModel):
+    """Day-of-week × hour-of-day sales heatmap (issue #229 — M9 Analytics).
+
+    The raw material for a peak-hours heatmap: completed sales bucketed into a
+    7×24 grid so a merchant can see when to staff up. Only non-empty ``cells``
+    are returned (the grid is sparse); ``busiest`` names the single hottest cell
+    (most orders, revenue breaking ties), or is null when there are no sales.
+
+    Held/voided tickets and credit-note refunds are excluded — the heatmap shows
+    selling activity, not parked tickets or returns. Buckets come from the stored
+    UTC timestamp; localised (per-tenant timezone) buckets are a later slice.
+    """
+
+    method: str
+    lookback_days: int
+    total_orders: int
+    total_revenue: float
+    busiest: Optional[PeakHoursCell] = None
+    cells: List[PeakHoursCell]
+
+
 # ============================================================
 # REPORT → PDF EXPORT (RPT-10, F-072)
 # ============================================================
@@ -2040,6 +2070,88 @@ async def get_customer_analytics(
         average_clv=round(average_clv, 2),
         total_revenue=round(total_revenue, 2),
         customers=customers,
+    )
+
+
+@router.get("/api/v1/reports/peak-hours", response_model=PeakHoursResponse)
+async def get_peak_hours(
+    lookback: int = Query(365, ge=1, le=3650),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Day-of-week × hour-of-day sales heatmap (issue #229 — analytics).
+
+    Buckets the tenant's completed sales into a 7×24 grid — the raw material for
+    a peak-hours heatmap that tells a merchant when demand concentrates. Held and
+    voided tickets are not selling activity, and a credit note is a refund, not a
+    sale, so all three are excluded (mirroring the sibling revenue reports).
+
+    Tenant-scoped and server-side aggregated (OPS-05): the grouping happens in
+    SQL keyed on ``extract(dow)`` / ``extract(hour)``, so peak memory is
+    O(non-empty cells) — at most 168 — never O(transactions). ``dow`` is
+    0=Sunday..6=Saturday on both Postgres and SQLite. Buckets use the stored UTC
+    timestamp; per-tenant-timezone localisation is a later slice.
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    dow = extract("dow", Transactions.created_at)
+    hour = extract("hour", Transactions.created_at)
+
+    rows = (
+        await db.execute(
+            select(
+                dow,
+                hour,
+                func.count(),
+                func.sum(Transactions.total_amount),
+            )
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    # A held ticket is parked, a voided sale is cancelled, and a
+                    # credit note is a refund — none is selling activity.
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                    Transactions.status.is_distinct_from("credit_note"),
+                )
+            )
+            .group_by(dow, hour)
+        )
+    ).all()
+
+    cells = [
+        PeakHoursCell(
+            day_of_week=int(float(d)),
+            hour=int(float(h)),
+            order_count=int(count or 0),
+            revenue=round(float(revenue or 0.0), 2),
+        )
+        for d, h, count, revenue in rows
+    ]
+    # Stable order for the grid: chronological (day, then hour).
+    cells.sort(key=lambda c: (c.day_of_week, c.hour))
+
+    total_orders = sum(c.order_count for c in cells)
+    total_revenue = sum(c.revenue for c in cells)
+    # The hottest cell — most orders, higher revenue breaking a tie.
+    busiest = (
+        max(cells, key=lambda c: (c.order_count, c.revenue)) if cells else None
+    )
+
+    return PeakHoursResponse(
+        method="sales_heatmap",
+        lookback_days=lookback,
+        total_orders=total_orders,
+        total_revenue=round(total_revenue, 2),
+        busiest=busiest,
+        cells=cells,
     )
 
 

@@ -1393,6 +1393,35 @@ export async function getDynamicPricing(lookback = 30): Promise<DynamicPricingRe
   return response.data;
 }
 
+// ---- Peak-hours heatmap (#229 M9·Analytics) ----
+// Completed sales bucketed into a day-of-week × hour-of-day grid — the raw
+// material for a peak-hours heatmap. Only non-empty cells are returned (the grid
+// is sparse); ``busiest`` names the hottest cell, or is null when there are no
+// sales. day_of_week is 0=Sunday..6=Saturday. Mirrors the Pydantic models in
+// backend/routers/features.py.
+export interface PeakHoursCell {
+  day_of_week: number; // 0=Sunday..6=Saturday
+  hour: number; // 0..23
+  order_count: number;
+  revenue: number;
+}
+export interface PeakHoursResponse {
+  method: string;
+  lookback_days: number;
+  total_orders: number;
+  total_revenue: number;
+  busiest: PeakHoursCell | null;
+  cells: PeakHoursCell[];
+}
+export async function getPeakHours(lookback = 365): Promise<PeakHoursResponse> {
+  const response = await client.apiCall.invoke<PeakHoursResponse>({
+    url: `/api/v1/reports/peak-hours?lookback=${lookback}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // ---- In-app assistant (#228 M9·AI) ----
 // The conversational surface over the tenant's own data. This first slice is a
 // rule-based intent router server-side; the client just passes the question and

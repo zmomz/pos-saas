@@ -12,6 +12,9 @@ export const translations: Record<Language, Record<string, string>> = {
   en: {
     // AI forecasting surface (#228, M9·AI)
     forecast_insights: 'Forecast Insights',
+    peak_hours: 'Peak Hours',
+    busiest_time: 'Busiest',
+    orders: 'orders',
     sales_forecast: 'Sales Forecast',
     avg_daily_sales: 'Avg Daily Sales',
     projected_demand: 'Projected Demand',
@@ -1659,6 +1662,9 @@ export const translations: Record<Language, Record<string, string>> = {
   ar: {
     // AI forecasting surface (#228, M9·AI)
     forecast_insights: 'رؤى التنبؤ',
+    peak_hours: 'ساعات الذروة',
+    busiest_time: 'الأكثر ازدحامًا',
+    orders: 'طلبات',
     sales_forecast: 'توقّع المبيعات',
     avg_daily_sales: 'متوسط المبيعات اليومية',
     projected_demand: 'الطلب المتوقّع',
@@ -3305,6 +3311,9 @@ export const translations: Record<Language, Record<string, string>> = {
   hi: {
     // AI forecasting surface (#228, M9·AI)
     forecast_insights: 'पूर्वानुमान अंतर्दृष्टि',
+    peak_hours: 'व्यस्ततम घंटे',
+    busiest_time: 'सबसे व्यस्त',
+    orders: 'ऑर्डर',
     sales_forecast: 'बिक्री पूर्वानुमान',
     avg_daily_sales: 'औसत दैनिक बिक्री',
     projected_demand: 'अनुमानित मांग',
@@ -4937,6 +4946,9 @@ export const translations: Record<Language, Record<string, string>> = {
   ur: {
     // AI forecasting surface (#228, M9·AI)
     forecast_insights: 'پیش گوئی بصیرت',
+    peak_hours: 'مصروف ترین اوقات',
+    busiest_time: 'سب سے مصروف',
+    orders: 'آرڈرز',
     sales_forecast: 'فروخت کی پیش گوئی',
     avg_daily_sales: 'اوسط یومیہ فروخت',
     projected_demand: 'متوقع طلب',
