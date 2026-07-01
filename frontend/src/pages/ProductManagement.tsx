@@ -943,7 +943,7 @@ export default function ProductManagement() {
           </Button>
         </div>
         {suggestionsLoading ? (
-          <div className="py-6 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
+          <LoadingState className="py-6" />
         ) : suggestionsError ? (
           <ErrorState message={t('reorder_load_error')} onRetry={loadSuggestions} />
         ) : suggestions.length === 0 ? (
@@ -1094,7 +1094,7 @@ export default function ProductManagement() {
 
           {/* Existing variants: loading / error (distinct from empty) / empty / list */}
           {variantsLoading ? (
-            <div className="py-8 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
+            <LoadingState className="py-8" />
           ) : variantsError ? (
             <ErrorState
               message={t('variant_load_error')}

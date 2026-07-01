@@ -25,6 +25,7 @@ import {
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatDateTime } from '@/lib/format';
+import LoadingState from '@/components/states/LoadingState';
 import { toast } from 'sonner';
 
 export interface WorkforceStaff {
@@ -269,7 +270,7 @@ export default function StaffWorkforceDialog({ open, onOpenChange, staff, onChan
               {openRecord ? t('stf_clock_out') : t('stf_clock_in')}
             </Button>
             {attLoading ? (
-              <p className="py-4 text-center text-muted-foreground animate-pulse">{t('loading')}</p>
+              <LoadingState className="py-4" />
             ) : attendance.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">{t('stf_no_attendance')}</p>
             ) : (
@@ -326,7 +327,7 @@ export default function StaffWorkforceDialog({ open, onOpenChange, staff, onChan
               </Button>
             </div>
             {shiftsLoading ? (
-              <p className="py-4 text-center text-muted-foreground animate-pulse">{t('loading')}</p>
+              <LoadingState className="py-4" />
             ) : shifts.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">{t('stf_no_shifts')}</p>
             ) : (

@@ -502,7 +502,7 @@ export default function StaffManagement() {
           </DialogHeader>
 
           {permsLoading && perms.length === 0 ? (
-            <div className="py-6 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
+            <LoadingState className="py-6" />
           ) : !permsHasLogin ? (
             <p role="alert" className="py-4 text-sm text-warning">
               {t('no_login_permissions')}

@@ -722,7 +722,7 @@ export default function CustomerManagement() {
           </DialogHeader>
 
           {insightsLoading ? (
-            <div className="py-12 text-center text-muted-foreground animate-pulse">{t('loading')}</div>
+            <LoadingState className="py-12" />
           ) : insightsError ? (
             <ErrorState
               message={t('insights_error')}

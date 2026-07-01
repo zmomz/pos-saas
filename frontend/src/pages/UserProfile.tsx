@@ -26,6 +26,7 @@ import {
 } from '@/lib/api';
 import { formatDate } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import LoadingState from '@/components/states/LoadingState';
 
 // Light-touch device label from a user-agent string; surfaces the browser family
 // instead of dumping the raw UA. Returns null when nothing recognizable is found.
@@ -605,7 +606,7 @@ export default function UserProfile() {
               {tt('active_sessions', 'Active sessions')}
             </p>
             {sessionLoading ? (
-              <p className="text-muted-foreground text-xs animate-pulse">{t('loading')}</p>
+              <LoadingState className="py-4" />
             ) : sessions.length === 0 ? (
               <p className="text-muted-foreground text-xs">
                 {tt('session_unavailable', 'Session details unavailable')}

@@ -598,7 +598,7 @@ export default function BranchManagement() {
             {!variantProductId ? (
               <div className="text-center py-8 text-muted-foreground text-sm">{t('select_product_first')}</div>
             ) : variantLoading ? (
-              <div className="text-center py-8 text-muted-foreground animate-pulse">{t('loading')}</div>
+              <LoadingState className="py-8" />
             ) : variantError ? (
               <div className="text-center py-8">
                 <p className="text-foreground/90 mb-3">{t('variant_stock_load_error')}</p>
