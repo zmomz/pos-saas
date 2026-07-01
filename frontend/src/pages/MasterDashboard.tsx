@@ -508,7 +508,7 @@ export default function MasterDashboard() {
                       {e.details || e.action}
                     </div>
                     <div className="mt-0.5 font-mono text-[10.5px] text-muted-foreground">
-                      {e.created_at ? new Date(e.created_at).toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                      {e.created_at ? formatDateTime(e.created_at, language) : '—'}
                     </div>
                   </div>
                 </div>
