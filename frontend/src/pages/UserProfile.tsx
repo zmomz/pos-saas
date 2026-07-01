@@ -363,6 +363,7 @@ export default function UserProfile() {
                 key={opt.value}
                 onClick={() => setLanguage(opt.value as Language)}
                 variant={language === opt.value ? 'default' : 'outline'}
+                aria-pressed={language === opt.value}
               >
                 {opt.label}
               </Button>
@@ -380,12 +381,14 @@ export default function UserProfile() {
             <Button
               onClick={() => { if (isDark) toggleTheme(); }}
               variant={!isDark ? 'default' : 'outline'}
+              aria-pressed={!isDark}
             >
               <Sun className="h-4 w-4 me-2" /> {tt('light', 'Light')}
             </Button>
             <Button
               onClick={() => { if (!isDark) toggleTheme(); }}
               variant={isDark ? 'default' : 'outline'}
+              aria-pressed={isDark}
             >
               <Moon className="h-4 w-4 me-2" /> {tt('dark', 'Dark')}
             </Button>
