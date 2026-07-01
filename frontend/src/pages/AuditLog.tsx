@@ -157,7 +157,7 @@ export default function AuditLog() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground/80">
+              <tr className="text-[10.5px] font-bold uppercase tracking-wider rtl:tracking-normal text-muted-foreground/80">
                 <th className="px-4 py-3 text-start">{t('audit_col_timestamp')}</th>
                 <th className="px-4 py-3 text-start">{t('audit_col_user')}</th>
                 <th className="px-4 py-3 text-start">{t('audit_col_action')}</th>
