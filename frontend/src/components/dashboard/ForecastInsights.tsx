@@ -1,15 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
-import { TrendingUp, PackageSearch, Tags } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, PackageSearch, Tags } from 'lucide-react';
 import { useLanguage, translate } from '@/lib/i18n';
 import { formatMoney, formatNumber } from '@/lib/format';
 import {
   getSalesForecast,
   getInventoryForecast,
   getDynamicPricing,
+  type SalesForecastMethod,
   type SalesForecastResponse,
   type InventoryForecastResponse,
   type DynamicPricingResponse,
 } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -32,6 +34,7 @@ export default function ForecastInsights() {
   const tr = useCallback((key: string): string => translate(language, key), [language]);
 
   const [sales, setSales] = useState<SalesForecastResponse | null>(null);
+  const [salesMethod, setSalesMethod] = useState<SalesForecastMethod>('moving_average');
   const [inventory, setInventory] = useState<InventoryForecastResponse | null>(null);
   const [pricing, setPricing] = useState<DynamicPricingResponse | null>(null);
   const [loadingSales, setLoadingSales] = useState(true);
@@ -41,12 +44,14 @@ export default function ForecastInsights() {
   const [inventoryError, setInventoryError] = useState(false);
   const [pricingError, setPricingError] = useState(false);
 
+  // The sales panel re-fetches whenever the operator switches forecast model, so
+  // it is keyed on salesMethod; the demand/pricing panels load once on mount.
   useEffect(() => {
     (async () => {
       setLoadingSales(true);
       setSalesError(false);
       try {
-        setSales((await getSalesForecast()) || null);
+        setSales((await getSalesForecast(30, 7, salesMethod)) || null);
       } catch {
         setSalesError(true);
         setSales(null);
@@ -54,6 +59,9 @@ export default function ForecastInsights() {
         setLoadingSales(false);
       }
     })();
+  }, [salesMethod]);
+
+  useEffect(() => {
     (async () => {
       setLoadingInventory(true);
       setInventoryError(false);
@@ -94,11 +102,43 @@ export default function ForecastInsights() {
 
       {/* Sales revenue projection */}
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
           <CardTitle className="flex items-center gap-2">
             <TrendingUp className="h-5 w-5 text-brand-600" aria-hidden="true" />
             {tr('sales_forecast')}
           </CardTitle>
+          {/* Model toggle: switch between the flat moving-average baseline and the
+              direction-aware linear-trend projection served by the same endpoint. */}
+          <div
+            role="group"
+            aria-label={tr('forecast_method')}
+            className="inline-flex overflow-hidden rounded-md border border-border"
+          >
+            {(
+              [
+                ['moving_average', 'method_moving_average'],
+                ['linear_trend', 'method_linear_trend'],
+              ] as const
+            ).map(([value, label]) => {
+              const active = salesMethod === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setSalesMethod(value)}
+                  className={cn(
+                    'px-3 py-1.5 text-xs font-medium transition-colors',
+                    active
+                      ? 'bg-brand-600 text-white'
+                      : 'bg-transparent text-muted-foreground hover:bg-muted'
+                  )}
+                >
+                  {tr(label)}
+                </button>
+              );
+            })}
+          </div>
         </CardHeader>
         <CardContent>
           {loadingSales ? (
@@ -126,6 +166,38 @@ export default function ForecastInsights() {
                   {tr('forecast_method')}: {sales.method}
                 </p>
               </div>
+              {/* Direction the linear model projects — only meaningful when a
+                  trend model is selected (moving_average is flat, trend 0). */}
+              {sales.method === 'linear_trend' && (
+                <div data-testid="sales-trend">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                    {tr('daily_trend')}
+                  </p>
+                  {(() => {
+                    const t = sales.trend_per_day;
+                    const rising = t > 0;
+                    const falling = t < 0;
+                    const Icon = rising ? TrendingUp : falling ? TrendingDown : Minus;
+                    const dir = rising
+                      ? tr('trend_rising')
+                      : falling
+                        ? tr('trend_falling')
+                        : tr('trend_flat');
+                    const tone = rising
+                      ? 'text-success'
+                      : falling
+                        ? 'text-danger'
+                        : 'text-muted-foreground';
+                    return (
+                      <p className={cn('flex items-center gap-1.5 text-2xl font-bold tabular-nums', tone)}>
+                        <Icon className="h-5 w-5" aria-hidden="true" />
+                        <span>{formatMoney(Math.abs(t), language)}</span>
+                        <span className="text-sm font-medium">{dir}</span>
+                      </p>
+                    );
+                  })()}
+                </div>
+              )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">{tr('no_data')}</p>

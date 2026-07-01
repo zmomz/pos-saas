@@ -1308,20 +1308,26 @@ export interface SalesForecastPoint {
   date: string; // projected day, YYYY-MM-DD
   forecast_sales: number;
 }
+// The sales-forecast endpoint exposes two self-describing models on one route:
+// the flat 'moving_average' (default) and the direction-aware 'linear_trend',
+// selected with ?method= (#228).
+export type SalesForecastMethod = 'moving_average' | 'linear_trend';
 export interface SalesForecastResponse {
   method: string;
   lookback_days: number;
   horizon_days: number;
   history_total: number;
   avg_daily_sales: number;
+  trend_per_day: number; // projected day-over-day change (0 for moving_average)
   points: SalesForecastPoint[];
 }
 export async function getSalesForecast(
   lookback = 30,
-  horizon = 7
+  horizon = 7,
+  method: SalesForecastMethod = 'moving_average'
 ): Promise<SalesForecastResponse> {
   const response = await client.apiCall.invoke<SalesForecastResponse>({
-    url: `/api/v1/reports/sales-forecast?lookback=${lookback}&horizon=${horizon}`,
+    url: `/api/v1/reports/sales-forecast?lookback=${lookback}&horizon=${horizon}&method=${method}`,
     method: 'GET',
     data: {},
   });
