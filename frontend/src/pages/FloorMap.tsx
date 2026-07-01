@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SegButton } from '@/components/ui/seg-button';
 import {
   Dialog,
   DialogContent,
@@ -400,20 +401,20 @@ export default function FloorMap() {
       {zones.length > 0 && (
         <div className="flex items-center gap-2">
           <div className="dxr-seg">
-            <button
+            <SegButton
               onClick={() => setActiveZone('all')}
-              data-active={activeZone === 'all'}
+              active={activeZone === 'all'}
             >
               {t('all_zones')}
-            </button>
+            </SegButton>
             {zones.map((z) => (
-              <button
+              <SegButton
                 key={z.id}
                 onClick={() => setActiveZone(z.id)}
-                data-active={activeZone === z.id}
+                active={activeZone === z.id}
               >
                 {z.name}
-              </button>
+              </SegButton>
             ))}
           </div>
           <Button

@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { SegButton } from '@/components/ui/seg-button';
 import {
   Dialog,
   DialogContent,
@@ -378,28 +379,28 @@ export default function KDS() {
 
       {/* Board view: live line vs. recently-bumped cards to recall (ISSUE-073) */}
       <div className="dxr-seg">
-        <button onClick={() => setBoardStatus('active')} data-active={boardStatus === 'active'}>
+        <SegButton onClick={() => setBoardStatus('active')} active={boardStatus === 'active'}>
           {t('kds_active')}
-        </button>
-        <button onClick={() => setBoardStatus('bumped')} data-active={boardStatus === 'bumped'}>
+        </SegButton>
+        <SegButton onClick={() => setBoardStatus('bumped')} active={boardStatus === 'bumped'}>
           {t('kds_completed')}
-        </button>
+        </SegButton>
       </div>
 
       {/* Station filter tabs */}
       {stations.length > 0 && (
         <div className="dxr-seg flex-wrap">
-          <button onClick={() => setActiveStation('all')} data-active={activeStation === 'all'}>
+          <SegButton onClick={() => setActiveStation('all')} active={activeStation === 'all'}>
             {t('all_stations')}
-          </button>
+          </SegButton>
           {stations.map((s) => (
-            <button
+            <SegButton
               key={s.id}
               onClick={() => setActiveStation(s.id)}
-              data-active={activeStation === s.id}
+              active={activeStation === s.id}
             >
               {s.name}
-            </button>
+            </SegButton>
           ))}
         </div>
       )}
