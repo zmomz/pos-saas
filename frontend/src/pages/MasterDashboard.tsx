@@ -452,33 +452,33 @@ export default function MasterDashboard() {
           </div>
           <div className="space-y-2.5">
             {suspended.slice(0, 2).map((a) => (
-              <div key={a.id} className="dxr-insight cursor-pointer" onClick={() => handleToggle(a.id)}>
+              <button type="button" key={a.id} className="dxr-insight cursor-pointer w-full text-start" onClick={() => handleToggle(a.id)}>
                 <div className="dxr-sw dxr-sw-danger h-[34px] w-[34px]"><AlertTriangle className="h-[17px] w-[17px]" /></div>
                 <div className="min-w-0">
                   <div className="text-[13.5px] font-bold">{a.company_name} {tt('paused', 'paused')}</div>
                   <div className="text-[12px] text-muted-foreground">{tt('reactivate_account', 'Tap to reactivate account')}</div>
                 </div>
                 <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground rtl:-scale-x-100" />
-              </div>
+              </button>
             ))}
             {nearCap.slice(0, 2).map((a) => (
-              <div key={`cap-${a.id}`} className="dxr-insight cursor-pointer" onClick={() => { setSlotDialog({ agentId: a.id, company: a.company_name }); setSlotAmount('5'); }}>
+              <button type="button" key={`cap-${a.id}`} className="dxr-insight cursor-pointer w-full text-start" onClick={() => { setSlotDialog({ agentId: a.id, company: a.company_name }); setSlotAmount('5'); }}>
                 <div className="dxr-sw dxr-sw-warning h-[34px] w-[34px]"><PackageIcon className="h-[17px] w-[17px]" /></div>
                 <div className="min-w-0">
                   <div className="text-[13.5px] font-bold">{a.company_name} {tt('near_slot_cap', 'near slot cap')}</div>
                   <div className="text-[12px] text-muted-foreground">{a.used_slots}/{a.package_type} {tt('slots_used', 'slots used')} · {tt('add_slots', 'add slots')}</div>
                 </div>
                 <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground rtl:-scale-x-100" />
-              </div>
+              </button>
             ))}
-            <div className="dxr-insight cursor-pointer" onClick={openTaxDialog}>
+            <button type="button" className="dxr-insight cursor-pointer w-full text-start" onClick={openTaxDialog}>
               <div className="dxr-sw dxr-sw-sky h-[34px] w-[34px]"><Percent className="h-[17px] w-[17px]" /></div>
               <div className="min-w-0">
                 <div className="text-[13.5px] font-bold">{tt('review_tax_rate', 'Review global tax rate')}</div>
                 <div className="text-[12px] text-muted-foreground">{tt('vat_compliance', 'VAT applied platform-wide')}</div>
               </div>
               <ChevronRight className="ms-auto h-[17px] w-[17px] self-center text-muted-foreground rtl:-scale-x-100" />
-            </div>
+            </button>
             {suspended.length === 0 && nearCap.length === 0 && (
               <p className="px-1 py-4 text-[13px] text-muted-foreground">{tt('all_systems_operational', 'All systems operational.')}</p>
             )}
