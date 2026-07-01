@@ -140,6 +140,51 @@ async def test_assistant_lists_low_stock_products(client):
     assert "Beans" in body["answer"]
 
 
+async def test_assistant_reports_average_order_value(client):
+    """"What's my average order value?" → net 30-day takings ÷ order count."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Over the 30-day window: two orders (300 + 100) net to 400 across 2 orders
+    # → AOV 200. A credit note nets the takings down but is not itself an order.
+    await _seed_sale(client_id, user["id"], days_ago=3, total=300.0, items=[], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=5, total=100.0, items=[], idx=2)
+    await _seed_sale(client_id, user["id"], days_ago=6, total=40.0, items=[],
+                     status="credit_note", idx=3)
+    # A held ticket is not revenue, and a sale older than 30 days is out of window.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     status="held", idx=4)
+    await _seed_sale(client_id, user["id"], days_ago=40, total=999.0, items=[], idx=5)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my average order value", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "average_order"
+    assert body["data"]["order_count"] == 2
+    assert abs(body["data"]["net_sales"] - 360.0) < 0.01
+    assert abs(body["data"]["average_order_value"] - 180.0) < 0.01
+    assert "180" in body["answer"]
+
+
+async def test_assistant_average_order_value_handles_no_sales(client):
+    """No sales in the window → AOV is 0, not a divide-by-zero crash."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=average basket size", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "average_order"
+    assert body["data"]["order_count"] == 0
+    assert body["data"]["average_order_value"] == 0.0
+
+
 async def test_assistant_unroutable_question_degrades_gracefully(client):
     """A question it can't map is an ``unknown`` answer with suggestions, not a 400/500."""
     user, token, client_id = await make_client_account(client)

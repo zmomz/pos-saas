@@ -106,11 +106,12 @@ export default function AssistantPanel() {
   );
 }
 
-// The backend seeds the same three capabilities; mirror them so the chips render
+// The backend seeds the same capabilities; mirror them so the chips render
 // before the first request completes. Once an answer returns, its own
 // ``suggestions`` (authoritative) replace these.
 const DEFAULT_SUGGESTIONS = [
   'What is my best selling product?',
   'How much did I sell today?',
+  'What is my average order value?',
   'Which products are low on stock?',
 ];

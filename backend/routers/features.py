@@ -2061,7 +2061,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | sales_today | low_stock | unknown
+    intent: str  # top_product | sales_today | average_order | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2077,6 +2077,11 @@ _ASSISTANT_INTENTS = [
     ("top_product", ["top product", "top seller", "best seller", "best-seller",
                      "bestseller", "best selling", "best-selling", "most sold",
                      "الأكثر", "أفضل منتج", "افضل منتج"]),
+    # Checked before ``sales_today`` so "average sales today" routes to the AOV
+    # metric rather than the bare-"today" takings intent.
+    ("average_order", ["average order", "average basket", "average ticket",
+                       "average sale", "average spend", "basket size", "aov",
+                       "متوسط الطلب", "متوسط الفاتورة", "متوسط السلة"]),
     ("sales_today", ["today", "revenue today", "sold today", "sales today",
                      "takings", "اليوم", "مبيعات اليوم"]),
 ]
@@ -2084,6 +2089,7 @@ _ASSISTANT_INTENTS = [
 _ASSISTANT_SUGGESTIONS = [
     "What is my best selling product?",
     "How much did I sell today?",
+    "What is my average order value?",
     "Which products are low on stock?",
 ]
 
@@ -2172,6 +2178,41 @@ async def _assistant_sales_today(db: AsyncSession, client_id: int) -> dict:
     return {"net_sales": round(float(row[0] or 0.0), 2), "order_count": int(row[1] or 0)}
 
 
+async def _assistant_average_order_value(db: AsyncSession, client_id: int) -> dict:
+    """Average order value over the last 30 days — net takings ÷ order count.
+
+    Uses the same money rule as the financial reports: a credit note nets against
+    revenue (so it lowers the average) but is not itself an order, so it never
+    inflates the divisor; held/voided tickets are not revenue at all. An empty
+    window yields 0.0 rather than a divide-by-zero.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=30)
+    is_credit_note = Transactions.status == "credit_note"
+    net_value = func.coalesce(
+        func.sum(
+            case((is_credit_note, -Transactions.total_amount), else_=Transactions.total_amount)
+        ),
+        0.0,
+    )
+    order_count = func.coalesce(func.sum(case((is_credit_note, 0), else_=1)), 0)
+    row = (
+        await db.execute(
+            select(net_value, order_count).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+        )
+    ).one()
+    net_sales = round(float(row[0] or 0.0), 2)
+    orders = int(row[1] or 0)
+    avg = round(net_sales / orders, 2) if orders else 0.0
+    return {"net_sales": net_sales, "order_count": orders, "average_order_value": avg}
+
+
 async def _assistant_low_stock(db: AsyncSession, client_id: int) -> dict:
     """Reorder-point-aware low-stock products (same rule as /products/low-stock)."""
     result = await db.execute(
@@ -2236,6 +2277,20 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=sales, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "average_order":
+        aov = await _assistant_average_order_value(db, client_id)
+        if aov["order_count"]:
+            answer = (
+                f"Your average order value over the last 30 days is "
+                f"{aov['average_order_value']:.2f}, across {aov['order_count']} order(s)."
+            )
+        else:
+            answer = "No orders in the last 30 days yet, so there's no average to report."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=aov, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "low_stock":
