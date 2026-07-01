@@ -14,6 +14,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { useLanguage } from '@/lib/i18n';
+import { formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import {
   getNotifications,
@@ -139,18 +140,6 @@ export default function Notifications() {
     }
   }
 
-  function formatTime(dateStr: string) {
-    try {
-      const date = new Date(dateStr);
-      return date.toLocaleString(
-        language === 'ar' ? 'ar-SA' : language === 'hi' ? 'hi-IN' : language === 'ur' ? 'ur-PK' : 'en-US',
-        { dateStyle: 'medium', timeStyle: 'short' }
-      );
-    } catch {
-      return dateStr;
-    }
-  }
-
   const recipientLabel =
     channel === 'email'
       ? tt('recipient_email', 'Email address')
@@ -216,7 +205,7 @@ export default function Notifications() {
                   <p className={cn('text-sm', !n.is_read ? 'font-semibold text-foreground' : 'text-muted-foreground')}>
                     {n.message}
                   </p>
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">{formatTime(n.created_at)}</p>
+                  <p className="mt-1 font-mono text-xs text-muted-foreground">{formatDateTime(n.created_at, language)}</p>
                 </div>
                 {!n.is_read && <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-brand" />}
               </div>
