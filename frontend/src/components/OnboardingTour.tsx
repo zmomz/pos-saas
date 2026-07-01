@@ -222,7 +222,7 @@ const OnboardingTour: React.FC = () => {
             onClick={handleSkip}
             className="flex items-center gap-1 text-sm text-muted-foreground dark:text-muted-foreground hover:text-foreground dark:hover:text-foreground transition-colors"
           >
-            <SkipForward className="h-3.5 w-3.5" />
+            <SkipForward className={`h-3.5 w-3.5 ${isRTL ? 'rotate-180' : ''}`} />
             {t('skip') || 'Skip'}
           </button>
           <button

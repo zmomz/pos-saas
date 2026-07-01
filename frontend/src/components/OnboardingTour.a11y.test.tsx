@@ -82,4 +82,24 @@ describe('OnboardingTour a11y (#226)', () => {
     // Dismissal is a completion: the flag is persisted so it does not re-arm.
     expect(localStorage.getItem('onboarding_completed_master')).toBe('true');
   });
+
+  // ISSUE-226 (a11y · RTL) — the "Skip" affordance leads with a SkipForward
+  // glyph: a play-head skipping *forward*, i.e. toward the end of the reading
+  // direction. Under RTL "forward" is leftward, so an unmirrored glyph points
+  // the wrong way. Its sibling "Next" chevron already flips (`rtl:rotate-180`);
+  // this brings the skip glyph to the same idiom so the pair reads coherently.
+  it('leaves the Skip glyph upright in LTR', () => {
+    const dialog = showTour();
+    const glyph = dialog.querySelector('.lucide-skip-forward');
+    expect(glyph).not.toBeNull();
+    expect(glyph?.classList.contains('rotate-180')).toBe(false);
+  });
+
+  it('mirrors the Skip glyph under RTL', () => {
+    localStorage.setItem('pos-language', 'ar');
+    const dialog = showTour();
+    const glyph = dialog.querySelector('.lucide-skip-forward');
+    expect(glyph).not.toBeNull();
+    expect(glyph?.classList.contains('rotate-180')).toBe(true);
+  });
 });
