@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Bell, AlertTriangle, CheckCheck, Send, Mail, MessageCircle, Smartphone, CalendarClock } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { SegButton } from '@/components/ui/seg-button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
@@ -249,16 +250,15 @@ export default function Notifications() {
               <label className="dxr-eyebrow">{tt('channel', 'Channel')}</label>
               <div className="dxr-seg w-full">
                 {CHANNELS.map(({ value, icon: Icon }) => (
-                  <button
+                  <SegButton
                     key={value}
-                    type="button"
-                    data-active={channel === value}
+                    active={channel === value}
                     onClick={() => setChannel(value)}
                     className="flex-1"
                   >
                     <Icon className="h-4 w-4 me-1.5 inline-block" />
                     {tt(`channel_${value}`, value === 'email' ? 'Email' : value === 'whatsapp' ? 'WhatsApp' : 'Push')}
-                  </button>
+                  </SegButton>
                 ))}
               </div>
             </div>

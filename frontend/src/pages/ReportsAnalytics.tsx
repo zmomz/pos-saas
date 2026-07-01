@@ -4,6 +4,7 @@ import { useLanguage, translate } from '@/lib/i18n';
 import { formatMoney, formatNumber } from '@/lib/format';
 import { getSalesSummary, getTopProducts, exportCSV, getPaymentBreakdown, getJournalExport, getProfitMarginReport, getVatSummaryReport, getInventoryReport, getRefundVoidReport, getDiscountReport, getPnlReport, getCashFlowReport, downloadReportPdf, type JournalExport, type ProfitMarginReport, type VatSummaryReport, type InventoryReport, type RefundVoidReport, type DiscountReport, type PnlReport, type CashFlowReport } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import { SegButton } from '@/components/ui/seg-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -514,9 +515,9 @@ export default function ReportsAnalytics() {
       {/* Period Selector */}
       <div className="dxr-seg">
         {(['daily', 'weekly', 'monthly'] as const).map((p) => (
-          <button key={p} data-active={period === p} onClick={() => setPeriod(p)}>
+          <SegButton key={p} active={period === p} onClick={() => setPeriod(p)}>
             {tr(p)}
-          </button>
+          </SegButton>
         ))}
       </div>
 

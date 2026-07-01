@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { SegButton } from '@/components/ui/seg-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -875,15 +876,14 @@ export default function ShiftManagement() {
               <label className="text-sm text-muted-foreground mb-1 block">{t('movement_type')}</label>
               <div className="dxr-seg w-full">
                 {(['pay_in', 'pay_out', 'cash_drop'] as CashMovementType[]).map((type) => (
-                  <button
+                  <SegButton
                     key={type}
-                    type="button"
-                    data-active={movementType === type}
+                    active={movementType === type}
                     onClick={() => setMovementType(type)}
                     className="flex-1"
                   >
                     {t(type)}
-                  </button>
+                  </SegButton>
                 ))}
               </div>
             </div>
