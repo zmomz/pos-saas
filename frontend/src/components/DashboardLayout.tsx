@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { getNotifications } from '@/lib/api';
+import { getNotifications, globalSearch } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext';
 import { isPathAllowed } from '@/lib/businessType';
@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import OnboardingTour from '@/components/OnboardingTour';
 import OfflineBanner from '@/components/states/OfflineBanner';
 import CommandPalette, { type PaletteGroup } from '@/components/dashboard/rx/CommandPalette';
+import { buildSearchGroups } from '@/components/dashboard/rx/globalSearchGroups';
 import { PageChromeProvider, useShellChrome } from '@/contexts/PageChromeContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -289,6 +290,16 @@ const Shell: React.FC = () => {
   };
   const paletteGroups: PaletteGroup[] = [...(chrome.paletteGroups ?? []), navGroup];
 
+  // #231: make the ⌘K palette a true global search — feed the query to the
+  // cross-entity /search backend and merge navigable product/customer/
+  // transaction hits in above the static nav. Memoised so the palette's
+  // debounce effect isn't re-armed on every render.
+  const searchEverything = useCallback(
+    async (query: string): Promise<PaletteGroup[]> =>
+      buildSearchGroups(await globalSearch(query), navigate, t),
+    [navigate, t],
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       {/* Skip link (#226 · WCAG 2.4.1): first focusable element so keyboard/SR
@@ -496,6 +507,9 @@ const Shell: React.FC = () => {
             placeholder={t('search_or_command')}
             label={t('command_palette')}
             groups={paletteGroups}
+            onSearch={searchEverything}
+            searchingLabel={t('loading')}
+            searchErrorLabel={t('ops_load_error')}
           />
 
           <button

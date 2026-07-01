@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ElementType } from 'react';
+import { useEffect, useMemo, useRef, useState, type ElementType } from 'react';
 import { Search } from 'lucide-react';
 
 export interface PaletteItem {
@@ -19,21 +19,45 @@ interface CommandPaletteProps {
   /** accessible name announced for the modal dialog */
   label?: string;
   groups: PaletteGroup[];
+  /**
+   * Optional async backend search (#231). When provided, the current query is
+   * debounced and passed to it; the returned groups are merged in *above* the
+   * static ones so live /search hits (products/customers/transactions) surface
+   * from the global palette. Omit it and the palette stays a pure static filter.
+   */
+  onSearch?: (query: string) => Promise<PaletteGroup[]>;
+  /** shown while an onSearch request is in flight */
+  searchingLabel?: string;
+  /** shown when an onSearch request rejects */
+  searchErrorLabel?: string;
 }
+
+// Debounce so a fast typist fires one /search call, not one per keystroke.
+const SEARCH_DEBOUNCE_MS = 180;
 
 /**
  * ⌘K / Ctrl-K command palette. Renders the trigger pill (for the page command
  * bar) plus the modal overlay. Self-contained: manages open state, keyboard
- * shortcut, Esc-to-close and live filtering.
+ * shortcut, Esc-to-close and live filtering. With `onSearch` it also merges
+ * live backend results into the list (#231 global search).
  */
 export default function CommandPalette({
   placeholder = 'Search or run a command…',
   triggerLabel = 'Search or run a command',
   label = 'Command palette',
   groups,
+  onSearch,
+  searchingLabel = 'Searching…',
+  searchErrorLabel = 'Search failed',
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
+  const [resultGroups, setResultGroups] = useState<PaletteGroup[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
+  // Monotonic request id: a slow response for a stale query is discarded so the
+  // list always reflects the latest keystroke, never an out-of-order reply.
+  const reqIdRef = useRef(0);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -47,6 +71,50 @@ export default function CommandPalette({
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Closing the palette clears any live results so reopening never flashes stale
+  // hits from a previous query.
+  useEffect(() => {
+    if (!open) {
+      reqIdRef.current++;
+      setResultGroups([]);
+      setSearching(false);
+      setSearchError(false);
+    }
+  }, [open]);
+
+  // Debounced backend search for the current query (#231).
+  useEffect(() => {
+    if (!open || !onSearch) return;
+    const needle = q.trim();
+    if (!needle) {
+      reqIdRef.current++;
+      setResultGroups([]);
+      setSearching(false);
+      setSearchError(false);
+      return;
+    }
+    const reqId = ++reqIdRef.current;
+    setSearching(true);
+    setSearchError(false);
+    const timer = setTimeout(() => {
+      onSearch(needle)
+        .then((gs) => {
+          if (reqId !== reqIdRef.current) return; // stale response — ignore
+          setResultGroups(gs);
+        })
+        .catch(() => {
+          if (reqId !== reqIdRef.current) return;
+          setResultGroups([]);
+          setSearchError(true);
+        })
+        .finally(() => {
+          if (reqId !== reqIdRef.current) return;
+          setSearching(false);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [q, open, onSearch]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return groups;
@@ -54,6 +122,9 @@ export default function CommandPalette({
       .map((g) => ({ ...g, items: g.items.filter((i) => i.label.toLowerCase().includes(needle)) }))
       .filter((g) => g.items.length > 0);
   }, [q, groups]);
+
+  // Live backend hits first, then the filtered static nav/quick-action groups.
+  const displayGroups = useMemo(() => [...resultGroups, ...filtered], [resultGroups, filtered]);
 
   return (
     <>
@@ -95,10 +166,20 @@ export default function CommandPalette({
               />
             </div>
             <div className="max-h-[50vh] overflow-y-auto p-2">
-              {filtered.length === 0 && (
+              {searchError && (
+                <div className="px-3 py-3 text-center text-sm text-warning" role="status">
+                  {searchErrorLabel}
+                </div>
+              )}
+              {searching && !searchError && (
+                <div className="px-3 py-3 text-center text-sm text-muted-foreground" role="status">
+                  {searchingLabel}
+                </div>
+              )}
+              {!searching && !searchError && displayGroups.length === 0 && (
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">No matches</div>
               )}
-              {filtered.map((g) => (
+              {displayGroups.map((g) => (
                 <div key={g.label} className="p-1">
                   <div className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
                     {g.label}
