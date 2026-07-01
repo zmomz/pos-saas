@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
 import AgentMoyasarBanner from '@/components/billing/AgentMoyasarBanner';
 import {
@@ -228,11 +229,7 @@ export default function ClientDashboard() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   // H4 — the dashboard stats failed to load. Tell the truth with a retry rather

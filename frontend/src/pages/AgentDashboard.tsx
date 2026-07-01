@@ -17,6 +17,7 @@ import { Avatar } from '@/components/dashboard/Avatar';
 import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
@@ -537,11 +538,7 @@ export default function AgentDashboard() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   // H4 — the merchant book failed to load. Tell the truth with a retry rather

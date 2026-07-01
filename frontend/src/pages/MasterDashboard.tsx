@@ -9,6 +9,7 @@ import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDateTime } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import Gauge from '@/components/dashboard/rx/Gauge';
 import Bar from '@/components/dashboard/rx/Bar';
@@ -283,11 +284,7 @@ export default function MasterDashboard() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="animate-pulse text-muted-foreground">{t('loading')}</div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   return (

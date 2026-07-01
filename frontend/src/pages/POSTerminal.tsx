@@ -13,6 +13,7 @@ import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { notifyError } from '@/lib/notify';
 import { toast } from 'sonner';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { ScanBarcode, RotateCcw, ShoppingCart, Tag, Check, X, Printer, FileDown, Mail, MessageSquare, Camera, Pause, Play, WifiOff, Trash2, Lock, Banknote, CreditCard, Split as SplitIcon, Minus, Plus } from 'lucide-react';
 
@@ -1124,7 +1125,7 @@ export default function POSTerminal() {
   if (loading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
+        <LoadingState />
       </div>
     );
   }
