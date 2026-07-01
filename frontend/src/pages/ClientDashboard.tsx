@@ -19,6 +19,7 @@ import { usePageChrome } from '@/contexts/PageChromeContext';
 import CountUp from '@/components/dashboard/rx/CountUp';
 import ErrorState from '@/components/states/ErrorState';
 import LoadingState from '@/components/states/LoadingState';
+import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import CardOnFileDialog, { type CardOnFileToken } from '@/components/billing/CardOnFileDialog';
 import AgentMoyasarBanner from '@/components/billing/AgentMoyasarBanner';
 import {
@@ -270,6 +271,34 @@ export default function ClientDashboard() {
     }).join(' ');
   })();
 
+  // Recent transactions speak the one shared table voice (<DataTable>/.dxr-tbl).
+  const txColumns: DataTableColumn<Transaction>[] = [
+    {
+      key: 'invoice',
+      header: t('invoice_number') || 'Invoice',
+      className: 'font-mono text-[13px]',
+      cell: (tx) => tx.invoice_number,
+    },
+    {
+      key: 'total',
+      header: t('total') || 'Total',
+      className: 'font-semibold tabular-nums',
+      cell: (tx) => formatMoney(tx.total_amount || 0, language),
+    },
+    {
+      key: 'payment',
+      header: t('payment_method') || 'Payment',
+      cell: (tx) => <span className="pill-sky">{tx.payment_method}</span>,
+    },
+    {
+      key: 'status',
+      header: t('status') || 'Status',
+      cell: () => (
+        <span className="pill-success"><span className="h-1.5 w-1.5 rounded-full bg-current" />{t('paid') || 'Paid'}</span>
+      ),
+    },
+  ];
+
   return (
     <div className="animate-fade-up space-y-5">
       {/* Subscription dunning banner */}
@@ -518,31 +547,13 @@ export default function ClientDashboard() {
             <h2 className="text-[16px] font-extrabold tracking-tight">{t('recent_transactions') || 'Recent Transactions'}</h2>
             <button onClick={() => navigate('/reports')} className="inline-flex items-center gap-1 text-[13px] font-bold text-brand-700">{t('view_all') || 'View all'} <ArrowRight className="h-[15px] w-[15px] rtl:-scale-x-100" /></button>
           </div>
-          <div className="overflow-x-auto px-2 pb-2">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground/80">
-                  <th className="px-3 py-2.5 text-start">{t('invoice_number') || 'Invoice'}</th>
-                  <th className="px-3 py-2.5 text-start">{t('total') || 'Total'}</th>
-                  <th className="px-3 py-2.5 text-start">{t('payment_method') || 'Payment'}</th>
-                  <th className="px-3 py-2.5 text-start">{t('status') || 'Status'}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.length === 0 ? (
-                  <tr><td colSpan={4} className="px-3 py-10 text-center text-muted-foreground">{t('empty_cart') || 'No transactions yet.'}</td></tr>
-                ) : (
-                  transactions.map((tx) => (
-                    <tr key={tx.id} className="border-t border-border/70 transition-colors hover:bg-muted/40">
-                      <td className="px-3 py-3 font-mono text-[13px]">{tx.invoice_number}</td>
-                      <td className="px-3 py-3 font-semibold tabular-nums">{formatMoney(tx.total_amount || 0, language)}</td>
-                      <td className="px-3 py-3"><span className="pill-sky">{tx.payment_method}</span></td>
-                      <td className="px-3 py-3"><span className="pill-success"><span className="h-1.5 w-1.5 rounded-full bg-current" />{t('paid') || 'Paid'}</span></td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          <div className="px-2 pb-2">
+            <DataTable
+              columns={txColumns}
+              rows={transactions}
+              rowKey={(tx) => tx.id}
+              empty={t('empty_cart') || 'No transactions yet.'}
+            />
           </div>
         </div>
       </div>
