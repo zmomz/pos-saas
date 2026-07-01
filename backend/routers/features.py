@@ -2714,7 +2714,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | sales_today | average_order | payment_mix | vat_owed | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
+    intent: str  # top_product | top_margin | top_customer | sales_today | average_order | payment_mix | vat_owed | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2774,6 +2774,18 @@ _ASSISTANT_INTENTS = [
                     "راكد", "بضاعة راكدة", "مخزون راكد", "لا يباع", "لا تباع"]),
     ("low_stock", ["low stock", "low on stock", "running low", "out of stock",
                    "مخزون", "نفاد", "نفذ"]),
+    # Checked before ``top_margin``/``top_product`` so a *who* question ("who are
+    # my best customers", "biggest spender") routes to the customer ranking rather
+    # than the most-profitable product or the units-sold winner. Its vocabulary is
+    # *which buyer* (customer/spender/VIP), distinct from *which product*. The
+    # Arabic "أفضل عميل" is kept clear of ``top_product``'s bare "الأكثر" cue.
+    ("top_customer", ["best customer", "best customers", "top customer",
+                      "top customers", "biggest customer", "biggest spender",
+                      "who spends the most", "most valuable customer",
+                      "loyal customers", "loyal customer", "vip customer",
+                      "who is my best customer", "who are my best customers",
+                      "أفضل عميل", "أفضل عملاء", "أفضل العملاء", "أهم العملاء",
+                      "أكبر عميل", "أكثر عميل"]),
     # Checked before ``top_product`` so a *profit* question ("most profitable",
     # "highest margin") routes to the gross-margin winner rather than the
     # units-sold winner — and so the Arabic "الأكثر ربحية" isn't swallowed by
@@ -2838,6 +2850,7 @@ _ASSISTANT_INTENTS = [
 _ASSISTANT_SUGGESTIONS = [
     "What is my best selling product?",
     "Which product is most profitable?",
+    "Who are my best customers?",
     "How much did I sell today?",
     "What is my average order value?",
     "How do my customers pay?",
@@ -2978,6 +2991,80 @@ async def _assistant_top_margin(db: AsyncSession, client_id: int) -> dict:
                 "gross_profit": round(gross_profit, 2),
             }
     return best or {}
+
+
+async def _assistant_top_customer(db: AsyncSession, client_id: int, lookback: int = 30,
+                                  limit: int = 5) -> dict:
+    """Top customers by net spend over the last ``lookback`` days.
+
+    The conversational answer to "who are my best customers": net spend per
+    identified customer over the window, ranked by spend, with the leader named.
+    Uses the same money rule as the financial reports — a credit note nets against
+    that customer's spend (a refund lowers their standing) but is not itself an
+    order; held/voided tickets aren't selling activity. Customers are keyed by
+    phone when present (the stable CRM identity, so the same buyer isn't split
+    across name spellings) else by name. Walk-in / anonymous sales (no name and no
+    phone) are excluded — they aren't identifiable customers. An empty or wholly
+    anonymous window yields an empty ranking and ``top`` ``None`` rather than a
+    crash.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    rows = (
+        await db.execute(
+            select(
+                Transactions.customer_name,
+                Transactions.customer_phone,
+                Transactions.total_amount,
+                Transactions.status,
+            ).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+        )
+    ).all()
+
+    by_customer: dict[str, dict] = {}
+    for name, phone, total, status in rows:
+        name = (name or "").strip()
+        phone = (phone or "").strip()
+        if not name and not phone:
+            continue  # walk-in / anonymous sale — not an identifiable customer
+        key = phone or name.lower()
+        bucket = by_customer.setdefault(
+            key, {"name": name or phone, "phone": phone or None, "net": 0.0, "orders": 0}
+        )
+        # Prefer a human name for display if a later row on the same phone supplies one.
+        if name and bucket["name"] == bucket["phone"]:
+            bucket["name"] = name
+        amount = float(total or 0.0)
+        if status == "credit_note":
+            bucket["net"] -= amount
+        else:
+            bucket["net"] += amount
+            bucket["orders"] += 1
+
+    total_net = round(sum(b["net"] for b in by_customer.values()), 2)
+    ranked = sorted(by_customer.values(), key=lambda b: (-b["net"], b["name"]))
+    customers = [
+        {
+            "name": b["name"],
+            "phone": b["phone"],
+            "net_spent": round(b["net"], 2),
+            "order_count": b["orders"],
+            "share": round(b["net"] / total_net, 4) if total_net else 0.0,
+        }
+        for b in ranked[:limit]
+    ]
+    return {
+        "lookback_days": lookback,
+        "customer_count": len(by_customer),
+        "customers": customers,
+        "top": customers[0] if customers else None,
+    }
 
 
 async def _assistant_sales_today(db: AsyncSession, client_id: int) -> dict:
@@ -3783,6 +3870,30 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=top, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "top_customer":
+        tc = await _assistant_top_customer(db, client_id)
+        top = tc["top"]
+        if top:
+            others = ", ".join(
+                f"{c['name']} ({c['net_spent']:.2f})" for c in tc["customers"][1:]
+            )
+            answer = (
+                f"Your top customer over the last {tc['lookback_days']} days is "
+                f"{top['name']} — {top['net_spent']:.2f} spent across "
+                f"{top['order_count']} order(s)."
+            )
+            if others:
+                answer += f" Next: {others}."
+        else:
+            answer = (
+                f"No named customers in the last {tc['lookback_days']} days yet — "
+                f"attach a customer to a sale to start building your top-customer list."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=tc, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "top_margin":

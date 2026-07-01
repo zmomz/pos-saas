@@ -111,6 +111,7 @@ export default function AssistantPanel() {
 // ``suggestions`` (authoritative) replace these.
 const DEFAULT_SUGGESTIONS = [
   'What is my best selling product?',
+  'Who are my best customers?',
   'How much did I sell today?',
   'What is my average order value?',
   'How do my customers pay?',

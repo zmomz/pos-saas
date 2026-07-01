@@ -22,7 +22,8 @@ from models.transactions import Transactions
 
 async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: float,
                      items, status: str = "completed", idx: int = 0,
-                     payment_method: str = "cash", vat: float = 0.0):
+                     payment_method: str = "cash", vat: float = 0.0,
+                     customer_name=None, customer_phone=None):
     """Insert one transaction carrying ``items`` (list of {product_id, quantity})."""
     import json as _json
 
@@ -40,6 +41,8 @@ async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: fl
                 payment_method=payment_method,
                 status=status,
                 items_json=_json.dumps(items),
+                customer_name=customer_name,
+                customer_phone=customer_phone,
                 created_at=created,
             )
         )
@@ -1064,3 +1067,79 @@ async def test_assistant_inventory_value_routes_in_arabic(client):
     body = resp.json()
     assert body["intent"] == "inventory_value"
     assert body["data"]["cost_value"] == 40.0
+
+
+async def test_assistant_names_the_top_customer(client):
+    """"Who are my best customers?" → the customer with the most net spend over
+    30 days; a credit note nets against that customer, walk-in (unnamed) sales are
+    excluded, and a sale outside the window doesn't count."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Maha spends 500 net (600 − 100 refund) across 2 counted orders; Sami 300.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=600.0, items=[],
+                     idx=1, customer_name="Maha", customer_phone="0500000001")
+    await _seed_sale(client_id, user["id"], days_ago=2, total=100.0, items=[],
+                     status="credit_note", idx=2,
+                     customer_name="Maha", customer_phone="0500000001")
+    await _seed_sale(client_id, user["id"], days_ago=3, total=300.0, items=[],
+                     idx=3, customer_name="Sami", customer_phone="0500000002")
+    # A walk-in (no customer identity) must NOT surface as a customer.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[], idx=4)
+    # An old sale (outside the 30-day window) must NOT count.
+    await _seed_sale(client_id, user["id"], days_ago=45, total=999.0, items=[],
+                     idx=5, customer_name="Maha", customer_phone="0500000001")
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=who are my best customers", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["method"] == "rule_based"
+    assert body["intent"] == "top_customer"
+    data = body["data"]
+    assert data["customer_count"] == 2
+    top = data["top"]
+    assert top["name"] == "Maha"
+    assert abs(top["net_spent"] - 500.0) < 0.01
+    assert top["order_count"] == 1          # the refund is not itself an order
+    # Ranked: Maha (500) ahead of Sami (300).
+    assert [c["name"] for c in data["customers"]] == ["Maha", "Sami"]
+    assert "Maha" in body["answer"]
+
+
+async def test_assistant_top_customer_handles_no_customers(client):
+    """No identified customers → an empty ranking and a graceful answer, no crash."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Only walk-in sales exist — nobody to rank.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=100.0, items=[], idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=who is my best customer", headers=headers
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["intent"] == "top_customer"
+    data = body["data"]
+    assert data["customer_count"] == 0
+    assert data["top"] is None
+    assert data["customers"] == []
+
+
+async def test_assistant_top_customer_routes_in_arabic(client):
+    """Arabic "أفضل عميل" routes to top_customer."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=250.0, items=[],
+                     idx=1, customer_name="Layla", customer_phone="0500000009")
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=من هو أفضل عميل", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "top_customer"
+    assert body["data"]["top"]["name"] == "Layla"
