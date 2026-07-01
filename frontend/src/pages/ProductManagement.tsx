@@ -501,20 +501,33 @@ export default function ProductManagement() {
     }
   }
 
-  function renderForm(onSubmit: () => void, submitLabel: string) {
+  // ISSUE-226 (a11y): `idPrefix` disambiguates the add- vs edit-form field ids so
+  // each visible <Label> can be programmatically associated (htmlFor/id) with its
+  // <Input>, exposing an accessible name to screen readers (WCAG 1.3.1 / 3.3.2).
+  function renderForm(
+    onSubmit: () => void,
+    submitLabel: string,
+    idPrefix: string
+  ) {
     return (
       <div className="space-y-4">
         <div>
-          <Label className="mb-1 block">{tt('name', 'Name')} *</Label>
+          <Label htmlFor={`${idPrefix}-name`} className="mb-1 block">
+            {tt('name', 'Name')} *
+          </Label>
           <Input
+            id={`${idPrefix}-name`}
             value={formData.name}
             onChange={(e) => handleFormChange('name', e.target.value)}
             placeholder={tt('product_name_placeholder', 'Product name')}
           />
         </div>
         <div>
-          <Label className="mb-1 block">{tt('arabic_name', 'Arabic Name')}</Label>
+          <Label htmlFor={`${idPrefix}-name-ar`} className="mb-1 block">
+            {tt('arabic_name', 'Arabic Name')}
+          </Label>
           <Input
+            id={`${idPrefix}-name-ar`}
             value={formData.name_ar}
             onChange={(e) => handleFormChange('name_ar', e.target.value)}
             placeholder={tt('product_name_ar_placeholder', 'اسم المنتج')}
@@ -522,8 +535,11 @@ export default function ProductManagement() {
           />
         </div>
         <div>
-          <Label className="mb-1 block">{tt('barcode', 'Barcode')}</Label>
+          <Label htmlFor={`${idPrefix}-barcode`} className="mb-1 block">
+            {tt('barcode', 'Barcode')}
+          </Label>
           <Input
+            id={`${idPrefix}-barcode`}
             value={formData.barcode}
             onChange={(e) => handleFormChange('barcode', e.target.value)}
             placeholder="e.g. 1234567890"
@@ -531,8 +547,11 @@ export default function ProductManagement() {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label className="mb-1 block">{t('price')} *</Label>
+            <Label htmlFor={`${idPrefix}-price`} className="mb-1 block">
+              {t('price')} *
+            </Label>
             <Input
+              id={`${idPrefix}-price`}
               type="number"
               value={formData.price}
               onChange={(e) => handleFormChange('price', e.target.value)}
@@ -540,8 +559,11 @@ export default function ProductManagement() {
             />
           </div>
           <div>
-            <Label className="mb-1 block">{tt('cost_price', 'Cost Price')}</Label>
+            <Label htmlFor={`${idPrefix}-cost-price`} className="mb-1 block">
+              {tt('cost_price', 'Cost Price')}
+            </Label>
             <Input
+              id={`${idPrefix}-cost-price`}
               type="number"
               value={formData.cost_price}
               onChange={(e) => handleFormChange('cost_price', e.target.value)}
@@ -551,8 +573,11 @@ export default function ProductManagement() {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label className="mb-1 block">{t('quantity')} *</Label>
+            <Label htmlFor={`${idPrefix}-quantity`} className="mb-1 block">
+              {t('quantity')} *
+            </Label>
             <Input
+              id={`${idPrefix}-quantity`}
               type="number"
               value={formData.quantity}
               onChange={(e) => handleFormChange('quantity', e.target.value)}
@@ -560,8 +585,11 @@ export default function ProductManagement() {
             />
           </div>
           <div>
-            <Label className="mb-1 block">{tt('vat_percent', 'VAT %')}</Label>
+            <Label htmlFor={`${idPrefix}-vat`} className="mb-1 block">
+              {tt('vat_percent', 'VAT %')}
+            </Label>
             <Input
+              id={`${idPrefix}-vat`}
               type="number"
               value={formData.vat_rate}
               onChange={(e) => handleFormChange('vat_rate', e.target.value)}
@@ -571,8 +599,11 @@ export default function ProductManagement() {
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <Label className="mb-1 block">{t('reorder_point')}</Label>
+            <Label htmlFor={`${idPrefix}-reorder-point`} className="mb-1 block">
+              {t('reorder_point')}
+            </Label>
             <Input
+              id={`${idPrefix}-reorder-point`}
               type="number"
               value={formData.reorder_point}
               onChange={(e) => handleFormChange('reorder_point', e.target.value)}
@@ -580,8 +611,11 @@ export default function ProductManagement() {
             />
           </div>
           <div>
-            <Label className="mb-1 block">{t('reorder_quantity')}</Label>
+            <Label htmlFor={`${idPrefix}-reorder-qty`} className="mb-1 block">
+              {t('reorder_quantity')}
+            </Label>
             <Input
+              id={`${idPrefix}-reorder-qty`}
               type="number"
               value={formData.reorder_quantity}
               onChange={(e) => handleFormChange('reorder_quantity', e.target.value)}
@@ -608,8 +642,11 @@ export default function ProductManagement() {
           </label>
           {formData.is_weighted && (
             <div>
-              <Label className="mb-1 block">{t('unit_label')}</Label>
+              <Label htmlFor={`${idPrefix}-unit-label`} className="mb-1 block">
+                {t('unit_label')}
+              </Label>
               <Input
+                id={`${idPrefix}-unit-label`}
                 value={formData.unit_label}
                 onChange={(e) => handleFormChange('unit_label', e.target.value)}
                 placeholder={t('unit_label_placeholder')}
@@ -619,14 +656,16 @@ export default function ProductManagement() {
           <p className="text-xs text-muted-foreground">{t('weighted_open_price_hint')}</p>
         </div>
         <div>
-          <Label className="mb-1 block">{t('category')}</Label>
+          <Label htmlFor={`${idPrefix}-category`} className="mb-1 block">
+            {t('category')}
+          </Label>
           <Select
             value={formData.category_id || NO_CATEGORY}
             onValueChange={(v) =>
               handleFormChange('category_id', v === NO_CATEGORY ? '' : v)
             }
           >
-            <SelectTrigger>
+            <SelectTrigger id={`${idPrefix}-category`} aria-label={t('category')}>
               <SelectValue placeholder={t('category')} />
             </SelectTrigger>
             <SelectContent>
@@ -917,7 +956,7 @@ export default function ProductManagement() {
             <DialogHeader>
               <DialogTitle>{tt('add_new_product', 'Add New Product')}</DialogTitle>
             </DialogHeader>
-            {renderForm(handleAddProduct, tt('add_product', 'Add Product'))}
+            {renderForm(handleAddProduct, tt('add_product', 'Add Product'), 'add-product')}
           </DialogContent>
         </Dialog>
       </PageHeading>
@@ -1050,7 +1089,7 @@ export default function ProductManagement() {
           <DialogHeader>
             <DialogTitle>{tt('edit_product', 'Edit Product')}</DialogTitle>
           </DialogHeader>
-          {renderForm(handleEditProduct, t('save'))}
+          {renderForm(handleEditProduct, t('save'), 'edit-product')}
         </DialogContent>
       </Dialog>
 
