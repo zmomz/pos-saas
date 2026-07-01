@@ -52,6 +52,9 @@ ALLOWLIST = {
     "transactions.py": "generic entity triad (sales written via /api/v1/pos)",
     # Backend-internal: no frontend caller by design.
     "health.py": "liveness/DB probe (/database/health), ops-internal",
+    # Admin console (#225): master-only operator control plane (maintenance mode);
+    # the frontend console is a later slice of the same epic.
+    "admin_console.py": "operator admin console (maintenance mode), FE console pending (#225)",
     # Wire-later (F-054 operator decision; IB §8 orphan ledger):
     "storage.py": "object storage — kept for a later AG-07 exports wire-up",
     # receipt_templates.py was wired into the frontend by the ReceiptTemplateDesigner

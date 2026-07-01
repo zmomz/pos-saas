@@ -15,6 +15,7 @@
 # modules actually present in the package — so adding a router file without
 # listing it (or listing one that no longer exists) fails CI.
 REGISTERED_MODULES = (
+    "admin_console",
     "aggregator",
     "api_usage",
     "audit_logs",

@@ -161,6 +161,14 @@ from middlewares.production import (  # noqa: E402
 
 app.add_middleware(RequestValidationMiddleware)
 
+# Maintenance mode (M10 Admin, #225): while the platform master has flipped
+# maintenance on, ordinary tenant /api/v1 traffic is refused with 503. Master,
+# auth, admin-console and health paths stay reachable so the master is never
+# locked out. Fails open (any check error ⇒ pass through).
+from middlewares.maintenance import MaintenanceModeMiddleware  # noqa: E402
+
+app.add_middleware(MaintenanceModeMiddleware)
+
 # API-usage metering: writes an api_usage row per authenticated call so
 # /api-usage/stats reflects real traffic. No-op unless API_METERING_ENABLED=true.
 app.add_middleware(ApiUsageMeteringMiddleware)
