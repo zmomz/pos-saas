@@ -189,7 +189,7 @@ export default function BrandingEditor() {
               <div className="space-y-2">
                 <Label className={labelCls}>{t('primary_color')}</Label>
                 <div className="flex items-center gap-3">
-                  <input type="color" value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="h-10 w-12 cursor-pointer rounded-lg border border-input bg-transparent" />
+                  <input type="color" aria-label={t('primary_color_picker')} value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="h-10 w-12 cursor-pointer rounded-lg border border-input bg-transparent" />
                   <Input aria-label={t('primary_color')} value={primaryColor} onChange={(e) => setPrimaryColor(e.target.value)} className="flex-1 font-mono" dir="ltr" />
                 </div>
                 {primaryPale && <p className="text-xs text-amber-600">{t('pale_color_warning')}</p>}
@@ -199,7 +199,7 @@ export default function BrandingEditor() {
               <div className="space-y-2">
                 <Label className={labelCls}>{t('secondary_color')}</Label>
                 <div className="flex items-center gap-3">
-                  <input type="color" value={secondaryColor} onChange={(e) => setSecondaryColor(e.target.value)} className="h-10 w-12 cursor-pointer rounded-lg border border-input bg-transparent" />
+                  <input type="color" aria-label={t('secondary_color_picker')} value={secondaryColor} onChange={(e) => setSecondaryColor(e.target.value)} className="h-10 w-12 cursor-pointer rounded-lg border border-input bg-transparent" />
                   <Input aria-label={t('secondary_color')} value={secondaryColor} onChange={(e) => setSecondaryColor(e.target.value)} className="flex-1 font-mono" dir="ltr" />
                 </div>
                 {secondaryPale && <p className="text-xs text-amber-600">{t('pale_color_warning')}</p>}
