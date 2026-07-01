@@ -428,6 +428,16 @@ class BarcodeResolution(BaseModel):
     barcode: Optional[str] = None
     quantity: Optional[int] = None
     sku: Optional[str] = None
+    # ISSUE-230 (Integrations): a variable-measure *scale* barcode carries an
+    # embedded value the scan itself supplies. ``scale`` flags such a resolution;
+    # ``scale_kind`` is "weight" (a weighted product → ``scale_weight`` kg is the
+    # line quantity) or "price" (any other product → ``scale_price`` is the line's
+    # total price, the scale having done the price×weight maths). Absent/False on
+    # an ordinary barcode.
+    scale: bool = False
+    scale_kind: Optional[str] = None
+    scale_weight: Optional[float] = None
+    scale_price: Optional[float] = None
 
 
 @router.get("/resolve-barcode", response_model=BarcodeResolution)
@@ -445,6 +455,7 @@ async def resolve_barcode(
     line. Owner-scoped (SEC-02): only the caller's own catalog is searched.
     """
     from services.product_variants import resolve_variant_barcode, resolve_product_barcode
+    from services.scale_barcode import parse_scale_barcode
 
     variant = await resolve_variant_barcode(db, owner_id, barcode)
     if variant:
@@ -479,6 +490,52 @@ async def resolve_barcode(
             barcode=product.barcode,
             quantity=product.quantity,
         )
+
+    # ISSUE-230: a variable-measure *scale* barcode never matches a stored code
+    # exactly (its value changes each weigh), so it lands here. Recognise the
+    # format, resolve the product by the item-code prefix its catalog barcode
+    # shares, and hand the scan's embedded weight/price back to the POS.
+    scale = parse_scale_barcode(barcode)
+    if scale is not None:
+        matched = (
+            await db.execute(
+                select(Products)
+                .where(
+                    Products.user_id == owner_id,
+                    func.substr(Products.barcode, 1, 6) == scale.item_prefix,
+                )
+                .order_by(Products.id.asc())
+            )
+        ).scalars().first()
+        if matched:
+            if matched.is_weighted:
+                # Embedded grams → kilograms = the weighed line quantity.
+                return BarcodeResolution(
+                    kind="product",
+                    product_id=matched.id,
+                    name=matched.name,
+                    name_ar=matched.name_ar,
+                    price=float(matched.price or 0),
+                    barcode=barcode,
+                    quantity=matched.quantity,
+                    scale=True,
+                    scale_kind="weight",
+                    scale_weight=round(scale.value / 1000.0, 3),
+                )
+            # Embedded halalas → the line's total price (the scale priced it).
+            return BarcodeResolution(
+                kind="product",
+                product_id=matched.id,
+                name=matched.name,
+                name_ar=matched.name_ar,
+                price=float(matched.price or 0),
+                barcode=barcode,
+                quantity=matched.quantity,
+                scale=True,
+                scale_kind="price",
+                scale_price=round(scale.value / 100.0, 2),
+            )
+
     return BarcodeResolution(kind="none")
 
 

@@ -1514,6 +1514,14 @@ export interface BarcodeResolution {
   barcode?: string;
   quantity?: number;
   sku?: string;
+  // ISSUE-230 (Integrations): a variable-measure *scale* barcode carries a value
+  // the scan itself supplies. `scale_kind` is 'weight' (weighted product →
+  // `scale_weight` kg is the line quantity) or 'price' (any other product →
+  // `scale_price` is the line's total price, the scale having priced it).
+  scale?: boolean;
+  scale_kind?: 'weight' | 'price';
+  scale_weight?: number;
+  scale_price?: number;
 }
 
 export async function resolveBarcode(barcode: string): Promise<BarcodeResolution> {

@@ -436,19 +436,39 @@ export default function POSTerminal() {
     }
   }
 
-  function addToCart(product: Product, variantId?: number) {
+  // ISSUE-230 (Integrations): a scale scan carries an exact measured quantity
+  // (weighted product) or a pre-computed line price, supplied via `overrides`.
+  function addToCart(
+    product: Product,
+    variantId?: number,
+    overrides?: { quantity?: number; unitPrice?: number },
+  ) {
     const key = cartKeyFor(product.id, variantId);
     setCart((prev) => {
       const existing = prev.find((item) => item.key === key);
       if (existing) {
+        // A scale scan is an exact measurement, so it *sets* the line rather than
+        // incrementing it — re-scanning the weighed item corrects the amount.
+        if (overrides) {
+          return prev.map((item) =>
+            item.key === key
+              ? {
+                  ...item,
+                  quantity: overrides.quantity ?? item.quantity,
+                  unitPrice: overrides.unitPrice ?? item.unitPrice,
+                }
+              : item
+          );
+        }
         return prev.map((item) =>
           item.key === key ? { ...item, quantity: item.quantity + 1 } : item
         );
       }
       // POS-11 (F-011): an open-price line seeds its sale-time price from the
       // catalog default so the cashier can adjust it inline before checkout.
-      const unitPrice = product.is_open_price ? product.price : undefined;
-      return [...prev, { product, quantity: 1, variantId, unitPrice, key }];
+      const unitPrice = overrides?.unitPrice ?? (product.is_open_price ? product.price : undefined);
+      const quantity = overrides?.quantity ?? 1;
+      return [...prev, { product, quantity, variantId, unitPrice, key }];
     });
   }
 
@@ -508,6 +528,13 @@ export default function POSTerminal() {
       }
       if (res.kind === 'product' && res.product_id) {
         const local = products.find((p) => p.id === res.product_id);
+        // ISSUE-230: a scale barcode supplies the weighed quantity (weighted
+        // product) or the scale-computed line price, applied as an override.
+        const overrides = res.scale
+          ? res.scale_kind === 'weight'
+            ? { quantity: res.scale_weight }
+            : { unitPrice: res.scale_price }
+          : undefined;
         addToCart(
           local || {
             id: res.product_id,
@@ -516,6 +543,8 @@ export default function POSTerminal() {
             price: res.price,
             barcode: res.barcode,
           },
+          undefined,
+          overrides,
         );
         setBarcodeMessage({ text: `✓ ${res.name} ${tt('added', 'added')}`, type: 'success' });
         return true;
