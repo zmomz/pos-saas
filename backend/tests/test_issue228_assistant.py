@@ -231,6 +231,74 @@ async def test_assistant_forecast_handles_no_sales(client):
     assert body["data"]["avg_daily_sales"] == 0.0
 
 
+async def test_assistant_suggests_smart_reorder_quantities(client):
+    """"What should I reorder?" → velocity-driven reorder quantities, not the
+    static low-stock list. A fast mover running thin gets a quantity sized to
+    cover the target horizon; a well-stocked item is not suggested."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Beans: 5 on hand, sold 60 units over the window → 2/day → 14-day cover
+    # target = 28 → suggest 28 − 5 = 23.
+    beans = await _seed_product(client_id, user["id"], name="Beans", quantity=5)
+    # Cups: 500 on hand, sold 30 units → 1/day → target 14, already covered → 0.
+    cups = await _seed_product(client_id, user["id"], name="Cups", quantity=500)
+    # Gift Card: digital → never a reorder candidate even at 0 stock.
+    await _seed_product(client_id, user["id"], name="Gift Card", quantity=0,
+                        is_digital=True)
+
+    await _seed_sale(client_id, user["id"], days_ago=3, total=10.0,
+                     items=[{"product_id": beans, "quantity": 60}], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=4, total=10.0,
+                     items=[{"product_id": cups, "quantity": 30}], idx=2)
+    # A held ticket's units and a sale older than 30 days must not count toward
+    # velocity (they'd inflate the suggested quantity).
+    await _seed_sale(client_id, user["id"], days_ago=2, total=10.0,
+                     items=[{"product_id": beans, "quantity": 999}],
+                     status="held", idx=3)
+    await _seed_sale(client_id, user["id"], days_ago=45, total=10.0,
+                     items=[{"product_id": beans, "quantity": 999}], idx=4)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what should I reorder", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "smart_reorder"
+    assert body["data"]["lookback_days"] == 30
+    assert body["data"]["coverage_days"] == 14
+    assert body["data"]["count"] == 1
+    item = body["data"]["products"][0]
+    assert item["product_id"] == beans
+    assert item["on_hand"] == 5
+    assert item["units_sold"] == 60
+    assert abs(item["daily_velocity"] - 2.0) < 0.01
+    assert item["suggested_reorder_qty"] == 23
+    assert "Beans" in body["answer"]
+    assert "23" in body["answer"]
+    # The well-stocked and digital items are never suggested.
+    assert cups not in [p["product_id"] for p in body["data"]["products"]]
+
+
+async def test_assistant_smart_reorder_handles_nothing_to_reorder(client):
+    """No sales (so no velocity) → nothing to reorder, not a crash or a bad list."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_product(client_id, user["id"], name="Beans", quantity=5)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much should I restock", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "smart_reorder"
+    assert body["data"]["count"] == 0
+    assert body["data"]["products"] == []
+
+
 async def test_assistant_unroutable_question_degrades_gracefully(client):
     """A question it can't map is an ``unknown`` answer with suggestions, not a 400/500."""
     user, token, client_id = await make_client_account(client)

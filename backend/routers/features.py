@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import logging
+import math
 import os
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -2173,7 +2174,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | sales_today | average_order | sales_forecast | low_stock | unknown
+    intent: str  # top_product | sales_today | average_order | sales_forecast | smart_reorder | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2184,8 +2185,14 @@ class AssistantAnswer(BaseModel):
 # routes revenue). Bilingual: the app is Arabic-first, so each intent carries a
 # few Arabic cue words alongside the English ones.
 _ASSISTANT_INTENTS = [
+    # Checked before ``low_stock`` so an actionable "what/how much should I
+    # reorder" routes to the velocity-driven suggestion rather than the static
+    # low-stock list. ``low_stock`` keeps the pure "which are low" phrasings.
+    ("smart_reorder", ["reorder", "restock", "re-order", "re-stock",
+                       "what should i order", "what to order", "purchase order",
+                       "إعادة طلب", "كمية الطلب"]),
     ("low_stock", ["low stock", "low on stock", "running low", "out of stock",
-                   "reorder", "restock", "مخزون", "نفاد", "نفذ"]),
+                   "مخزون", "نفاد", "نفذ"]),
     ("top_product", ["top product", "top seller", "best seller", "best-seller",
                      "bestseller", "best selling", "best-selling", "most sold",
                      "الأكثر", "أفضل منتج", "افضل منتج"]),
@@ -2208,6 +2215,7 @@ _ASSISTANT_SUGGESTIONS = [
     "How much did I sell today?",
     "What is my average order value?",
     "What is my sales forecast for next week?",
+    "What should I reorder?",
     "Which products are low on stock?",
 ]
 
@@ -2374,6 +2382,92 @@ async def _assistant_low_stock(db: AsyncSession, client_id: int) -> dict:
     return {"count": len(products), "products": products}
 
 
+async def _assistant_smart_reorder(db: AsyncSession, client_id: int) -> dict:
+    """Velocity-driven reorder suggestions — the "smart" companion to low_stock.
+
+    Where ``low_stock`` reports a static list of products below their reorder
+    point, this sizes a *quantity*: for each product it measures the units sold
+    over a 30-day lookback (held/voided tickets and out-of-window sales excluded,
+    exactly like ``top_product``), turns that into a daily velocity, and projects
+    the stock needed to cover the next ``coverage_days``. The suggestion is the
+    shortfall between that target and what's on hand — so only products that will
+    actually run thin at the current sales pace are listed, sorted most-urgent
+    first. A product with no recent sales has zero velocity and is never
+    suggested (don't reorder dead stock), so an empty window yields an empty list
+    rather than a crash.
+    """
+    lookback, coverage_days = 30, 14
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    # Tenant catalogue keyed by id: active, stockable (non-digital) products only,
+    # carrying the on-hand count we size the shortfall against.
+    prod_result = await db.execute(
+        select(Products.id, Products.name, Products.name_ar, Products.quantity).where(
+            and_(
+                Products.client_id == client_id,
+                Products.is_active == True,
+                Products.is_digital.is_distinct_from(True),
+            )
+        )
+    )
+    catalogue = {
+        pid: {"name": name, "name_ar": name_ar, "on_hand": int(qty or 0)}
+        for pid, name, name_ar, qty in prod_result.all()
+    }
+
+    units_sold: dict = {}
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id", 0)
+            if pid not in catalogue:
+                continue
+            units_sold[pid] = units_sold.get(pid, 0) + (item.get("quantity", 0) or 0)
+
+    suggestions = []
+    for pid, sold in units_sold.items():
+        if sold <= 0:
+            continue
+        velocity = sold / lookback
+        target_stock = math.ceil(velocity * coverage_days)
+        on_hand = catalogue[pid]["on_hand"]
+        shortfall = target_stock - on_hand
+        if shortfall <= 0:
+            continue
+        suggestions.append({
+            "product_id": pid,
+            "name": catalogue[pid]["name"],
+            "name_ar": catalogue[pid]["name_ar"],
+            "on_hand": on_hand,
+            "units_sold": int(sold),
+            "daily_velocity": round(velocity, 2),
+            "suggested_reorder_qty": int(shortfall),
+        })
+
+    suggestions.sort(key=lambda s: s["suggested_reorder_qty"], reverse=True)
+    return {
+        "lookback_days": lookback,
+        "coverage_days": coverage_days,
+        "count": len(suggestions),
+        "products": suggestions,
+    }
+
+
 @router.get("/api/v1/assistant/query", response_model=AssistantAnswer)
 async def assistant_query(
     q: str = Query(..., min_length=1, max_length=500),
@@ -2446,6 +2540,23 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=fc, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "smart_reorder":
+        ro = await _assistant_smart_reorder(db, client_id)
+        if ro["count"]:
+            lines = ", ".join(
+                f"{p['name']} ({p['suggested_reorder_qty']})" for p in ro["products"]
+            )
+            answer = (
+                f"At the last 30 days' pace, reorder {ro['count']} product(s) to "
+                f"cover the next {ro['coverage_days']} days: {lines}."
+            )
+        else:
+            answer = "Nothing needs reordering at your current sales pace."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=ro, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "low_stock":
