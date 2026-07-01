@@ -26,6 +26,7 @@ import {
 } from '@/lib/api';
 import { toast } from 'sonner';
 import { useLanguage } from '@/lib/i18n';
+import LoadingState from '@/components/states/LoadingState';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { UtensilsCrossed, Plus, Users, AlertTriangle, Lock, ShoppingBag, Pencil, Trash2 } from 'lucide-react';
 
@@ -243,13 +244,7 @@ export default function FloorMap() {
     activeZone === 'all' ? tables : tables.filter((tb) => tb.zone_id === activeZone);
 
   // ---- Loading state ----
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   // ---- Permission-denied state (restaurant mode off / retail business_type) ----
   if (denied) {

@@ -17,6 +17,7 @@ import { useLanguage } from '@/lib/i18n';
 import { formatDateTime } from '@/lib/format';
 import { generateWebhookSecret } from '@/lib/webhookSecret';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import EmptyState from '@/components/states/EmptyState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
@@ -288,13 +289,7 @@ export default function WebhookManagement() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64" dir={isRTL ? 'rtl' : 'ltr'}>
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   if (denied) {
     return (

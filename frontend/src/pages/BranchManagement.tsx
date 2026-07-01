@@ -24,6 +24,7 @@ import { toast } from 'sonner';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import { Building2, Plus, MapPin, ArrowRightLeft, Package, ClipboardList, Star, History, Layers } from 'lucide-react';
 
 const ADJUSTMENT_REASONS: StockAdjustmentReason[] = [
@@ -419,13 +420,7 @@ export default function BranchManagement() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   return (
     <div className="animate-fade-up space-y-6" dir={isRTL ? 'rtl' : 'ltr'}>

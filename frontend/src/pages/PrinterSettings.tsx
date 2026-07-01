@@ -28,6 +28,7 @@ import {
   type PrinterRole,
 } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import LoadingState from '@/components/states/LoadingState';
 import { Printer as PrinterIcon, Star, Plus } from 'lucide-react';
 
 interface PrinterFormData {
@@ -117,13 +118,7 @@ export default function PrinterSettings() {
     }
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   return (
     <div className="animate-fade-up space-y-6">
