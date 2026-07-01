@@ -878,60 +878,67 @@ export default function ReportsAnalytics() {
                 </div>
               </div>
 
-              {/* Operating cash flow: inflows − outflows = net */}
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-card">
-                    <TableHead className="text-muted-foreground">{tr('operating_cash_flow')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('amount')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {cashFlow.inflows.map((i) => (
-                    <TableRow key={i.label} className="border-border hover:bg-muted">
-                      <TableCell className="text-foreground">{i.label}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(i.amount, language)}</TableCell>
-                    </TableRow>
-                  ))}
-                  {cashFlow.outflows.map((o) => (
-                    <TableRow key={o.label} className="border-border hover:bg-muted">
-                      <TableCell className="text-foreground">{o.label}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(-o.amount, language)}</TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="border-border bg-muted/60">
-                    <TableCell className="text-foreground font-bold">{tr('net_cash_flow')}</TableCell>
-                    <TableCell className={`text-end font-bold tabular-nums ${cashFlow.net_cash_flow >= 0 ? 'text-success' : 'text-danger'}`}>
-                      {formatMoney(cashFlow.net_cash_flow, language)}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
+              {/* Operating cash flow: inflows − outflows = net.
+                  ISSUE-208: one shared table voice — the `.dxr-tbl` primitive
+                  (a raw <table> rather than the config-driven <DataTable>) to
+                  carry the running net-cash-flow summary row. */}
+              <div className="w-full overflow-x-auto">
+                <table className="dxr-tbl">
+                  <thead>
+                    <tr>
+                      <th>{tr('operating_cash_flow')}</th>
+                      <th className="text-end">{tr('amount')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cashFlow.inflows.map((i) => (
+                      <tr key={i.label}>
+                        <td className="text-foreground">{i.label}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">{formatMoney(i.amount, language)}</td>
+                      </tr>
+                    ))}
+                    {cashFlow.outflows.map((o) => (
+                      <tr key={o.label}>
+                        <td className="text-foreground">{o.label}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">{formatMoney(-o.amount, language)}</td>
+                      </tr>
+                    ))}
+                    <tr className="bg-muted/60 font-bold">
+                      <td className="text-foreground">{tr('net_cash_flow')}</td>
+                      <td className={`text-end tabular-nums ${cashFlow.net_cash_flow >= 0 ? 'text-success' : 'text-danger'}`}>
+                        {formatMoney(cashFlow.net_cash_flow, language)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
 
               {/* Receipts by tender */}
               {cashFlow.by_tender.length > 0 && (
                 <div className="mt-6">
                   <p className="text-sm font-medium text-foreground mb-2">{tr('receipts_by_tender')}</p>
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-border hover:bg-card">
-                        <TableHead className="text-muted-foreground">{tr('method')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('collected')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('refunds')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('net')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {cashFlow.by_tender.map((t) => (
-                        <TableRow key={t.tender_type} className="border-border hover:bg-muted">
-                          <TableCell className="text-foreground font-medium">{tenderLabel(t.tender_type)}</TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(t.collected, language)}</TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(t.refunds, language)}</TableCell>
-                          <TableCell className="text-foreground text-end font-medium tabular-nums">{formatMoney(t.net, language)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <div className="w-full overflow-x-auto">
+                    <table className="dxr-tbl">
+                      <thead>
+                        <tr>
+                          <th>{tr('method')}</th>
+                          <th className="text-end">{tr('collected')}</th>
+                          <th className="text-end">{tr('refunds')}</th>
+                          <th className="text-end">{tr('net')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {cashFlow.by_tender.map((t) => (
+                          <tr key={t.tender_type}>
+                            <td className="text-foreground font-medium">{tenderLabel(t.tender_type)}</td>
+                            <td className="text-foreground/90 text-end tabular-nums">{formatMoney(t.collected, language)}</td>
+                            <td className="text-foreground/90 text-end tabular-nums">{formatMoney(t.refunds, language)}</td>
+                            <td className="text-foreground text-end font-medium tabular-nums">{formatMoney(t.net, language)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
 
