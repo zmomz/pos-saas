@@ -749,64 +749,69 @@ export default function ReportsAnalytics() {
                 </div>
               </div>
 
-              {/* The income statement, top to bottom */}
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-card">
-                    <TableHead className="text-muted-foreground">{tr('line')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('amount')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  <TableRow className="border-border hover:bg-muted">
-                    <TableCell className="text-foreground">{tr('gross_sales')}</TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(pnl.gross_sales, language)}</TableCell>
-                  </TableRow>
-                  <TableRow className="border-border hover:bg-muted">
-                    <TableCell className="text-foreground">{tr('discounts')}</TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(-pnl.discounts, language)}</TableCell>
-                  </TableRow>
-                  <TableRow className="border-border bg-muted/40">
-                    <TableCell className="text-foreground font-semibold">{tr('net_revenue')}</TableCell>
-                    <TableCell className="text-foreground text-end font-semibold tabular-nums">{formatMoney(pnl.net_revenue, language)}</TableCell>
-                  </TableRow>
-                  <TableRow className="border-border hover:bg-muted">
-                    <TableCell className="text-foreground">{tr('cogs')}</TableCell>
-                    <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(-pnl.cogs, language)}</TableCell>
-                  </TableRow>
-                  <TableRow className="border-border bg-muted/40">
-                    <TableCell className="text-foreground font-semibold">{tr('gross_profit')}</TableCell>
-                    <TableCell className="text-foreground text-end font-semibold tabular-nums">{formatMoney(pnl.gross_profit, language)}</TableCell>
-                  </TableRow>
-                  <TableRow className="border-border hover:bg-card">
-                    <TableCell className="text-muted-foreground text-xs uppercase tracking-wide pt-4" colSpan={2}>
-                      {tr('operating_expenses')}
-                    </TableCell>
-                  </TableRow>
-                  {pnl.expenses.length === 0 ? (
-                    <TableRow className="border-border hover:bg-muted">
-                      <TableCell className="text-muted-foreground" colSpan={2}>{tr('no_data')}</TableCell>
-                    </TableRow>
-                  ) : (
-                    pnl.expenses.map((e) => (
-                      <TableRow key={e.category} className="border-border hover:bg-muted">
-                        <TableCell className="text-foreground ps-6">{e.category}</TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">{formatMoney(-e.amount, language)}</TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                  <TableRow className="border-border bg-muted/40">
-                    <TableCell className="text-foreground font-semibold">{tr('total_expenses')}</TableCell>
-                    <TableCell className="text-foreground text-end font-semibold tabular-nums">{formatMoney(-pnl.total_expenses, language)}</TableCell>
-                  </TableRow>
-                  <TableRow className="border-border bg-muted/60">
-                    <TableCell className="text-foreground font-bold">{tr('net_profit')}</TableCell>
-                    <TableCell className={`text-end font-bold tabular-nums ${pnl.net_profit >= 0 ? 'text-success' : 'text-danger'}`}>
-                      {formatMoney(pnl.net_profit, language)}
-                    </TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
+              {/* The income statement, top to bottom.
+                  ISSUE-208: one shared table voice — the `.dxr-tbl` primitive
+                  (a raw <table> rather than the config-driven <DataTable>) to
+                  carry the section header and running summary rows. */}
+              <div className="w-full overflow-x-auto">
+                <table className="dxr-tbl">
+                  <thead>
+                    <tr>
+                      <th>{tr('line')}</th>
+                      <th className="text-end">{tr('amount')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td className="text-foreground">{tr('gross_sales')}</td>
+                      <td className="text-foreground/90 text-end tabular-nums">{formatMoney(pnl.gross_sales, language)}</td>
+                    </tr>
+                    <tr>
+                      <td className="text-foreground">{tr('discounts')}</td>
+                      <td className="text-foreground/90 text-end tabular-nums">{formatMoney(-pnl.discounts, language)}</td>
+                    </tr>
+                    <tr className="bg-muted/40">
+                      <td className="text-foreground font-semibold">{tr('net_revenue')}</td>
+                      <td className="text-foreground text-end font-semibold tabular-nums">{formatMoney(pnl.net_revenue, language)}</td>
+                    </tr>
+                    <tr>
+                      <td className="text-foreground">{tr('cogs')}</td>
+                      <td className="text-foreground/90 text-end tabular-nums">{formatMoney(-pnl.cogs, language)}</td>
+                    </tr>
+                    <tr className="bg-muted/40">
+                      <td className="text-foreground font-semibold">{tr('gross_profit')}</td>
+                      <td className="text-foreground text-end font-semibold tabular-nums">{formatMoney(pnl.gross_profit, language)}</td>
+                    </tr>
+                    <tr>
+                      <td className="text-muted-foreground text-xs uppercase tracking-wide pt-4" colSpan={2}>
+                        {tr('operating_expenses')}
+                      </td>
+                    </tr>
+                    {pnl.expenses.length === 0 ? (
+                      <tr>
+                        <td className="text-muted-foreground" colSpan={2}>{tr('no_data')}</td>
+                      </tr>
+                    ) : (
+                      pnl.expenses.map((e) => (
+                        <tr key={e.category}>
+                          <td className="text-foreground ps-6">{e.category}</td>
+                          <td className="text-foreground/90 text-end tabular-nums">{formatMoney(-e.amount, language)}</td>
+                        </tr>
+                      ))
+                    )}
+                    <tr className="bg-muted/40">
+                      <td className="text-foreground font-semibold">{tr('total_expenses')}</td>
+                      <td className="text-foreground text-end font-semibold tabular-nums">{formatMoney(-pnl.total_expenses, language)}</td>
+                    </tr>
+                    <tr className="bg-muted/60">
+                      <td className="text-foreground font-bold">{tr('net_profit')}</td>
+                      <td className={`text-end font-bold tabular-nums ${pnl.net_profit >= 0 ? 'text-success' : 'text-danger'}`}>
+                        {formatMoney(pnl.net_profit, language)}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </>
           )}
         </CardContent>
