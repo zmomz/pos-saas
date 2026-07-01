@@ -1365,6 +1365,47 @@ class SalesFunnelResponse(BaseModel):
     biggest_dropoff: Optional[FunnelDropoff] = None
 
 
+class AccountingJournalLine(BaseModel):
+    """One account's net debit/credit for the period (issue #230 — integrations)."""
+
+    account_code: str  # a stable GL code an ERP can map to its chart of accounts
+    account_name: str
+    debit: float  # 0 when the account nets to the credit side
+    credit: float  # 0 when the account nets to the debit side
+
+
+class AccountingExportResponse(BaseModel):
+    """Double-entry sales-journal export (issue #230 — Integrations).
+
+    The first accounting/ERP integration slice: the window's selling activity as a
+    balanced set of general-ledger postings an accountant — or an ERP import — can
+    book directly, keyed on stable ``account_code``s rather than free text.
+
+    Each completed sale posts, by construction, a balanced entry: the money
+    received (``total_amount`` + ``tip_amount``) DEBITs a tender asset account
+    (cash sales → *Cash on Hand* ``1000``; every other tender → *Card & Bank
+    Clearing* ``1010``), while the VAT collected CREDITs *VAT Payable* ``2100``,
+    any gratuity CREDITs *Gratuities Payable* ``2200``, and the remainder
+    (``total_amount`` − ``vat_amount`` — net-of-discount revenue) CREDITs *Sales
+    Revenue* ``4000``. Deriving revenue as the remainder keeps the entry balanced
+    for any discount/rounding, independent of the stored ``subtotal``.
+
+    Credit notes reverse the same postings, so refunds net the journal down and it
+    stays balanced. Held (parked) and voided (cancelled) tickets are not selling
+    activity and are excluded, mirroring the sibling revenue reports. Tenant-scoped
+    and server-side aggregated (OPS-05): grouped by tender in SQL, so peak memory
+    is O(distinct tenders), never O(transactions). Money buckets use the stored
+    figures; per-tender-split (``payment_breakdown``) postings are a later slice.
+    """
+
+    method: str
+    lookback_days: int
+    total_debit: float
+    total_credit: float
+    balanced: bool  # abs(total_debit - total_credit) < 0.01
+    lines: List[AccountingJournalLine]
+
+
 # ============================================================
 # REPORT → PDF EXPORT (RPT-10, F-072)
 # ============================================================
@@ -2455,6 +2496,128 @@ async def get_sales_funnel(
         total_tickets=started,
         stages=stages,
         biggest_dropoff=biggest_dropoff,
+    )
+
+
+# The chart-of-accounts the sales journal posts to. Codes are stable so an ERP can
+# map them once to its own accounts; tenders split cash vs everything-else.
+_ACC_CASH = ("1000", "Cash on Hand")
+_ACC_BANK = ("1010", "Card & Bank Clearing")
+_ACC_VAT = ("2100", "VAT Payable")
+_ACC_TIPS = ("2200", "Gratuities Payable")
+_ACC_REVENUE = ("4000", "Sales Revenue")
+
+
+@router.get("/api/v1/reports/accounting-export", response_model=AccountingExportResponse)
+async def get_accounting_export(
+    lookback: int = Query(365, ge=1, le=3650),
+    current_user: UserResponse = Depends(get_current_user),
+    owner_id: str = Depends(get_owner_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Double-entry sales-journal export (issue #230 — Integrations).
+
+    Turns the window's selling activity into a balanced set of GL postings an
+    accountant or ERP can book directly. Money received debits a tender account
+    (cash vs card/bank); VAT, gratuities and net revenue are credited. Revenue is
+    derived as ``total − vat`` so the entry balances for any discount/rounding.
+    Credit notes reverse the postings. Held/voided tickets are excluded. Grouped
+    by tender in SQL (OPS-05), so memory is O(distinct tenders).
+    """
+    role_info = await get_user_role(db, owner_id)
+    if role_info["role"] != "client":
+        raise HTTPException(status_code=403, detail="Only clients can access reports")
+
+    client_id = role_info["entity_id"]
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+
+    # One grouped pass over the window, split into selling vs refunding activity by
+    # status so a credit note can reverse its sale's postings. Held/voided tickets
+    # are not selling activity, so they contribute to neither side.
+    is_refund = Transactions.status == "credit_note"
+    sign = case((is_refund, -1.0), else_=1.0)
+
+    rows = (
+        await db.execute(
+            select(
+                Transactions.payment_method,
+                func.sum(sign * func.coalesce(Transactions.total_amount, 0.0)),
+                func.sum(sign * func.coalesce(Transactions.vat_amount, 0.0)),
+                func.sum(sign * func.coalesce(Transactions.tip_amount, 0.0)),
+            )
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    # A held ticket is parked and a voided sale is cancelled —
+                    # neither is selling activity. Credit notes are kept: they are
+                    # the refunding side that reverses a sale's postings.
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+            .group_by(Transactions.payment_method)
+        )
+    ).all()
+
+    # Net balances per account. Tender accounts carry a natural debit (money in),
+    # the income/liability accounts a natural credit.
+    balances: dict[tuple, float] = {}
+
+    def _add(account, amount):
+        balances[account] = balances.get(account, 0.0) + amount
+
+    for method, total, vat, tip in rows:
+        total = float(total or 0.0)
+        vat = float(vat or 0.0)
+        tip = float(tip or 0.0)
+        tender = _ACC_CASH if (method or "").lower() == "cash" else _ACC_BANK
+        # DEBIT the tender with money received; CREDIT VAT, tips and the remainder
+        # (revenue). Deriving revenue as total − vat keeps the entry balanced.
+        _add(tender, total + tip)  # debit-natural
+        _add(_ACC_VAT, vat)  # credit-natural
+        _add(_ACC_TIPS, tip)  # credit-natural
+        _add(_ACC_REVENUE, total - vat)  # credit-natural
+
+    debit_natural = {_ACC_CASH, _ACC_BANK}
+    # Stable GL order: assets, then liabilities, then income.
+    order = [_ACC_CASH, _ACC_BANK, _ACC_VAT, _ACC_TIPS, _ACC_REVENUE]
+
+    lines: List[AccountingJournalLine] = []
+    total_debit = 0.0
+    total_credit = 0.0
+    for account in order:
+        net = round(balances.get(account, 0.0), 2)
+        if net == 0.0:
+            continue  # an account with no activity is not posted
+        # An account sits on its natural side; a sign flip (e.g. refunds exceeding
+        # sales) moves it to the opposite column so the entry still balances.
+        natural_debit = account in debit_natural
+        on_debit = natural_debit if net > 0 else not natural_debit
+        magnitude = abs(net)
+        debit = magnitude if on_debit else 0.0
+        credit = 0.0 if on_debit else magnitude
+        total_debit += debit
+        total_credit += credit
+        lines.append(
+            AccountingJournalLine(
+                account_code=account[0],
+                account_name=account[1],
+                debit=debit,
+                credit=credit,
+            )
+        )
+
+    total_debit = round(total_debit, 2)
+    total_credit = round(total_credit, 2)
+
+    return AccountingExportResponse(
+        method="sales_journal",
+        lookback_days=lookback,
+        total_debit=total_debit,
+        total_credit=total_credit,
+        balanced=abs(total_debit - total_credit) < 0.01,
+        lines=lines,
     )
 
 

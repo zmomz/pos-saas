@@ -1488,6 +1488,37 @@ export async function getSalesFunnel(lookback = 30): Promise<SalesFunnelResponse
   return response.data;
 }
 
+// ---- Accounting/ERP sales-journal export (#230 Integrations) ----
+// The window's selling activity as a balanced set of double-entry GL postings an
+// accountant — or an ERP import — can book directly, keyed on stable
+// account_code. Money received debits a tender account (cash → 1000, card/bank →
+// 1010); VAT (2100), gratuities (2200) and net revenue (4000) are credited.
+// Credit notes reverse the postings; the journal always balances.
+export interface AccountingJournalLine {
+  account_code: string; // stable GL code an ERP maps to its chart of accounts
+  account_name: string;
+  debit: number; // 0 when the account nets to the credit side
+  credit: number; // 0 when the account nets to the debit side
+}
+export interface AccountingExportResponse {
+  method: string; // "sales_journal"
+  lookback_days: number;
+  total_debit: number;
+  total_credit: number;
+  balanced: boolean; // total_debit == total_credit (within a cent)
+  lines: AccountingJournalLine[];
+}
+export async function getAccountingExport(
+  lookback = 30,
+): Promise<AccountingExportResponse> {
+  const response = await client.apiCall.invoke<AccountingExportResponse>({
+    url: `/api/v1/reports/accounting-export?lookback=${lookback}`,
+    method: 'GET',
+    data: {},
+  });
+  return response.data;
+}
+
 // ---- In-app assistant (#228 M9·AI) ----
 // The conversational surface over the tenant's own data. This first slice is a
 // rule-based intent router server-side; the client just passes the question and
