@@ -20,6 +20,7 @@ import { client, receivePurchaseOrder, getBranches } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import LoadingState from '@/components/states/LoadingState';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
@@ -495,13 +496,7 @@ export default function SupplierManagement() {
     },
   ];
 
-  if (loading && suppliers.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading && suppliers.length === 0) return <LoadingState message={t('loading')} />;
 
   if (denied) {
     return <PermissionDenied />;

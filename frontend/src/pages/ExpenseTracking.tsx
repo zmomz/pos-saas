@@ -20,6 +20,7 @@ import { getExpenses, createExpense, updateExpense, deleteExpense, getTransactio
 import { useLanguage } from '@/lib/i18n';
 import { formatMoney, formatDate } from '@/lib/format';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import LoadingState from '@/components/states/LoadingState';
 import StatTile from '@/components/dashboard/StatTile';
 import { DollarSign, TrendingDown, TrendingUp, Receipt, Plus } from 'lucide-react';
 
@@ -225,13 +226,7 @@ export default function ExpenseTracking() {
     );
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-foreground animate-pulse">{t('loading')}</div>
-      </div>
-    );
-  }
+  if (loading) return <LoadingState message={t('loading')} />;
 
   return (
     <div className="animate-fade-up space-y-6">
