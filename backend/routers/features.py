@@ -2639,7 +2639,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | sales_today | average_order | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | low_stock | unknown
+    intent: str  # top_product | top_margin | sales_today | average_order | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2675,6 +2675,16 @@ _ASSISTANT_INTENTS = [
                          "slow moving", "slow-moving", "تخفيض", "تسعير"]),
     ("low_stock", ["low stock", "low on stock", "running low", "out of stock",
                    "مخزون", "نفاد", "نفذ"]),
+    # Checked before ``top_product`` so a *profit* question ("most profitable",
+    # "highest margin") routes to the gross-margin winner rather than the
+    # units-sold winner — and so the Arabic "الأكثر ربحية" isn't swallowed by
+    # ``top_product``'s bare "الأكثر" cue. Its vocabulary is money-made-per-sale,
+    # distinct from units moved.
+    ("top_margin", ["most profitable", "highest margin", "best margin",
+                    "biggest margin", "highest profit", "most profit",
+                    "makes the most money", "make the most money", "profit margin",
+                    "gross profit", "margin", "profit", "الأكثر ربحية", "ربحية",
+                    "هامش الربح", "الربح", "أرباح"]),
     ("top_product", ["top product", "top seller", "best seller", "best-seller",
                      "bestseller", "best selling", "best-selling", "most sold",
                      "الأكثر", "أفضل منتج", "افضل منتج"]),
@@ -2711,6 +2721,7 @@ _ASSISTANT_INTENTS = [
 
 _ASSISTANT_SUGGESTIONS = [
     "What is my best selling product?",
+    "Which product is most profitable?",
     "How much did I sell today?",
     "What is my average order value?",
     "What is my sales forecast for next week?",
@@ -2778,6 +2789,75 @@ async def _assistant_top_product(db: AsyncSession, client_id: int) -> dict:
     pid, units = max(units_sold.items(), key=lambda kv: kv[1])
     name, name_ar = names[pid]
     return {"product_id": pid, "name": name, "name_ar": name_ar, "units_sold": int(units)}
+
+
+async def _assistant_top_margin(db: AsyncSession, client_id: int) -> dict:
+    """Most profitable product by gross margin over the last 30 days (#228 — AI).
+
+    ``top_product`` ranks by units moved; this ranks by *money made*: gross profit
+    is units sold × per-unit margin (``price - cost_price``). A cheap high-volume
+    item can out-earn a pricey low-volume one, which is the actionable insight.
+    Products with no ``cost_price`` have no computable margin and are excluded,
+    however heavily they sell; held/voided and out-of-window sales never count.
+    Returns ``{}`` when no product has both a cost price and a sale, so the
+    surface can nudge the operator to set cost prices rather than crash.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=30)
+    # Tenant catalogue keyed by id → we can compute margin and name the winner,
+    # ignoring units attributed to other tenants' / deleted products.
+    prod_result = await db.execute(
+        select(Products.id, Products.name, Products.name_ar,
+               Products.price, Products.cost_price).where(
+            Products.client_id == client_id
+        )
+    )
+    catalogue = {
+        pid: (name, name_ar, price, cost)
+        for pid, name, name_ar, price, cost in prod_result.all()
+    }
+
+    units_sold: dict = {}
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id", 0)
+            if pid not in catalogue:
+                continue
+            units_sold[pid] = units_sold.get(pid, 0) + (item.get("quantity", 0) or 0)
+
+    best = None
+    for pid, units in units_sold.items():
+        name, name_ar, price, cost = catalogue[pid]
+        # No cost price → no computable margin; a zero-unit sale earns nothing.
+        if cost is None or price is None or units <= 0:
+            continue
+        unit_margin = price - cost
+        gross_profit = unit_margin * units
+        if best is None or gross_profit > best["gross_profit"]:
+            best = {
+                "product_id": pid,
+                "name": name,
+                "name_ar": name_ar,
+                "units_sold": int(units),
+                "unit_margin": round(unit_margin, 2),
+                "gross_profit": round(gross_profit, 2),
+            }
+    return best or {}
 
 
 async def _assistant_sales_today(db: AsyncSession, client_id: int) -> dict:
@@ -3311,6 +3391,25 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=top, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "top_margin":
+        tm = await _assistant_top_margin(db, client_id)
+        if tm:
+            answer = (
+                f"Your most profitable product is {tm['name']} — "
+                f"{tm['gross_profit']:.2f} gross profit from {tm['units_sold']} "
+                f"unit(s) sold in the last 30 days ({tm['unit_margin']:.2f} margin "
+                f"each)."
+            )
+        else:
+            answer = (
+                "I can't work out margins yet — set a cost price on your products "
+                "(and make a sale) and I'll tell you which one earns you the most."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=tm, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "sales_today":

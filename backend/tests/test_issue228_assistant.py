@@ -47,13 +47,14 @@ async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: fl
 
 async def _seed_product(client_id: int, user_id: str, *, name: str, quantity: float,
                         reorder_point: int = 0, is_digital: bool = False,
-                        price: float = 10.0) -> int:
+                        price: float = 10.0, cost_price=None) -> int:
     async with db_manager.async_session_maker() as db:
         p = Products(
             user_id=user_id,
             client_id=client_id,
             name=name,
             price=price,
+            cost_price=cost_price,
             quantity=quantity,
             reorder_point=reorder_point,
             is_active=True,
@@ -644,3 +645,78 @@ async def test_assistant_stock_out_handles_nothing_at_risk(client):
     assert body["intent"] == "stock_out"
     assert body["data"]["count"] == 0
     assert body["data"]["products"] == []
+
+
+async def test_assistant_names_the_most_profitable_product(client):
+    """"Which product is most profitable?" → the product contributing the most
+    *gross profit* (units sold × per-unit margin), not the most units or revenue.
+
+    Margin is ``price - cost_price``; a cheap high-volume item can out-earn a
+    pricey low-volume one. Products with no ``cost_price`` have no computable
+    margin and are excluded, even if they sell heavily. Held/voided tickets and
+    out-of-window sales never count toward the profit total.
+    """
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Coffee: margin 6/unit × 10 units = 60 profit.
+    coffee = await _seed_product(client_id, user["id"], name="Coffee", quantity=100,
+                                 price=10.0, cost_price=4.0)
+    # Muffin: margin 4/unit × 20 units = 80 profit → the winner (most total profit,
+    # though a lower per-unit margin than Coffee).
+    muffin = await _seed_product(client_id, user["id"], name="Muffin", quantity=100,
+                                 price=5.0, cost_price=1.0)
+    # Mystery: no cost_price → margin unknown → excluded despite heavy sales.
+    mystery = await _seed_product(client_id, user["id"], name="Mystery", quantity=100,
+                                  price=100.0, cost_price=None)
+
+    await _seed_sale(client_id, user["id"], days_ago=2, total=100.0,
+                     items=[{"product_id": coffee, "quantity": 10}], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=100.0,
+                     items=[{"product_id": muffin, "quantity": 20}], idx=2)
+    await _seed_sale(client_id, user["id"], days_ago=4, total=100.0,
+                     items=[{"product_id": mystery, "quantity": 100}], idx=3)
+    # A held ticket and an out-of-window sale must not inflate the profit total.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=100.0,
+                     items=[{"product_id": muffin, "quantity": 999}],
+                     status="held", idx=4)
+    await _seed_sale(client_id, user["id"], days_ago=45, total=100.0,
+                     items=[{"product_id": coffee, "quantity": 999}], idx=5)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=which product is most profitable", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "top_margin"
+    data = body["data"]
+    assert data["product_id"] == muffin
+    assert data["units_sold"] == 20
+    assert abs(data["unit_margin"] - 4.0) < 0.01
+    assert abs(data["gross_profit"] - 80.0) < 0.01
+    assert "Muffin" in body["answer"]
+    # The no-cost product is never crowned, however much it sells.
+    assert data["product_id"] != mystery
+
+
+async def test_assistant_top_margin_without_cost_data_degrades_gracefully(client):
+    """No cost prices anywhere (so no computable margin) → a helpful nudge, HTTP
+    200, empty data — never a crash or a bogus winner."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    widget = await _seed_product(client_id, user["id"], name="Widget", quantity=100,
+                                 price=10.0, cost_price=None)
+    await _seed_sale(client_id, user["id"], days_ago=2, total=100.0,
+                     items=[{"product_id": widget, "quantity": 10}], idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my highest margin product", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "top_margin"
+    assert body["data"] == {}
+    assert "cost" in body["answer"].lower()
