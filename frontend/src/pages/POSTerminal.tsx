@@ -1691,6 +1691,7 @@ export default function POSTerminal() {
                 onChange={(e) => setBarcodeInput(e.target.value)}
                 onKeyDown={handleBarcodeScan}
                 placeholder={t('scan_barcode')}
+                aria-label={t('scan_barcode')}
                 className="ps-10 bg-card border-border text-foreground placeholder:text-muted-foreground focus:border-brand-500"
               />
             </div>
@@ -1698,6 +1699,7 @@ export default function POSTerminal() {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('search_products')}
+              aria-label={t('search_products')}
               className="flex-1 bg-card border-border text-foreground placeholder:text-muted-foreground focus:border-brand-500"
             />
             <Button
