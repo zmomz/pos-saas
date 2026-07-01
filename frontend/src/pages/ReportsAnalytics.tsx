@@ -1141,69 +1141,77 @@ export default function ReportsAnalytics() {
 
               {/* By item */}
               <h3 className="text-sm font-semibold text-foreground/90 mb-2">{tr('by_item')}</h3>
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-card">
-                    <TableHead className="text-muted-foreground">{tr('item')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('qty_sold')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('revenue')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('cogs')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('gross_profit')}</TableHead>
-                    <TableHead className="text-muted-foreground text-end">{tr('margin')}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {margin.by_item.map((row) => (
-                    <TableRow key={row.key} className="border-border hover:bg-muted">
-                      <TableCell className="text-foreground font-medium">{row.name}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">{row.qty_sold}</TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
-                        {formatMoney(row.revenue, language)}
-                      </TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">
-                        {formatMoney(row.cogs, language)}
-                      </TableCell>
-                      <TableCell className="text-success text-end tabular-nums">
-                        {formatMoney(row.gross_profit, language)}
-                      </TableCell>
-                      <TableCell className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              {/* ISSUE-208: one shared table voice — the `.dxr-tbl` primitive.
+                  These panels keep raw <table>s (rather than the config-driven
+                  <DataTable>) so item / category / dead-stock stay grouped under
+                  one card with their own headings. */}
+              <div className="w-full overflow-x-auto">
+                <table className="dxr-tbl">
+                  <thead>
+                    <tr>
+                      <th>{tr('item')}</th>
+                      <th className="text-end">{tr('qty_sold')}</th>
+                      <th className="text-end">{tr('revenue')}</th>
+                      <th className="text-end">{tr('cogs')}</th>
+                      <th className="text-end">{tr('gross_profit')}</th>
+                      <th className="text-end">{tr('margin')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {margin.by_item.map((row) => (
+                      <tr key={row.key}>
+                        <td className="text-foreground font-medium">{row.name}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">{row.qty_sold}</td>
+                        <td className="text-foreground/90 text-end tabular-nums">
+                          {formatMoney(row.revenue, language)}
+                        </td>
+                        <td className="text-foreground/90 text-end tabular-nums">
+                          {formatMoney(row.cogs, language)}
+                        </td>
+                        <td className="text-success text-end tabular-nums">
+                          {formatMoney(row.gross_profit, language)}
+                        </td>
+                        <td className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
               {/* By category */}
               {margin.by_category.length > 0 && (
                 <>
                   <h3 className="text-sm font-semibold text-foreground/90 mt-6 mb-2">{tr('by_category')}</h3>
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-border hover:bg-card">
-                        <TableHead className="text-muted-foreground">{tr('category')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('revenue')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('cogs')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('gross_profit')}</TableHead>
-                        <TableHead className="text-muted-foreground text-end">{tr('margin')}</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {margin.by_category.map((row) => (
-                        <TableRow key={row.key} className="border-border hover:bg-muted">
-                          <TableCell className="text-foreground font-medium">{row.name}</TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">
-                            {formatMoney(row.revenue, language)}
-                          </TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">
-                            {formatMoney(row.cogs, language)}
-                          </TableCell>
-                          <TableCell className="text-success text-end tabular-nums">
-                            {formatMoney(row.gross_profit, language)}
-                          </TableCell>
-                          <TableCell className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <div className="w-full overflow-x-auto">
+                    <table className="dxr-tbl">
+                      <thead>
+                        <tr>
+                          <th>{tr('category')}</th>
+                          <th className="text-end">{tr('revenue')}</th>
+                          <th className="text-end">{tr('cogs')}</th>
+                          <th className="text-end">{tr('gross_profit')}</th>
+                          <th className="text-end">{tr('margin')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {margin.by_category.map((row) => (
+                          <tr key={row.key}>
+                            <td className="text-foreground font-medium">{row.name}</td>
+                            <td className="text-foreground/90 text-end tabular-nums">
+                              {formatMoney(row.revenue, language)}
+                            </td>
+                            <td className="text-foreground/90 text-end tabular-nums">
+                              {formatMoney(row.cogs, language)}
+                            </td>
+                            <td className="text-success text-end tabular-nums">
+                              {formatMoney(row.gross_profit, language)}
+                            </td>
+                            <td className="text-foreground/90 text-end tabular-nums">{row.margin_pct.toFixed(1)}%</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </>
               )}
 
@@ -1213,32 +1221,34 @@ export default function ReportsAnalytics() {
               {margin.dead_stock.length === 0 ? (
                 <p className="text-muted-foreground text-sm py-3">{tr('no_dead_stock')}</p>
               ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-border hover:bg-card">
-                      <TableHead className="text-muted-foreground">{tr('product_name')}</TableHead>
-                      <TableHead className="text-muted-foreground">{tr('category')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('on_hand')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('cost')}</TableHead>
-                      <TableHead className="text-muted-foreground text-end">{tr('stock_value')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {margin.dead_stock.map((row) => (
-                      <TableRow key={row.product_id} className="border-border hover:bg-muted">
-                        <TableCell className="text-foreground font-medium">{row.name}</TableCell>
-                        <TableCell className="text-muted-foreground text-xs">{row.category || '—'}</TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">{row.quantity}</TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">
-                          {formatMoney(row.cost_price, language)}
-                        </TableCell>
-                        <TableCell className="text-foreground/90 text-end tabular-nums">
-                          {formatMoney(row.stock_value, language)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className="w-full overflow-x-auto">
+                  <table className="dxr-tbl">
+                    <thead>
+                      <tr>
+                        <th>{tr('product_name')}</th>
+                        <th>{tr('category')}</th>
+                        <th className="text-end">{tr('on_hand')}</th>
+                        <th className="text-end">{tr('cost')}</th>
+                        <th className="text-end">{tr('stock_value')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {margin.dead_stock.map((row) => (
+                        <tr key={row.product_id}>
+                          <td className="text-foreground font-medium">{row.name}</td>
+                          <td className="text-muted-foreground text-xs">{row.category || '—'}</td>
+                          <td className="text-foreground/90 text-end tabular-nums">{row.quantity}</td>
+                          <td className="text-foreground/90 text-end tabular-nums">
+                            {formatMoney(row.cost_price, language)}
+                          </td>
+                          <td className="text-foreground/90 text-end tabular-nums">
+                            {formatMoney(row.stock_value, language)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </>
           )}
