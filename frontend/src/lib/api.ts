@@ -1401,7 +1401,7 @@ export async function getDynamicPricing(lookback = 30): Promise<DynamicPricingRe
 export interface AssistantAnswer {
   method: string;
   query: string;
-  intent: string; // top_product | sales_today | average_order | low_stock | unknown
+  intent: string; // top_product | sales_today | average_order | sales_forecast | low_stock | unknown
   answer: string;
   data: Record<string, unknown>;
   suggestions: string[];

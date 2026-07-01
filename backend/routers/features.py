@@ -2061,7 +2061,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | sales_today | average_order | low_stock | unknown
+    intent: str  # top_product | sales_today | average_order | sales_forecast | low_stock | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2082,6 +2082,11 @@ _ASSISTANT_INTENTS = [
     ("average_order", ["average order", "average basket", "average ticket",
                        "average sale", "average spend", "basket size", "aov",
                        "متوسط الطلب", "متوسط الفاتورة", "متوسط السلة"]),
+    # Checked before ``sales_today`` so a forward-looking "how much will I sell
+    # next week" routes to the projection rather than the today's-takings metric.
+    ("sales_forecast", ["forecast", "projection", "projected", "next week",
+                        "next 7 days", "next seven days", "will i sell",
+                        "expect to sell", "on track to", "توقع", "الأسبوع القادم"]),
     ("sales_today", ["today", "revenue today", "sold today", "sales today",
                      "takings", "اليوم", "مبيعات اليوم"]),
 ]
@@ -2090,6 +2095,7 @@ _ASSISTANT_SUGGESTIONS = [
     "What is my best selling product?",
     "How much did I sell today?",
     "What is my average order value?",
+    "What is my sales forecast for next week?",
     "Which products are low on stock?",
 ]
 
@@ -2213,6 +2219,28 @@ async def _assistant_average_order_value(db: AsyncSession, client_id: int) -> di
     return {"net_sales": net_sales, "order_count": orders, "average_order_value": avg}
 
 
+async def _assistant_sales_forecast(db: AsyncSession, client_id: int) -> dict:
+    """Project the next 7 days of takings from the last 30 days' daily average.
+
+    The conversational surface over ``/reports/sales-forecast``'s moving-average
+    model: the mean daily take over a 30-day lookback, projected flat across a
+    7-day horizon. Reuses the same signed-revenue rule as the reports it draws on
+    (a single ``SUM``; held/voided excluded), so an empty window forecasts 0.0
+    rather than crashing.
+    """
+    lookback, horizon = 30, 7
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    history_total = await _revenue_sum_between(db, client_id, start_date, None)
+    avg_daily = history_total / lookback
+    projected = avg_daily * horizon
+    return {
+        "lookback_days": lookback,
+        "horizon_days": horizon,
+        "avg_daily_sales": round(avg_daily, 2),
+        "projected_sales": round(projected, 2),
+    }
+
+
 async def _assistant_low_stock(db: AsyncSession, client_id: int) -> dict:
     """Reorder-point-aware low-stock products (same rule as /products/low-stock)."""
     result = await db.execute(
@@ -2291,6 +2319,21 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=aov, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "sales_forecast":
+        fc = await _assistant_sales_forecast(db, client_id)
+        if fc["avg_daily_sales"] > 0:
+            answer = (
+                f"Based on the last 30 days ({fc['avg_daily_sales']:.2f}/day on "
+                f"average), you're on track to take about {fc['projected_sales']:.2f} "
+                f"over the next 7 days."
+            )
+        else:
+            answer = "No sales in the last 30 days yet, so there's nothing to forecast."
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=fc, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "low_stock":

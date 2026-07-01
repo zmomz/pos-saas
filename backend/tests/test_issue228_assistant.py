@@ -185,6 +185,52 @@ async def test_assistant_average_order_value_handles_no_sales(client):
     assert body["data"]["average_order_value"] == 0.0
 
 
+async def test_assistant_forecasts_next_weeks_sales(client):
+    """"What's my sales forecast for next week?" → the 30-day daily average
+    projected over the next 7 days (the assistant surface over the forecasting AI)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Over the 30-day window: 300 + 600 = 900 in takings → 30/day average →
+    # a 7-day projection of 210.
+    await _seed_sale(client_id, user["id"], days_ago=5, total=300.0, items=[], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=20, total=600.0, items=[], idx=2)
+    # A held ticket is not revenue, and a sale older than 30 days is out of window.
+    await _seed_sale(client_id, user["id"], days_ago=2, total=999.0, items=[],
+                     status="held", idx=3)
+    await _seed_sale(client_id, user["id"], days_ago=45, total=999.0, items=[], idx=4)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my sales forecast for next week",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "sales_forecast"
+    assert body["data"]["lookback_days"] == 30
+    assert body["data"]["horizon_days"] == 7
+    assert abs(body["data"]["avg_daily_sales"] - 30.0) < 0.01
+    assert abs(body["data"]["projected_sales"] - 210.0) < 0.01
+    assert "210" in body["answer"]
+
+
+async def test_assistant_forecast_handles_no_sales(client):
+    """No sales in the window → a 0 forecast, not a crash or an empty answer."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much will I sell next week", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "sales_forecast"
+    assert body["data"]["projected_sales"] == 0.0
+    assert body["data"]["avg_daily_sales"] == 0.0
+
+
 async def test_assistant_unroutable_question_degrades_gracefully(client):
     """A question it can't map is an ``unknown`` answer with suggestions, not a 400/500."""
     user, token, client_id = await make_client_account(client)
