@@ -2714,7 +2714,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | top_customer | sales_today | average_order | payment_mix | vat_owed | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
+    intent: str  # top_product | top_margin | top_customer | sales_today | average_order | payment_mix | vat_owed | refunds | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2799,6 +2799,14 @@ _ASSISTANT_INTENTS = [
     ("top_product", ["top product", "top seller", "best seller", "best-seller",
                      "bestseller", "best selling", "best-selling", "most sold",
                      "الأكثر", "أفضل منتج", "افضل منتج"]),
+    # Checked before the ``sales_trend``/``sales_today`` money intents so a
+    # "how much did I refund this week / returns today" routes to the returns read
+    # rather than being swallowed by trend's "this week" or the bare-"today"
+    # takings cue. Its vocabulary is *money given back* (refunds/returns/credit
+    # notes), distinct from gross takings, VAT, and the how-much intents below.
+    ("refunds", ["refund", "refunds", "refunded", "return", "returns", "returned",
+                 "credit note", "credit notes", "money back", "مرتجعات",
+                 "المرتجعات", "مرتجع", "استرجاع", "إرجاع", "مردودات"]),
     # Checked before ``sales_today`` so "average sales today" routes to the AOV
     # metric rather than the bare-"today" takings intent.
     ("average_order", ["average order", "average basket", "average ticket",
@@ -2855,6 +2863,7 @@ _ASSISTANT_SUGGESTIONS = [
     "What is my average order value?",
     "How do my customers pay?",
     "How much VAT have I collected?",
+    "How much did I refund?",
     "What is my sales forecast for next week?",
     "Is business up or down this week?",
     "When are we busiest?",
@@ -3182,6 +3191,54 @@ async def _assistant_vat_owed(db: AsyncSession, client_id: int, lookback: int = 
         "taxable_base": taxable_base,
         "effective_rate": effective_rate,
         "order_count": int(row[2] or 0),
+        "lookback_days": lookback,
+    }
+
+
+async def _assistant_refunds(db: AsyncSession, client_id: int, lookback: int = 30) -> dict:
+    """Refunds (credit notes) over the last ``lookback`` days — the money handed
+    back to customers — with the refund rate against gross sales (#228).
+
+    Answers "how much did I refund?": the total credit-note value, the number of
+    refunds, the average refund, and the refund rate (refunds ÷ gross sales) so a
+    spike in returns is visible at a glance. Uses the same money rule as the
+    financial reports — a credit note is the refund, non-credit-note sales are the
+    gross takings it nets against; held/voided tickets are not selling activity. An
+    empty window (or a window with sales but no refunds) yields zeroed figures
+    rather than a divide-by-zero.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    is_credit_note = Transactions.status == "credit_note"
+    refund_total = func.coalesce(
+        func.sum(case((is_credit_note, Transactions.total_amount), else_=0.0)), 0.0
+    )
+    refund_count = func.coalesce(func.sum(case((is_credit_note, 1), else_=0)), 0)
+    gross_sales = func.coalesce(
+        func.sum(case((is_credit_note, 0.0), else_=Transactions.total_amount)), 0.0
+    )
+    order_count = func.coalesce(func.sum(case((is_credit_note, 0), else_=1)), 0)
+    row = (
+        await db.execute(
+            select(refund_total, refund_count, gross_sales, order_count).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+        )
+    ).one()
+    total = round(float(row[0] or 0.0), 2)
+    count = int(row[1] or 0)
+    gross = round(float(row[2] or 0.0), 2)
+    return {
+        "refund_total": total,
+        "refund_count": count,
+        "gross_sales": gross,
+        "order_count": int(row[3] or 0),
+        "refund_rate": round(total / gross, 4) if gross else 0.0,
+        "avg_refund": round(total / count, 2) if count else 0.0,
         "lookback_days": lookback,
     }
 
@@ -3960,6 +4017,25 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=pm, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "refunds":
+        rf = await _assistant_refunds(db, client_id)
+        if rf["refund_count"]:
+            answer = (
+                f"You've refunded {rf['refund_total']:.2f} across {rf['refund_count']} "
+                f"return(s) over the last {rf['lookback_days']} days — about "
+                f"{rf['refund_rate'] * 100:.1f}% of your {rf['gross_sales']:.2f} in "
+                f"gross sales (average {rf['avg_refund']:.2f} per refund)."
+            )
+        else:
+            answer = (
+                f"No refunds in the last {rf['lookback_days']} days — nothing has been "
+                f"handed back to customers."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=rf, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "vat_owed":

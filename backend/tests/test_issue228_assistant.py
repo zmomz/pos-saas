@@ -1143,3 +1143,85 @@ async def test_assistant_top_customer_routes_in_arabic(client):
     body = resp.json()
     assert body["intent"] == "top_customer"
     assert body["data"]["top"]["name"] == "Layla"
+
+
+# ---------------------------------------------------------------------------
+# refunds — "how much did I refund?" (#228 — M9·AI)
+# ---------------------------------------------------------------------------
+
+
+async def test_assistant_reports_refunds(client):
+    """"How much did I refund?" → total credit-note value over the last 30 days,
+    the refund count, and the refund rate (refunds ÷ gross sales). Held/voided and
+    out-of-window tickets never count; the answer names the refunded total."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Gross sales in window: 400 + 600 = 1000 across two orders.
+    await _seed_sale(client_id, user["id"], days_ago=2, total=400.0, items=[], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=600.0, items=[], idx=2)
+    # Two refunds (credit notes): 50 + 100 = 150.
+    await _seed_sale(client_id, user["id"], days_ago=4, total=50.0, items=[],
+                     status="credit_note", idx=3)
+    await _seed_sale(client_id, user["id"], days_ago=5, total=100.0, items=[],
+                     status="credit_note", idx=4)
+    # Held/voided and out-of-window tickets must never count.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     status="held", idx=5)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     status="voided", idx=6)
+    await _seed_sale(client_id, user["id"], days_ago=40, total=999.0, items=[],
+                     status="credit_note", idx=7)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much did I refund", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "refunds"
+    data = body["data"]
+    assert abs(data["refund_total"] - 150.0) < 0.01
+    assert data["refund_count"] == 2
+    assert abs(data["gross_sales"] - 1000.0) < 0.01
+    assert data["order_count"] == 2
+    assert abs(data["refund_rate"] - 0.15) < 0.001  # 150 / 1000
+    assert abs(data["avg_refund"] - 75.0) < 0.01
+    assert "150" in body["answer"]
+
+
+async def test_assistant_refunds_handles_no_refunds(client):
+    """Sales but no refunds → zeroed refund figures and a graceful answer, HTTP 200."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=250.0, items=[], idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much have I refunded", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "refunds"
+    data = body["data"]
+    assert data["refund_total"] == 0.0
+    assert data["refund_count"] == 0
+    assert data["refund_rate"] == 0.0
+    assert data["avg_refund"] == 0.0
+
+
+async def test_assistant_refunds_routes_in_arabic(client):
+    """Arabic "المرتجعات" routes to the refunds intent (not swallowed by another)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=80.0, items=[],
+                     status="credit_note", idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=كم قيمة المرتجعات هذا الشهر", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "refunds"
+    assert abs(body["data"]["refund_total"] - 80.0) < 0.01

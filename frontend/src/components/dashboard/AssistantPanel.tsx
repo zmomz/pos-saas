@@ -116,6 +116,7 @@ const DEFAULT_SUGGESTIONS = [
   'What is my average order value?',
   'How do my customers pay?',
   'How much VAT have I collected?',
+  'How much did I refund?',
   'What is my sales forecast for next week?',
   'Is business up or down this week?',
   'When are we busiest?',
