@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { SegButton } from '@/components/ui/seg-button';
 import { Input } from '@/components/ui/input';
 import { SearchField } from '@/components/ui/search-field';
 import { Label } from '@/components/ui/label';
@@ -553,12 +554,12 @@ export default function SupplierManagement() {
 
       {/* Tabs */}
       <div className="dxr-seg">
-        <button data-active={activeTab === 'suppliers'} onClick={() => setActiveTab('suppliers')}>
+        <SegButton active={activeTab === 'suppliers'} onClick={() => setActiveTab('suppliers')}>
           {t('suppliers')}
-        </button>
-        <button data-active={activeTab === 'orders'} onClick={() => setActiveTab('orders')}>
+        </SegButton>
+        <SegButton active={activeTab === 'orders'} onClick={() => setActiveTab('orders')}>
           {t('purchase_orders')}
-        </button>
+        </SegButton>
       </div>
 
       {activeTab === 'suppliers' && (

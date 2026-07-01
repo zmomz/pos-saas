@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { SegButton } from '@/components/ui/seg-button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -358,12 +359,12 @@ export default function LoyaltyProgram() {
 
       {/* Tabs */}
       <div className="dxr-seg">
-        <button data-active={activeTab === 'balances'} onClick={() => setActiveTab('balances')}>
+        <SegButton active={activeTab === 'balances'} onClick={() => setActiveTab('balances')}>
           {tt('customer_balances', 'Customer Balances')}
-        </button>
-        <button data-active={activeTab === 'history'} onClick={() => setActiveTab('history')}>
+        </SegButton>
+        <SegButton active={activeTab === 'history'} onClick={() => setActiveTab('history')}>
           {tt('points_history', 'Points History')}
-        </button>
+        </SegButton>
       </div>
 
       {activeTab === 'balances' && (

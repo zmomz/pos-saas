@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { SegButton } from '@/components/ui/seg-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -378,12 +379,12 @@ export default function WebhookManagement() {
 
       {/* Tabs */}
       <div className="dxr-seg">
-        <button data-active={activeTab === 'webhooks'} onClick={() => setActiveTab('webhooks')}>
+        <SegButton active={activeTab === 'webhooks'} onClick={() => setActiveTab('webhooks')}>
           {t('webhook_tab_webhooks')}
-        </button>
-        <button data-active={activeTab === 'logs'} onClick={() => setActiveTab('logs')}>
+        </SegButton>
+        <SegButton active={activeTab === 'logs'} onClick={() => setActiveTab('logs')}>
           {t('webhook_tab_logs')}
-        </button>
+        </SegButton>
       </div>
 
       {activeTab === 'webhooks' && (
