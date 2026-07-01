@@ -1257,6 +1257,8 @@ class DynamicPriceItem(BaseModel):
     current_price: float
     suggested_price: float
     adjustment_pct: float  # signed percentage applied (+markup / −markdown)
+    cost_price: Optional[float] = None  # unit cost, when known (else None)
+    margin_floored: bool = False  # True when a markdown was clamped up to cost_price
 
 
 class DynamicPricingResponse(BaseModel):
@@ -2123,6 +2125,18 @@ async def get_dynamic_pricing(
 
         adjustment = markup_pct if signal == "markup" else -markdown_pct
         suggested_price = round(price * (1 + adjustment / 100.0), 2)
+
+        # Margin guard: a markdown must never recommend selling below cost. When the
+        # unit cost is known and the raw markdown would dip under it, clamp the
+        # suggestion up to cost and recompute the *actual* applied adjustment so the
+        # advisor never proposes a guaranteed loss.
+        cost_price = float(p.cost_price) if p.cost_price is not None else None
+        margin_floored = False
+        if signal == "markdown" and cost_price is not None and suggested_price < cost_price:
+            suggested_price = round(cost_price, 2)
+            adjustment = ((suggested_price / price - 1) * 100.0) if price > 0 else adjustment
+            margin_floored = True
+
         suggestions.append(
             DynamicPriceItem(
                 product_id=pid,
@@ -2135,6 +2149,8 @@ async def get_dynamic_pricing(
                 current_price=round(price, 2),
                 suggested_price=suggested_price,
                 adjustment_pct=round(adjustment, 2),
+                cost_price=round(cost_price, 2) if cost_price is not None else None,
+                margin_floored=margin_floored,
             )
         )
 
@@ -3563,7 +3579,7 @@ async def _assistant_dynamic_pricing(db: AsyncSession, client_id: int) -> dict:
     # stock on hand and a listed price — the only ones a markdown can act on.
     prod_result = await db.execute(
         select(Products.id, Products.name, Products.name_ar,
-               Products.quantity, Products.price).where(
+               Products.quantity, Products.price, Products.cost_price).where(
             and_(
                 Products.client_id == client_id,
                 Products.is_active == True,
@@ -3573,8 +3589,9 @@ async def _assistant_dynamic_pricing(db: AsyncSession, client_id: int) -> dict:
     )
     catalogue = {
         pid: {"name": name, "name_ar": name_ar,
-              "on_hand": int(qty or 0), "price": float(price or 0.0)}
-        for pid, name, name_ar, qty, price in prod_result.all()
+              "on_hand": int(qty or 0), "price": float(price or 0.0),
+              "cost_price": float(cost) if cost is not None else None}
+        for pid, name, name_ar, qty, price, cost in prod_result.all()
         if (qty or 0) > 0 and (price or 0.0) > 0
     }
 
@@ -3621,6 +3638,17 @@ async def _assistant_dynamic_pricing(db: AsyncSession, client_id: int) -> dict:
         else:
             discount_pct = 10
         suggested_price = round(meta["price"] * (1 - discount_pct / 100), 2)
+
+        # Margin guard: never recommend selling below cost. If the tiered markdown
+        # would dip under a known cost, clamp up to cost and report the *actual*
+        # applied discount so the advisor never proposes a guaranteed loss.
+        cost_price = meta["cost_price"]
+        margin_floored = False
+        if cost_price is not None and suggested_price < cost_price:
+            suggested_price = round(cost_price, 2)
+            discount_pct = round((1 - suggested_price / meta["price"]) * 100, 1)
+            margin_floored = True
+
         suggestions.append({
             "product_id": pid,
             "name": meta["name"],
@@ -3632,6 +3660,8 @@ async def _assistant_dynamic_pricing(db: AsyncSession, client_id: int) -> dict:
             "current_price": round(meta["price"], 2),
             "suggested_price": suggested_price,
             "discount_pct": discount_pct,
+            "cost_price": round(cost_price, 2) if cost_price is not None else None,
+            "margin_floored": margin_floored,
         })
 
     # Most-urgent first: deepest cut, then slowest to clear (dead stock, whose

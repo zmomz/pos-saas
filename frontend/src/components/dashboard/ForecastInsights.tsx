@@ -299,6 +299,14 @@ export default function ForecastInsights() {
                       </td>
                       <td className="text-end font-semibold tabular-nums text-foreground">
                         {formatMoney(it.suggested_price, language)}
+                        {it.margin_floored ? (
+                          <span
+                            className="ms-2 rounded bg-warning/15 px-1.5 py-0.5 text-xs font-medium text-warning"
+                            title={tr('margin_at_cost')}
+                          >
+                            {tr('margin_at_cost')}
+                          </span>
+                        ) : null}
                       </td>
                     </tr>
                   ))}

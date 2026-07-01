@@ -386,6 +386,31 @@ async def test_assistant_dynamic_pricing_handles_nothing_to_discount(client):
     assert body["data"]["products"] == []
 
 
+async def test_assistant_markdown_never_prices_below_cost(client):
+    """A tiered markdown that would dip under cost is floored at cost, not a loss."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Dead stock (no sales in window) → deepest 25% tier. price 40, cost 35: a raw
+    # −25% lands at 30.00, BELOW the 35.00 cost. It must clamp to cost.
+    dead = await _seed_product(client_id, user["id"], name="ThinDead",
+                               quantity=20, price=40.0, cost_price=35.0)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what should I discount", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["intent"] == "dynamic_pricing"
+    item = body["data"]["products"][0]
+    assert item["product_id"] == dead
+    assert item["cost_price"] == 35.0
+    assert item["margin_floored"] is True
+    assert item["suggested_price"] == 35.0  # clamped to cost, not the 30.00 raw markdown
+    # discount_pct reflects the ACTUAL applied cut (40→35 = 12.5%), not the 25 nominal.
+    assert item["discount_pct"] == 12.5
+
+
 async def test_assistant_reports_week_over_week_trend(client):
     """"Is business up or down this week?" → this week's net takings compared to
     last week's, with a direction and a percent change (the assistant surface over

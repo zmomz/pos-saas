@@ -28,7 +28,9 @@ from models.products import Products
 from models.transactions import Transactions
 
 
-async def _add_product(client_id, user_id, name, quantity, price=10.0, *, is_digital=False):
+async def _add_product(
+    client_id, user_id, name, quantity, price=10.0, *, is_digital=False, cost_price=None
+):
     async with db_manager.async_session_maker() as db:
         p = Products(
             user_id=user_id,
@@ -38,6 +40,7 @@ async def _add_product(client_id, user_id, name, quantity, price=10.0, *, is_dig
             quantity=quantity,
             is_active=True,
             is_digital=is_digital,
+            cost_price=cost_price,
         )
         db.add(p)
         await db.commit()
@@ -187,6 +190,57 @@ async def test_digital_products_are_never_priced(client):
     resp = await client.get("/api/v1/reports/dynamic-pricing?lookback=30", headers=headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["total"] == 0
+
+
+async def test_markdown_never_prices_below_cost(client):
+    """A markdown that would dip under cost is floored at cost — never sell at a loss."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Overstocked slow mover → markdown. price 50, cost 45; a flat −15% would land at
+    # 42.50, i.e. BELOW the 45.00 cost (a guaranteed loss). It must be clamped to cost.
+    pid = await _add_product(
+        client_id, user["id"], "Thin Margin", quantity=1000, price=50.0, cost_price=45.0
+    )
+    await _seed_sale(client_id, user["id"], 2, [(pid, 3)])  # 0.1/day → cover >> ceiling
+
+    resp = await client.get(
+        "/api/v1/reports/dynamic-pricing?lookback=30&markup_pct=10&markdown_pct=15",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    item = resp.json()["items"][0]
+    assert item["signal"] == "markdown"
+    assert abs(item["cost_price"] - 45.0) < 0.001
+    assert item["margin_floored"] is True
+    # Clamped to the 45.00 cost, not the 42.50 raw markdown.
+    assert abs(item["suggested_price"] - 45.0) < 0.001
+    # adjustment_pct reflects the ACTUAL applied cut (45/50 − 1 = −10%), not the −15 nominal.
+    assert abs(item["adjustment_pct"] - (-10.0)) < 0.001
+
+
+async def test_markdown_above_cost_is_not_floored(client):
+    """When the raw markdown still clears cost, the full discount stands (not floored)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # price 50, cost 30; −15% → 42.50, comfortably above the 30.00 cost floor.
+    pid = await _add_product(
+        client_id, user["id"], "Fat Margin", quantity=1000, price=50.0, cost_price=30.0
+    )
+    await _seed_sale(client_id, user["id"], 2, [(pid, 3)])
+
+    resp = await client.get(
+        "/api/v1/reports/dynamic-pricing?lookback=30&markup_pct=10&markdown_pct=15",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    item = resp.json()["items"][0]
+    assert item["signal"] == "markdown"
+    assert abs(item["cost_price"] - 30.0) < 0.001
+    assert item["margin_floored"] is False
+    assert abs(item["suggested_price"] - 42.5) < 0.001
+    assert abs(item["adjustment_pct"] - (-15.0)) < 0.001
 
 
 async def test_dynamic_pricing_is_tenant_scoped(client):

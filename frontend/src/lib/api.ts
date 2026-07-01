@@ -1375,6 +1375,8 @@ export interface DynamicPriceItem {
   current_price: number;
   suggested_price: number;
   adjustment_pct: number;
+  cost_price?: number | null;
+  margin_floored?: boolean;
 }
 export interface DynamicPricingResponse {
   method: string;

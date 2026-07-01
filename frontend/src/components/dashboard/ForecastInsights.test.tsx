@@ -123,6 +123,34 @@ describe('ForecastInsights (#228 AI forecasting surface)', () => {
     expect(within(row).getByText('Markup')).toBeInTheDocument(); // signal
   });
 
+  it('flags a markdown that was floored at cost so it never sells below cost', async () => {
+    stub({
+      pricing: {
+        ...PRICING,
+        items: [
+          {
+            product_id: 3,
+            name: 'ThinMargin',
+            name_ar: null,
+            on_hand: 1000,
+            avg_daily_units: 0.1,
+            days_of_cover: 10000,
+            signal: 'markdown',
+            current_price: 50,
+            suggested_price: 45,
+            adjustment_pct: -10,
+            cost_price: 45,
+            margin_floored: true,
+          },
+        ],
+      },
+    });
+    renderPanel();
+    const row = (await screen.findByText('ThinMargin')).closest('tr') as HTMLElement;
+    expect(within(row).getByText(/45/)).toBeInTheDocument(); // suggested = cost floor
+    expect(within(row).getByText('At cost')).toBeInTheDocument(); // margin-floor badge
+  });
+
   it('shows an empty state when nothing needs reordering or repricing', async () => {
     stub({
       inventory: { ...INVENTORY, total: 0, items: [] },
