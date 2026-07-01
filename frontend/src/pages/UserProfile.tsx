@@ -413,6 +413,7 @@ export default function UserProfile() {
               onClick={toggleHighContrast}
               variant={highContrast ? 'default' : 'outline'}
               aria-pressed={highContrast}
+              aria-label={tt('high_contrast', 'High contrast')}
             >
               {highContrast ? tt('on', 'On') : tt('off', 'Off')}
             </Button>
@@ -438,7 +439,7 @@ export default function UserProfile() {
               <ALargeSmall className="h-4 w-4 text-muted-foreground" />
               <span>{tt('text_size', 'Text size')}</span>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-3 gap-3" role="group" aria-label={tt('text_size', 'Text size')}>
               {([
                 ['normal', tt('text_size_normal', 'Normal')],
                 ['large', tt('text_size_large', 'Large')],
