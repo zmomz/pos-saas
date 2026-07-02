@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -763,58 +765,101 @@ export default function OrderTicket() {
             {productGroups.map((g) => {
               const groupSelected = g.modifiers.filter((m) => selectedMods.has(m.id)).length;
               const unmet = g.required && groupSelected === 0;
+              const isSingle = g.max_select === 1;
+              // Shared heading: the group name + a required/max badge, labelling
+              // the group for assistive tech via `modgroup-<id>-label`.
+              const heading = (
+                <div className="flex items-center gap-2 mb-2">
+                  <span id={`modgroup-${g.id}-label`} className="text-sm text-foreground">
+                    {g.name}
+                  </span>
+                  {g.required && (
+                    <Badge className={unmet ? 'pill-danger' : 'pill-success'}>
+                      {t('required')}
+                    </Badge>
+                  )}
+                  {g.max_select != null && g.max_select > 1 && (
+                    <span className="text-xs text-muted-foreground">{t('max')} {g.max_select}</span>
+                  )}
+                </div>
+              );
+              const empty = <p className="text-xs text-muted-foreground">{t('no_modifiers')}</p>;
+              // A modifier row: the visible label + its price delta, with the
+              // control (checkbox or radio) slotted in by the caller.
+              const row = (m: (typeof g.modifiers)[number], control: JSX.Element) => (
+                <div
+                  key={m.id}
+                  className="flex items-center justify-between gap-2 text-sm text-foreground/90"
+                >
+                  <span className="flex items-center gap-2">
+                    {control}
+                    <label htmlFor={`mod-${m.id}`} className="cursor-pointer">
+                      {m.name}
+                    </label>
+                  </span>
+                  {m.price_delta !== 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {m.price_delta > 0 ? '+' : ''}
+                      {m.price_delta}
+                    </span>
+                  )}
+                </div>
+              );
+
+              // Single-select → shadcn RadioGroup (its own role="radiogroup"),
+              // labelled by the heading and carrying aria-required when required.
+              if (isSingle) {
+                const selected = g.modifiers.find((m) => selectedMods.has(m.id));
+                return (
+                  <RadioGroup
+                    key={g.id}
+                    aria-labelledby={`modgroup-${g.id}-label`}
+                    aria-required={g.required ? true : undefined}
+                    value={selected ? String(selected.id) : ''}
+                    onValueChange={(v) => toggleModifier(g, Number(v))}
+                    className="rounded-md border border-border p-3 gap-1"
+                  >
+                    {heading}
+                    {g.modifiers.length === 0
+                      ? empty
+                      : g.modifiers.map((m) =>
+                          row(
+                            m,
+                            <RadioGroupItem
+                              id={`mod-${m.id}`}
+                              value={String(m.id)}
+                              aria-label={m.name}
+                            />
+                          )
+                        )}
+                  </RadioGroup>
+                );
+              }
+
+              // Multi-select → a plain group of shadcn Checkboxes.
               return (
                 <div
                   key={g.id}
-                  // Expose each modifier group to assistive tech: a single-select
-                  // group is a radiogroup, a multi-select group is a plain group.
-                  // Either way it is labelled by its heading so a SR user hears the
-                  // group name ("Size"), and required single-select groups carry
-                  // aria-required so the constraint is programmatic, not colour-only.
-                  role={g.max_select === 1 ? 'radiogroup' : 'group'}
+                  role="group"
                   aria-labelledby={`modgroup-${g.id}-label`}
-                  aria-required={g.max_select === 1 && g.required ? true : undefined}
                   className="rounded-md border border-border p-3"
                 >
-                  <div className="flex items-center gap-2 mb-2">
-                    <span id={`modgroup-${g.id}-label`} className="text-sm text-foreground">
-                      {g.name}
-                    </span>
-                    {g.required && (
-                      <Badge className={unmet ? 'pill-danger' : 'pill-success'}>
-                        {t('required')}
-                      </Badge>
-                    )}
-                    {g.max_select != null && g.max_select > 1 && (
-                      <span className="text-xs text-muted-foreground">{t('max')} {g.max_select}</span>
-                    )}
-                  </div>
+                  {heading}
                   {g.modifiers.length === 0 ? (
-                    <p className="text-xs text-muted-foreground">{t('no_modifiers')}</p>
+                    empty
                   ) : (
                     <div className="space-y-1">
-                      {g.modifiers.map((m) => (
-                        <label
-                          key={m.id}
-                          className="flex items-center justify-between gap-2 text-sm text-foreground/90 cursor-pointer"
-                        >
-                          <span className="flex items-center gap-2">
-                            <input
-                              type={g.max_select === 1 ? 'radio' : 'checkbox'}
-                              name={`group-${g.id}`}
-                              checked={selectedMods.has(m.id)}
-                              onChange={() => toggleModifier(g, m.id)}
-                            />
-                            {m.name}
-                          </span>
-                          {m.price_delta !== 0 && (
-                            <span className="text-xs text-muted-foreground">
-                              {m.price_delta > 0 ? '+' : ''}
-                              {m.price_delta}
-                            </span>
-                          )}
-                        </label>
-                      ))}
+                      {g.modifiers.map((m) =>
+                        row(
+                          m,
+                          <Checkbox
+                            id={`mod-${m.id}`}
+                            aria-label={m.name}
+                            checked={selectedMods.has(m.id)}
+                            onCheckedChange={() => toggleModifier(g, m.id)}
+                          />
+                        )
+                      )}
                     </div>
                   )}
                 </div>
@@ -1034,14 +1079,15 @@ export default function OrderTicket() {
                 {items.map((item) => (
                   <label
                     key={item.id}
+                    htmlFor={`settle-item-${item.id}`}
                     className="flex items-center justify-between gap-2 rounded-md bg-muted/40 px-3 py-2 text-sm text-foreground/90 cursor-pointer"
                   >
                     <span className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
+                      <Checkbox
+                        id={`settle-item-${item.id}`}
                         aria-label={`${item.qty} × ${item.name || `#${item.product_id}`}`}
                         checked={settleItemIds.has(item.id)}
-                        onChange={() =>
+                        onCheckedChange={() =>
                           setSettleItemIds((prev) => {
                             const next = new Set(prev);
                             if (next.has(item.id)) next.delete(item.id);
