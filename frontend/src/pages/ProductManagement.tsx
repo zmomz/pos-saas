@@ -18,6 +18,8 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
+import SavedFilterBar from '@/components/dashboard/rx/SavedFilterBar';
+import { useSavedFilters } from '@/hooks/useSavedFilters';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { formatMoney } from '@/lib/format';
@@ -141,6 +143,13 @@ const emptyForm: ProductFormData = {
   unit_label: '',
 };
 
+// #231: the shape of a saved product-list view.
+interface ProductFilterPreset {
+  search: string;
+  categoryFilter: string;
+  showArchived: boolean;
+}
+
 export default function ProductManagement() {
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
@@ -150,6 +159,9 @@ export default function ProductManagement() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   // ISSUE-068: opt in to see archived (soft-deleted) products so they can be restored.
   const [showArchived, setShowArchived] = useState(false);
+  // #231 (Productivity — saved filters): named presets of the search/category/
+  // archived combination, persisted per screen.
+  const savedFilters = useSavedFilters<ProductFilterPreset>('dxr.savedfilters.products');
   // H7 (ISSUE-038): the merchant's categories, sourced for the form + filter.
   const [categories, setCategories] = useState<Category[]>([]);
   const [addOpen, setAddOpen] = useState(false);
@@ -1038,6 +1050,23 @@ export default function ProductManagement() {
           {t('show_archived')}
         </label>
       </div>
+
+      {/* #231 (Productivity — saved filters): pin the current search/category/
+          archived combination under a name and re-apply it in one click. */}
+      <SavedFilterBar<ProductFilterPreset>
+        saved={savedFilters.saved}
+        onApply={(v) => {
+          setSearch(v.search);
+          setCategoryFilter(v.categoryFilter);
+          setShowArchived(v.showArchived);
+        }}
+        onSave={(name) => savedFilters.save(name, { search, categoryFilter, showArchived })}
+        onRemove={savedFilters.remove}
+        saveLabel={t('saved_views_save')}
+        namePlaceholder={t('saved_views_name_placeholder')}
+        applyTitle={(name) => t('saved_views_apply').replace('{name}', name)}
+        removeLabel={(name) => t('saved_views_remove').replace('{name}', name)}
+      />
 
       {/* ISSUE-064: import outcome — created/updated counts + rejected rows. */}
       {importResult && (
