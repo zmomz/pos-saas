@@ -2715,7 +2715,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | top_customer | sales_today | order_count | average_order | payment_mix | vat_owed | refunds | discounts | expenses | net_profit | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
+    intent: str  # top_product | top_category | top_margin | top_customer | sales_today | order_count | average_order | payment_mix | vat_owed | refunds | discounts | expenses | net_profit | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2827,6 +2827,20 @@ _ASSISTANT_INTENTS = [
                     "makes the most money", "make the most money", "profit margin",
                     "gross profit", "margin", "profit", "الأكثر ربحية", "ربحية",
                     "هامش الربح", "الربح", "أرباح"]),
+    # Checked before ``top_product`` so a *category* question ("best selling
+    # category", "which category sells the most") routes to the category ranking
+    # rather than being swallowed by ``top_product``'s bare "best selling"/"best
+    # seller" cues (and the Arabic "أفضل فئة" by its bare "الأكثر"). Its vocabulary
+    # is *which part of the catalogue* (category/department/section), distinct from
+    # *which single item* (top_product).
+    ("top_category", ["best selling category", "best-selling category",
+                      "top selling category", "top-selling category",
+                      "best category", "top category", "biggest category",
+                      "leading category", "which category", "what category",
+                      "category sells the most", "highest selling category",
+                      "best department", "top department",
+                      "أفضل فئة", "أفضل الفئات", "الفئة الأكثر", "أي فئة",
+                      "أعلى فئة"]),
     ("top_product", ["top product", "top seller", "best seller", "best-seller",
                      "bestseller", "best selling", "best-selling", "most sold",
                      "الأكثر", "أفضل منتج", "افضل منتج"]),
@@ -2912,6 +2926,7 @@ _ASSISTANT_INTENTS = [
 
 _ASSISTANT_SUGGESTIONS = [
     "What is my best selling product?",
+    "What is my best selling category?",
     "Which product is most profitable?",
     "Who are my best customers?",
     "How much did I sell today?",
@@ -2990,6 +3005,82 @@ async def _assistant_top_product(db: AsyncSession, client_id: int) -> dict:
     pid, units = max(units_sold.items(), key=lambda kv: kv[1])
     name, name_ar = names[pid]
     return {"product_id": pid, "name": name, "name_ar": name_ar, "units_sold": int(units)}
+
+
+async def _assistant_top_category(db: AsyncSession, client_id: int, limit: int = 5) -> dict:
+    """Best-selling category by units over the last 30 days (#228 — AI slice).
+
+    ``top_product`` ranks a single item; this rolls each product's units up to its
+    (denormalised) ``category`` so the operator can see which part of the catalogue
+    carries sales. Revenue is catalogue price × units summed per category — the same
+    catalogue-price basis ``top_margin`` uses. Products with no category are excluded
+    (there is nothing to name); held/voided and out-of-window sales never count.
+    Returns ``{}`` when no *categorised* product has sold, so the surface can nudge
+    the operator to categorise their catalogue rather than crash.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=30)
+    # Tenant catalogue keyed by id → category + price, so units attributed to other
+    # tenants' / deleted products are ignored and uncategorised items excluded.
+    prod_result = await db.execute(
+        select(Products.id, Products.category, Products.price).where(
+            Products.client_id == client_id
+        )
+    )
+    catalogue = {
+        pid: (category, price)
+        for pid, category, price in prod_result.all()
+    }
+
+    # category → {"units": int, "revenue": float}
+    totals: dict = {}
+    stream = await db.stream_scalars(
+        select(Transactions.items_json).where(
+            and_(
+                Transactions.client_id == client_id,
+                Transactions.created_at >= start_date,
+                Transactions.status.is_distinct_from("held"),
+                Transactions.status.is_distinct_from("voided"),
+            )
+        )
+    )
+    async for items_json in stream:
+        if not items_json:
+            continue
+        try:
+            items = json.loads(items_json)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for item in items:
+            pid = item.get("product_id", 0)
+            if pid not in catalogue:
+                continue
+            category, price = catalogue[pid]
+            # No category → nothing to name; skip (mirrors the top_margin cost gate).
+            if not category:
+                continue
+            qty = item.get("quantity", 0) or 0
+            bucket = totals.setdefault(category, {"units": 0, "revenue": 0.0})
+            bucket["units"] += qty
+            bucket["revenue"] += (price or 0.0) * qty
+
+    if not totals:
+        return {}
+    ranked = sorted(
+        (
+            {"category": cat, "units_sold": int(v["units"]),
+             "revenue": round(v["revenue"], 2)}
+            for cat, v in totals.items()
+        ),
+        key=lambda c: (c["units_sold"], c["revenue"]),
+        reverse=True,
+    )
+    top = ranked[0]
+    return {
+        "category": top["category"],
+        "units_sold": top["units_sold"],
+        "revenue": top["revenue"],
+        "categories": ranked[:limit],
+    }
 
 
 async def _assistant_top_margin(db: AsyncSession, client_id: int) -> dict:
@@ -4185,6 +4276,29 @@ async def assistant_query(
 
     client_id = role_info["entity_id"]
     intent = _route_assistant_intent(q)
+
+    if intent == "top_category":
+        tc = await _assistant_top_category(db, client_id)
+        if tc:
+            others = ", ".join(
+                f"{c['category']} ({c['units_sold']})" for c in tc["categories"][1:]
+            )
+            answer = (
+                f"Your best-selling category is {tc['category']} — "
+                f"{tc['units_sold']} units sold ({tc['revenue']:.2f} in sales) "
+                f"in the last 30 days."
+            )
+            if others:
+                answer += f" Next: {others}."
+        else:
+            answer = (
+                "I can't rank categories yet — assign categories to your products "
+                "(and make a sale) and I'll tell you which one sells the most."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=tc, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
 
     if intent == "top_product":
         top = await _assistant_top_product(db, client_id)

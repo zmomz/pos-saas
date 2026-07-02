@@ -72,7 +72,7 @@ async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: fl
 async def _seed_product(client_id: int, user_id: str, *, name: str, quantity: float,
                         reorder_point: int = 0, is_digital: bool = False,
                         price: float = 10.0, cost_price=None,
-                        is_active: bool = True) -> int:
+                        is_active: bool = True, category=None) -> int:
     async with db_manager.async_session_maker() as db:
         p = Products(
             user_id=user_id,
@@ -84,6 +84,7 @@ async def _seed_product(client_id: int, user_id: str, *, name: str, quantity: fl
             reorder_point=reorder_point,
             is_active=is_active,
             is_digital=is_digital,
+            category=category,
         )
         db.add(p)
         await db.commit()
@@ -1708,3 +1709,90 @@ async def test_assistant_discounts_routes_in_arabic(client):
     body = resp.json()
     assert body["intent"] == "discounts"
     assert abs(body["data"]["discount_total"] - 20.0) < 0.01
+
+
+async def test_assistant_names_the_top_selling_category(client):
+    """"What's my best selling category?" → the category with the most units sold.
+
+    ``top_product`` ranks a single item; a merchant also wants the *category*
+    view — which part of the menu/catalogue is carrying sales. Units are summed
+    per product then grouped by the product's category over the last 30 days.
+    """
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Drinks (Latte + Espresso) outsell Food (Muffin) by units over the window.
+    latte = await _seed_product(client_id, user["id"], name="Latte", quantity=50,
+                                price=20.0, category="Drinks")
+    espresso = await _seed_product(client_id, user["id"], name="Espresso", quantity=50,
+                                   price=15.0, category="Drinks")
+    muffin = await _seed_product(client_id, user["id"], name="Muffin", quantity=50,
+                                 price=8.0, category="Food")
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=100.0,
+                     items=[{"product_id": latte, "quantity": 6}], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=2, total=120.0,
+                     items=[{"product_id": espresso, "quantity": 9}], idx=2)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=40.0,
+                     items=[{"product_id": muffin, "quantity": 4}], idx=3)
+    # Held/voided and out-of-window sales never count.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0,
+                     items=[{"product_id": muffin, "quantity": 99}],
+                     status="held", idx=4)
+    await _seed_sale(client_id, user["id"], days_ago=45, total=999.0,
+                     items=[{"product_id": muffin, "quantity": 99}], idx=5)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my best selling category",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["method"] == "rule_based"
+    assert body["intent"] == "top_category"
+    data = body["data"]
+    assert data["category"] == "Drinks"
+    assert data["units_sold"] == 15  # 6 latte + 9 espresso
+    # Revenue is catalogue price × units: 6×20 + 9×15 = 255.
+    assert abs(data["revenue"] - 255.0) < 0.01
+    assert "Drinks" in body["answer"]
+
+
+async def test_assistant_top_category_routes_in_arabic(client):
+    """Arabic "أفضل فئة" routes to top_category, not swallowed by top_product."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    tea = await _seed_product(client_id, user["id"], name="Tea", quantity=50,
+                              price=12.0, category="Drinks")
+    await _seed_sale(client_id, user["id"], days_ago=1, total=24.0,
+                     items=[{"product_id": tea, "quantity": 2}], idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=ما هي أفضل فئة مبيعا", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "top_category"
+    assert body["data"]["category"] == "Drinks"
+
+
+async def test_assistant_top_category_handles_no_categorised_sales(client):
+    """No categorised product has sold → an empty payload and a helpful nudge."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # A sale, but the product carries no category → nothing to rank.
+    uncat = await _seed_product(client_id, user["id"], name="Mystery", quantity=50,
+                                price=10.0, category=None)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=30.0,
+                     items=[{"product_id": uncat, "quantity": 3}], idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my top category", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["intent"] == "top_category"
+    assert body["data"] == {}
+    assert "categor" in body["answer"].lower()
