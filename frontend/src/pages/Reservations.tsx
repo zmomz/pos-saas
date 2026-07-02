@@ -339,7 +339,7 @@ export default function Reservations() {
           <Card className="border-brand-500/20">
             <CardContent className="space-y-4 p-5">
               <h2 className="flex items-center gap-2 text-lg font-semibold text-foreground">
-                <ListOrdered className="h-5 w-5 text-brand-600" />
+                <ListOrdered className="h-5 w-5 text-brand-600 rtl:-scale-x-100" />
                 {t('rw_waitlist')}
               </h2>
 
