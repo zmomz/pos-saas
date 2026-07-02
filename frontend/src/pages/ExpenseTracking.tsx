@@ -171,9 +171,9 @@ export default function ExpenseTracking() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('expense_category', 'Category')} *</label>
+          <label htmlFor="expense-category" className="text-sm text-muted-foreground mb-1 block">{tt('expense_category', 'Category')} *</label>
           <Select value={formData.category} onValueChange={(v) => handleFormChange('category', v)}>
-            <SelectTrigger className="bg-muted border-input text-foreground">
+            <SelectTrigger id="expense-category" className="bg-muted border-input text-foreground">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="bg-card border-input">
@@ -186,8 +186,9 @@ export default function ExpenseTracking() {
           </Select>
         </div>
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('expense_amount_sar', 'Amount (⃁)')} *</label>
+          <label htmlFor="expense-amount" className="text-sm text-muted-foreground mb-1 block">{tt('expense_amount_sar', 'Amount (⃁)')} *</label>
           <Input
+            id="expense-amount"
             type="number"
             value={formData.amount}
             onChange={(e) => handleFormChange('amount', e.target.value)}
@@ -196,8 +197,9 @@ export default function ExpenseTracking() {
           />
         </div>
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('description', 'Description')}</label>
+          <label htmlFor="expense-description" className="text-sm text-muted-foreground mb-1 block">{tt('description', 'Description')}</label>
           <Input
+            id="expense-description"
             value={formData.description}
             onChange={(e) => handleFormChange('description', e.target.value)}
             placeholder={tt('expense_description_placeholder', 'Expense description')}
@@ -205,8 +207,9 @@ export default function ExpenseTracking() {
           />
         </div>
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('date', 'Date')}</label>
+          <label htmlFor="expense-date" className="text-sm text-muted-foreground mb-1 block">{tt('date', 'Date')}</label>
           <Input
+            id="expense-date"
             type="date"
             value={formData.expense_date}
             onChange={(e) => handleFormChange('expense_date', e.target.value)}
