@@ -132,6 +132,9 @@ export default function CommandPalette({
   // keyboard-only user returns to where they were instead of the top of the
   // document (WCAG 2.4.3). Covers every open path — trigger click and ⌘K alike.
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  // The dialog panel, so a Tab press can be confined to the focusables inside it
+  // (focus trap) rather than escaping to the page behind the backdrop.
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -342,6 +345,35 @@ export default function CommandPalette({
     [flatItems, active, q, recordSearch],
   );
 
+  // Focus trap: an `aria-modal` dialog must keep Tab focus inside itself so a
+  // keyboard-only user never lands on the page hidden behind the backdrop (WCAG
+  // 2.4.3). Wrap at both ends — Tab off the last control returns to the first,
+  // Shift+Tab off the first jumps to the last — and pull focus back in if it has
+  // somehow strayed outside the panel.
+  const onDialogKeyDown = useCallback((e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const root = dialogRef.current;
+    if (!root) return;
+    const focusables = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    const activeEl = document.activeElement as HTMLElement | null;
+    if (e.shiftKey) {
+      if (activeEl === first || !root.contains(activeEl)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (activeEl === last || !root.contains(activeEl)) {
+      e.preventDefault();
+      first.focus();
+    }
+  }, []);
+
   return (
     <>
       <button
@@ -368,9 +400,11 @@ export default function CommandPalette({
           }}
         >
           <div
+            ref={dialogRef}
             role="dialog"
             aria-modal="true"
             aria-label={label}
+            onKeyDown={onDialogKeyDown}
             className="w-full max-w-[560px] overflow-hidden rounded-[18px] border border-border bg-popover shadow-2xl"
           >
             <div className="flex items-center gap-3 border-b border-border px-4 py-4">
