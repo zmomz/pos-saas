@@ -68,7 +68,7 @@ export default function AuthLayout({
         </div>
         {showLanguageSwitcher && (
           <Select value={language} onValueChange={(v) => setLanguage(v as Language)}>
-            <SelectTrigger className="w-32">
+            <SelectTrigger className="w-32" aria-label={t('choose_language')}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

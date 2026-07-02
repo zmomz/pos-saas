@@ -1,7 +1,14 @@
 import '@testing-library/jest-dom/vitest';
 import axios from 'axios';
-import { afterEach, vi } from 'vitest';
+import { afterEach, expect, vi } from 'vitest';
 import { cleanup } from '@testing-library/react';
+// ISSUE-274 (M11 · FE-Platform · a11y) — register the vitest-axe
+// `toHaveNoViolations` matcher globally so the automated WCAG gate
+// (`*.axe.a11y.test.tsx`) can assert axe-core scans across core flows.
+// `extend-expect` supplies the TS types; `matchers` supplies the runtime impl.
+import 'vitest-axe/extend-expect';
+import * as axeMatchers from 'vitest-axe/matchers';
+expect.extend(axeMatchers);
 
 // REV-05: jsdom's XHR adapter hangs forever when the request body is a
 // `FormData` (multipart upload) — MSW's XHR interceptor never resolves it, so
