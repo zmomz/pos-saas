@@ -21,6 +21,15 @@ import Bar from '@/components/dashboard/rx/Bar';
 import ForecastInsights from '@/components/dashboard/ForecastInsights';
 import PeakHoursHeatmap from '@/components/dashboard/PeakHoursHeatmap';
 import AssistantPanel from '@/components/dashboard/AssistantPanel';
+import SavedFilterBar from '@/components/dashboard/rx/SavedFilterBar';
+import { useSavedFilters } from '@/hooks/useSavedFilters';
+
+// #273 (Productivity follow-up) — a "saved report" is a named snapshot of the
+// report configuration (currently the period selector). Distinct from list-screen
+// saved filters; reuses the same persistence machinery under its own storage key.
+interface SavedReportPreset {
+  period: string;
+}
 
 interface SalesDataPoint {
   period: string;
@@ -46,6 +55,7 @@ interface PaymentTender {
 export default function ReportsAnalytics() {
   const { language } = useLanguage();
   const [period, setPeriod] = useState<string>('daily');
+  const savedReports = useSavedFilters<SavedReportPreset>('dxr.savedreports');
   const [salesData, setSalesData] = useState<SalesDataPoint[]>([]);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [paymentTenders, setPaymentTenders] = useState<PaymentTender[]>([]);
@@ -540,6 +550,18 @@ export default function ReportsAnalytics() {
           </SegButton>
         ))}
       </div>
+
+      {/* Saved reports — pin the current period config under a name (#273) */}
+      <SavedFilterBar<SavedReportPreset>
+        saved={savedReports.saved}
+        onApply={(v) => setPeriod(v.period)}
+        onSave={(name) => savedReports.save(name, { period })}
+        onRemove={savedReports.remove}
+        saveLabel={tr('saved_reports_save')}
+        namePlaceholder={tr('saved_reports_name_placeholder')}
+        applyTitle={(name) => tr('saved_reports_apply').replace('{name}', name)}
+        removeLabel={(name) => tr('saved_reports_remove').replace('{name}', name)}
+      />
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
