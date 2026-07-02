@@ -398,20 +398,20 @@ export default function BranchManagement() {
     return (
       <div className="space-y-4">
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('branch_name', 'Branch Name')} *</label>
-          <Input value={formData.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder={tt('branch_name_placeholder', 'Main Branch')} className="bg-muted border-input text-foreground" />
+          <label htmlFor="branch-name" className="text-sm text-muted-foreground mb-1 block">{tt('branch_name', 'Branch Name')} *</label>
+          <Input id="branch-name" value={formData.name} onChange={(e) => handleFormChange('name', e.target.value)} placeholder={tt('branch_name_placeholder', 'Main Branch')} className="bg-muted border-input text-foreground" />
         </div>
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('address', 'Address')}</label>
-          <Input value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder={tt('branch_address_placeholder', 'Branch address')} className="bg-muted border-input text-foreground" />
+          <label htmlFor="branch-address" className="text-sm text-muted-foreground mb-1 block">{tt('address', 'Address')}</label>
+          <Input id="branch-address" value={formData.address} onChange={(e) => handleFormChange('address', e.target.value)} placeholder={tt('branch_address_placeholder', 'Branch address')} className="bg-muted border-input text-foreground" />
         </div>
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('manager_name', 'Manager Name')}</label>
-          <Input value={formData.manager_name} onChange={(e) => handleFormChange('manager_name', e.target.value)} placeholder={tt('branch_manager_placeholder', 'Branch manager')} className="bg-muted border-input text-foreground" />
+          <label htmlFor="branch-manager" className="text-sm text-muted-foreground mb-1 block">{tt('manager_name', 'Manager Name')}</label>
+          <Input id="branch-manager" value={formData.manager_name} onChange={(e) => handleFormChange('manager_name', e.target.value)} placeholder={tt('branch_manager_placeholder', 'Branch manager')} className="bg-muted border-input text-foreground" />
         </div>
         <div>
-          <label className="text-sm text-muted-foreground mb-1 block">{tt('phone', 'Phone')}</label>
-          <Input value={formData.phone} onChange={(e) => handleFormChange('phone', e.target.value)} placeholder="+966 xxx xxxx" className="bg-muted border-input text-foreground" />
+          <label htmlFor="branch-phone" className="text-sm text-muted-foreground mb-1 block">{tt('phone', 'Phone')}</label>
+          <Input id="branch-phone" value={formData.phone} onChange={(e) => handleFormChange('phone', e.target.value)} placeholder="+966 xxx xxxx" className="bg-muted border-input text-foreground" />
         </div>
         <Button onClick={onSubmit} disabled={submitting || !formData.name} className="w-full shadow-brand">
           {submitting ? t('loading') : submitLabel}
