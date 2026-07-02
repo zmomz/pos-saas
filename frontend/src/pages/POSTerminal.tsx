@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -113,6 +113,31 @@ const TERMINAL_TENDERS = new Set(['card', 'mada', 'applepay', 'stcpay', 'tabby',
 function isTerminalTender(method: string): boolean {
   return TERMINAL_TENDERS.has(method);
 }
+
+// ISSUE-268 (triage cleanup): single source of truth for the cashier-selectable
+// tender types. The single- and split-payment pickers each used to carry their
+// own hand-maintained array and had already drifted — single offered
+// `bank_transfer` while split offered `transfer`. Both now map over this one
+// constant so they can never diverge again. `v` is the backend's canonical
+// tender type (see SUPPORTED_TENDER_TYPES in payment_gateway.py); `transfer` is
+// canonical and `bank_transfer` was only ever an alias the backend normalised.
+// `labelKey` is the i18n key for the button label (transfer keeps its
+// merchant-facing "Bank Transfer" wording). `icon` is optional chrome.
+export const POS_TENDER_OPTIONS: ReadonlyArray<{
+  v: string;
+  labelKey: string;
+  icon?: ComponentType<{ className?: string }>;
+}> = [
+  { v: 'cash', labelKey: 'cash', icon: Banknote },
+  { v: 'mada', labelKey: 'tender_mada' },
+  { v: 'card', labelKey: 'card', icon: CreditCard },
+  { v: 'applepay', labelKey: 'tender_applepay' },
+  { v: 'stcpay', labelKey: 'tender_stcpay' },
+  { v: 'tabby', labelKey: 'tender_tabby' },
+  { v: 'tamara', labelKey: 'tender_tamara' },
+  { v: 'giftcard', labelKey: 'tender_gift_card' },
+  { v: 'transfer', labelKey: 'bank_transfer' },
+];
 
 interface Receipt {
   id?: number;
@@ -2173,17 +2198,7 @@ export default function POSTerminal() {
             {!splitMode ? (
               <>
                 <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { v: 'cash', label: t('cash'), icon: Banknote },
-                    { v: 'mada', label: t('tender_mada') },
-                    { v: 'card', label: t('card'), icon: CreditCard },
-                    { v: 'applepay', label: t('tender_applepay') },
-                    { v: 'stcpay', label: t('tender_stcpay') },
-                    { v: 'tabby', label: t('tender_tabby') },
-                    { v: 'tamara', label: t('tender_tamara') },
-                    { v: 'giftcard', label: t('tender_gift_card') },
-                    { v: 'bank_transfer', label: t('bank_transfer') },
-                  ].map((m) => {
+                  {POS_TENDER_OPTIONS.map((m) => {
                     const Icon = m.icon;
                     const active = paymentMethod === m.v;
                     return (
@@ -2198,7 +2213,7 @@ export default function POSTerminal() {
                             : 'border-input text-muted-foreground hover:border-brand hover:text-brand-700'
                         }`}
                       >
-                        {Icon ? <Icon className="h-4 w-4" /> : null} {m.label}
+                        {Icon ? <Icon className="h-4 w-4" /> : null} {t(m.labelKey)}
                       </button>
                     );
                   })}
@@ -2297,15 +2312,9 @@ export default function POSTerminal() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent className="bg-muted border-border">
-                          <SelectItem value="cash" className="text-foreground hover:bg-muted">{t('cash')}</SelectItem>
-                          <SelectItem value="mada" className="text-foreground hover:bg-muted">{t('tender_mada')}</SelectItem>
-                          <SelectItem value="card" className="text-foreground hover:bg-muted">{t('card')}</SelectItem>
-                          <SelectItem value="applepay" className="text-foreground hover:bg-muted">{t('tender_applepay')}</SelectItem>
-                          <SelectItem value="stcpay" className="text-foreground hover:bg-muted">{t('tender_stcpay')}</SelectItem>
-                          <SelectItem value="tabby" className="text-foreground hover:bg-muted">{t('tender_tabby')}</SelectItem>
-                          <SelectItem value="tamara" className="text-foreground hover:bg-muted">{t('tender_tamara')}</SelectItem>
-                          <SelectItem value="giftcard" className="text-foreground hover:bg-muted">{t('tender_gift_card')}</SelectItem>
-                          <SelectItem value="transfer" className="text-foreground hover:bg-muted">{t('bank_transfer')}</SelectItem>
+                          {POS_TENDER_OPTIONS.map((m) => (
+                            <SelectItem key={m.v} value={m.v} className="text-foreground hover:bg-muted">{t(m.labelKey)}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                       <Input

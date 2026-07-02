@@ -1,3 +1,16 @@
+"""Generic object-storage (OSS) HTTP surface — an OPTIONAL cloud-backend router.
+
+ISSUE-268: this router exposes generic S3-style CRUD (create-bucket, list/rename/
+delete objects, presigned upload/download). It has no product HTTP consumer — the
+real, load-bearing caller is the ``StorageService`` *class* in ``services/storage``,
+used directly by the CSV export path (ISSUE-030) to hand back a presigned upload
+URL. The router is retained intentionally as an optional operator/cloud-backend
+surface: every endpoint degrades to a clear 503 when OSS is unconfigured (via
+``get_storage_service``), so it is inert on a default deployment rather than a
+500 façade. Keep ``services/storage.StorageService`` — trimming it would break
+the export path; this HTTP layer, by contrast, is optional and stays dark until
+an OSS gateway is configured.
+"""
 import logging
 
 from dependencies.auth import get_admin_user, get_current_user

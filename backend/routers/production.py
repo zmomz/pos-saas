@@ -242,7 +242,13 @@ class SessionRefreshRequest(BaseModel):
 # =============================================================================
 # Permissions Endpoints
 # =============================================================================
-@router.post("/permissions/check")
+# ISSUE-268: the raw permission primitives below (check/list/grant/revoke) are
+# master/agent-only and have ZERO frontend consumers — merchants edit staff
+# access through the owner-scoped `/staff-permissions/*` editor further down.
+# They are tagged `platform-internal` so their orphaned status is explicit
+# (and greppable) rather than looking like live merchant API. Do NOT wire the
+# SPA to these; extend the `/staff-permissions/*` surface instead.
+@router.post("/permissions/check", tags=["platform-internal"])
 async def check_permission(
     data: PermissionCheckRequest,
     current_user: UserResponse = Depends(get_current_user),
@@ -267,7 +273,7 @@ async def check_permission(
     }
 
 
-@router.get("/permissions/list")
+@router.get("/permissions/list", tags=["platform-internal"])
 async def list_permissions(
     current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -297,7 +303,7 @@ async def list_permissions(
     }
 
 
-@router.post("/permissions/grant")
+@router.post("/permissions/grant", tags=["platform-internal"])
 async def grant_permission(
     data: PermissionGrantRequest,
     current_user: UserResponse = Depends(get_current_user),
@@ -340,7 +346,7 @@ async def grant_permission(
     return {"status": "granted", "permission_key": data.permission_key, "target_user_id": data.target_user_id}
 
 
-@router.post("/permissions/revoke")
+@router.post("/permissions/revoke", tags=["platform-internal"])
 async def revoke_permission(
     data: PermissionRevokeRequest,
     current_user: UserResponse = Depends(get_current_user),
