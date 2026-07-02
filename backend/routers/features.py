@@ -2715,7 +2715,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_category | top_margin | top_customer | sales_today | order_count | average_order | payment_mix | vat_owed | refunds | discounts | expenses | net_profit | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
+    intent: str  # top_product | top_category | top_margin | top_customer | sales_today | order_count | average_order | payment_mix | vat_owed | refunds | discounts | expenses | net_profit | sales_forecast | sales_trend | busiest_day | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2882,6 +2882,16 @@ _ASSISTANT_INTENTS = [
                      "compared with last week", "this week", "how is business",
                      "how's business", "how are we doing", "الاتجاه",
                      "مقارنة بالأسبوع"]),
+    # Checked before ``peak_hours`` so a *which-day* question ("busiest day of the
+    # week", "which day are we busiest", "slowest day") routes to the day-level
+    # read rather than being swallowed by ``peak_hours``'s bare "busiest" cue (which
+    # names a single hour-of-day cell). Its vocabulary is *which weekday* — the
+    # weekly staffing/ordering question — distinct from *which hour* (peak_hours).
+    ("busiest_day", ["busiest day", "busiest days", "best day", "best days",
+                     "which day", "what day", "day of the week", "day of week",
+                     "slowest day", "quietest day", "worst day",
+                     "أفضل يوم", "أفضل الأيام", "أي يوم", "أزحم يوم", "أبطأ يوم",
+                     "اليوم الأكثر"]),
     # Checked before ``sales_today`` so a "when are we busiest / what's our peak
     # hour" routes to the staffing read rather than today's takings. Its cues are
     # the vocabulary of *timing* ("busiest", "peak hour", "rush"), distinct from
@@ -2940,6 +2950,7 @@ _ASSISTANT_SUGGESTIONS = [
     "Am I making a profit?",
     "What is my sales forecast for next week?",
     "Is business up or down this week?",
+    "Which day of the week is busiest?",
     "When are we busiest?",
     "What should I reorder?",
     "Which products will run out soon?",
@@ -3797,6 +3808,61 @@ async def _assistant_peak_hours(db: AsyncSession, client_id: int, lookback: int 
     return {"lookback_days": lookback, "total_orders": total_orders, "busiest": busiest}
 
 
+async def _assistant_busiest_day(db: AsyncSession, client_id: int, lookback: int = 30) -> dict:
+    """Busiest and quietest day-of-week over the last ``lookback`` days (#228).
+
+    The day-level counterpart to ``peak_hours`` (which names the single hottest
+    hour-of-day cell): it rolls the tenant's completed sales up to the weekday and
+    names the busiest trading day — the weekly staffing/ordering question an owner
+    asks ("which day are we busiest?"). Held/voided tickets and credit-note refunds
+    are not selling activity and are excluded, exactly like the peak-hours heatmap.
+    ``quietest`` names the least-busy trading day among the days that actually sold
+    (so it never invents an idle weekday) and is ``None`` unless at least two
+    weekdays traded. An empty window yields ``busiest = None`` (no days to rank) so
+    the answer degrades gracefully rather than crashing on ``max()`` of nothing.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    dow = extract("dow", Transactions.created_at)
+    rows = (
+        await db.execute(
+            select(dow, func.count(), func.sum(Transactions.total_amount))
+            .where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                    Transactions.status.is_distinct_from("credit_note"),
+                )
+            )
+            .group_by(dow)
+        )
+    ).all()
+
+    days = [
+        {
+            "day_of_week": int(float(d)),
+            "order_count": int(count or 0),
+            "revenue": round(float(revenue or 0.0), 2),
+        }
+        for d, count, revenue in rows
+    ]
+    total_orders = sum(d["order_count"] for d in days)
+    # Busiest first: most orders, higher revenue breaking a tie, then weekday for a
+    # deterministic order.
+    days.sort(key=lambda d: (-d["order_count"], -d["revenue"], d["day_of_week"]))
+    busiest = days[0] if days else None
+    # Quietest is only meaningful once more than one weekday has traded.
+    quietest = days[-1] if len(days) >= 2 else None
+    return {
+        "lookback_days": lookback,
+        "total_orders": total_orders,
+        "days": days,
+        "busiest": busiest,
+        "quietest": quietest,
+    }
+
+
 async def _assistant_low_stock(db: AsyncSession, client_id: int) -> dict:
     """Reorder-point-aware low-stock products (same rule as /products/low-stock)."""
     result = await db.execute(
@@ -4620,6 +4686,38 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=tr, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "busiest_day":
+        bd = await _assistant_busiest_day(db, client_id)
+        busiest = bd["busiest"]
+        if busiest:
+            day = (
+                _DOW_NAMES[busiest["day_of_week"]]
+                if 0 <= busiest["day_of_week"] < len(_DOW_NAMES)
+                else "?"
+            )
+            answer = (
+                f"{day} is your busiest day — {busiest['order_count']} order(s) "
+                f"({busiest['revenue']:.2f}) over the last {bd['lookback_days']} days."
+            )
+            quietest = bd["quietest"]
+            if quietest and quietest["day_of_week"] != busiest["day_of_week"]:
+                qday = (
+                    _DOW_NAMES[quietest["day_of_week"]]
+                    if 0 <= quietest["day_of_week"] < len(_DOW_NAMES)
+                    else "?"
+                )
+                answer += (
+                    f" {qday} is quietest ({quietest['order_count']} order(s))."
+                )
+        else:
+            answer = (
+                "No sales in the last 30 days yet, so there's no busiest day to report."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=bd, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "peak_hours":

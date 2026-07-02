@@ -620,6 +620,88 @@ async def test_assistant_busiest_time_handles_no_sales(client):
     assert body["data"]["total_orders"] == 0
 
 
+async def test_assistant_names_the_busiest_day_of_week(client):
+    """"Which day of the week is busiest?" → the day-of-week (aggregated across all
+    hours) with the most orders, so an owner can plan weekly staffing and ordering.
+    This is the day-level counterpart to the hour-cell ``peak_hours`` read. Held /
+    voided tickets and credit-note refunds are not selling activity and out-of-window
+    sales don't count — the same money rule as the peak-hours heatmap."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # A busy trading day: three completed sales two days ago.
+    busy = (datetime.now(timezone.utc) - timedelta(days=2)).replace(
+        hour=10, minute=0, second=0, microsecond=0
+    )
+    await _seed_sale_at(client_id, user["id"], created_at=busy, total=10.0, idx=1)
+    await _seed_sale_at(client_id, user["id"], created_at=busy, total=20.0, idx=2)
+    await _seed_sale_at(client_id, user["id"], created_at=busy, total=30.0, idx=3)
+    # A quieter trading day: one completed sale four days ago (a different weekday).
+    quiet = (datetime.now(timezone.utc) - timedelta(days=4)).replace(
+        hour=15, minute=0, second=0, microsecond=0
+    )
+    await _seed_sale_at(client_id, user["id"], created_at=quiet, total=99.0, idx=4)
+    # Held / voided / credit-note tickets on the busy day are not selling activity;
+    # an out-of-window sale is out of the window. None must tip the day counts.
+    await _seed_sale_at(client_id, user["id"], created_at=busy, total=999.0,
+                        status="held", idx=5)
+    await _seed_sale_at(client_id, user["id"], created_at=busy, total=999.0,
+                        status="voided", idx=6)
+    await _seed_sale_at(client_id, user["id"], created_at=busy, total=999.0,
+                        status="credit_note", idx=7)
+    old = (datetime.now(timezone.utc) - timedelta(days=40)).replace(hour=10)
+    await _seed_sale_at(client_id, user["id"], created_at=old, total=999.0, idx=8)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=which day of the week is busiest", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "busiest_day"
+    assert body["data"]["total_orders"] == 4  # 3 + 1; the excluded tickets never count
+    busiest = body["data"]["busiest"]
+    assert busiest["day_of_week"] == _dow(busy)
+    assert busiest["order_count"] == 3
+    assert busiest["revenue"] == 60.0
+    quietest = body["data"]["quietest"]
+    assert quietest["day_of_week"] == _dow(quiet)
+    assert quietest["order_count"] == 1
+    assert "3" in body["answer"]
+
+
+async def test_assistant_busiest_day_handles_no_sales(client):
+    """No sales in the window → a graceful "no busiest day" answer, not a crash on an
+    empty ranking, and HTTP 200."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=which day is busiest", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "busiest_day"
+    assert body["data"]["busiest"] is None
+    assert body["data"]["quietest"] is None
+    assert body["data"]["total_orders"] == 0
+
+
+async def test_busiest_day_does_not_steal_the_peak_hours_intent(client):
+    """The day-level ``busiest_day`` intent must not swallow the hour-level
+    ``peak_hours`` question — "when are we busiest" (no weekday) still routes to the
+    peak-hour cell read."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=when are we busiest", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["intent"] == "peak_hours"
+
+
 async def test_assistant_rejects_non_clients(client):
     """A master (non-client) account cannot reach the assistant (403), like reports."""
     from conftest import make_master_account

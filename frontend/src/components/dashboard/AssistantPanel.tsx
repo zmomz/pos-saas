@@ -124,6 +124,7 @@ const DEFAULT_SUGGESTIONS = [
   'Am I making a profit?',
   'What is my sales forecast for next week?',
   'Is business up or down this week?',
+  'Which day of the week is busiest?',
   'When are we busiest?',
   'What should I reorder?',
   'Which products will run out soon?',
