@@ -169,7 +169,7 @@ export default function Notifications() {
           </Button>
         )}
         <Button size="sm" onClick={() => setComposeOpen(true)}>
-          <Send className="h-4 w-4" />
+          <Send className="h-4 w-4 rtl:-scale-x-100" />
           {tt('compose', 'Compose')}
         </Button>
       </PageHeading>
@@ -324,7 +324,7 @@ export default function Notifications() {
               {tt('cancel', 'Cancel')}
             </Button>
             <Button onClick={handleSend} disabled={!canSend || sending}>
-              {scheduleOn ? <CalendarClock className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+              {scheduleOn ? <CalendarClock className="h-4 w-4" /> : <Send className="h-4 w-4 rtl:-scale-x-100" />}
               {sending
                 ? t('saving')
                 : scheduleOn
