@@ -20,7 +20,12 @@ import {
   exportCustomerData,
   eraseCustomerData,
   getCustomerInsights,
+  getConsentHistory,
+  getRetentionPolicy,
+  setRetentionPolicy,
+  enforceRetentionPolicy,
   type CustomerInsights,
+  type ConsentEvent,
 } from '@/lib/api';
 import ErrorState from '@/components/states/ErrorState';
 import LoadingState from '@/components/states/LoadingState';
@@ -28,8 +33,8 @@ import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataT
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
-import { formatMoney } from '@/lib/format';
-import { Plus, Users, UserPlus, Download, ShieldOff, BarChart3, Tag } from 'lucide-react';
+import { formatMoney, formatDateTime } from '@/lib/format';
+import { Plus, Users, UserPlus, Download, ShieldOff, BarChart3, Tag, History, ShieldCheck } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -98,6 +103,21 @@ export default function CustomerManagement() {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [insightsError, setInsightsError] = useState(false);
   const [insights, setInsights] = useState<CustomerInsights | null>(null);
+
+  // M7·Compliance (#272): per-customer PDPL consent trail dialog.
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [consentLoading, setConsentLoading] = useState(false);
+  const [consentError, setConsentError] = useState(false);
+  const [consentEvents, setConsentEvents] = useState<ConsentEvent[]>([]);
+
+  // M7·Compliance (#272): tenant-wide dormant-PII retention policy dialog.
+  const [retentionOpen, setRetentionOpen] = useState(false);
+  const [retentionLoading, setRetentionLoading] = useState(false);
+  const [retentionError, setRetentionError] = useState(false);
+  const [retentionDays, setRetentionDays] = useState('');
+  const [retentionUpdatedAt, setRetentionUpdatedAt] = useState<string | null>(null);
+  const [retentionSaving, setRetentionSaving] = useState(false);
+  const [retentionNotice, setRetentionNotice] = useState('');
 
   const { t, tt, language } = useLanguage();
 
@@ -289,6 +309,96 @@ export default function CustomerManagement() {
       setInsightsError(true);
     } finally {
       setInsightsLoading(false);
+    }
+  }
+
+  // M7·Compliance (#272): open the PDPL consent trail for a customer. Lazily
+  // fetched on open so the list mount is untouched. Renders loading/error/data.
+  async function openConsent(customer: Customer) {
+    setSelectedCustomer(customer);
+    setConsentEvents([]);
+    setConsentError(false);
+    setConsentOpen(true);
+    await loadConsent(customer.id);
+  }
+
+  async function loadConsent(customerId: string) {
+    setConsentLoading(true);
+    setConsentError(false);
+    try {
+      const data = await getConsentHistory(customerId);
+      setConsentEvents(Array.isArray(data?.items) ? data.items : []);
+    } catch (err) {
+      console.error('Failed to load consent history:', err);
+      setConsentError(true);
+    } finally {
+      setConsentLoading(false);
+    }
+  }
+
+  // M7·Compliance (#272): open the tenant retention policy. Lazily fetched.
+  async function openRetention() {
+    setRetentionNotice('');
+    setRetentionError(false);
+    setRetentionOpen(true);
+    await loadRetention();
+  }
+
+  async function loadRetention() {
+    setRetentionLoading(true);
+    setRetentionError(false);
+    try {
+      const policy = await getRetentionPolicy();
+      setRetentionDays(
+        policy?.customer_pii_retention_days != null
+          ? String(policy.customer_pii_retention_days)
+          : '',
+      );
+      setRetentionUpdatedAt(policy?.updated_at ?? null);
+    } catch (err) {
+      console.error('Failed to load retention policy:', err);
+      setRetentionError(true);
+    } finally {
+      setRetentionLoading(false);
+    }
+  }
+
+  // Arm (positive day count) or disable (blank ⇒ null) the retention window.
+  async function handleSaveRetention() {
+    setRetentionSaving(true);
+    setRetentionNotice('');
+    try {
+      const trimmed = retentionDays.trim();
+      const days = trimmed === '' ? null : Number(trimmed);
+      const policy = await setRetentionPolicy(days);
+      setRetentionDays(
+        policy?.customer_pii_retention_days != null
+          ? String(policy.customer_pii_retention_days)
+          : '',
+      );
+      setRetentionUpdatedAt(policy?.updated_at ?? null);
+      setRetentionNotice(t('retention_saved'));
+    } catch (err) {
+      console.error('Failed to save retention policy:', err);
+      setRetentionNotice(t('retention_save_failed'));
+    } finally {
+      setRetentionSaving(false);
+    }
+  }
+
+  // Run the sweep now: minimize PII on every customer past the window.
+  async function handleEnforceRetention() {
+    setRetentionSaving(true);
+    setRetentionNotice('');
+    try {
+      const result = await enforceRetentionPolicy();
+      setRetentionNotice(`${result.erased_count} ${t('retention_swept_suffix')}`);
+      await loadCustomers();
+    } catch (err) {
+      console.error('Failed to enforce retention policy:', err);
+      setRetentionNotice(t('retention_save_failed'));
+    } finally {
+      setRetentionSaving(false);
     }
   }
 
@@ -495,6 +605,15 @@ export default function CustomerManagement() {
             <Button
               size="sm"
               variant="outline"
+              onClick={() => openConsent(customer)}
+              className="text-xs"
+            >
+              <History className="h-3 w-3 me-1" />
+              {t('consent_history')}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
               onClick={() => handleExportData(customer)}
               className="text-xs"
             >
@@ -533,6 +652,14 @@ export default function CustomerManagement() {
           title={tt('customers', 'Customers')}
           subtitle={`${customers.length} ${tt('customers', 'Customers')}`}
         >
+          <Button
+            variant="outline"
+            onClick={openRetention}
+            className="h-11 rounded-[10px]"
+          >
+            <ShieldCheck className="h-4 w-4" />
+            {t('retention_policy')}
+          </Button>
           <DialogTrigger asChild>
             <Button
               onClick={() => setFormData(emptyForm)}
@@ -763,6 +890,117 @@ export default function CustomerManagement() {
               </div>
             </div>
           ) : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* PDPL consent trail — append-only history behind the snapshot (#272) */}
+      <Dialog open={consentOpen} onOpenChange={setConsentOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5 text-brand" />
+              {t('consent_history')}
+              {selectedCustomer && (
+                <span className="text-muted-foreground font-normal">— {selectedCustomer.name}</span>
+              )}
+            </DialogTitle>
+          </DialogHeader>
+
+          {consentLoading ? (
+            <LoadingState className="py-12" />
+          ) : consentError ? (
+            <ErrorState
+              message={t('consent_history_error')}
+              onRetry={() => selectedCustomer && loadConsent(selectedCustomer.id)}
+            />
+          ) : consentEvents.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground">{t('consent_history_empty')}</div>
+          ) : (
+            <ol className="space-y-2">
+              {consentEvents.map((ev) => (
+                <li
+                  key={ev.id}
+                  className="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/40 p-3"
+                >
+                  <div>
+                    <span className={ev.granted ? 'pill-success' : 'pill-muted'}>
+                      {ev.granted ? t('consent_granted') : t('consent_withdrawn')}
+                    </span>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t('consent_source')}: {ev.source}
+                      {ev.actor ? ` · ${ev.actor}` : ''}
+                    </p>
+                  </div>
+                  <span className="whitespace-nowrap text-xs text-muted-foreground" dir="ltr">
+                    {ev.created_at ? formatDateTime(ev.created_at, language) : '—'}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Tenant dormant-PII retention policy (#272, SEC-05 / PDPL) */}
+      <Dialog open={retentionOpen} onOpenChange={setRetentionOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-5 w-5 text-brand" />
+              {t('retention_policy_title')}
+            </DialogTitle>
+          </DialogHeader>
+
+          {retentionLoading ? (
+            <LoadingState className="py-12" />
+          ) : retentionError ? (
+            <ErrorState message={t('retention_load_error')} onRetry={loadRetention} />
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">{t('retention_policy_hint')}</p>
+              <div>
+                <Label className="mb-1 block" htmlFor="retention-days">
+                  {t('retention_days_label')}
+                </Label>
+                <Input
+                  id="retention-days"
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  value={retentionDays}
+                  onChange={(e) => setRetentionDays(e.target.value)}
+                  placeholder={t('retention_disabled_placeholder')}
+                  dir="ltr"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {retentionDays.trim() === ''
+                    ? t('retention_disabled')
+                    : retentionUpdatedAt
+                      ? `${t('retention_updated_at')}: ${formatDateTime(retentionUpdatedAt, language)}`
+                      : ''}
+                </p>
+              </div>
+              {retentionNotice && (
+                <div className="rounded-md border border-brand/40 bg-brand/10 p-2 text-sm text-foreground">
+                  {retentionNotice}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-3 pt-1">
+                <Button onClick={handleSaveRetention} disabled={retentionSaving} className="flex-1">
+                  {retentionSaving ? t('loading') : t('save')}
+                </Button>
+                <Button
+                  variant="warning"
+                  onClick={handleEnforceRetention}
+                  disabled={retentionSaving}
+                  className="flex-1"
+                >
+                  <ShieldOff className="h-4 w-4 me-1" />
+                  {t('retention_enforce')}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

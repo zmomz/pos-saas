@@ -2758,6 +2758,73 @@ export async function eraseCustomerData(id: string) {
   return response.data;
 }
 
+// ---- M7·Compliance (#227 / #272) — consent history, retention policy ----
+
+// One immutable consent change in a customer's PDPL consent trail.
+export interface ConsentEvent {
+  id: number;
+  consent_type: string;
+  granted: boolean;
+  source: string;
+  actor?: string | null;
+  created_at?: string | null;
+}
+
+export interface ConsentHistory {
+  customer_id: number;
+  items: ConsentEvent[];
+}
+
+// PDPL: the append-only consent trail behind the `marketing_consent` snapshot —
+// evidences *when* consent was given or withdrawn, newest-first.
+export async function getConsentHistory(id: string): Promise<ConsentHistory> {
+  const response = await client.apiCall.invoke<ConsentHistory>({
+    url: `/api/v1/entities/customers/${id}/consent-history`,
+    method: 'GET',
+  });
+  return response.data as ConsentHistory;
+}
+
+// The tenant's dormant-PII retention window (null ⇒ retention disabled).
+export interface RetentionPolicy {
+  customer_pii_retention_days?: number | null;
+  updated_at?: string | null;
+}
+
+export async function getRetentionPolicy(): Promise<RetentionPolicy> {
+  const response = await client.apiCall.invoke<RetentionPolicy>({
+    url: `/api/v1/entities/customers/retention-policy`,
+    method: 'GET',
+  });
+  return response.data as RetentionPolicy;
+}
+
+// Arm (positive day count) or disable (null) the retention window.
+export async function setRetentionPolicy(
+  customer_pii_retention_days: number | null,
+): Promise<RetentionPolicy> {
+  const response = await client.apiCall.invoke<RetentionPolicy>({
+    url: `/api/v1/entities/customers/retention-policy`,
+    method: 'PUT',
+    data: { customer_pii_retention_days },
+  });
+  return response.data as RetentionPolicy;
+}
+
+export interface RetentionEnforceResult {
+  erased: number[];
+  erased_count: number;
+}
+
+// Run a retention sweep now: minimize PII on every customer past the window.
+export async function enforceRetentionPolicy(): Promise<RetentionEnforceResult> {
+  const response = await client.apiCall.invoke<RetentionEnforceResult>({
+    url: `/api/v1/entities/customers/retention-policy/enforce`,
+    method: 'POST',
+  });
+  return response.data as RetentionEnforceResult;
+}
+
 // Procurement (Phase 6 / F-034): receive a purchase order. The backend lands
 // stock in the per-branch ledger when `branch_id` is given (else the client-level
 // aggregate), supports partial receipts via `lines` (the PO becomes
@@ -3378,6 +3445,37 @@ export async function getAuditLogs() {
     limit: 200,
   });
   return response.data;
+}
+
+// ---- M7·Compliance (#227 / #272) — regulatory audit export ----
+
+// Reconcile status of the tamper-evident audit chain (verify_audit_chain).
+export interface RegulatoryExportIntegrity {
+  verified: boolean;
+  checked: number;
+  broken_id?: number | null;
+  reason?: string | null;
+}
+
+export interface RegulatoryAuditExport {
+  artifact_type: string;
+  format_version: string;
+  generated_at: string;
+  owner_user_id?: string | null;
+  record_count: number;
+  integrity: RegulatoryExportIntegrity;
+  records: Record<string, unknown>[];
+}
+
+// A self-describing, independently verifiable regulatory audit artifact for the
+// caller's tenant — the raw compliance rows with their hash chain, plus the
+// reconcile status attesting whether the trail is intact.
+export async function getRegulatoryAuditExport(): Promise<RegulatoryAuditExport> {
+  const response = await client.apiCall.invoke<RegulatoryAuditExport>({
+    url: `/api/v1/entities/audit_logs/regulatory-export`,
+    method: 'GET',
+  });
+  return response.data as RegulatoryAuditExport;
 }
 
 // Discount Management

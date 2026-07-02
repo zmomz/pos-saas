@@ -7,14 +7,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { getAuditLogs } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { getAuditLogs, getRegulatoryAuditExport, type RegulatoryExportIntegrity } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { formatDateTime } from '@/lib/format';
 import ErrorState from '@/components/states/ErrorState';
 import LoadingState from '@/components/states/LoadingState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
-import { Shield, Clock, Filter } from 'lucide-react';
+import { Shield, Clock, Filter, Download, ShieldCheck, ShieldAlert } from 'lucide-react';
 
 interface AuditEntry {
   id: string;
@@ -54,7 +55,37 @@ export default function AuditLog() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
+  // M7·Compliance (#272) — regulatory audit export, fetched lazily on click.
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(false);
+  const [integrity, setIntegrity] = useState<RegulatoryExportIntegrity | null>(null);
+
   const { t, isRTL, language } = useLanguage();
+
+  // Fetch the tamper-evident audit artifact, surface its integrity attestation,
+  // and download it as JSON so the merchant can hand it to a regulator.
+  async function handleRegulatoryExport() {
+    setExporting(true);
+    setExportError(false);
+    try {
+      const artifact = await getRegulatoryAuditExport();
+      setIntegrity(artifact.integrity);
+      const blob = new Blob([JSON.stringify(artifact, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `regulatory-audit-export.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to build regulatory export:', err);
+      setExportError(true);
+    } finally {
+      setExporting(false);
+    }
+  }
 
   function actionLabel(action: string): string {
     if (action === 'all') return t('audit_all_actions');
@@ -129,6 +160,43 @@ export default function AuditLog() {
         title={t('audit_log')}
         subtitle={`${logs.length} ${t('audit_total_entries')}`}
       />
+
+      {/* Regulatory export (#272, SEC-05) — tamper-evident artifact + attestation */}
+      <div className="dxr-tile flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-2">
+          <ShieldCheck className="mt-0.5 h-4 w-4 text-brand" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">{t('regulatory_export')}</p>
+            <p className="text-xs text-muted-foreground">{t('regulatory_export_hint')}</p>
+            {integrity && (
+              <p
+                className={`mt-1 flex items-center gap-1 text-xs font-medium ${
+                  integrity.verified ? 'text-success' : 'text-danger'
+                }`}
+              >
+                {integrity.verified ? (
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                ) : (
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                )}
+                {integrity.verified ? t('regulatory_verified') : t('regulatory_broken')}
+                <span className="text-muted-foreground">
+                  · {integrity.checked} {t('regulatory_records_suffix')}
+                </span>
+              </p>
+            )}
+            {exportError && (
+              <p role="alert" className="mt-1 text-xs text-danger">
+                {t('regulatory_export_error')}
+              </p>
+            )}
+          </div>
+        </div>
+        <Button variant="outline" onClick={handleRegulatoryExport} disabled={exporting} className="shrink-0">
+          <Download className="h-4 w-4 me-1" />
+          {exporting ? t('loading') : t('regulatory_export_download')}
+        </Button>
+      </div>
 
       {/* Filters */}
       <div className="dxr-tile flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center">
