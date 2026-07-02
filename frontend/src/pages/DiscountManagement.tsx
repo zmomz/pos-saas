@@ -26,6 +26,9 @@ import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { undoableAction } from '@/lib/undo';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { SearchField } from '@/components/ui/search-field';
+import SavedFilterBar from '@/components/dashboard/rx/SavedFilterBar';
+import { useSavedFilters } from '@/hooks/useSavedFilters';
 import LoadingState from '@/components/states/LoadingState';
 import { formatMoney } from '@/lib/format';
 import { Tag, Percent, DollarSign, Plus } from 'lucide-react';
@@ -42,6 +45,15 @@ interface Discount {
   starts_at?: string | null;
   ends_at?: string | null;
   created_at?: string;
+}
+
+// #273 — the status segment a Discounts saved view can capture.
+type DiscountStatusFilter = 'all' | 'active' | 'inactive';
+
+// #273 — the filter combination a saved view captures for the Discounts book.
+interface DiscountFilterPreset {
+  search: string;
+  status: DiscountStatusFilter;
 }
 
 interface DiscountFormData {
@@ -99,12 +111,28 @@ export default function DiscountManagement() {
   const [selectedDiscount, setSelectedDiscount] = useState<Discount | null>(null);
   const [formData, setFormData] = useState<DiscountFormData>(emptyForm);
   const [submitting, setSubmitting] = useState(false);
+  // #273 (Productivity follow-up — saved filters): the search/status combination
+  // a power user can pin under a name and re-apply in one click.
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<DiscountStatusFilter>('all');
+  const savedFilters = useSavedFilters<DiscountFilterPreset>('dxr.savedfilters.discounts');
 
   const { t, tt, isRTL, language } = useLanguage();
 
+  // #273 — narrow the book by code search + active/inactive segment before it
+  // reaches the table and the selection helper, so both stay in sync with what
+  // the operator sees.
+  const filteredDiscounts = discounts.filter((d) => {
+    const matchesSearch = !search.trim() || d.code.toLowerCase().includes(search.trim().toLowerCase());
+    const active = d.is_active !== false;
+    const matchesStatus =
+      statusFilter === 'all' || (statusFilter === 'active' ? active : !active);
+    return matchesSearch && matchesStatus;
+  });
+
   // #231 (Productivity — bulk ops): multi-row selection for batch actions via the
   // shared useBulkSelection hook. The list is unpaginated, so the "page" is the
-  // whole set; the bulk bar surfaces once anything is selected.
+  // whole filtered set; the bulk bar surfaces once anything is selected.
   const {
     selectedIds,
     allPageSelected,
@@ -112,7 +140,7 @@ export default function DiscountManagement() {
     toggle: toggleSelect,
     toggleAllOnPage: toggleSelectAllOnPage,
     clear: clearSelection,
-  } = useBulkSelection<string>(discounts.map((d) => d.id));
+  } = useBulkSelection<string>(filteredDiscounts.map((d) => d.id));
 
   useEffect(() => {
     loadDiscounts();
@@ -565,6 +593,46 @@ export default function DiscountManagement() {
         />
       </div>
 
+      {/* #273 (Productivity — saved filters): search by code, segment by status,
+          and pin the combination under a name to re-apply it in one click. */}
+      <SearchField
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={t('search_discounts')}
+      />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="flex items-center gap-1 text-sm text-muted-foreground">
+          {t('filter_by_status')}:
+        </span>
+        {(['all', 'active', 'inactive'] as DiscountStatusFilter[]).map((s) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setStatusFilter(s)}
+            className={`rounded-full px-3 py-1 text-xs ${
+              statusFilter === s ? 'bg-brand text-white' : 'bg-muted text-foreground/90'
+            }`}
+          >
+            {t(s)}
+          </button>
+        ))}
+      </div>
+
+      <SavedFilterBar<DiscountFilterPreset>
+        saved={savedFilters.saved}
+        onApply={(v) => {
+          setSearch(v.search);
+          setStatusFilter(v.status);
+        }}
+        onSave={(name) => savedFilters.save(name, { search, status: statusFilter })}
+        onRemove={savedFilters.remove}
+        saveLabel={t('saved_views_save')}
+        namePlaceholder={t('saved_views_name_placeholder')}
+        applyTitle={(name) => t('saved_views_apply').replace('{name}', name)}
+        removeLabel={(name) => t('saved_views_remove').replace('{name}', name)}
+      />
+
       {/* #231 bulk-action bar: surfaces once any row is selected. */}
       {selectedIds.size > 0 && (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5">
@@ -586,7 +654,7 @@ export default function DiscountManagement() {
       <DataTable
         className="dxr-tile p-0"
         columns={discountColumns}
-        rows={discounts}
+        rows={filteredDiscounts}
         rowKey={(discount) => discount.id}
         empty={t('no_discounts')}
       />
