@@ -306,7 +306,9 @@ export default function StoreSettings() {
               {t('bt_change_warning_desc')}
               {pendingType && (
                 <span className="mt-2 block font-semibold text-foreground">
-                  {typeLabel(currentType)} → {typeLabel(pendingType)}
+                  {typeLabel(currentType)}{' '}
+                  <span className="inline-block rtl:-scale-x-100" aria-hidden="true">→</span>{' '}
+                  {typeLabel(pendingType)}
                 </span>
               )}
             </AlertDialogDescription>
