@@ -8,6 +8,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import ErrorState from '@/components/states/ErrorState';
+import LoadingState from '@/components/states/LoadingState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import { useLanguage } from '@/lib/i18n';
@@ -176,12 +177,7 @@ export default function PackageManagement() {
         </Button>
       </PageHeading>
 
-      {loading && (
-        <div className="flex items-center justify-center py-20">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-brand border-t-transparent" />
-          <span className="ms-3 text-muted-foreground">{t('loading')}</span>
-        </div>
-      )}
+      {loading && <LoadingState />}
 
       {!loading && denied && <PermissionDenied />}
       {!loading && !denied && loadError && <ErrorState onRetry={fetchPackages} />}
