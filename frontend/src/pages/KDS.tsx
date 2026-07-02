@@ -329,8 +329,14 @@ export default function KDS() {
             <Radio className="h-3 w-3" />
             {streamLive ? t('kds_live') : t('kds_reconnecting')}
           </Badge>
-          <Badge className="bg-muted text-foreground gap-1">
-            <ChefHat className="h-3 w-3" /> {allDayQty}
+          {/* A11y (ISSUE-226): the ChefHat carried the "all-day items" meaning
+              visually only; name the badge so a screen reader announces what the
+              number counts rather than a bare quantity (WCAG 1.3.1 / 4.1.2). */}
+          <Badge
+            className="bg-muted text-foreground gap-1"
+            aria-label={t('kds_all_day').replace('{count}', String(allDayQty))}
+          >
+            <ChefHat className="h-3 w-3" aria-hidden="true" /> {allDayQty}
           </Badge>
           <Dialog open={addStationOpen} onOpenChange={setAddStationOpen}>
             <DialogTrigger asChild>
