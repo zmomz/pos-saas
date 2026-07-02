@@ -70,6 +70,13 @@ export default function KDS() {
   const [denied, setDenied] = useState(false);
   const [streamLive, setStreamLive] = useState(false);
 
+  // a11y (#226 · SR pass): the polite live-region text announcing the most
+  // recently fired order. A `fired` event silently adds a card to the board;
+  // this narrates it so a screen-reader cook knows a new order arrived. The
+  // order reference is included so two consecutive fires re-announce (a polite
+  // region only speaks when its text changes).
+  const [kdsAnnouncement, setKdsAnnouncement] = useState('');
+
   const [addStationOpen, setAddStationOpen] = useState(false);
   const [stationForm, setStationForm] = useState<{ name: string; name_ar: string }>({
     name: '',
@@ -150,7 +157,10 @@ export default function KDS() {
       });
       es.addEventListener('fired', (e) => {
         try {
-          upsert(JSON.parse((e as MessageEvent).data).card);
+          const card = JSON.parse((e as MessageEvent).data).card as KdsCard;
+          upsert(card);
+          // Narrate the new order to assistive tech (see kdsAnnouncement).
+          setKdsAnnouncement(`${t('kds_new_order_announce')}: ${t('kds_order')} #${card.order_ticket_id}`);
         } catch {
           /* ignore */
         }
@@ -176,7 +186,7 @@ export default function KDS() {
       cancelled = true;
       es?.close();
     };
-  }, [denied, boardStatus]);
+  }, [denied, boardStatus, t]);
 
   // Poll fallback: when the live stream isn't connected, refresh on a timer so
   // the board never goes stale (the SSE path makes this a no-op while connected).
@@ -313,6 +323,17 @@ export default function KDS() {
 
   return (
     <div className="animate-fade-up space-y-6">
+      {/* a11y (#226 · SR pass): polite live region narrating newly-fired orders
+          for screen-reader cooks. Visually hidden; announces on text change. */}
+      <div
+        data-testid="kds-announcer"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {kdsAnnouncement}
+      </div>
       {/* Header */}
       <PageHeading
         title={t('kds')}
