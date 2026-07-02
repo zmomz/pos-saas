@@ -36,10 +36,11 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { useFavorites } from '@/hooks/useFavorites';
 import SavedFilterBar from '@/components/dashboard/rx/SavedFilterBar';
 import { useSavedFilters } from '@/hooks/useSavedFilters';
 import { formatMoney, formatDateTime } from '@/lib/format';
-import { Plus, Users, UserPlus, Download, ShieldOff, BarChart3, Tag, History, ShieldCheck } from 'lucide-react';
+import { Plus, Users, UserPlus, Download, ShieldOff, BarChart3, Tag, History, ShieldCheck, Star } from 'lucide-react';
 
 interface Customer {
   id: string;
@@ -111,6 +112,11 @@ export default function CustomerManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState('');
   const [tagFilter, setTagFilter] = useState<string>('');
+  // #273 (Productivity follow-up — entity favorites): star individual customers
+  // (persisted per-book in localStorage) and narrow the book to just the pinned
+  // records with the "Favorites only" toggle.
+  const favorites = useFavorites('dxr.favorites.customers');
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   // #273 (Productivity follow-up) — the saved-filter machinery, first wired on
   // Products, extended to the Customers book: pin a search+segment combination
   // under a name and re-apply it in one click. Preset captures both dimensions.
@@ -170,7 +176,8 @@ export default function CustomerManagement() {
       c.phone?.toLowerCase().includes(term) ||
       c.email?.toLowerCase().includes(term);
     const matchesTag = !tagFilter || (Array.isArray(c.tags) && c.tags.includes(tagFilter));
-    return matchesSearch && matchesTag;
+    const matchesFavorite = !favoritesOnly || favorites.isFavorite(c.id);
+    return matchesSearch && matchesTag && matchesFavorite;
   });
 
   // #231 (Productivity — bulk ops): multi-row selection for batch actions via the
@@ -614,6 +621,26 @@ export default function CustomerManagement() {
       ),
     },
     {
+      // #273 entity favorites: per-row star toggle. Pinned rows fill gold.
+      key: 'favorite',
+      className: 'w-0',
+      header: '',
+      cell: (customer) => {
+        const pinned = favorites.isFavorite(customer.id);
+        return (
+          <button
+            type="button"
+            onClick={() => favorites.toggle(customer.id)}
+            aria-pressed={pinned}
+            aria-label={`${pinned ? t('favorite_remove') : t('favorite_add')}: ${customer.name}`}
+            className="rounded-md p-1 text-muted-foreground hover:text-gold"
+          >
+            <Star className={pinned ? 'h-4 w-4 fill-gold text-gold' : 'h-4 w-4'} />
+          </button>
+        );
+      },
+    },
+    {
       key: 'name',
       header: tt('name', 'Name'),
       className: 'font-medium text-foreground',
@@ -814,6 +841,20 @@ export default function CustomerManagement() {
         applyTitle={(name) => t('saved_views_apply').replace('{name}', name)}
         removeLabel={(name) => t('saved_views_remove').replace('{name}', name)}
       />
+
+      {/* #273 entity favorites — narrow the book to just the starred customers. */}
+      <button
+        type="button"
+        onClick={() => setFavoritesOnly((v) => !v)}
+        aria-pressed={favoritesOnly}
+        className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1 text-xs ${
+          favoritesOnly ? 'bg-brand text-white' : 'bg-muted text-foreground/90'
+        }`}
+      >
+        <Star className={favoritesOnly ? 'h-3.5 w-3.5 fill-current' : 'h-3.5 w-3.5'} />
+        {t('favorites_only')}
+        {favorites.count > 0 && <span className="tabular-nums opacity-80">({favorites.count})</span>}
+      </button>
 
       {/* Segment filter (CRM-04 / F-039) — filter the book by tag */}
       {allTags.length > 0 && (
