@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ElementType } from 'react';
-import { Search, Clock } from 'lucide-react';
+import { Search, Clock, Star } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 export interface PaletteItem {
   icon: ElementType;
@@ -45,6 +46,20 @@ interface CommandPaletteProps {
   recentSearchesKey?: string;
   /** header for the recent-searches group */
   recentLabel?: string;
+  /**
+   * localStorage key for pinned favorites (#231). When supplied, every static
+   * nav / quick-action item gains a star toggle; starred labels are remembered
+   * and surface under a "Favorites" group at the very top on a blank query, so
+   * a power user reaches their most-used pages in one keystroke. Live /search
+   * hits and the Recent chips are never favouritable. Omit it and no star shows.
+   */
+  favoritesKey?: string;
+  /** header for the favorites group */
+  favoritesLabel?: string;
+  /** accessible verb for the "pin" star toggle (item label is appended) */
+  favoriteAddLabel?: string;
+  /** accessible verb for the "unpin" star toggle (item label is appended) */
+  favoriteRemoveLabel?: string;
 }
 
 // Debounce so a fast typist fires one /search call, not one per keystroke.
@@ -53,8 +68,12 @@ const SEARCH_DEBOUNCE_MS = 180;
 // Keep the recent list short so it stays a shortcut, not a scroll.
 const MAX_RECENT = 6;
 
-// Read the persisted recent-search terms, tolerating a missing/corrupt entry.
-function readRecent(key?: string): string[] {
+// Keep the pinned list short so Favorites stays a shortcut, not a second rail.
+const MAX_FAVORITES = 8;
+
+// Read a persisted string list (recent terms / favorite labels), tolerating a
+// missing or corrupt entry.
+function readStringList(key?: string): string[] {
   if (!key) return [];
   try {
     const raw = localStorage.getItem(key);
@@ -81,13 +100,18 @@ export default function CommandPalette({
   searchErrorLabel = 'Search failed',
   recentSearchesKey,
   recentLabel = 'Recent',
+  favoritesKey,
+  favoritesLabel = 'Favorites',
+  favoriteAddLabel = 'Add to favorites',
+  favoriteRemoveLabel = 'Remove from favorites',
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [resultGroups, setResultGroups] = useState<PaletteGroup[]>([]);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(false);
-  const [recent, setRecent] = useState<string[]>(() => readRecent(recentSearchesKey));
+  const [recent, setRecent] = useState<string[]>(() => readStringList(recentSearchesKey));
+  const [favorites, setFavorites] = useState<string[]>(() => readStringList(favoritesKey));
   // Monotonic request id: a slow response for a stale query is discarded so the
   // list always reflects the latest keystroke, never an out-of-order reply.
   const reqIdRef = useRef(0);
@@ -173,6 +197,41 @@ export default function CommandPalette({
     [recentSearchesKey],
   );
 
+  // Pin / unpin a nav destination by label, persisting the list so it survives
+  // a reload. New pins go to the front (most-recent-first), capped. No-op unless
+  // the caller opted into a favorites key.
+  const toggleFavorite = useCallback(
+    (label: string) => {
+      if (!favoritesKey) return;
+      setFavorites((prev) => {
+        const next = prev.includes(label)
+          ? prev.filter((f) => f !== label)
+          : [label, ...prev].slice(0, MAX_FAVORITES);
+        try {
+          localStorage.setItem(favoritesKey, JSON.stringify(next));
+        } catch {
+          /* storage full / unavailable — keep the in-memory list anyway */
+        }
+        return next;
+      });
+    },
+    [favoritesKey],
+  );
+
+  // Favorites group: only on a blank query, resolving each pinned label back to
+  // its live item from the static groups. A pin whose destination no longer
+  // exists (renamed/removed nav item) is silently dropped, never a dead row.
+  const favoritesGroup = useMemo<PaletteGroup | null>(() => {
+    if (!favoritesKey || q.trim() || favorites.length === 0) return null;
+    const byLabel = new Map<string, PaletteItem>();
+    for (const g of groups) for (const it of g.items) byLabel.set(it.label, it);
+    const items = favorites
+      .map((label) => byLabel.get(label))
+      .filter((it): it is PaletteItem => Boolean(it));
+    if (items.length === 0) return null;
+    return { label: favoritesLabel, items };
+  }, [favoritesKey, q, favorites, groups, favoritesLabel]);
+
   // Recent-search group: only on a blank query, and only once there's history.
   const recentGroup = useMemo<PaletteGroup | null>(() => {
     if (q.trim() || recent.length === 0) return null;
@@ -195,11 +254,18 @@ export default function CommandPalette({
       .filter((g) => g.items.length > 0);
   }, [q, groups]);
 
-  // Recent searches (blank query only), then live backend hits, then the
-  // filtered static nav/quick-action groups.
-  const displayGroups = useMemo(
-    () => [...(recentGroup ? [recentGroup] : []), ...resultGroups, ...filtered],
-    [recentGroup, resultGroups, filtered],
+  // Favorites (blank query only), then recent searches (blank query only), then
+  // live backend hits, then the filtered static nav/quick-action groups. Only
+  // the favorites + static groups are favouritable — the Recent chips and live
+  // /search hits carry no stable pin identity.
+  const sections = useMemo(
+    () => [
+      ...(favoritesGroup ? [{ group: favoritesGroup, favouritable: true }] : []),
+      ...(recentGroup ? [{ group: recentGroup, favouritable: false }] : []),
+      ...resultGroups.map((group) => ({ group, favouritable: false })),
+      ...filtered.map((group) => ({ group, favouritable: true })),
+    ],
+    [favoritesGroup, recentGroup, resultGroups, filtered],
   );
 
   return (
@@ -252,33 +318,55 @@ export default function CommandPalette({
                   {searchingLabel}
                 </div>
               )}
-              {!searching && !searchError && displayGroups.length === 0 && (
+              {!searching && !searchError && sections.length === 0 && (
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">No matches</div>
               )}
-              {displayGroups.map((g) => (
+              {sections.map(({ group: g, favouritable }) => (
                 <div key={g.label} className="p-1">
                   <div className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.12em] rtl:tracking-normal text-muted-foreground">
                     {g.label}
                   </div>
                   {g.items.map((it) => {
                     const Icon = it.icon;
+                    // Star toggles only render when the caller opted into
+                    // favorites AND the item lives in a favouritable group.
+                    const showStar = Boolean(favoritesKey) && favouritable;
+                    const pinned = favorites.includes(it.label);
                     return (
-                      <button
+                      <div
                         key={it.label}
-                        type="button"
-                        onClick={() => {
-                          // A committed action on a non-blank query is a "real"
-                          // search worth remembering (#231).
-                          recordSearch(q);
-                          it.onSelect?.();
-                          if (!it.keepOpen) setOpen(false);
-                        }}
-                        className="flex w-full items-center gap-3 rounded-[11px] px-3 py-2.5 text-start text-sm font-semibold text-foreground transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10"
+                        className="group flex w-full items-center rounded-[11px] transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10"
                       >
-                        <Icon className="h-[18px] w-[18px] text-muted-foreground" />
-                        {it.label}
-                        {it.kbd && <span className="ms-auto font-mono text-[11px] text-muted-foreground">{it.kbd}</span>}
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // A committed action on a non-blank query is a "real"
+                            // search worth remembering (#231).
+                            recordSearch(q);
+                            it.onSelect?.();
+                            if (!it.keepOpen) setOpen(false);
+                          }}
+                          className="flex min-w-0 flex-1 items-center gap-3 rounded-[11px] px-3 py-2.5 text-start text-sm font-semibold text-foreground"
+                        >
+                          <Icon className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
+                          <span className="truncate">{it.label}</span>
+                          {it.kbd && <span className="ms-auto font-mono text-[11px] text-muted-foreground">{it.kbd}</span>}
+                        </button>
+                        {showStar && (
+                          <button
+                            type="button"
+                            onClick={() => toggleFavorite(it.label)}
+                            aria-pressed={pinned}
+                            aria-label={`${pinned ? favoriteRemoveLabel : favoriteAddLabel}: ${it.label}`}
+                            className="me-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-colors hover:text-gold"
+                          >
+                            <Star
+                              className={cn('h-4 w-4', pinned && 'fill-gold text-gold')}
+                              aria-hidden="true"
+                            />
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>

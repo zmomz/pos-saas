@@ -515,6 +515,10 @@ const Shell: React.FC = () => {
             searchErrorLabel={t('ops_load_error')}
             recentSearchesKey="pos_recent_searches"
             recentLabel={t('recent_searches')}
+            favoritesKey="pos_favorites"
+            favoritesLabel={t('favorites')}
+            favoriteAddLabel={t('favorite_add')}
+            favoriteRemoveLabel={t('favorite_remove')}
           />
 
           {/* A11y (#226): the unread state is signalled by a color-only red dot,
