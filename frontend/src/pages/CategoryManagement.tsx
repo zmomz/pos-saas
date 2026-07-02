@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { getCategories, createCategory, updateCategory, deleteCategory } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
+import { undoableAction } from '@/lib/undo';
 import LoadingState from '@/components/states/LoadingState';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import ErrorState from '@/components/states/ErrorState';
@@ -141,19 +142,38 @@ export default function CategoryManagement() {
     setDeleteOpen(true);
   }
 
-  async function handleDeleteCategory() {
+  // #231 (Productivity — undo): deleting a category is deferred behind an undo
+  // window. We drop the row (and any children) optimistically and only hit the
+  // server once the window elapses; an undo cancels the commit outright so a
+  // mis-click never reaches the backend and no restore round-trip is needed.
+  function handleDeleteCategory() {
     if (!selectedCategory) return;
-    setSubmitting(true);
-    try {
-      await deleteCategory(selectedCategory.id);
-      setDeleteOpen(false);
-      setSelectedCategory(null);
-      await loadCategories();
-    } catch (err) {
-      console.error('Failed to delete category:', err);
-    } finally {
-      setSubmitting(false);
-    }
+    const category = selectedCategory;
+    setDeleteOpen(false);
+    setSelectedCategory(null);
+    // Optimistic removal of the row and any descendants; the server still holds
+    // the rows until (and unless) the deferred commit fires, so a refetch
+    // reliably restores them on undo.
+    setCategories((prev) =>
+      prev.filter((c) => c.id !== category.id && c.parent_id !== category.id)
+    );
+    undoableAction({
+      message: tt('category_deleted', 'Category deleted'),
+      undoLabel: tt('action_undo', 'Undo'),
+      onUndo: () => {
+        loadCategories();
+      },
+      onCommit: async () => {
+        try {
+          await deleteCategory(category.id);
+          await loadCategories();
+        } catch (err) {
+          console.error('Failed to delete category:', err);
+          // Commit failed — restore the rows so the operator isn't misled.
+          loadCategories();
+        }
+      },
+    });
   }
 
   function renderForm(onSubmit: () => void, submitLabel: string) {
