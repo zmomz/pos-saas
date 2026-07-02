@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBusinessProfile } from '@/contexts/BusinessProfileContext';
 import { useLanguage } from '@/lib/i18n';
@@ -150,6 +150,16 @@ const OnboardingTour: React.FC = () => {
     setIsVisible(false);
   };
 
+  // The dialog panel, focused when the tour opens so a keyboard / screen-reader
+  // user lands *inside* the modal instead of on whatever sits behind the inert
+  // backdrop (WCAG 2.4.3). The dialog carries tabIndex={-1} so it can hold focus
+  // without joining the tab order.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!isVisible) return;
+    dialogRef.current?.focus();
+  }, [isVisible]);
+
   // Keyboard parity with the click-the-backdrop dismissal (WCAG 2.1.1): while
   // the tour is open, Escape finishes it. Registered on the document so it
   // fires regardless of where focus currently sits.
@@ -178,10 +188,13 @@ const OnboardingTour: React.FC = () => {
 
       {/* Tooltip */}
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="onboarding-tour-title"
-        className="absolute z-[10000] w-[320px] bg-white dark:bg-card rounded-xl shadow-2xl border border-border dark:border-input p-5 animate-in fade-in duration-300"
+        aria-describedby="onboarding-tour-desc"
+        tabIndex={-1}
+        className="absolute z-[10000] w-[320px] bg-white dark:bg-card rounded-xl shadow-2xl border border-border dark:border-input p-5 animate-in fade-in duration-300 focus:outline-none"
         style={{ top: tooltipPosition.top, left: tooltipPosition.left }}
       >
         {/* Close button */}
@@ -212,7 +225,10 @@ const OnboardingTour: React.FC = () => {
         >
           {t(step.titleKey)}
         </h3>
-        <p className="text-sm text-muted-foreground dark:text-foreground/90 mb-4 leading-relaxed">
+        <p
+          id="onboarding-tour-desc"
+          className="text-sm text-muted-foreground dark:text-foreground/90 mb-4 leading-relaxed"
+        >
           {t(step.descKey)}
         </p>
 
