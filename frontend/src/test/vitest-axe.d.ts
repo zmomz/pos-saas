@@ -10,6 +10,10 @@ import 'vitest';
 import type { AxeMatchers } from 'vitest-axe/matchers';
 
 declare module 'vitest' {
+  // Empty bodies are required: this is interface-merging module augmentation,
+  // not a redundant subtype — the members come from AxeMatchers.
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface Assertion<T = any> extends AxeMatchers {}
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
   interface AsymmetricMatchersContaining extends AxeMatchers {}
 }
