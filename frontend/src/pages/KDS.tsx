@@ -237,6 +237,10 @@ export default function KDS() {
     try {
       await recallKdsTicket(card.id);
       await load();
+      // Narrate the confirmed recall to assistive tech (see kdsAnnouncement):
+      // the card silently returned to the active line, so a screen-reader cook
+      // needs the cue — mirrors the bump / fired-order announcers.
+      setKdsAnnouncement(`${t('kds_recall_announce')}: ${t('kds_order')} #${card.order_ticket_id}`);
     } catch (err) {
       console.error(t('kds_recall_error'), err);
       toast.error(t('kds_recall_error'));
