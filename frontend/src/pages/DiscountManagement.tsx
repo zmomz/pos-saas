@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Select,
   SelectContent,
@@ -24,6 +25,7 @@ import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataT
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { undoableAction } from '@/lib/undo';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
 import LoadingState from '@/components/states/LoadingState';
 import { formatMoney } from '@/lib/format';
 import { Tag, Percent, DollarSign, Plus } from 'lucide-react';
@@ -99,6 +101,18 @@ export default function DiscountManagement() {
   const [submitting, setSubmitting] = useState(false);
 
   const { t, tt, isRTL, language } = useLanguage();
+
+  // #231 (Productivity — bulk ops): multi-row selection for batch actions via the
+  // shared useBulkSelection hook. The list is unpaginated, so the "page" is the
+  // whole set; the bulk bar surfaces once anything is selected.
+  const {
+    selectedIds,
+    allPageSelected,
+    isSelected,
+    toggle: toggleSelect,
+    toggleAllOnPage: toggleSelectAllOnPage,
+    clear: clearSelection,
+  } = useBulkSelection<string>(discounts.map((d) => d.id));
 
   useEffect(() => {
     loadDiscounts();
@@ -241,6 +255,34 @@ export default function DiscountManagement() {
     });
   }
 
+  // #231 (Productivity — bulk ops + undo): delete every selected discount in one
+  // action. Mirrors the single-row delete: rows drop optimistically and the
+  // deletes are deferred behind the undo window, so an undo cancels the whole
+  // batch before it reaches the server and no restore round-trip is needed.
+  function handleBulkDelete() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    clearSelection();
+    setDiscounts((prev) => prev.filter((d) => !ids.includes(d.id)));
+    undoableAction({
+      message: `${ids.length} ${tt('discounts_deleted', 'discounts deleted')}`,
+      undoLabel: tt('action_undo', 'Undo'),
+      onUndo: () => {
+        loadDiscounts();
+      },
+      onCommit: async () => {
+        try {
+          await Promise.all(ids.map((id) => deleteDiscount(id)));
+          await loadDiscounts();
+        } catch (err) {
+          console.error('Failed to bulk-delete discounts:', err);
+          // Commit failed — restore the rows so the operator isn't misled.
+          loadDiscounts();
+        }
+      },
+    });
+  }
+
   function renderForm(onSubmit: () => void, submitLabel: string) {
     return (
       <div className="space-y-4">
@@ -364,6 +406,24 @@ export default function DiscountManagement() {
   }
 
   const discountColumns: DataTableColumn<Discount>[] = [
+    {
+      key: 'select',
+      className: 'w-0',
+      header: (
+        <Checkbox
+          checked={allPageSelected}
+          onCheckedChange={toggleSelectAllOnPage}
+          aria-label={tt('select_all', 'Select all')}
+        />
+      ),
+      cell: (discount) => (
+        <Checkbox
+          checked={isSelected(discount.id)}
+          onCheckedChange={() => toggleSelect(discount.id)}
+          aria-label={`${tt('select_row', 'Select')} ${discount.code}`}
+        />
+      ),
+    },
     {
       key: 'code',
       header: t('code'),
@@ -504,6 +564,23 @@ export default function DiscountManagement() {
           tone="violet"
         />
       </div>
+
+      {/* #231 bulk-action bar: surfaces once any row is selected. */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5">
+          <span className="text-sm font-medium text-brand-800" role="status" aria-live="polite">
+            {selectedIds.size} {tt('selected', 'selected')}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleBulkDelete}
+            className="border-danger/40 text-danger hover:bg-danger/10"
+          >
+            {tt('delete_selected', 'Delete selected')}
+          </Button>
+        </div>
+      )}
 
       {/* Table */}
       <DataTable
