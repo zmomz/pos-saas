@@ -154,6 +154,8 @@ interface ProductFilterPreset {
 export default function ProductManagement() {
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
+  // #231 (Productivity — bulk ops): ids of rows selected for a batch action.
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [productsError, setProductsError] = useState(false);
   const [search, setSearch] = useState('');
@@ -286,6 +288,59 @@ export default function ProductManagement() {
   }
 
   const pagedProducts = products.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // #231 (Productivity — bulk ops): multi-row selection for batch actions. The
+  // header checkbox toggles every row on the current page; the bulk bar surfaces
+  // once anything is selected.
+  const pageIds = pagedProducts.map((p) => p.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+
+  function toggleSelect(id: number) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  // #231 (Productivity — bulk ops + undo): archive every selected product in one
+  // action. Mirrors the single-row delete: rows drop optimistically and the
+  // archive is deferred behind the undo window, so an undo cancels the whole
+  // batch before it reaches the server and no restore round-trip is needed.
+  function handleBulkDelete() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setSelectedIds(new Set());
+    setProducts((prev) => prev.filter((p) => !ids.includes(p.id)));
+    undoableAction({
+      message: `${ids.length} ${tt('products_deleted', 'products deleted')}`,
+      undoLabel: tt('action_undo', 'Undo'),
+      onUndo: () => {
+        loadProducts();
+      },
+      onCommit: async () => {
+        try {
+          await Promise.all(ids.map((id) => deleteProduct(id)));
+          await loadProducts();
+          await loadSuggestions();
+        } catch (err) {
+          console.error('Failed to bulk-delete products:', err);
+          // Commit failed — restore the rows so the operator isn't misled.
+          loadProducts();
+        }
+      },
+    });
+  }
 
   const totalProducts = products.length;
   const lowStockCount = products.filter(isLowStock).length;
@@ -759,6 +814,24 @@ export default function ProductManagement() {
 
   const productColumns: DataTableColumn<Product>[] = [
     {
+      key: 'select',
+      className: 'w-0',
+      header: (
+        <Checkbox
+          checked={allPageSelected}
+          onCheckedChange={toggleSelectAllOnPage}
+          aria-label={tt('select_all', 'Select all')}
+        />
+      ),
+      cell: (product) => (
+        <Checkbox
+          checked={selectedIds.has(product.id)}
+          onCheckedChange={() => toggleSelect(product.id)}
+          aria-label={`${tt('select_row', 'Select')} ${product.name}`}
+        />
+      ),
+    },
+    {
       header: tt('name', 'Name'),
       cell: (product) => (
         <div className="flex items-center gap-3">
@@ -1115,6 +1188,23 @@ export default function ProductManagement() {
         <ErrorState message={t('products_load_error')} onRetry={loadProducts} />
       ) : (
         <>
+          {/* #231 (Productivity — bulk ops): batch-action bar; appears once any
+              row is selected. */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5">
+              <span className="text-sm font-medium text-brand-800" role="status" aria-live="polite">
+                {selectedIds.size} {tt('selected', 'selected')}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkDelete}
+                className="border-danger/40 text-danger hover:bg-danger/10"
+              >
+                {tt('delete_selected', 'Delete selected')}
+              </Button>
+            </div>
+          )}
           <div className="dxr-tile p-0">
             <DataTable
               columns={productColumns}
