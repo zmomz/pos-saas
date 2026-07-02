@@ -2715,7 +2715,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | top_customer | sales_today | average_order | payment_mix | vat_owed | refunds | expenses | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
+    intent: str  # top_product | top_margin | top_customer | sales_today | average_order | payment_mix | vat_owed | refunds | expenses | net_profit | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2787,6 +2787,21 @@ _ASSISTANT_INTENTS = [
                       "who is my best customer", "who are my best customers",
                       "أفضل عميل", "أفضل عملاء", "أفضل العملاء", "أهم العملاء",
                       "أكبر عميل", "أكثر عميل"]),
+    # Checked before ``top_margin`` so a *whole-business* profit question ("net
+    # profit", "am I making money", "bottom line") routes to the P&L bottom line
+    # rather than being swallowed by ``top_margin``'s bare "profit"/"margin" (and
+    # the Arabic "صافي الربح" by its bare "الربح"). Its vocabulary is the overall
+    # profit/loss of the business, distinct from the most-profitable *product*
+    # (top_margin) and from expenses/refunds/takings on their own. Deliberately no
+    # bare "profitable" cue, so "most profitable product" still routes to top_margin.
+    ("net_profit", ["net profit", "net loss", "net income", "bottom line",
+                    "profit and loss", "profit & loss", "p&l", "p and l",
+                    "am i profitable", "are we profitable", "how profitable",
+                    "profitability", "making a profit", "make a profit",
+                    "am i making money", "are we making money", "making money",
+                    "overall profit", "total profit", "am i in profit",
+                    "صافي الربح", "صافي الأرباح", "الربح الصافي", "هل أنا رابح",
+                    "هل نحن رابحون", "الربح والخسارة", "هل المحل رابح"]),
     # Checked before ``top_product`` so a *profit* question ("most profitable",
     # "highest margin") routes to the gross-margin winner rather than the
     # units-sold winner — and so the Arabic "الأكثر ربحية" isn't swallowed by
@@ -2877,6 +2892,7 @@ _ASSISTANT_SUGGESTIONS = [
     "How much VAT have I collected?",
     "How much did I refund?",
     "How much did I spend on expenses?",
+    "Am I making a profit?",
     "What is my sales forecast for next week?",
     "Is business up or down this week?",
     "When are we busiest?",
@@ -3303,6 +3319,67 @@ async def _assistant_expenses(db: AsyncSession, client_id: int, lookback: int = 
         "lookback_days": lookback,
         "categories": categories,
         "top_category": categories[0] if categories else None,
+    }
+
+
+async def _assistant_net_profit(db: AsyncSession, client_id: int, lookback: int = 30) -> dict:
+    """Net profit over the last ``lookback`` days — the bottom line (#228).
+
+    The whole-business money read the assistant was missing: net sales (gross
+    takings minus refunds) minus recorded operating expenses. It ties the
+    money-*in* reads (takings/refunds) to the money-*out* read (expenses) into a
+    single profit-or-loss figure, which is the question an owner actually asks.
+    Uses the same money rule as the sibling reports — a credit note is a refund
+    that nets against gross takings, held/voided and out-of-window tickets are not
+    selling activity — over the transactions, plus the tenant's own expenses
+    ledger. An empty window yields zeroed figures and a break-even answer rather
+    than a divide-by-zero on the margin.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    is_credit_note = Transactions.status == "credit_note"
+    gross_sales = func.coalesce(
+        func.sum(case((is_credit_note, 0.0), else_=Transactions.total_amount)), 0.0
+    )
+    refund_total = func.coalesce(
+        func.sum(case((is_credit_note, Transactions.total_amount), else_=0.0)), 0.0
+    )
+    sales_row = (
+        await db.execute(
+            select(gross_sales, refund_total).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+        )
+    ).one()
+    expense_total = (
+        await db.execute(
+            select(func.coalesce(func.sum(Expenses.amount), 0.0)).where(
+                and_(
+                    Expenses.client_id == client_id,
+                    Expenses.created_at >= start_date,
+                )
+            )
+        )
+    ).scalar_one()
+
+    gross = round(float(sales_row[0] or 0.0), 2)
+    refunds = round(float(sales_row[1] or 0.0), 2)
+    net_sales = round(gross - refunds, 2)
+    expenses = round(float(expense_total or 0.0), 2)
+    net_profit = round(net_sales - expenses, 2)
+    return {
+        "lookback_days": lookback,
+        "gross_sales": gross,
+        "refund_total": refunds,
+        "net_sales": net_sales,
+        "expense_total": expenses,
+        "net_profit": net_profit,
+        "profit_margin": round(net_profit / net_sales, 4) if net_sales else 0.0,
+        "is_profitable": net_profit > 0,
     }
 
 
@@ -4120,6 +4197,37 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=ex, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "net_profit":
+        pl = await _assistant_net_profit(db, client_id)
+        days = pl["lookback_days"]
+        if pl["net_sales"] == 0.0 and pl["expense_total"] == 0.0:
+            answer = (
+                f"No sales or expenses in the last {days} days yet, so there's no "
+                f"profit or loss to report."
+            )
+        elif pl["net_profit"] > 0:
+            answer = (
+                f"Over the last {days} days you made a net profit of "
+                f"{pl['net_profit']:.2f} — {pl['net_sales']:.2f} in net sales minus "
+                f"{pl['expense_total']:.2f} in expenses "
+                f"({pl['profit_margin'] * 100:.1f}% margin)."
+            )
+        elif pl["net_profit"] < 0:
+            answer = (
+                f"Over the last {days} days you ran a net loss of "
+                f"{abs(pl['net_profit']):.2f} — {pl['net_sales']:.2f} in net sales "
+                f"minus {pl['expense_total']:.2f} in expenses."
+            )
+        else:
+            answer = (
+                f"Over the last {days} days you broke even — {pl['net_sales']:.2f} in "
+                f"net sales exactly matched {pl['expense_total']:.2f} in expenses."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=pl, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "vat_owed":

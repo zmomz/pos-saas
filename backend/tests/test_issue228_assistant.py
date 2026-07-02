@@ -1348,3 +1348,153 @@ async def test_assistant_expenses_is_tenant_scoped(client):
     assert body["intent"] == "expenses"
     assert body["data"]["expense_total"] == 0.0
     assert body["data"]["top_category"] is None
+
+
+# ---------------------------------------------------------------------------
+# net_profit — "am I making a profit?" (#228 — M9·AI)
+# ---------------------------------------------------------------------------
+
+
+async def test_assistant_reports_net_profit(client):
+    """"What is my net profit?" → the bottom line over the last 30 days: net sales
+    (gross takings minus refunds) minus recorded expenses. Held/voided and
+    out-of-window tickets never count; refunds net gross takings down; the answer
+    names the net profit figure and reads as a profit."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Gross takings: 600 + 400 = 1000 across two counted orders.
+    await _seed_sale(client_id, user["id"], days_ago=2, total=600.0, items=[], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=400.0, items=[], idx=2)
+    # A refund (credit note) of 100 nets gross down → net sales 900.
+    await _seed_sale(client_id, user["id"], days_ago=4, total=100.0, items=[],
+                     status="credit_note", idx=3)
+    # Held/voided are not selling activity; out-of-window is out of window.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=5000.0, items=[],
+                     status="held", idx=4)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=7000.0, items=[],
+                     status="voided", idx=5)
+    await _seed_sale(client_id, user["id"], days_ago=40, total=9999.0, items=[], idx=6)
+
+    # Expenses in window: Rent 300 + Salaries 200 = 500. Net profit = 900 − 500 = 400.
+    await _seed_expense(client_id, user["id"], days_ago=2, amount=300.0,
+                        category="Rent", idx=1)
+    await _seed_expense(client_id, user["id"], days_ago=3, amount=200.0,
+                        category="Salaries", idx=2)
+    await _seed_expense(client_id, user["id"], days_ago=40, amount=9999.0,
+                        category="Rent", idx=3)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my net profit", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "net_profit"
+    data = body["data"]
+    assert abs(data["gross_sales"] - 1000.0) < 0.01
+    assert abs(data["refund_total"] - 100.0) < 0.01
+    assert abs(data["net_sales"] - 900.0) < 0.01
+    assert abs(data["expense_total"] - 500.0) < 0.01
+    assert abs(data["net_profit"] - 400.0) < 0.01
+    assert abs(data["profit_margin"] - round(400.0 / 900.0, 4)) < 0.0001
+    assert data["is_profitable"] is True
+    assert data["lookback_days"] == 30
+    assert "400" in body["answer"]
+
+
+async def test_assistant_net_profit_reads_as_a_loss(client):
+    """When expenses outrun net sales the bottom line is negative and the answer
+    reads as a loss, never a divide-by-zero or a stray positive figure."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=2, total=300.0, items=[], idx=1)
+    await _seed_expense(client_id, user["id"], days_ago=2, amount=1000.0,
+                        category="Rent", idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=am I making money", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "net_profit"
+    data = body["data"]
+    assert abs(data["net_sales"] - 300.0) < 0.01
+    assert abs(data["net_profit"] - (-700.0)) < 0.01
+    assert data["is_profitable"] is False
+    assert "loss" in body["answer"].lower()
+
+
+async def test_assistant_net_profit_handles_no_activity(client):
+    """No sales and no expenses → zeroed figures, break-even answer, HTTP 200,
+    never a divide-by-zero on the margin."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what is my net profit", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "net_profit"
+    data = body["data"]
+    assert data["net_sales"] == 0.0
+    assert data["expense_total"] == 0.0
+    assert data["net_profit"] == 0.0
+    assert data["profit_margin"] == 0.0
+    assert data["is_profitable"] is False
+
+
+async def test_assistant_net_profit_routes_in_arabic(client):
+    """Arabic "صافي الربح" routes to net_profit, not swallowed by top_margin's bare
+    "الربح" cue."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=500.0, items=[], idx=1)
+    await _seed_expense(client_id, user["id"], days_ago=1, amount=200.0,
+                        category="Rent", idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=ما هو صافي الربح", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "net_profit"
+    assert abs(body["data"]["net_profit"] - 300.0) < 0.01
+
+
+async def test_assistant_net_profit_does_not_steal_top_margin(client):
+    """The "most profitable *product*" question must still route to top_margin — the
+    net_profit cues are deliberately more specific than a bare "profitable"."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=which product is most profitable", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "top_margin"
+
+
+async def test_assistant_net_profit_is_tenant_scoped(client):
+    """One tenant's sales and expenses never leak into another's net-profit read."""
+    user_a, token_a, client_a = await make_client_account(client)
+    user_b, token_b, client_b = await make_client_account(client)
+
+    # Tenant B has takings and expenses; tenant A has nothing.
+    await _seed_sale(client_b, user_b["id"], days_ago=1, total=800.0, items=[], idx=1)
+    await _seed_expense(client_b, user_b["id"], days_ago=1, amount=300.0,
+                        category="Rent", idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=am I profitable",
+        headers=auth_headers(token_a),
+    )
+    body = resp.json()
+    assert body["intent"] == "net_profit"
+    assert body["data"]["net_sales"] == 0.0
+    assert body["data"]["expense_total"] == 0.0
+    assert body["data"]["net_profit"] == 0.0

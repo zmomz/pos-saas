@@ -118,6 +118,7 @@ const DEFAULT_SUGGESTIONS = [
   'How much VAT have I collected?',
   'How much did I refund?',
   'How much did I spend on expenses?',
+  'Am I making a profit?',
   'What is my sales forecast for next week?',
   'Is business up or down this week?',
   'When are we busiest?',
