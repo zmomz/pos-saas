@@ -392,9 +392,9 @@ export default function GuidedStocktake() {
             </DialogHeader>
             <div className="space-y-4 py-2">
               <div className="space-y-2">
-                <label className="text-sm text-muted-foreground">{t('stocktake_branch_scope')}</label>
+                <label htmlFor="stocktake-branch-scope" className="text-sm text-muted-foreground">{t('stocktake_branch_scope')}</label>
                 <Select value={startBranch} onValueChange={setStartBranch}>
-                  <SelectTrigger className="bg-muted border-input text-foreground">
+                  <SelectTrigger id="stocktake-branch-scope" className="bg-muted border-input text-foreground">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-card border-input">
@@ -408,8 +408,9 @@ export default function GuidedStocktake() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <label className="text-sm text-muted-foreground">{t('stocktake_name')}</label>
+                <label htmlFor="stocktake-name" className="text-sm text-muted-foreground">{t('stocktake_name')}</label>
                 <Input
+                  id="stocktake-name"
                   value={startName}
                   onChange={(e) => setStartName(e.target.value)}
                   placeholder={t('stocktake_name_placeholder')}
