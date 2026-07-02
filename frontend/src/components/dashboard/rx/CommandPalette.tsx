@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ElementType } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ElementType,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { Search, Clock, Star } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -112,6 +120,11 @@ export default function CommandPalette({
   const [searchError, setSearchError] = useState(false);
   const [recent, setRecent] = useState<string[]>(() => readStringList(recentSearchesKey));
   const [favorites, setFavorites] = useState<string[]>(() => readStringList(favoritesKey));
+  // Index of the arrow-key-highlighted result across the whole flattened list
+  // (-1 = nothing highlighted). Drives the combobox `aria-activedescendant`
+  // pointer and each row's `aria-selected` so keyboard-only / SR users can walk
+  // the palette without Tab-cycling every row (ISSUE-226).
+  const [active, setActive] = useState(-1);
   // Monotonic request id: a slow response for a stale query is discarded so the
   // list always reflects the latest keystroke, never an out-of-order reply.
   const reqIdRef = useRef(0);
@@ -268,6 +281,56 @@ export default function CommandPalette({
     [favoritesGroup, recentGroup, resultGroups, filtered],
   );
 
+  // The activatable rows, flattened in render order, so a single running index
+  // can drive Arrow navigation across section boundaries. `offsets[s]` is the
+  // flat index of section s's first row.
+  const flatItems = useMemo(
+    () => sections.flatMap(({ group: g }) => g.items),
+    [sections],
+  );
+  const sectionOffsets = useMemo(() => {
+    const offs: number[] = [];
+    let acc = 0;
+    for (const { group: g } of sections) {
+      offs.push(acc);
+      acc += g.items.length;
+    }
+    return offs;
+  }, [sections]);
+  const listId = 'command-palette-listbox';
+  const activeId = active >= 0 && active < flatItems.length ? `${listId}-opt-${active}` : undefined;
+
+  // A new result set (query/results changed) drops any stale highlight — the
+  // old index no longer maps to the same row.
+  useEffect(() => {
+    setActive(-1);
+  }, [sections]);
+
+  // Arrow / Enter navigation while focus is in the search box. Wraps at both
+  // ends so the list is a loop; Enter runs the highlighted row's action (and
+  // remembers the query, mirroring a mouse click). Handled on the input rather
+  // than the window listener so it never fights the page's own key bindings.
+  const onInputKeyDown = useCallback(
+    (e: ReactKeyboardEvent<HTMLInputElement>) => {
+      const n = flatItems.length;
+      if (n === 0) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActive((i) => (i + 1) % n);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive((i) => (i <= 0 ? n - 1 : i - 1));
+      } else if (e.key === 'Enter' && active >= 0 && active < n) {
+        e.preventDefault();
+        const it = flatItems[active];
+        recordSearch(q);
+        it.onSelect?.();
+        if (!it.keepOpen) setOpen(false);
+      }
+    },
+    [flatItems, active, q, recordSearch],
+  );
+
   return (
     <>
       <button
@@ -302,12 +365,18 @@ export default function CommandPalette({
                 autoFocus
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
+                onKeyDown={onInputKeyDown}
                 placeholder={placeholder}
                 aria-label={placeholder}
+                role="combobox"
+                aria-expanded={flatItems.length > 0}
+                aria-controls={listId}
+                aria-autocomplete="list"
+                aria-activedescendant={activeId}
                 className="w-full bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
               />
             </div>
-            <div className="max-h-[50vh] overflow-y-auto p-2">
+            <div id={listId} className="max-h-[50vh] overflow-y-auto p-2">
               {searchError && (
                 <div className="px-3 py-3 text-center text-sm text-warning" role="status">
                   {searchErrorLabel}
@@ -321,24 +390,32 @@ export default function CommandPalette({
               {!searching && !searchError && sections.length === 0 && (
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">No matches</div>
               )}
-              {sections.map(({ group: g, favouritable }) => (
+              {sections.map(({ group: g, favouritable }, sIdx) => (
                 <div key={g.label} className="p-1">
                   <div className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.12em] rtl:tracking-normal text-muted-foreground">
                     {g.label}
                   </div>
-                  {g.items.map((it) => {
+                  {g.items.map((it, iIdx) => {
                     const Icon = it.icon;
                     // Star toggles only render when the caller opted into
                     // favorites AND the item lives in a favouritable group.
                     const showStar = Boolean(favoritesKey) && favouritable;
                     const pinned = favorites.includes(it.label);
+                    // Flat index across all sections drives the Arrow highlight.
+                    const optIndex = sectionOffsets[sIdx] + iIdx;
+                    const isActive = optIndex === active;
                     return (
                       <div
                         key={it.label}
-                        className="group flex w-full items-center rounded-[11px] transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10"
+                        className={cn(
+                          'group flex w-full items-center rounded-[11px] transition-colors hover:bg-brand-50 hover:text-brand-700 dark:hover:bg-brand-500/10',
+                          isActive && 'bg-brand-50 text-brand-700 dark:bg-brand-500/10',
+                        )}
                       >
                         <button
                           type="button"
+                          id={`${listId}-opt-${optIndex}`}
+                          aria-selected={isActive}
                           onClick={() => {
                             // A committed action on a non-blank query is a "real"
                             // search worth remembering (#231).

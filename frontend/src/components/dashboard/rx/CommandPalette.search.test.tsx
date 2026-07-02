@@ -27,7 +27,7 @@ describe('CommandPalette live /search (#231)', () => {
     const user = userEvent.setup();
     openWith({ onSearch });
 
-    await user.type(screen.getByRole('textbox'), 'widget');
+    await user.type(screen.getByRole('combobox'), 'widget');
 
     expect(await screen.findByRole('button', { name: 'Widget · 123' })).toBeInTheDocument();
     await waitFor(() => expect(onSearch).toHaveBeenCalledWith('widget'));
@@ -41,7 +41,7 @@ describe('CommandPalette live /search (#231)', () => {
     const user = userEvent.setup();
     openWith({ onSearch });
 
-    await user.type(screen.getByRole('textbox'), 'widget');
+    await user.type(screen.getByRole('combobox'), 'widget');
     await user.click(await screen.findByRole('button', { name: 'Widget · 123' }));
 
     expect(onSelect).toHaveBeenCalledOnce();
@@ -53,7 +53,7 @@ describe('CommandPalette live /search (#231)', () => {
     const user = userEvent.setup();
     openWith({ onSearch, searchErrorLabel: 'Search failed' });
 
-    await user.type(screen.getByRole('textbox'), 'widget');
+    await user.type(screen.getByRole('combobox'), 'widget');
 
     expect(await screen.findByText('Search failed')).toBeInTheDocument();
   });

@@ -40,7 +40,7 @@ describe('CommandPalette a11y (ISSUE-226)', () => {
   it('names the search field by its accessible name', () => {
     open({ placeholder: 'Find a command' });
     expect(
-      screen.getByRole('textbox', { name: 'Find a command' }),
+      screen.getByRole('combobox', { name: 'Find a command' }),
     ).toBeInTheDocument();
   });
 });
