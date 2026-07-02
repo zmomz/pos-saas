@@ -128,12 +128,19 @@ export default function CommandPalette({
   // Monotonic request id: a slow response for a stale query is discarded so the
   // list always reflects the latest keystroke, never an out-of-order reply.
   const reqIdRef = useRef(0);
+  // The element focused just before the palette opened. Restored on close so a
+  // keyboard-only user returns to where they were instead of the top of the
+  // document (WCAG 2.4.3). Covers every open path — trigger click and ⌘K alike.
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setOpen((o) => !o);
+        setOpen((o) => {
+          if (!o) restoreFocusRef.current = document.activeElement as HTMLElement | null;
+          return !o;
+        });
       }
       if (e.key === 'Escape') setOpen(false);
     };
@@ -150,6 +157,10 @@ export default function CommandPalette({
       setResultGroups([]);
       setSearching(false);
       setSearchError(false);
+      // The dialog has unmounted by the time this effect runs, so returning
+      // focus to the opener never fights the palette's own autofocus.
+      restoreFocusRef.current?.focus();
+      restoreFocusRef.current = null;
     }
   }, [open]);
 
@@ -335,7 +346,10 @@ export default function CommandPalette({
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={(e) => {
+          restoreFocusRef.current = e.currentTarget;
+          setOpen(true);
+        }}
         className="hidden items-center gap-2.5 rounded-full border border-input bg-card px-4 py-2.5 text-[13.5px] text-muted-foreground shadow-sm transition-colors hover:border-brand md:flex"
       >
         <Search className="h-4 w-4" />
