@@ -23,6 +23,7 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
+import { undoableAction } from '@/lib/undo';
 import LoadingState from '@/components/states/LoadingState';
 import { formatMoney } from '@/lib/format';
 import { Tag, Percent, DollarSign, Plus } from 'lucide-react';
@@ -209,19 +210,35 @@ export default function DiscountManagement() {
     setDeleteOpen(true);
   }
 
-  async function handleDeleteDiscount() {
+  // #231 (Productivity — undo): deleting a discount is deferred behind an undo
+  // window. We drop the row optimistically and only hit the server once the
+  // window elapses; an undo cancels the commit outright so a mis-click never
+  // reaches the backend and no restore round-trip is needed.
+  function handleDeleteDiscount() {
     if (!selectedDiscount) return;
-    setSubmitting(true);
-    try {
-      await deleteDiscount(selectedDiscount.id);
-      setDeleteOpen(false);
-      setSelectedDiscount(null);
-      await loadDiscounts();
-    } catch (err) {
-      console.error('Failed to delete discount:', err);
-    } finally {
-      setSubmitting(false);
-    }
+    const discount = selectedDiscount;
+    setDeleteOpen(false);
+    setSelectedDiscount(null);
+    // Optimistic removal; the server still holds the row until (and unless) the
+    // deferred commit fires, so a refetch reliably restores it on undo.
+    setDiscounts((prev) => prev.filter((d) => d.id !== discount.id));
+    undoableAction({
+      message: tt('discount_deleted', 'Discount deleted'),
+      undoLabel: tt('action_undo', 'Undo'),
+      onUndo: () => {
+        loadDiscounts();
+      },
+      onCommit: async () => {
+        try {
+          await deleteDiscount(discount.id);
+          await loadDiscounts();
+        } catch (err) {
+          console.error('Failed to delete discount:', err);
+          // Commit failed — restore the row so the operator isn't misled.
+          loadDiscounts();
+        }
+      },
+    });
   }
 
   function renderForm(onSubmit: () => void, submitLabel: string) {
