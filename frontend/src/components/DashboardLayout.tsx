@@ -465,7 +465,7 @@ const Shell: React.FC = () => {
             title={t('logout')}
             className="flex h-[42px] w-[42px] items-center justify-center rounded-[13px] text-muted-foreground transition-colors hover:bg-danger/10 hover:text-danger"
           >
-            <LogOut className="h-5 w-5" />
+            <LogOut className="h-5 w-5 rtl:-scale-x-100" />
           </button>
 
           {/* Avatar */}
