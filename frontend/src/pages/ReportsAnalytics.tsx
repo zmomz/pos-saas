@@ -495,8 +495,28 @@ export default function ReportsAnalytics() {
     return <span className="text-muted-foreground text-sm tabular-nums">#{rank}</span>;
   };
 
+  // ISSUE-226 (a11y · SR pass) — the per-panel loading placeholders are purely
+  // visual `<Skeleton>`s, so assistive tech got no cue while report data was in
+  // flight. Announce the aggregate loading state through a live region (WCAG
+  // 4.1.3): "loading" while any panel fetches, then "loaded" once all settle.
+  const anyLoading =
+    loadingSales ||
+    loadingProducts ||
+    loadingPayments ||
+    loadingJournal ||
+    loadingMargin ||
+    loadingVat ||
+    loadingInventory ||
+    loadingRefundsVoids ||
+    loadingDiscounts ||
+    loadingPnl ||
+    loadingCashFlow;
+
   return (
     <div className="animate-fade-up space-y-6">
+      <p className="sr-only" role="status" aria-live="polite">
+        {anyLoading ? tr('reports_loading') : tr('reports_loaded')}
+      </p>
       {/* Header */}
       <PageHeading
         title={tr('reports_analytics')}
