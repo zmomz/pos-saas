@@ -35,6 +35,8 @@ import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
+import SavedFilterBar from '@/components/dashboard/rx/SavedFilterBar';
+import { useSavedFilters } from '@/hooks/useSavedFilters';
 import { formatMoney, formatDateTime } from '@/lib/format';
 import { Plus, Users, UserPlus, Download, ShieldOff, BarChart3, Tag, History, ShieldCheck } from 'lucide-react';
 
@@ -64,6 +66,12 @@ interface CustomerFormData {
   marketing_consent: boolean;
   // Edited as a comma-separated string; split into the tags array on submit.
   tags: string;
+}
+
+// #273 — the filter combination a saved view captures for the Customers book.
+interface CustomerFilterPreset {
+  search: string;
+  tagFilter: string;
 }
 
 const emptyForm: CustomerFormData = {
@@ -99,6 +107,10 @@ export default function CustomerManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [actionError, setActionError] = useState('');
   const [tagFilter, setTagFilter] = useState<string>('');
+  // #273 (Productivity follow-up) — the saved-filter machinery, first wired on
+  // Products, extended to the Customers book: pin a search+segment combination
+  // under a name and re-apply it in one click. Preset captures both dimensions.
+  const savedFilters = useSavedFilters<CustomerFilterPreset>('dxr.savedfilters.customers');
 
   // CRM-04 (F-039): per-customer computed insights dialog.
   const [insightsOpen, setInsightsOpen] = useState(false);
@@ -781,6 +793,22 @@ export default function CustomerManagement() {
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder={tt('search_customers', 'Search by name, phone, or email...')}
+      />
+
+      {/* #273 (Productivity — saved filters): pin the current search/segment
+          combination under a name and re-apply it in one click. */}
+      <SavedFilterBar<CustomerFilterPreset>
+        saved={savedFilters.saved}
+        onApply={(v) => {
+          setSearch(v.search);
+          setTagFilter(v.tagFilter);
+        }}
+        onSave={(name) => savedFilters.save(name, { search, tagFilter })}
+        onRemove={savedFilters.remove}
+        saveLabel={t('saved_views_save')}
+        namePlaceholder={t('saved_views_name_placeholder')}
+        applyTitle={(name) => t('saved_views_apply').replace('{name}', name)}
+        removeLabel={(name) => t('saved_views_remove').replace('{name}', name)}
       />
 
       {/* Segment filter (CRM-04 / F-039) — filter the book by tag */}
