@@ -77,9 +77,25 @@ export default function DataTable<T>({
             </tr>
           ) : (
             rows.map((row, ri) => (
+              // a11y (#226 · keyboard-only nav): a clickable row must be a real,
+              // focusable control — expose it as a button-role tab stop that
+              // fires on Enter/Space, so a keyboard/SR operator can activate it,
+              // not just a mouse. Non-clickable rows stay plain markup.
               <tr
                 key={rowKey(row, ri)}
                 onClick={onRowClick ? () => onRowClick(row, ri) : undefined}
+                onKeyDown={
+                  onRowClick
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onRowClick(row, ri);
+                        }
+                      }
+                    : undefined
+                }
+                role={onRowClick ? 'button' : undefined}
+                tabIndex={onRowClick ? 0 : undefined}
                 className={cn(onRowClick && 'cursor-pointer')}
               >
                 {columns.map((col, ci) => (
