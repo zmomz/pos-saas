@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from core.database import get_db
 from dependencies.auth import get_current_user
 from models.clients import Clients
@@ -118,6 +119,31 @@ class DocumentSummaryResponse(BaseModel):
     needs_attention: bool
     onboarded: bool
     gateway_configured: bool
+
+
+class RetentionGap(BaseModel):
+    """A fiscal document that breaks retention coverage."""
+
+    document_id: int
+    invoice_number: str
+    icv: Optional[int] = None
+    reason: str  # "missing_retention_until" | "window_expired"
+    retention_until: Optional[datetime] = None
+
+
+class RetentionAttestationResponse(BaseModel):
+    """ZATCA 6-year retention coverage attested over the tenant's fiscal docs."""
+
+    total: int
+    with_retention: int
+    missing_retention: int
+    within_window: int
+    expired: int
+    coverage_start: Optional[datetime] = None  # earliest retention_until
+    coverage_end: Optional[datetime] = None    # latest retention_until
+    retention_years: int
+    gaps: List[RetentionGap]
+    attested: bool
 
 
 class IntegrityResponse(BaseModel):
@@ -489,6 +515,96 @@ async def documents_summary(
         needs_attention=stuck > 0,
         onboarded=bool(creds and creds.onboarded),
         gateway_configured=zatca.resolve_base_url() is not None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# 6-year retention attestation (ISSUE-271)
+# ---------------------------------------------------------------------------
+@router.get("/retention-attestation", response_model=RetentionAttestationResponse)
+async def retention_attestation(
+    current_user: UserResponse = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Attest ZATCA statutory retention coverage over the client's fiscal docs.
+
+    ``retention_until`` is stamped on every document at signing time
+    (``ZATCA_RETENTION_YEARS``, default 6). This endpoint attests that coverage:
+    every archived invoice/credit-note carries a ``retention_until``, how many
+    are still *within* their window, the earliest/latest coverage dates, and it
+    flags any gap — a document missing ``retention_until`` (never stamped, or
+    tampered) or whose window has already **expired**. Kept deliberately separate
+    from the audit-log regulatory export (different audience/integrity model).
+
+    ``attested`` is the single go/no-go signal: true only when there is at least
+    one document and none breaks coverage (no missing stamp, none expired).
+    """
+    client = await _get_client(db, str(current_user.id))
+    now = datetime.now(timezone.utc)
+
+    result = await db.execute(
+        select(ZatcaDocuments)
+        .where(ZatcaDocuments.client_id == client.id)
+        .order_by(ZatcaDocuments.icv.asc(), ZatcaDocuments.id.asc())
+    )
+    docs = result.scalars().all()
+
+    with_retention = 0
+    within_window = 0
+    expired = 0
+    coverage_start: Optional[datetime] = None
+    coverage_end: Optional[datetime] = None
+    gaps: List[RetentionGap] = []
+
+    for doc in docs:
+        ru = doc.retention_until
+        if ru is None:
+            gaps.append(
+                RetentionGap(
+                    document_id=doc.id,
+                    invoice_number=doc.invoice_number,
+                    icv=doc.icv,
+                    reason="missing_retention_until",
+                    retention_until=None,
+                )
+            )
+            continue
+
+        with_retention += 1
+        # Stored TZ-aware, but SQLite round-trips can drop tzinfo — normalise.
+        ru_cmp = ru if ru.tzinfo is not None else ru.replace(tzinfo=timezone.utc)
+        if coverage_start is None or ru_cmp < coverage_start:
+            coverage_start = ru_cmp
+        if coverage_end is None or ru_cmp > coverage_end:
+            coverage_end = ru_cmp
+
+        if ru_cmp > now:
+            within_window += 1
+        else:
+            expired += 1
+            gaps.append(
+                RetentionGap(
+                    document_id=doc.id,
+                    invoice_number=doc.invoice_number,
+                    icv=doc.icv,
+                    reason="window_expired",
+                    retention_until=ru_cmp,
+                )
+            )
+
+    total = len(docs)
+    missing_retention = total - with_retention
+    return RetentionAttestationResponse(
+        total=total,
+        with_retention=with_retention,
+        missing_retention=missing_retention,
+        within_window=within_window,
+        expired=expired,
+        coverage_start=coverage_start,
+        coverage_end=coverage_end,
+        retention_years=int(getattr(settings, "zatca_retention_years", None) or 6),
+        gaps=gaps,
+        attested=total > 0 and not gaps,
     )
 
 
