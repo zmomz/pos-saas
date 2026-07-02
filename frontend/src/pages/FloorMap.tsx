@@ -311,8 +311,9 @@ export default function FloorMap() {
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">{t('zone_name')}</label>
+                  <label htmlFor="zone-name" className="text-sm text-muted-foreground mb-1 block">{t('zone_name')}</label>
                   <Input
+                    id="zone-name"
                     value={zoneForm.name}
                     onChange={(e) => setZoneForm({ name: e.target.value })}
                     className="bg-muted border-input text-foreground"
@@ -341,8 +342,9 @@ export default function FloorMap() {
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">{t('table_name')}</label>
+                  <label htmlFor="table-name" className="text-sm text-muted-foreground mb-1 block">{t('table_name')}</label>
                   <Input
+                    id="table-name"
                     value={tableForm.name}
                     onChange={(e) => setTableForm((f) => ({ ...f, name: e.target.value }))}
                     placeholder="T1"
@@ -350,8 +352,9 @@ export default function FloorMap() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">{t('table_seats')}</label>
+                  <label htmlFor="table-seats" className="text-sm text-muted-foreground mb-1 block">{t('table_seats')}</label>
                   <Input
+                    id="table-seats"
                     type="number"
                     value={tableForm.seats}
                     onChange={(e) => setTableForm((f) => ({ ...f, seats: parseInt(e.target.value) || 0 }))}
@@ -360,7 +363,7 @@ export default function FloorMap() {
                 </div>
                 {zones.length > 0 && (
                   <div>
-                    <label className="text-sm text-muted-foreground mb-1 block">{t('all_zones')}</label>
+                    <label htmlFor="table-zone" className="text-sm text-muted-foreground mb-1 block">{t('all_zones')}</label>
                     <Select
                       value={tableForm.zone_id != null ? String(tableForm.zone_id) : 'none'}
                       onValueChange={(v) =>
@@ -370,7 +373,7 @@ export default function FloorMap() {
                         }))
                       }
                     >
-                      <SelectTrigger className="w-full bg-muted border border-input text-foreground rounded-md p-2">
+                      <SelectTrigger id="table-zone" className="w-full bg-muted border border-input text-foreground rounded-md p-2">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
