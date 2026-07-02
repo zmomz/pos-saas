@@ -225,6 +225,19 @@ const Shell: React.FC = () => {
   // unread state. The backend /notifications/list response carries unread_count.
   const [unreadCount, setUnreadCount] = useState(0);
 
+  // Keyboard-only nav audit (#226 · WCAG 2.1.1): the mobile drawer can be
+  // dismissed by clicking the backdrop, but that is a pointer-only gesture.
+  // Escape gives keyboard users the same standard dismissal the command palette
+  // and every dialog already honour. Bound only while the drawer is open.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawerOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [drawerOpen]);
+
   useEffect(() => {
     let active = true;
     getNotifications()
