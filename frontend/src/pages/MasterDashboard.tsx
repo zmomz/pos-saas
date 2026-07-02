@@ -561,16 +561,16 @@ export default function MasterDashboard() {
           <DialogHeader><DialogTitle>{tt('create_agent', 'Create Agent')}</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="mb-1 block text-sm text-muted-foreground">{t('company_name')}</label>
-              <Input placeholder={t('company_name')} value={newAgentForm.company_name} onChange={(e) => setNewAgentForm({ ...newAgentForm, company_name: e.target.value })} />
+              <label htmlFor="create-agent-company" className="mb-1 block text-sm text-muted-foreground">{t('company_name')}</label>
+              <Input id="create-agent-company" placeholder={t('company_name')} value={newAgentForm.company_name} onChange={(e) => setNewAgentForm({ ...newAgentForm, company_name: e.target.value })} />
             </div>
             <div>
-              <label className="mb-1 block text-sm text-muted-foreground">{t('email')}</label>
-              <Input placeholder={t('email')} type="email" value={newAgentForm.email} onChange={(e) => setNewAgentForm({ ...newAgentForm, email: e.target.value })} />
+              <label htmlFor="create-agent-email" className="mb-1 block text-sm text-muted-foreground">{t('email')}</label>
+              <Input id="create-agent-email" placeholder={t('email')} type="email" value={newAgentForm.email} onChange={(e) => setNewAgentForm({ ...newAgentForm, email: e.target.value })} />
             </div>
             <div>
-              <label className="mb-1 block text-sm text-muted-foreground">{t('phone')}</label>
-              <Input placeholder={t('phone')} value={newAgentForm.phone} onChange={(e) => setNewAgentForm({ ...newAgentForm, phone: e.target.value })} />
+              <label htmlFor="create-agent-phone" className="mb-1 block text-sm text-muted-foreground">{t('phone')}</label>
+              <Input id="create-agent-phone" placeholder={t('phone')} value={newAgentForm.phone} onChange={(e) => setNewAgentForm({ ...newAgentForm, phone: e.target.value })} />
             </div>
             <div>
               <label className="mb-1 block text-sm text-muted-foreground">{t('package')}</label>
