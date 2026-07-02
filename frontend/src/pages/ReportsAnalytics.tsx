@@ -1597,7 +1597,11 @@ export default function ReportsAnalytics() {
                         <TableCell className="text-foreground text-xs">
                           {r.invoice_number || '—'}
                           {r.original_invoice ? (
-                            <span className="text-muted-foreground"> ← {r.original_invoice}</span>
+                            <span className="text-muted-foreground">
+                              {' '}
+                              <span aria-hidden="true" className="inline-block rtl:-scale-x-100">←</span>{' '}
+                              {r.original_invoice}
+                            </span>
                           ) : null}
                         </TableCell>
                         <TableCell className="text-foreground/90 text-xs">{r.actor || '—'}</TableCell>
