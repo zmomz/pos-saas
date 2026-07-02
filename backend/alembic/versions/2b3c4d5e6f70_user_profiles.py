@@ -46,5 +46,4 @@ def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "user_profiles" not in insp.get_table_names():
         return
-    op.drop_index("ix_user_profiles_user_id", table_name="user_profiles")
     op.drop_table("user_profiles")

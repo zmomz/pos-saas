@@ -55,5 +55,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "variant_branch_stock" in insp.get_table_names():
-        op.drop_index("ix_variant_branch_stock_id", table_name="variant_branch_stock")
         op.drop_table("variant_branch_stock")

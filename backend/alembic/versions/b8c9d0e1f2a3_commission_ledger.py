@@ -59,8 +59,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "commission_ledger" in insp.get_table_names():
-        op.drop_index("ix_commission_ledger_subscription_payment_id", table_name="commission_ledger")
-        op.drop_index("ix_commission_ledger_client_id", table_name="commission_ledger")
-        op.drop_index("ix_commission_ledger_agent_id", table_name="commission_ledger")
-        op.drop_index("ix_commission_ledger_user_id", table_name="commission_ledger")
         op.drop_table("commission_ledger")

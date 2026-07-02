@@ -108,7 +108,13 @@ async def test_package_tier_seeds_client_features_to_match_tier(client):
 
 @pytest.mark.asyncio
 async def test_package_without_tier_leaves_all_client_features_enabled(client):
-    """A package with no tier provisions a client with everything enabled (no rows)."""
+    """A package with no tier gates nothing via the package: every tier feature
+    stays enabled-by-default (backward compatible).
+
+    The only row a tier-less provision seeds is the business-type ``restaurant``
+    flag (issue #201), which is independent of the package tier and is off for a
+    default *retail* merchant. Every other capability remains ungated.
+    """
     _mu, master_token = await make_master_account(client)
 
     pkg = await _create_package(client, master_token, None)
@@ -126,12 +132,20 @@ async def test_package_without_tier_leaves_all_client_features_enabled(client):
     async with db_manager.async_session_maker() as db:
         rows = (
             await db.execute(
-                select(Client_features).where(Client_features.client_id == client_id)
+                select(Client_features.feature_name, Client_features.is_enabled).where(
+                    Client_features.client_id == client_id
+                )
             )
-        ).scalars().all()
-        assert rows == []  # no disabling rows
+        ).all()
+        flags = {name: bool(enabled) for name, enabled in rows}
+        # No package tier => the only seeded row is the type-driven restaurant
+        # flag, off for a default retail merchant. No tier-gating rows exist.
+        assert flags == {"restaurant": False}
+        # Every package-tier capability is enabled-by-default; only the
+        # restaurant vertical is gated, and by business type, not the tier.
         for key in FEATURE_KEYS:
-            assert (await is_feature_enabled(db, client_id, key)) is True, key
+            expected = key != "restaurant"
+            assert (await is_feature_enabled(db, client_id, key)) is expected, key
 
 
 @pytest.mark.asyncio

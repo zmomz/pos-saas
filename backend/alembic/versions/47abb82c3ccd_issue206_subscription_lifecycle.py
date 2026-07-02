@@ -14,8 +14,8 @@ On a fresh database the baseline ``create_all`` already builds ``clients`` with
 the columns, so each add is guarded to be idempotent — it only backfills a
 database migrated to head before this revision existed.
 
-Revision ID: a1b2c3d4e5f6
-Revises: c4e5f6a7b8d9
+Revision ID: 47abb82c3ccd
+Revises: fd40c133051d
 Create Date: 2026-06-29 12:00:00.000000
 """
 from typing import Sequence, Union
@@ -25,8 +25,8 @@ from alembic import op
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
-revision: str = "a1b2c3d4e5f6"
-down_revision: Union[str, Sequence[str], None] = "c4e5f6a7b8d9"
+revision: str = "47abb82c3ccd"
+down_revision: Union[str, Sequence[str], None] = "fd40c133051d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

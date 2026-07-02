@@ -14,6 +14,8 @@ pytestmark = pytest.mark.asyncio
 
 DEFAULT_PREFS = {
     "email_alerts": True,
+    "whatsapp_alerts": False,
+    "push_alerts": False,
     "low_stock_alerts": True,
     "daily_summary": False,
     "transaction_alerts": True,
@@ -42,6 +44,8 @@ async def test_saved_preferences_persist_and_reload(client):
 
     new_prefs = {
         "email_alerts": False,
+        "whatsapp_alerts": True,
+        "push_alerts": True,
         "low_stock_alerts": True,
         "daily_summary": True,
         "transaction_alerts": False,

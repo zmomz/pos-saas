@@ -7,8 +7,8 @@ On a fresh database the baseline ``create_all`` already builds ``users`` with th
 column, so the add is guarded to be idempotent — it only backfills a database
 migrated to head before this revision existed.
 
-Revision ID: b2c3d4e5f6a7
-Revises: a1b2c3d4e5f6
+Revision ID: cac12c02fb72
+Revises: 9d2a8af2fa93
 Create Date: 2026-06-30 14:45:00.000000
 """
 from typing import Sequence, Union
@@ -18,8 +18,8 @@ from alembic import op
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
-revision: str = "b2c3d4e5f6a7"
-down_revision: Union[str, Sequence[str], None] = "a1b2c3d4e5f6"
+revision: str = "cac12c02fb72"
+down_revision: Union[str, Sequence[str], None] = "9d2a8af2fa93"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

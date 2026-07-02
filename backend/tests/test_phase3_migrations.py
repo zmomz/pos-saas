@@ -65,6 +65,35 @@ def test_autogenerate_diff_is_empty_after_upgrade(tmp_path):
     assert diff == [], f"Models drifted from migrations: {diff}"
 
 
+def test_downgrade_to_base_runs_clean(tmp_path):
+    """The whole chain reverses: ``upgrade head`` then ``downgrade base`` runs
+    every migration's downgrade, in order, without raising.
+
+    This guards against the duplicate-revision / redundant-``drop_index`` /
+    index-blocked ``drop_column`` regressions that previously made a full
+    round-trip impossible (SQLite ``OperationalError``). Tables built by the
+    ``e4f5a6b7c8d9`` create_all squash are intentionally *not* dropped on
+    downgrade (that revision documents a no-op downgrade), so this asserts the
+    pass completes and that the hand-written pre-squash tables are torn down —
+    proof the downgrades actually executed — rather than a fully empty schema.
+    """
+    db_file = tmp_path / "roundtrip.db"
+    sync_url = f"sqlite:///{db_file}"
+    cfg = _alembic_cfg(sync_url)
+
+    command.upgrade(cfg, "head")
+    command.downgrade(cfg, "base")  # must not raise
+
+    engine = create_engine(sync_url)
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    engine.dispose()
+    # The original hand-written baseline (368d6a17ebd5) drops these on downgrade;
+    # their absence proves the chain's downgrades ran end-to-end.
+    for gone in ("transactions", "products", "clients", "agents"):
+        assert gone not in tables, f"{gone} should have been dropped on downgrade"
+
+
 def _skip_alembic_version(obj, name, type_, reflected, compare_to):
     if type_ == "table" and name == "alembic_version":
         return False

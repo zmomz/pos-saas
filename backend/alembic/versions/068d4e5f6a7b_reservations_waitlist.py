@@ -80,14 +80,7 @@ def downgrade() -> None:
     existing = set(insp.get_table_names())
 
     if "waitlist_entries" in existing:
-        op.drop_index("ix_waitlist_entries_client_id", table_name="waitlist_entries")
-        op.drop_index("ix_waitlist_entries_user_id", table_name="waitlist_entries")
-        op.drop_index("ix_waitlist_entries_id", table_name="waitlist_entries")
         op.drop_table("waitlist_entries")
 
     if "reservations" in existing:
-        op.drop_index("ix_reservations_table_id", table_name="reservations")
-        op.drop_index("ix_reservations_client_id", table_name="reservations")
-        op.drop_index("ix_reservations_user_id", table_name="reservations")
-        op.drop_index("ix_reservations_id", table_name="reservations")
         op.drop_table("reservations")

@@ -51,7 +51,4 @@ def downgrade() -> None:
     insp = inspect(op.get_bind())
 
     if "user_sessions" in insp.get_table_names():
-        op.drop_index("ix_user_sessions_id", table_name="user_sessions")
-        op.drop_index("ix_user_sessions_jti", table_name="user_sessions")
-        op.drop_index("ix_user_sessions_user_id", table_name="user_sessions")
         op.drop_table("user_sessions")

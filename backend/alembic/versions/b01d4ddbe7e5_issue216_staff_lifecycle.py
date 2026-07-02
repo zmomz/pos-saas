@@ -11,8 +11,8 @@ On a fresh database the baseline ``create_all`` already builds everything at its
 current shape, so each add is guarded to be idempotent — it only backfills a
 database migrated to head before this revision existed.
 
-Revision ID: d1e2f3a4b5c6
-Revises: c4e5f6a7b8d9
+Revision ID: b01d4ddbe7e5
+Revises: d8e9f0a1b2c3
 Create Date: 2026-06-30 12:00:00.000000
 """
 from typing import Sequence, Union
@@ -22,8 +22,8 @@ from alembic import op
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
-revision: str = "d1e2f3a4b5c6"
-down_revision: Union[str, Sequence[str], None] = "c4e5f6a7b8d9"
+revision: str = "b01d4ddbe7e5"
+down_revision: Union[str, Sequence[str], None] = "d8e9f0a1b2c3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -40,6 +40,14 @@ def _drop_column_if_present(insp, table: str, column: str) -> None:
     if table in insp.get_table_names():
         existing = {c["name"] for c in insp.get_columns(table)}
         if column in existing:
+            # Drop any index covering this column first — SQLite rejects a
+            # DROP COLUMN while an index still references it (the column can be
+            # indexed via the ORM's ``index=True`` baked into a create_table).
+            # Re-inspect live so an index a prior step already dropped is not
+            # dropped twice (a passed-in inspector may be stale).
+            for idx in inspect(op.get_bind()).get_indexes(table):
+                if column in (idx.get("column_names") or []):
+                    op.drop_index(idx["name"], table_name=table)
             op.drop_column(table, column)
 
 

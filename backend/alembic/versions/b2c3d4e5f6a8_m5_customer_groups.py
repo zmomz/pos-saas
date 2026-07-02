@@ -38,6 +38,14 @@ def _drop_column_if_present(insp, table: str, column: str) -> None:
     if table in insp.get_table_names():
         existing = {c["name"] for c in insp.get_columns(table)}
         if column in existing:
+            # Drop any index covering this column first — SQLite rejects a
+            # DROP COLUMN while an index still references it (the column can be
+            # indexed via the ORM's ``index=True`` baked into a create_table).
+            # Re-inspect live so an index a prior step already dropped is not
+            # dropped twice (a passed-in inspector may be stale).
+            for idx in inspect(op.get_bind()).get_indexes(table):
+                if column in (idx.get("column_names") or []):
+                    op.drop_index(idx["name"], table_name=table)
             op.drop_column(table, column)
 
 
@@ -62,9 +70,20 @@ def upgrade() -> None:
         insp, "customers", sa.Column("group_id", sa.Integer(), nullable=True)
     )
 
+    # The ORM declares ``group_id`` as indexed (index=True); create the matching
+    # index so the migration chain stays in sync with the model metadata. On a
+    # fresh DB create_all already built it, so guard on its absence.
+    insp = inspect(op.get_bind())
+    if "customers" in insp.get_table_names():
+        cols = {c["name"] for c in insp.get_columns("customers")}
+        idx = {i["name"] for i in insp.get_indexes("customers")}
+        if "group_id" in cols and "ix_customers_group_id" not in idx:
+            op.create_index("ix_customers_group_id", "customers", ["group_id"])
+
 
 def downgrade() -> None:
     insp = inspect(op.get_bind())
+    # _drop_column_if_present drops the ix_customers_group_id index first.
     _drop_column_if_present(insp, "customers", "group_id")
     if "customer_groups" in insp.get_table_names():
         op.drop_table("customer_groups")

@@ -10,8 +10,8 @@ tables at their current shape (the router imports the models at startup), so the
 creates are guarded to be idempotent — they only act on a database migrated to head
 before this revision existed.
 
-Revision ID: d1e2f3a4b5c6
-Revises: c4e5f6a7b8d9
+Revision ID: 9d2a8af2fa93
+Revises: 47abb82c3ccd
 Create Date: 2026-06-29 12:00:00.000000
 """
 from typing import Sequence, Union
@@ -21,8 +21,8 @@ from alembic import op
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
-revision: str = "d1e2f3a4b5c6"
-down_revision: Union[str, Sequence[str], None] = "c4e5f6a7b8d9"
+revision: str = "9d2a8af2fa93"
+down_revision: Union[str, Sequence[str], None] = "47abb82c3ccd"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -81,11 +81,7 @@ def downgrade() -> None:
     insp = inspect(op.get_bind())
 
     if "stock_count_lines" in insp.get_table_names():
-        op.drop_index("ix_stock_count_lines_user_id", table_name="stock_count_lines")
-        op.drop_index("ix_stock_count_lines_session_id", table_name="stock_count_lines")
         op.drop_table("stock_count_lines")
 
     if "stock_count_sessions" in insp.get_table_names():
-        op.drop_index("ix_stock_count_sessions_client_id", table_name="stock_count_sessions")
-        op.drop_index("ix_stock_count_sessions_user_id", table_name="stock_count_sessions")
         op.drop_table("stock_count_sessions")

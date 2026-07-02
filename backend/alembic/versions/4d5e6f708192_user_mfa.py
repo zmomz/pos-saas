@@ -45,5 +45,4 @@ def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "user_mfa" not in insp.get_table_names():
         return
-    op.drop_index("ix_user_mfa_user_id", table_name="user_mfa")
     op.drop_table("user_mfa")

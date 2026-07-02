@@ -75,10 +75,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_index(op.f("ix_zatca_documents_transaction_id"), table_name="zatca_documents")
-    op.drop_index(op.f("ix_zatca_documents_client_id"), table_name="zatca_documents")
-    op.drop_index(op.f("ix_zatca_documents_id"), table_name="zatca_documents")
     op.drop_table("zatca_documents")
-    op.drop_index(op.f("ix_zatca_credentials_client_id"), table_name="zatca_credentials")
-    op.drop_index(op.f("ix_zatca_credentials_id"), table_name="zatca_credentials")
     op.drop_table("zatca_credentials")

@@ -39,6 +39,14 @@ def _drop_column_if_present(insp, table: str, column: str) -> None:
     if table in insp.get_table_names():
         existing = {c["name"] for c in insp.get_columns(table)}
         if column in existing:
+            # Drop any index covering this column first — SQLite rejects a
+            # DROP COLUMN while an index still references it (the column can be
+            # indexed via the ORM's ``index=True`` baked into a create_table).
+            # Re-inspect live so an index a prior step already dropped is not
+            # dropped twice (a passed-in inspector may be stale).
+            for idx in inspect(op.get_bind()).get_indexes(table):
+                if column in (idx.get("column_names") or []):
+                    op.drop_index(idx["name"], table_name=table)
             op.drop_column(table, column)
 
 
@@ -88,8 +96,4 @@ def downgrade() -> None:
     _drop_column_if_present(insp, "clients", "salla_webhook_secret")
     _drop_column_if_present(insp, "clients", "salla_store_id")
     if "channel_orders" in insp.get_table_names():
-        op.drop_index("ix_channel_orders_transaction_id", table_name="channel_orders")
-        op.drop_index("ix_channel_orders_external_order_id", table_name="channel_orders")
-        op.drop_index("ix_channel_orders_client_id", table_name="channel_orders")
-        op.drop_index("ix_channel_orders_user_id", table_name="channel_orders")
         op.drop_table("channel_orders")

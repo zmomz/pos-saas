@@ -50,5 +50,4 @@ def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "store_settings" not in insp.get_table_names():
         return
-    op.drop_index("ix_store_settings_owner_user_id", table_name="store_settings")
     op.drop_table("store_settings")

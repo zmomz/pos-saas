@@ -13,7 +13,7 @@ guarded idempotently — it only acts on a database migrated to head before this
 revision existed.
 
 Revision ID: a1b2c3d4e5f7
-Revises: fd40c133051d
+Revises: cac12c02fb72
 Create Date: 2026-06-30 22:00:00.000000
 """
 from typing import Sequence, Union
@@ -24,7 +24,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = "a1b2c3d4e5f7"
-down_revision: Union[str, Sequence[str], None] = "fd40c133051d"
+down_revision: Union[str, Sequence[str], None] = "cac12c02fb72"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -43,6 +43,14 @@ def _drop_column_if_present(insp, table: str, column: str) -> None:
     if table in insp.get_table_names():
         existing = {c["name"] for c in insp.get_columns(table)}
         if column in existing:
+            # Drop any index covering this column first — SQLite rejects a
+            # DROP COLUMN while an index still references it (the column can be
+            # indexed via the ORM's ``index=True`` baked into a create_table).
+            # Re-inspect live so an index a prior step already dropped is not
+            # dropped twice (a passed-in inspector may be stale).
+            for idx in inspect(op.get_bind()).get_indexes(table):
+                if column in (idx.get("column_names") or []):
+                    op.drop_index(idx["name"], table_name=table)
             op.drop_column(table, column)
 
 

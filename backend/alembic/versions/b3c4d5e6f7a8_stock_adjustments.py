@@ -53,6 +53,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "stock_adjustments" in insp.get_table_names():
-        op.drop_index("ix_stock_adjustments_client_id", table_name="stock_adjustments")
-        op.drop_index("ix_stock_adjustments_user_id", table_name="stock_adjustments")
         op.drop_table("stock_adjustments")

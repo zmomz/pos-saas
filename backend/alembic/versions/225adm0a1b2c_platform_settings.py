@@ -42,5 +42,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "platform_settings" in insp.get_table_names():
-        op.drop_index("ix_platform_settings_key", table_name="platform_settings")
         op.drop_table("platform_settings")

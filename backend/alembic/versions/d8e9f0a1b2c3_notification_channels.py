@@ -9,7 +9,7 @@ Idempotent: skips a column that already exists (a fresh DB builds the table at
 its current shape via the baseline ``create_all``).
 
 Revision ID: d8e9f0a1b2c3
-Revises: c4e5f6a7b8d9
+Revises: d1e2f3a4b5c6
 Create Date: 2026-06-30 00:45:00.000000
 """
 from typing import Sequence, Union
@@ -20,7 +20,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = "d8e9f0a1b2c3"
-down_revision: Union[str, Sequence[str], None] = "c4e5f6a7b8d9"
+down_revision: Union[str, Sequence[str], None] = "d1e2f3a4b5c6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

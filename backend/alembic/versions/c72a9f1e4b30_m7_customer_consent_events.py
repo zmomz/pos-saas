@@ -10,7 +10,7 @@ at its current shape, so the create is guarded idempotently — it only acts on 
 database migrated to head before this revision existed.
 
 Revision ID: c72a9f1e4b30
-Revises: d8e9f0a1b2c3
+Revises: 225adm0a1b2c
 Create Date: 2026-07-01 03:20:00.000000
 """
 from typing import Sequence, Union
@@ -21,7 +21,7 @@ from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = "c72a9f1e4b30"
-down_revision: Union[str, Sequence[str], None] = "d8e9f0a1b2c3"
+down_revision: Union[str, Sequence[str], None] = "225adm0a1b2c"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

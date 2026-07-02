@@ -54,7 +54,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "printers" in insp.get_table_names():
-        op.drop_index("ix_printers_station_id", table_name="printers")
-        op.drop_index("ix_printers_client_id", table_name="printers")
-        op.drop_index("ix_printers_user_id", table_name="printers")
         op.drop_table("printers")

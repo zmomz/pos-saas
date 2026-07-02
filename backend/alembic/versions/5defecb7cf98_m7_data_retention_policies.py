@@ -10,7 +10,7 @@ On a fresh database the baseline revision's ``create_all`` already builds the
 table at its current shape, so the create is guarded idempotently — it only acts
 on a database migrated to head before this revision existed.
 
-Revision ID: e1f2a3b4c5d6
+Revision ID: 5defecb7cf98
 Revises: c72a9f1e4b30
 Create Date: 2026-07-01 03:30:00.000000
 """
@@ -21,7 +21,7 @@ from alembic import op
 from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
-revision: str = "e1f2a3b4c5d6"
+revision: str = "5defecb7cf98"
 down_revision: Union[str, Sequence[str], None] = "c72a9f1e4b30"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

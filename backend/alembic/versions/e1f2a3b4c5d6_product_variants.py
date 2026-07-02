@@ -54,7 +54,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "product_variants" in insp.get_table_names():
-        op.drop_index("ix_product_variants_product_id", table_name="product_variants")
-        op.drop_index("ix_product_variants_client_id", table_name="product_variants")
-        op.drop_index("ix_product_variants_user_id", table_name="product_variants")
         op.drop_table("product_variants")

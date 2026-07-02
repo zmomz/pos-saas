@@ -51,7 +51,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     insp = inspect(op.get_bind())
     if "notifications" in insp.get_table_names():
-        op.drop_index("ix_notifications_dedupe_key", table_name="notifications")
-        op.drop_index("ix_notifications_client_id", table_name="notifications")
-        op.drop_index("ix_notifications_user_id", table_name="notifications")
         op.drop_table("notifications")

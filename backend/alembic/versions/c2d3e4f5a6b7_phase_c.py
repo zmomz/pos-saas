@@ -43,6 +43,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_column("transactions", "payment_breakdown")
-    op.drop_index(op.f("ix_system_settings_key"), table_name="system_settings")
-    op.drop_index(op.f("ix_system_settings_id"), table_name="system_settings")
     op.drop_table("system_settings")
