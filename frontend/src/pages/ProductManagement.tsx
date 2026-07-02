@@ -48,6 +48,7 @@ import ErrorState from '@/components/states/ErrorState';
 import LoadingState from '@/components/states/LoadingState';
 import { DataPagination } from '@/components/DataPagination';
 import { useLanguage } from '@/lib/i18n';
+import { undoableAction } from '@/lib/undo';
 
 const PAGE_SIZE = 10;
 
@@ -386,20 +387,36 @@ export default function ProductManagement() {
     setDeleteOpen(true);
   }
 
-  async function handleDeleteProduct() {
+  // #231 (Productivity — undo): deleting a product archives it, but the archive
+  // is deferred behind an undo window. We drop the row optimistically and only
+  // hit the server once the window elapses; an undo cancels the commit outright
+  // so a mis-click never reaches the backend and no restore round-trip is needed.
+  function handleDeleteProduct() {
     if (!selectedProduct) return;
-    setSubmitting(true);
-    try {
-      await deleteProduct(selectedProduct.id);
-      setDeleteOpen(false);
-      setSelectedProduct(null);
-      await loadProducts();
-      await loadSuggestions();
-    } catch (err) {
-      console.error('Failed to delete product:', err);
-    } finally {
-      setSubmitting(false);
-    }
+    const product = selectedProduct;
+    setDeleteOpen(false);
+    setSelectedProduct(null);
+    // Optimistic removal; the server still holds the row until (and unless) the
+    // deferred commit fires, so a refetch reliably restores it on undo.
+    setProducts((prev) => prev.filter((p) => p.id !== product.id));
+    undoableAction({
+      message: tt('product_deleted', 'Product deleted'),
+      undoLabel: tt('action_undo', 'Undo'),
+      onUndo: () => {
+        loadProducts();
+      },
+      onCommit: async () => {
+        try {
+          await deleteProduct(product.id);
+          await loadProducts();
+          await loadSuggestions();
+        } catch (err) {
+          console.error('Failed to delete product:', err);
+          // Commit failed — restore the row so the operator isn't misled.
+          loadProducts();
+        }
+      },
+    });
   }
 
   // ISSUE-068: un-archive a soft-deleted product so it reappears in the catalog/POS.
