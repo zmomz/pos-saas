@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, useRef, type FormEvent } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -68,7 +69,10 @@ export default function Operations() {
   const [integrityError, setIntegrityError] = useState(false);
 
   // --- Global search (on demand) ---
-  const [query, setQuery] = useState('');
+  // #273 (Productivity — global-search deep-linking): a ⌘K transaction hit lands
+  // here with a ?q= seed; pre-fill the box and auto-run it (effect below).
+  const [searchParams] = useSearchParams();
+  const [query, setQuery] = useState(() => searchParams.get('q') ?? '');
   const [results, setResults] = useState<GlobalSearchResults | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(false);
@@ -123,9 +127,8 @@ export default function Operations() {
     }
   }
 
-  async function runSearch(e: FormEvent) {
-    e.preventDefault();
-    const q = query.trim();
+  const performSearch = useCallback(async (raw: string) => {
+    const q = raw.trim();
     if (!q) return;
     setSearching(true);
     setSearchError(false);
@@ -137,7 +140,23 @@ export default function Operations() {
     } finally {
       setSearching(false);
     }
+  }, []);
+
+  async function runSearch(e: FormEvent) {
+    e.preventDefault();
+    await performSearch(query);
   }
+
+  // #273 (Productivity — global-search deep-linking): when arrived at via a ⌘K
+  // hit (/ops?q=…), run the seeded query once so the record shows immediately.
+  const autoSearched = useRef(false);
+  useEffect(() => {
+    const seed = searchParams.get('q');
+    if (seed && !autoSearched.current) {
+      autoSearched.current = true;
+      performSearch(seed);
+    }
+  }, [searchParams, performSearch]);
 
   if (loading) return <LoadingState message={t('loading')} />;
 

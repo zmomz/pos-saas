@@ -42,12 +42,16 @@ describe('buildSearchGroups (#231 global search → palette)', () => {
     expect(groups[0].items[0].label).toMatch(/Widget/);
   });
 
-  it('navigates to the entity page when a hit is activated', () => {
+  it('deep-links to the specific record (pre-filtered) when a hit is activated', () => {
+    // #273 (Productivity follow-up — global-search deep-linking): a hit no longer
+    // dumps the user on the bare list page; it carries a ?q= that pre-filters the
+    // destination to the one record. The seed is the hit's most-identifying field
+    // (barcode / phone / invoice number), matching what the palette label shows.
     const navigate = vi.fn();
     const groups = buildSearchGroups(
       results({
-        products: [{ id: 1, name: 'Widget' }],
-        customers: [{ id: 7, name: 'Sara' }],
+        products: [{ id: 1, name: 'Widget', barcode: '123' }],
+        customers: [{ id: 7, name: 'Sara', phone: '0555' }],
         transactions: [{ id: 9, invoice_number: 'INV-9' }],
       }),
       navigate,
@@ -56,9 +60,28 @@ describe('buildSearchGroups (#231 global search → palette)', () => {
     groups[0].items[0].onSelect?.(); // product
     groups[1].items[0].onSelect?.(); // customer
     groups[2].items[0].onSelect?.(); // transaction
-    expect(navigate).toHaveBeenNthCalledWith(1, '/products');
-    expect(navigate).toHaveBeenNthCalledWith(2, '/customers');
-    expect(navigate).toHaveBeenNthCalledWith(3, '/ops');
+    expect(navigate).toHaveBeenNthCalledWith(1, '/products?q=123');
+    expect(navigate).toHaveBeenNthCalledWith(2, '/customers?q=0555');
+    expect(navigate).toHaveBeenNthCalledWith(3, '/ops?q=INV-9');
+  });
+
+  it('falls back to the name and URL-encodes the seed', () => {
+    const navigate = vi.fn();
+    const groups = buildSearchGroups(
+      results({
+        products: [{ id: 1, name: 'Blue Mug' }], // no barcode → name
+        customers: [{ id: 7, name: 'Al Amin' }], // no phone/email → name
+        transactions: [{ id: 9 }], // no invoice → #id
+      }),
+      navigate,
+      t,
+    );
+    groups[0].items[0].onSelect?.();
+    groups[1].items[0].onSelect?.();
+    groups[2].items[0].onSelect?.();
+    expect(navigate).toHaveBeenNthCalledWith(1, '/products?q=Blue%20Mug');
+    expect(navigate).toHaveBeenNthCalledWith(2, '/customers?q=Al%20Amin');
+    expect(navigate).toHaveBeenNthCalledWith(3, '/ops?q=9');
   });
 
   it('omits empty entity kinds so no bare group renders', () => {

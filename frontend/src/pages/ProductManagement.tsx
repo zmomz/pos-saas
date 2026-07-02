@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -157,7 +158,10 @@ export default function ProductManagement() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [productsError, setProductsError] = useState(false);
-  const [search, setSearch] = useState('');
+  // #273 (Productivity — global-search deep-linking): a ⌘K hit lands here with a
+  // ?q= seed identifying the record; pre-fill the search so the fetch narrows to it.
+  const [searchParams] = useSearchParams();
+  const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
   const [categoryFilter, setCategoryFilter] = useState('all');
   // ISSUE-068: opt in to see archived (soft-deleted) products so they can be restored.
   const [showArchived, setShowArchived] = useState(false);

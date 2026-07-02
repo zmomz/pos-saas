@@ -11,7 +11,16 @@ import type { PaletteGroup } from './CommandPalette';
  *
  * Group labels reuse the existing ops_search_* i18n keys (already in all four
  * locales), so this adds no new translation surface.
+ *
+ * #273 (Productivity follow-up — deep-linking): a hit no longer dumps the user
+ * on the bare list page. It carries a `?q=` seed — the record's most-identifying
+ * field (barcode / phone / invoice number, falling back to name / #id) — which
+ * each destination page reads to pre-filter itself down to that one record.
  */
+function deepLink(path: string, seed: string): string {
+  return `${path}?q=${encodeURIComponent(seed)}`;
+}
+
 export function buildSearchGroups(
   results: GlobalSearchResults,
   navigate: (path: string) => void,
@@ -26,7 +35,7 @@ export function buildSearchGroups(
       items: products.map((p) => ({
         icon: Package,
         label: p.barcode ? `${p.name} · ${p.barcode}` : p.name,
-        onSelect: () => navigate('/products'),
+        onSelect: () => navigate(deepLink('/products', p.barcode || p.name)),
       })),
     });
   }
@@ -39,7 +48,7 @@ export function buildSearchGroups(
         return {
           icon: UserCheck,
           label: contact ? `${c.name} · ${contact}` : c.name,
-          onSelect: () => navigate('/customers'),
+          onSelect: () => navigate(deepLink('/customers', contact || c.name)),
         };
       }),
     });
@@ -53,7 +62,7 @@ export function buildSearchGroups(
         return {
           icon: Receipt,
           label: tx.customer_name ? `${ref} · ${tx.customer_name}` : ref,
-          onSelect: () => navigate('/ops'),
+          onSelect: () => navigate(deepLink('/ops', tx.invoice_number || String(tx.id))),
         };
       }),
     });
