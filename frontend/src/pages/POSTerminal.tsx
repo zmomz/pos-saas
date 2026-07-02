@@ -1570,6 +1570,7 @@ export default function POSTerminal() {
                                 className="h-9 w-9 p-0 border-input text-foreground"
                                 onClick={() => setLineRefundQty(idx, qty - 1, item.quantity)}
                                 disabled={qty <= 0}
+                                aria-label={`${t('decrease_quantity')} — ${item.name}`}
                               >
                                 −
                               </Button>
@@ -1581,6 +1582,7 @@ export default function POSTerminal() {
                                 onChange={(e) =>
                                   setLineRefundQty(idx, Number(e.target.value), item.quantity)
                                 }
+                                aria-label={`${t('quantity')} — ${item.name}`}
                                 className="h-7 w-12 text-center bg-card border-input text-foreground text-xs"
                               />
                               <Button
@@ -1590,6 +1592,7 @@ export default function POSTerminal() {
                                 className="h-9 w-9 p-0 border-input text-foreground"
                                 onClick={() => setLineRefundQty(idx, qty + 1, item.quantity)}
                                 disabled={qty >= item.quantity}
+                                aria-label={`${t('increase_quantity')} — ${item.name}`}
                               >
                                 +
                               </Button>
