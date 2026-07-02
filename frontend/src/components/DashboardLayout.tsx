@@ -238,6 +238,19 @@ const Shell: React.FC = () => {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [drawerOpen]);
 
+  // Keyboard-only nav audit (#226 · WCAG 2.1.1): the sidebar language menu can be
+  // dismissed by clicking its invisible backdrop, but that is a pointer-only
+  // gesture. Escape gives keyboard users the same standard dismissal the drawer,
+  // command palette, and every dialog already honour. Bound only while it's open.
+  useEffect(() => {
+    if (!langOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLangOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [langOpen]);
+
   useEffect(() => {
     let active = true;
     getNotifications()
