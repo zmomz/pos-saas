@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { SegButton } from '@/components/ui/seg-button';
 import {
   getClientDashboard, getClientBranding, getTransactions, getClientSubscription,
   payClientSubscription, saveSubscriptionCard, downloadSubscriptionInvoice,
@@ -388,14 +389,13 @@ export default function ClientDashboard() {
           </div>
           <div className="dxr-seg" role="group" aria-label={t('sale_mode') || 'Default sale mode'}>
             {SALE_MODES.map((mode: SaleMode) => (
-              <button
+              <SegButton
                 key={mode}
-                type="button"
-                data-active={saleMode === mode}
+                active={saleMode === mode}
                 onClick={() => setSaleMode(mode)}
               >
                 {t(`sale_mode_${mode}`) || mode}
-              </button>
+              </SegButton>
             ))}
           </div>
         </div>
