@@ -17,14 +17,27 @@ import React, {
  *   - font scaling (a `data-font-scale` attribute on <html> that steps the base
  *     font size up for low-vision users), and
  *   - reduce motion (a `reduce-motion` class on <html> that stills animations
- *     and transitions app-wide — an in-app control for viewers who cannot set
- *     the OS-level `prefers-reduced-motion` setting, e.g. on a shared terminal).
+ *     and transitions app-wide). This is applied when *either* the viewer flips
+ *     the in-app control *or* the OS-level `prefers-reduced-motion: reduce`
+ *     preference is set (WCAG 2.3.3). The in-app control lets a viewer opt in on
+ *     a shared terminal where they cannot change the OS setting; the OS query is
+ *     an additional source of truth so a viewer who already expressed the
+ *     preference gets it honoured everywhere, live, without touching the toggle.
  *
- * Both are persisted to localStorage and re-applied on load, so a viewer's
+ * These are persisted to localStorage and re-applied on load, so a viewer's
  * choice survives a refresh and every worker/tab respects it. Kept separate
  * from ThemeContext (light/dark is a brand/preference axis; contrast and text
  * size are assistive axes that compose *on top of* either theme).
  */
+
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+// Read the current OS-level reduced-motion preference (false where matchMedia is
+// unavailable, e.g. older test envs — the in-app toggle still works there).
+const osPrefersReducedMotion = (): boolean =>
+  typeof window !== 'undefined' &&
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia(REDUCED_MOTION_QUERY).matches;
 
 export type FontScale = 'normal' | 'large' | 'x-large';
 
@@ -75,6 +88,20 @@ export const AccessibilityProvider: React.FC<AccessibilityProviderProps> = ({ ch
   const [reduceMotion, setReduceMotionState] = useState<boolean>(
     () => localStorage.getItem(REDUCE_MOTION_KEY) === 'true',
   );
+  // The OS-level `prefers-reduced-motion` preference, tracked live so a change
+  // to the system setting re-stills (or restores) motion without a reload.
+  const [osReduceMotion, setOsReduceMotion] = useState<boolean>(osPrefersReducedMotion);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return;
+    const mql = window.matchMedia(REDUCED_MOTION_QUERY);
+    const onChange = (e: MediaQueryListEvent) => setOsReduceMotion(e.matches);
+    // Re-sync in case the preference changed between the initial state read and
+    // this effect running, then subscribe to future changes.
+    setOsReduceMotion(mql.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, []);
 
   useEffect(() => {
     document.documentElement.classList.toggle('hc', highContrast);
@@ -86,10 +113,15 @@ export const AccessibilityProvider: React.FC<AccessibilityProviderProps> = ({ ch
     localStorage.setItem(FONT_KEY, fontScale);
   }, [fontScale]);
 
+  // The explicit toggle is the only thing persisted — the OS preference is read
+  // fresh each session — but the root class reflects *either* source (WCAG 2.3.3).
   useEffect(() => {
-    document.documentElement.classList.toggle('reduce-motion', reduceMotion);
     localStorage.setItem(REDUCE_MOTION_KEY, String(reduceMotion));
   }, [reduceMotion]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('reduce-motion', reduceMotion || osReduceMotion);
+  }, [reduceMotion, osReduceMotion]);
 
   const toggleHighContrast = useCallback(() => setHighContrastState((prev) => !prev), []);
   const setHighContrast = useCallback((on: boolean) => setHighContrastState(on), []);
