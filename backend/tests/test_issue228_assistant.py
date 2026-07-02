@@ -1498,3 +1498,112 @@ async def test_assistant_net_profit_is_tenant_scoped(client):
     assert body["data"]["net_sales"] == 0.0
     assert body["data"]["expense_total"] == 0.0
     assert body["data"]["net_profit"] == 0.0
+
+
+async def test_assistant_reports_order_count(client):
+    """"How many orders did I get?" → the count of completed orders over the last
+    30 days (plus today's), grounded in the tenant's own transactions.
+
+    Distinct from ``sales_today`` (which answers *how much money*): this answers
+    *how many tickets*. A credit note is a refund, not a new order, so it never
+    inflates the count; held/voided tickets are not selling activity; out-of-window
+    sales are out of window. Today's orders are surfaced alongside the window total,
+    and a daily average frames the volume."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Three completed orders today + one three days ago = 4 counted in the window.
+    await _seed_sale(client_id, user["id"], days_ago=0, total=100.0, items=[], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=0, total=200.0, items=[], idx=2)
+    await _seed_sale(client_id, user["id"], days_ago=0, total=300.0, items=[], idx=3)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=400.0, items=[], idx=4)
+    # A credit note is a refund, not a new order → never counted.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=50.0, items=[],
+                     status="credit_note", idx=5)
+    # Held/voided are not selling activity; out-of-window is out of window.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=10.0, items=[],
+                     status="held", idx=6)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=10.0, items=[],
+                     status="voided", idx=7)
+    await _seed_sale(client_id, user["id"], days_ago=40, total=999.0, items=[], idx=8)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how many orders did I get", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["method"] == "rule_based"
+    assert body["intent"] == "order_count"
+    data = body["data"]
+    assert data["order_count"] == 4
+    assert data["orders_today"] == 3
+    assert data["lookback_days"] == 30
+    assert abs(data["daily_average"] - round(4 / 30, 1)) < 0.001
+    assert "4" in body["answer"]
+
+
+async def test_assistant_order_count_handles_no_orders(client):
+    """No sales at all → a zeroed count, a break-even-style answer, and HTTP 200
+    (never a divide-by-zero on the daily average)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how many transactions did I have", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "order_count"
+    data = body["data"]
+    assert data["order_count"] == 0
+    assert data["orders_today"] == 0
+    assert data["daily_average"] == 0.0
+
+
+async def test_assistant_order_count_routes_in_arabic(client):
+    """Arabic "كم عدد الطلبات" (how many orders) routes to order_count, not swallowed
+    by the smart_reorder or sales_today cues."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=100.0, items=[], idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=2, total=200.0, items=[], idx=2)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=كم عدد الطلبات", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "order_count"
+    assert body["data"]["order_count"] == 2
+
+
+async def test_assistant_order_count_does_not_steal_smart_reorder(client):
+    """A "what should I reorder" question must still route to smart_reorder — the
+    order_count cues are the vocabulary of *how many I sold*, not *what to order*."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what should I reorder", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "smart_reorder"
+
+
+async def test_assistant_order_count_is_tenant_scoped(client):
+    """One tenant's orders never leak into another's order-count read."""
+    user_a, token_a, client_a = await make_client_account(client)
+    user_b, token_b, client_b = await make_client_account(client)
+
+    await _seed_sale(client_b, user_b["id"], days_ago=1, total=100.0, items=[], idx=1)
+    await _seed_sale(client_b, user_b["id"], days_ago=2, total=200.0, items=[], idx=2)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how many orders did I get",
+        headers=auth_headers(token_a),
+    )
+    body = resp.json()
+    assert body["intent"] == "order_count"
+    assert body["data"]["order_count"] == 0

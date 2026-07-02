@@ -2715,7 +2715,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | top_customer | sales_today | average_order | payment_mix | vat_owed | refunds | expenses | net_profit | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
+    intent: str  # top_product | top_margin | top_customer | sales_today | order_count | average_order | payment_mix | vat_owed | refunds | expenses | net_profit | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2878,6 +2878,19 @@ _ASSISTANT_INTENTS = [
     ("vat_owed", ["vat", "v.a.t", "tax owed", "tax do i owe", "tax i owe",
                   "tax collected", "how much tax", "sales tax", "zatca",
                   "ضريبة", "القيمة المضافة", "ضريبة القيمة المضافة"]),
+    # Checked before ``sales_today`` so a *how many* question ("how many orders",
+    # "number of sales", "order count") routes to the ticket-volume read rather than
+    # the money-in ``sales_today`` (whose bare "today"/"sales today" would otherwise
+    # swallow "how many sales today"). Its vocabulary is *count of tickets*, distinct
+    # from *how much money* (sales_today/AOV) and *what to order* (smart_reorder).
+    ("order_count", ["how many orders", "how many sales", "how many transactions",
+                     "how many invoices", "how many did i sell", "number of orders",
+                     "number of sales", "number of transactions", "number of invoices",
+                     "order count", "sales count", "transaction count", "order volume",
+                     "orders did i", "invoices did i", "how busy have i been",
+                     "كم عدد الطلبات", "كم عدد المبيعات", "كم عدد الفواتير",
+                     "كم عدد المعاملات", "عدد الطلبات", "عدد الفواتير",
+                     "عدد المعاملات", "كم طلب", "كم فاتورة"]),
     ("sales_today", ["today", "revenue today", "sold today", "sales today",
                      "takings", "اليوم", "مبيعات اليوم"]),
 ]
@@ -2887,6 +2900,7 @@ _ASSISTANT_SUGGESTIONS = [
     "Which product is most profitable?",
     "Who are my best customers?",
     "How much did I sell today?",
+    "How many orders did I get?",
     "What is my average order value?",
     "How do my customers pay?",
     "How much VAT have I collected?",
@@ -3135,6 +3149,53 @@ async def _assistant_sales_today(db: AsyncSession, client_id: int) -> dict:
         )
     ).one()
     return {"net_sales": round(float(row[0] or 0.0), 2), "order_count": int(row[1] or 0)}
+
+
+async def _assistant_order_count(db: AsyncSession, client_id: int,
+                                 lookback: int = 30) -> dict:
+    """How many completed orders over the last ``lookback`` days (and today).
+
+    The *count* counterpart to ``sales_today``'s money read: it answers "how many
+    tickets", not "how much money". Uses the same order rule as the financial
+    reports — a credit note is a refund, not a new order, so it never inflates the
+    count; held/voided tickets aren't selling activity. Returns today's count
+    alongside the window total and a daily average (0.0 on an empty window, never a
+    divide-by-zero) so the operator can frame the volume.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    start_of_day = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    is_credit_note = Transactions.status == "credit_note"
+    # A credit note carries a real order row but is a refund, not a new order → 0.
+    counted = case((is_credit_note, 0), else_=1)
+    orders_window = func.coalesce(func.sum(counted), 0)
+    # ``counted`` is already 0 for credit notes, so a today-scoped counted value
+    # excludes refunds automatically.
+    orders_today = func.coalesce(
+        func.sum(case((Transactions.created_at >= start_of_day, counted), else_=0)),
+        0,
+    )
+    row = (
+        await db.execute(
+            select(orders_window, orders_today).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                )
+            )
+        )
+    ).one()
+    total = int(row[0] or 0)
+    today = int(row[1] or 0)
+    return {
+        "lookback_days": lookback,
+        "order_count": total,
+        "orders_today": today,
+        "daily_average": round(total / lookback, 1) if lookback else 0.0,
+    }
 
 
 async def _assistant_average_order_value(db: AsyncSession, client_id: int) -> dict:
@@ -4110,6 +4171,24 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=tm, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "order_count":
+        oc = await _assistant_order_count(db, client_id)
+        if oc["order_count"]:
+            answer = (
+                f"You've had {oc['order_count']} order(s) over the last "
+                f"{oc['lookback_days']} days — about {oc['daily_average']:.1f} a day, "
+                f"{oc['orders_today']} so far today."
+            )
+        else:
+            answer = (
+                f"No orders in the last {oc['lookback_days']} days yet — nothing has "
+                f"rung through the till."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=oc, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "sales_today":
