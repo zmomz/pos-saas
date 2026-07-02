@@ -32,6 +32,7 @@ from models.categories import Categories
 from models.transactions import Transactions
 from models.packages import Packages
 from models.notifications import Notifications
+from models.expenses import Expenses
 
 logger = logging.getLogger(__name__)
 
@@ -2714,7 +2715,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | top_customer | sales_today | average_order | payment_mix | vat_owed | refunds | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
+    intent: str  # top_product | top_margin | top_customer | sales_today | average_order | payment_mix | vat_owed | refunds | expenses | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2807,6 +2808,17 @@ _ASSISTANT_INTENTS = [
     ("refunds", ["refund", "refunds", "refunded", "return", "returns", "returned",
                  "credit note", "credit notes", "money back", "مرتجعات",
                  "المرتجعات", "مرتجع", "استرجاع", "إرجاع", "مردودات"]),
+    # Checked before the money-*in* intents so a "how much did I spend on expenses /
+    # what are my costs / overheads" routes to the outgoings read rather than a
+    # takings metric. Its vocabulary is *money going out* (expenses, costs,
+    # overheads, spending), distinct from refunds (money handed back to customers)
+    # and from the how-much-I-took intents below. Bare "spend"/"cost" are avoided so
+    # the customer-spend and inventory-cost phrasings aren't swallowed.
+    ("expenses", ["expense", "expenses", "spend on", "spent on", "spending on",
+                  "operating cost", "operating costs", "overhead", "overheads",
+                  "outgoings", "my costs", "running costs", "cost centre",
+                  "cost center", "مصروف", "مصاريف", "مصروفات", "المصروفات",
+                  "نفقات", "النفقات", "تكاليف"]),
     # Checked before ``sales_today`` so "average sales today" routes to the AOV
     # metric rather than the bare-"today" takings intent.
     ("average_order", ["average order", "average basket", "average ticket",
@@ -2864,6 +2876,7 @@ _ASSISTANT_SUGGESTIONS = [
     "How do my customers pay?",
     "How much VAT have I collected?",
     "How much did I refund?",
+    "How much did I spend on expenses?",
     "What is my sales forecast for next week?",
     "Is business up or down this week?",
     "When are we busiest?",
@@ -3240,6 +3253,56 @@ async def _assistant_refunds(db: AsyncSession, client_id: int, lookback: int = 3
         "refund_rate": round(total / gross, 4) if gross else 0.0,
         "avg_refund": round(total / count, 2) if count else 0.0,
         "lookback_days": lookback,
+    }
+
+
+async def _assistant_expenses(db: AsyncSession, client_id: int, lookback: int = 30) -> dict:
+    """Recorded operating expenses over the last ``lookback`` days — the money going
+    *out* — broken down by category, with the biggest cost centre named (#228).
+
+    Answers "how much did I spend on expenses?": the total outgoings, the number of
+    recorded expenses, the average, and a per-category breakdown ranked by spend so
+    the merchant sees where the money went at a glance. This is the money-out
+    counterpart to the takings/VAT/refund intents — grounded in the tenant's own
+    ``expenses`` ledger. An empty window yields zeroed figures and an empty
+    breakdown rather than a divide-by-zero on the average.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    rows = (
+        await db.execute(
+            select(
+                Expenses.category,
+                func.coalesce(func.sum(Expenses.amount), 0.0),
+                func.count(),
+            )
+            .where(
+                and_(
+                    Expenses.client_id == client_id,
+                    Expenses.created_at >= start_date,
+                )
+            )
+            .group_by(Expenses.category)
+        )
+    ).all()
+
+    categories = [
+        {"category": cat or "Uncategorised", "total": round(float(total or 0.0), 2),
+         "count": int(count or 0)}
+        for cat, total, count in rows
+    ]
+    # Rank by spend, biggest cost centre first; category name breaks ties so the
+    # order is deterministic.
+    categories.sort(key=lambda c: (-c["total"], c["category"]))
+
+    total = round(sum(c["total"] for c in categories), 2)
+    count = sum(c["count"] for c in categories)
+    return {
+        "expense_total": total,
+        "expense_count": count,
+        "avg_expense": round(total / count, 2) if count else 0.0,
+        "lookback_days": lookback,
+        "categories": categories,
+        "top_category": categories[0] if categories else None,
     }
 
 
@@ -4036,6 +4099,27 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=rf, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "expenses":
+        ex = await _assistant_expenses(db, client_id)
+        if ex["expense_count"]:
+            top = ex["top_category"]
+            answer = (
+                f"You've recorded {ex['expense_total']:.2f} in expenses across "
+                f"{ex['expense_count']} entr{'y' if ex['expense_count'] == 1 else 'ies'} "
+                f"over the last {ex['lookback_days']} days (average "
+                f"{ex['avg_expense']:.2f} each). Your biggest cost centre is "
+                f"{top['category']} at {top['total']:.2f}."
+            )
+        else:
+            answer = (
+                f"No expenses recorded in the last {ex['lookback_days']} days — "
+                f"nothing has been logged as an outgoing cost."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=ex, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "vat_owed":

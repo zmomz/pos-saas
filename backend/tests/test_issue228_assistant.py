@@ -16,8 +16,27 @@ from datetime import datetime, timezone, timedelta
 
 from conftest import auth_headers, make_client_account
 from core.database import db_manager
+from models.expenses import Expenses
 from models.products import Products
 from models.transactions import Transactions
+
+
+async def _seed_expense(client_id: int, user_id: str, *, days_ago: float,
+                        amount: float, category: str, idx: int = 0):
+    """Insert one recorded expense stamped ``days_ago`` days back (UTC)."""
+    created = datetime.now(timezone.utc) - timedelta(days=days_ago, hours=1)
+    async with db_manager.async_session_maker() as db:
+        db.add(
+            Expenses(
+                user_id=user_id,
+                client_id=client_id,
+                category=category,
+                amount=amount,
+                description=f"exp-{idx}",
+                created_at=created,
+            )
+        )
+        await db.commit()
 
 
 async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: float,
@@ -1225,3 +1244,107 @@ async def test_assistant_refunds_routes_in_arabic(client):
     body = resp.json()
     assert body["intent"] == "refunds"
     assert abs(body["data"]["refund_total"] - 80.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# expenses — "how much did I spend on expenses?" (#228 — M9·AI)
+# ---------------------------------------------------------------------------
+
+
+async def test_assistant_reports_expenses(client):
+    """"How much did I spend on expenses?" → total recorded outgoings over the last
+    30 days, the expense count, the average, and the breakdown by category with the
+    biggest cost centre named. Out-of-window expenses never count; the answer names
+    the total and the top category."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # In-window expenses: Rent 3000, Salaries 2000 + 1500, Utilities 500 → 7000.
+    await _seed_expense(client_id, user["id"], days_ago=2, amount=3000.0,
+                        category="Rent", idx=1)
+    await _seed_expense(client_id, user["id"], days_ago=3, amount=2000.0,
+                        category="Salaries", idx=2)
+    await _seed_expense(client_id, user["id"], days_ago=4, amount=1500.0,
+                        category="Salaries", idx=3)
+    await _seed_expense(client_id, user["id"], days_ago=5, amount=500.0,
+                        category="Utilities", idx=4)
+    # An expense older than 30 days is out of window and must never count.
+    await _seed_expense(client_id, user["id"], days_ago=40, amount=9999.0,
+                        category="Rent", idx=5)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much did I spend on expenses", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "expenses"
+    data = body["data"]
+    assert abs(data["expense_total"] - 7000.0) < 0.01
+    assert data["expense_count"] == 4
+    assert abs(data["avg_expense"] - 1750.0) < 0.01  # 7000 / 4
+    assert data["lookback_days"] == 30
+    # Categories ranked by spend: Salaries (3500) > Rent (3000) > Utilities (500).
+    cats = data["categories"]
+    assert [c["category"] for c in cats] == ["Salaries", "Rent", "Utilities"]
+    assert abs(cats[0]["total"] - 3500.0) < 0.01
+    assert cats[0]["count"] == 2
+    assert data["top_category"]["category"] == "Salaries"
+    assert "7000" in body["answer"]
+    assert "Salaries" in body["answer"]
+
+
+async def test_assistant_expenses_handles_no_expenses(client):
+    """No expenses in the window → zeroed figures and a graceful answer, HTTP 200,
+    never a divide-by-zero on the average."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what are my expenses", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "expenses"
+    data = body["data"]
+    assert data["expense_total"] == 0.0
+    assert data["expense_count"] == 0
+    assert data["avg_expense"] == 0.0
+    assert data["categories"] == []
+    assert data["top_category"] is None
+
+
+async def test_assistant_expenses_routes_in_arabic(client):
+    """Arabic "المصروفات" routes to the expenses intent, not another money read."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_expense(client_id, user["id"], days_ago=1, amount=250.0,
+                        category="Rent", idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=كم المصروفات هذا الشهر", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "expenses"
+    assert abs(body["data"]["expense_total"] - 250.0) < 0.01
+
+
+async def test_assistant_expenses_is_tenant_scoped(client):
+    """One tenant's expenses never leak into another tenant's assistant."""
+    user_a, token_a, client_a = await make_client_account(client)
+    user_b, token_b, client_b = await make_client_account(client)
+
+    # Tenant B has a big expense; tenant A has none.
+    await _seed_expense(client_b, user_b["id"], days_ago=1, amount=5000.0,
+                        category="Rent", idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much did I spend on expenses",
+        headers=auth_headers(token_a),
+    )
+    body = resp.json()
+    assert body["intent"] == "expenses"
+    assert body["data"]["expense_total"] == 0.0
+    assert body["data"]["top_category"] is None
