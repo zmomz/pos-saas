@@ -42,6 +42,7 @@ async def _seed_expense(client_id: int, user_id: str, *, days_ago: float,
 async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: float,
                      items, status: str = "completed", idx: int = 0,
                      payment_method: str = "cash", vat: float = 0.0,
+                     discount: float = 0.0,
                      customer_name=None, customer_phone=None):
     """Insert one transaction carrying ``items`` (list of {product_id, quantity})."""
     import json as _json
@@ -55,7 +56,7 @@ async def _seed_sale(client_id: int, user_id: str, *, days_ago: float, total: fl
                 invoice_number=f"INV-AS-{client_id}-{status}-{payment_method}-{idx}",
                 subtotal=total - vat,
                 vat_amount=vat,
-                discount_amount=0.0,
+                discount_amount=discount,
                 total_amount=total,
                 payment_method=payment_method,
                 status=status,
@@ -1607,3 +1608,103 @@ async def test_assistant_order_count_is_tenant_scoped(client):
     body = resp.json()
     assert body["intent"] == "order_count"
     assert body["data"]["order_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# discounts — "how much did I give away in discounts?" (#228 — M9·AI)
+# ---------------------------------------------------------------------------
+
+
+async def test_assistant_reports_discounts_given(client):
+    """"How much did I give in discounts?" → total discount handed out at the till
+    over the last 30 days, the number of discounted orders, the average discount,
+    and the discount rate (discounts ÷ gross list price). Held/voided, credit notes
+    and out-of-window tickets never count; the answer names the discounted total."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    # Discounted sales in window: 50 + 50 = 100 across two discounted orders.
+    await _seed_sale(client_id, user["id"], days_ago=2, total=400.0, items=[],
+                     discount=50.0, idx=1)
+    await _seed_sale(client_id, user["id"], days_ago=3, total=350.0, items=[],
+                     discount=50.0, idx=2)
+    # A full-price sale counts as an order but carries no discount.
+    await _seed_sale(client_id, user["id"], days_ago=4, total=200.0, items=[],
+                     discount=0.0, idx=3)
+    # Held/voided, credit notes and out-of-window discounts must never count.
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     discount=999.0, status="held", idx=4)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     discount=999.0, status="voided", idx=5)
+    await _seed_sale(client_id, user["id"], days_ago=1, total=999.0, items=[],
+                     discount=999.0, status="credit_note", idx=6)
+    await _seed_sale(client_id, user["id"], days_ago=40, total=999.0, items=[],
+                     discount=999.0, idx=7)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much did I give in discounts", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "discounts"
+    data = body["data"]
+    assert abs(data["discount_total"] - 100.0) < 0.01
+    assert data["discounted_count"] == 2
+    assert data["order_count"] == 3          # two discounted + one full-price
+    assert abs(data["avg_discount"] - 50.0) < 0.01  # 100 / 2
+    assert data["lookback_days"] == 30
+    # Gross list = charged (400+350+200) + discounts (100) = 1050; rate = 100/1050.
+    assert abs(data["discount_rate"] - round(100.0 / 1050.0, 4)) < 0.001
+    assert "100" in body["answer"]
+
+
+async def test_assistant_discounts_handles_none_given(client):
+    """Sales but no discounts → zeroed discount figures and a graceful answer,
+    HTTP 200, never a divide-by-zero on the average or the rate."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=250.0, items=[],
+                     discount=0.0, idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=how much have I discounted", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    assert body["intent"] == "discounts"
+    data = body["data"]
+    assert data["discount_total"] == 0.0
+    assert data["discounted_count"] == 0
+    assert data["discount_rate"] == 0.0
+    assert data["avg_discount"] == 0.0
+
+
+async def test_assistant_discounts_do_not_collide_with_markdown_suggestions(client):
+    """The forward-looking "what should I discount?" still routes to dynamic_pricing;
+    only history-shaped phrasings ("how much did I discount") route to discounts."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=what should I discount", headers=headers
+    )
+    assert resp.json()["intent"] == "dynamic_pricing"
+
+
+async def test_assistant_discounts_routes_in_arabic(client):
+    """Arabic "الخصومات" routes to the discounts intent (not swallowed by another)."""
+    user, token, client_id = await make_client_account(client)
+    headers = auth_headers(token)
+
+    await _seed_sale(client_id, user["id"], days_ago=1, total=180.0, items=[],
+                     discount=20.0, idx=1)
+
+    resp = await client.get(
+        "/api/v1/assistant/query?q=كم قيمة الخصومات هذا الشهر", headers=headers
+    )
+    body = resp.json()
+    assert body["intent"] == "discounts"
+    assert abs(body["data"]["discount_total"] - 20.0) < 0.01

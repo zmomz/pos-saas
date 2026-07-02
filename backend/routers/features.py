@@ -2715,7 +2715,7 @@ class AssistantAnswer(BaseModel):
 
     method: str  # "rule_based" today; LLM-backed later
     query: str  # the question as asked
-    intent: str  # top_product | top_margin | top_customer | sales_today | order_count | average_order | payment_mix | vat_owed | refunds | expenses | net_profit | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
+    intent: str  # top_product | top_margin | top_customer | sales_today | order_count | average_order | payment_mix | vat_owed | refunds | discounts | expenses | net_profit | sales_forecast | sales_trend | peak_hours | smart_reorder | dynamic_pricing | stock_out | dead_stock | low_stock | inventory_value | unknown
     answer: str  # human-readable, grounded in the tenant's own data
     data: dict  # the structured numbers behind the answer
     suggestions: List[str]  # example questions the assistant can answer
@@ -2741,6 +2741,21 @@ _ASSISTANT_INTENTS = [
     ("smart_reorder", ["reorder", "restock", "re-order", "re-stock",
                        "what should i order", "what to order", "purchase order",
                        "إعادة طلب", "كمية الطلب"]),
+    # Checked before ``dynamic_pricing`` so a *backward-looking* "how much did I
+    # give away in discounts" routes to the till-discount history read rather than
+    # being swallowed by ``dynamic_pricing``'s bare "discount"/"markdown" cue (which
+    # answers the *forward* "what should I discount"). Its vocabulary is *money
+    # already given off at the point of sale* (discounts given, money off), distinct
+    # from refunds (money handed back after a sale) and from the pricing suggestion.
+    # Phrasings are deliberately specific so a bare "what should I discount" still
+    # falls through to ``dynamic_pricing``.
+    ("discounts", ["discounts given", "discount given", "in discounts",
+                   "gave away in discounts", "money off",
+                   "how much discount", "how much did i discount",
+                   "how much have i discounted", "how much did i mark down",
+                   "total discount", "discount total", "discounts i gave",
+                   "discounts have i", "did i discount", "have i discounted",
+                   "الخصومات", "الخصم", "كم الخصم", "قيمة الخصومات", "قيمة الخصم"]),
     # Checked before ``low_stock`` so a pricing-oriented "what should I discount /
     # mark down" routes to the markdown suggestions rather than a stock list. The
     # cues are the vocabulary of clearing slow stock, distinct from the reorder
@@ -2905,6 +2920,7 @@ _ASSISTANT_SUGGESTIONS = [
     "How do my customers pay?",
     "How much VAT have I collected?",
     "How much did I refund?",
+    "How much did I give in discounts?",
     "How much did I spend on expenses?",
     "Am I making a profit?",
     "What is my sales forecast for next week?",
@@ -3329,6 +3345,57 @@ async def _assistant_refunds(db: AsyncSession, client_id: int, lookback: int = 3
         "order_count": int(row[3] or 0),
         "refund_rate": round(total / gross, 4) if gross else 0.0,
         "avg_refund": round(total / count, 2) if count else 0.0,
+        "lookback_days": lookback,
+    }
+
+
+async def _assistant_discounts(db: AsyncSession, client_id: int, lookback: int = 30) -> dict:
+    """Discounts given away at the till over the last ``lookback`` days — the money
+    handed off at the point of sale — with the discount rate against the list price
+    (#228).
+
+    Answers "how much did I give in discounts?": the total discount amount, the
+    number of discounted orders, the average discount per discounted order, and the
+    discount rate (discounts ÷ gross list price) so an over-generous till is visible
+    at a glance. Uses the same money rule as the discount *report* — original sale
+    rows only (completed / refunded / partial, and NULL-status legacy sales); never
+    held, voided or credit notes, which are not original selling activity. The gross
+    list price is what was charged plus what was discounted off it. An empty window
+    (or a window with sales but no discounts) yields zeroed figures rather than a
+    divide-by-zero.
+    """
+    start_date = datetime.now(timezone.utc) - timedelta(days=lookback)
+    discount = func.coalesce(Transactions.discount_amount, 0.0)
+    discount_total = func.coalesce(func.sum(discount), 0.0)
+    discounted_count = func.coalesce(func.sum(case((discount > 0.005, 1), else_=0)), 0)
+    order_count = func.coalesce(func.count(), 0)
+    charged_total = func.coalesce(func.sum(Transactions.total_amount), 0.0)
+    row = (
+        await db.execute(
+            select(discount_total, discounted_count, order_count, charged_total).where(
+                and_(
+                    Transactions.client_id == client_id,
+                    Transactions.created_at >= start_date,
+                    Transactions.status.is_distinct_from("held"),
+                    Transactions.status.is_distinct_from("voided"),
+                    Transactions.status.is_distinct_from("credit_note"),
+                )
+            )
+        )
+    ).one()
+    total = round(float(row[0] or 0.0), 2)
+    d_count = int(row[1] or 0)
+    o_count = int(row[2] or 0)
+    charged = round(float(row[3] or 0.0), 2)
+    # Gross list price = what was actually charged + what was discounted off it.
+    gross_list = round(charged + total, 2)
+    return {
+        "discount_total": total,
+        "discounted_count": d_count,
+        "order_count": o_count,
+        "gross_list": gross_list,
+        "discount_rate": round(total / gross_list, 4) if gross_list else 0.0,
+        "avg_discount": round(total / d_count, 2) if d_count else 0.0,
         "lookback_days": lookback,
     }
 
@@ -4255,6 +4322,26 @@ async def assistant_query(
         return AssistantAnswer(
             method="rule_based", query=q, intent=intent, answer=answer,
             data=rf, suggestions=_ASSISTANT_SUGGESTIONS,
+        )
+
+    if intent == "discounts":
+        dc = await _assistant_discounts(db, client_id)
+        if dc["discounted_count"]:
+            answer = (
+                f"You've given away {dc['discount_total']:.2f} in discounts across "
+                f"{dc['discounted_count']} order(s) over the last "
+                f"{dc['lookback_days']} days — about {dc['discount_rate'] * 100:.1f}% "
+                f"off the {dc['gross_list']:.2f} you would have charged at list "
+                f"(average {dc['avg_discount']:.2f} per discounted order)."
+            )
+        else:
+            answer = (
+                f"No discounts in the last {dc['lookback_days']} days — everything "
+                f"has been sold at full price."
+            )
+        return AssistantAnswer(
+            method="rule_based", query=q, intent=intent, answer=answer,
+            data=dc, suggestions=_ASSISTANT_SUGGESTIONS,
         )
 
     if intent == "expenses":
