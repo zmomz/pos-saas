@@ -45,7 +45,7 @@ describe('CommandPalette keyboard navigation (ISSUE-226)', () => {
 
     fireEvent.keyDown(input, { key: 'ArrowDown' });
 
-    const first = screen.getByRole('button', { name: 'Go to reports' });
+    const first = screen.getByRole('option', { name: 'Go to reports' });
     expect(first.id).toBeTruthy();
     expect(first).toHaveAttribute('aria-selected', 'true');
     expect(input).toHaveAttribute('aria-activedescendant', first.id);
@@ -67,7 +67,7 @@ describe('CommandPalette keyboard navigation (ISSUE-226)', () => {
 
     fireEvent.keyDown(input, { key: 'ArrowUp' }); // from nothing -> last
 
-    const last = screen.getByRole('button', { name: 'Go to products' });
+    const last = screen.getByRole('option', { name: 'Go to products' });
     expect(last).toHaveAttribute('aria-selected', 'true');
     expect(input).toHaveAttribute('aria-activedescendant', last.id);
   });

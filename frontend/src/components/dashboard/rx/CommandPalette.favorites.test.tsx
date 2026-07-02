@@ -56,7 +56,7 @@ describe('CommandPalette favorites (#231)', () => {
     expect(JSON.parse(localStorage.getItem(FKEY) as string)).toEqual(['Go to reports']);
     expect(screen.getByText('Favorites')).toBeInTheDocument();
     // The pinned label now appears twice: once in Favorites, once in Navigate.
-    expect(screen.getAllByRole('button', { name: 'Go to reports' })).toHaveLength(2);
+    expect(screen.getAllByRole('option', { name: 'Go to reports' })).toHaveLength(2);
   });
 
   it('unpins a starred item via its filled star', () => {
@@ -89,8 +89,8 @@ describe('CommandPalette favorites (#231)', () => {
     openWith(favProps);
 
     expect(screen.getByText('Favorites')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Ghost' })).toBeNull();
+    expect(screen.queryByRole('option', { name: 'Ghost' })).toBeNull();
     // Resolves the surviving favorite (appears in both Favorites and Navigate).
-    expect(screen.getAllByRole('button', { name: 'Go to products' })).toHaveLength(2);
+    expect(screen.getAllByRole('option', { name: 'Go to products' })).toHaveLength(2);
   });
 });

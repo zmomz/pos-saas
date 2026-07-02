@@ -37,7 +37,7 @@ describe('CommandPalette focus trap (ISSUE-226)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Open search/ }));
 
     const input = screen.getByRole('combobox');
-    const last = screen.getByRole('button', { name: 'Go to products' });
+    const last = screen.getByRole('option', { name: 'Go to products' });
     last.focus();
     expect(last).toHaveFocus();
 
@@ -51,7 +51,7 @@ describe('CommandPalette focus trap (ISSUE-226)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Open search/ }));
 
     const input = screen.getByRole('combobox');
-    const last = screen.getByRole('button', { name: 'Go to products' });
+    const last = screen.getByRole('option', { name: 'Go to products' });
     input.focus();
     expect(input).toHaveFocus();
 

@@ -43,13 +43,13 @@ describe('CommandPalette recent searches (#231)', () => {
 
     // Search, then act on a hit — that commits the query to history.
     await user.type(screen.getByRole('combobox'), 'widget');
-    await user.click(await screen.findByRole('button', { name: 'Widget · 123' }));
+    await user.click(await screen.findByRole('option', { name: 'Widget · 123' }));
     expect(screen.queryByRole('dialog')).toBeNull();
 
     // Reopen on a blank query: the term surfaces under the Recent group.
     fireEvent.click(screen.getByRole('button', { name: /Open search/ }));
     expect(screen.getByText('Recent')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'widget' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'widget' })).toBeInTheDocument();
   });
 
   it('re-runs the search when a recent term is picked, without closing', async () => {
@@ -59,12 +59,12 @@ describe('CommandPalette recent searches (#231)', () => {
     localStorage.setItem(KEY, JSON.stringify(['widget']));
     openWith({ onSearch, recentSearchesKey: KEY, recentLabel: 'Recent' });
 
-    await user.click(screen.getByRole('button', { name: 'widget' }));
+    await user.click(screen.getByRole('option', { name: 'widget' }));
 
     // The palette stays open and the query is re-run through onSearch.
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByRole('combobox')).toHaveValue('widget');
-    expect(await screen.findByRole('button', { name: 'Widget · 123' })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'Widget · 123' })).toBeInTheDocument();
     await vi.waitFor(() => expect(onSearch).toHaveBeenCalledWith('widget'));
   });
 
@@ -74,7 +74,7 @@ describe('CommandPalette recent searches (#231)', () => {
     openWith({ onSearch, recentLabel: 'Recent' }); // opted out
 
     await user.type(screen.getByRole('combobox'), 'widget');
-    await user.click(await screen.findByRole('button', { name: 'Widget · 123' }));
+    await user.click(await screen.findByRole('option', { name: 'Widget · 123' }));
 
     fireEvent.click(screen.getByRole('button', { name: /Open search/ }));
     expect(screen.queryByText('Recent')).toBeNull();
@@ -89,7 +89,7 @@ describe('CommandPalette recent searches (#231)', () => {
 
     // Re-search 'apple' and act on it — it should jump to the front, not double.
     await user.type(screen.getByRole('combobox'), 'apple');
-    await user.click(await screen.findByRole('button', { name: 'Widget · 123' }));
+    await user.click(await screen.findByRole('option', { name: 'Widget · 123' }));
 
     expect(JSON.parse(localStorage.getItem(KEY) as string)).toEqual(['apple', 'banana']);
   });

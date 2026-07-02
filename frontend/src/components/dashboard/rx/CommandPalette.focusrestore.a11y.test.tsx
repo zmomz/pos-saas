@@ -48,7 +48,7 @@ describe('CommandPalette focus restoration (ISSUE-226)', () => {
     const trigger = screen.getByRole('button', { name: /Open search/ });
 
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole('button', { name: 'Go to reports' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Go to reports' }));
 
     expect(onReports).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog')).toBeNull();

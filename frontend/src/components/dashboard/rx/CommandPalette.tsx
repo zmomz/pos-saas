@@ -424,7 +424,12 @@ export default function CommandPalette({
                 className="w-full bg-transparent text-base text-foreground outline-none placeholder:text-muted-foreground"
               />
             </div>
-            <div id={listId} className="max-h-[50vh] overflow-y-auto p-2">
+            <div
+              id={listId}
+              role="listbox"
+              aria-label={label}
+              className="max-h-[50vh] overflow-y-auto p-2"
+            >
               {searchError && (
                 <div className="px-3 py-3 text-center text-sm text-warning" role="status">
                   {searchErrorLabel}
@@ -439,8 +444,16 @@ export default function CommandPalette({
                 <div className="px-3 py-6 text-center text-sm text-muted-foreground">No matches</div>
               )}
               {sections.map(({ group: g, favouritable }, sIdx) => (
-                <div key={g.label} className="p-1">
-                  <div className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.12em] rtl:tracking-normal text-muted-foreground">
+                <div
+                  key={g.label}
+                  role="group"
+                  aria-labelledby={`${listId}-grp-${sIdx}`}
+                  className="p-1"
+                >
+                  <div
+                    id={`${listId}-grp-${sIdx}`}
+                    className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-[0.12em] rtl:tracking-normal text-muted-foreground"
+                  >
                     {g.label}
                   </div>
                   {g.items.map((it, iIdx) => {
@@ -462,6 +475,7 @@ export default function CommandPalette({
                       >
                         <button
                           type="button"
+                          role="option"
                           id={`${listId}-opt-${optIndex}`}
                           aria-selected={isActive}
                           onClick={() => {

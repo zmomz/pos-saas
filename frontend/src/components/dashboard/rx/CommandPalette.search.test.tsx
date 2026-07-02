@@ -29,7 +29,7 @@ describe('CommandPalette live /search (#231)', () => {
 
     await user.type(screen.getByRole('combobox'), 'widget');
 
-    expect(await screen.findByRole('button', { name: 'Widget · 123' })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: 'Widget · 123' })).toBeInTheDocument();
     await waitFor(() => expect(onSearch).toHaveBeenCalledWith('widget'));
   });
 
@@ -42,7 +42,7 @@ describe('CommandPalette live /search (#231)', () => {
     openWith({ onSearch });
 
     await user.type(screen.getByRole('combobox'), 'widget');
-    await user.click(await screen.findByRole('button', { name: 'Widget · 123' }));
+    await user.click(await screen.findByRole('option', { name: 'Widget · 123' }));
 
     expect(onSelect).toHaveBeenCalledOnce();
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -64,6 +64,6 @@ describe('CommandPalette live /search (#231)', () => {
 
     // Opened but nothing typed → no backend call, static group still visible.
     expect(onSearch).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Go to reports' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Go to reports' })).toBeInTheDocument();
   });
 });
