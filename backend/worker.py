@@ -11,8 +11,9 @@ its registered coroutine via :func:`services.job_queue.run_job`. Arq owns the
 durable retry — a job that raises is re-tried up to ``max_tries`` with backoff,
 which is how webhook-delivery retries / reconcile survive a crash here.
 
-Two periodic crons re-enqueue the platform-wide sweeps (ZATCA reconcile + alert
-materialization) so they run on the queue rather than as ad-hoc manual triggers.
+Periodic crons re-enqueue the platform-wide sweeps (ZATCA reconcile, alert
+materialization, PDPL data-retention enforcement) so they run on the queue rather
+than as ad-hoc manual triggers.
 Under the default ``memory`` backend none of this runs — the API process
 executes jobs inline — so importing this module must stay dependency-free until
 its functions are actually called by Arq.
@@ -41,6 +42,11 @@ async def cron_reconcile_zatca(ctx: Dict[str, Any]) -> Any:
 async def cron_materialize_reports(ctx: Dict[str, Any]) -> Any:
     """Periodic platform-wide alert-feed materialization sweep (all clients)."""
     return await run_job("report.materialize")
+
+
+async def cron_enforce_retention(ctx: Dict[str, Any]) -> Any:
+    """Periodic PDPL data-retention enforcement sweep (every armed tenant, #270)."""
+    return await run_job("retention.enforce")
 
 
 def _redis_settings():
@@ -75,6 +81,7 @@ def _cron_jobs():
     return [
         cron(cron_reconcile_zatca, minute=minutes, run_at_startup=False),
         cron(cron_materialize_reports, minute=minutes, run_at_startup=False),
+        cron(cron_enforce_retention, minute=minutes, run_at_startup=False),
     ]
 
 

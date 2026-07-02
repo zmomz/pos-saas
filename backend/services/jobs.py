@@ -18,6 +18,8 @@ Jobs registered:
   clients) — the report-materialization rail.
 * ``notification.dispatch`` — deliver one preference-honoring notification.
 * ``export.generate`` — render a client's product catalog to CSV (exports rail).
+* ``retention.enforce`` — minimize dormant customer PII per each tenant's armed
+  PDPL retention policy (or sweep all armed tenants) — the retention-sweep rail.
 """
 import logging
 from typing import Any, Dict, Optional
@@ -25,6 +27,11 @@ from typing import Any, Dict, Optional
 from services.job_queue import job
 
 logger = logging.getLogger(__name__)
+
+# The actor recorded on audit + consent rows when enforcement runs unattended
+# (the scheduled sweep, not a merchant clicking /enforce). The ``system:`` prefix
+# marks it as a machine actor with no human in the loop (#270).
+SYSTEM_ACTOR = "system:retention-sweep"
 
 
 # ---------------------------------------------------------------------------
@@ -186,3 +193,55 @@ async def generate_export(*, client_id: int) -> Dict[str, Any]:
     summary = {"client_id": int(client_id), "rows": len(products), "bytes": len(csv_text.encode("utf-8"))}
     logger.info("Catalog export job complete: %s", summary)
     return summary
+
+
+# ---------------------------------------------------------------------------
+# PDPL data-retention enforcement (retention-sweep rail)
+# ---------------------------------------------------------------------------
+@job("retention.enforce")
+async def enforce_retention(
+    *, user_id: Optional[str] = None, client_id: Optional[int] = None
+) -> Dict[str, Any]:
+    """Enforce tenants' PDPL data-retention policies unattended (#270).
+
+    With ``user_id`` it enforces one tenant; without it, it sweeps **every**
+    tenant with an *armed* policy (``customer_pii_retention_days`` not null) — the
+    periodic worker-cron path, so a set-and-forget policy is actually applied with
+    no manual ``POST /retention-policy/enforce``. Delegates to
+    :meth:`services.data_retention.DataRetentionService.enforce` under the
+    :data:`SYSTEM_ACTOR` (machine, no human), which writes the existing
+    ``PDPL_RETENTION_ERASE_CUSTOMER`` audit + consent-withdrawal trail and is
+    idempotent (already-tombstoned rows carry ``pii_erased_at`` and are never
+    re-erased). Runs in its own session and commits; owner/tenant isolation is
+    preserved by the service's per-``user_id`` scoping.
+    """
+    from sqlalchemy import select
+
+    from core.database import db_manager
+    from services.data_retention import DataRetentionService
+
+    await db_manager.ensure_initialized()
+    totals = {"tenants": 0, "erased": 0}
+    async with db_manager.async_session_maker() as db:
+        service = DataRetentionService(db)
+        if user_id is not None:
+            targets = [(str(user_id), int(client_id) if client_id is not None else None)]
+        else:
+            from models.data_retention_policy import DataRetentionPolicy
+
+            rows = (
+                await db.execute(
+                    select(
+                        DataRetentionPolicy.user_id, DataRetentionPolicy.client_id
+                    ).where(DataRetentionPolicy.customer_pii_retention_days.isnot(None))
+                )
+            ).all()
+            targets = [(str(uid), int(cid) if cid is not None else None) for uid, cid in rows]
+
+        for uid, cid in targets:
+            erased = await service.enforce(user_id=uid, client_id=cid, actor=SYSTEM_ACTOR)
+            totals["tenants"] += 1
+            totals["erased"] += len(erased)
+        await db.commit()
+    logger.info("Retention enforcement sweep complete: %s", totals)
+    return totals
