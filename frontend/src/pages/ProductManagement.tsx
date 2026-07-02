@@ -49,6 +49,7 @@ import LoadingState from '@/components/states/LoadingState';
 import { DataPagination } from '@/components/DataPagination';
 import { useLanguage } from '@/lib/i18n';
 import { undoableAction } from '@/lib/undo';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
 
 const PAGE_SIZE = 10;
 
@@ -154,8 +155,6 @@ interface ProductFilterPreset {
 export default function ProductManagement() {
   const [products, setProducts] = useState<Product[]>([]);
   const [page, setPage] = useState(1);
-  // #231 (Productivity — bulk ops): ids of rows selected for a batch action.
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
   const [productsError, setProductsError] = useState(false);
   const [search, setSearch] = useState('');
@@ -289,29 +288,17 @@ export default function ProductManagement() {
 
   const pagedProducts = products.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  // #231 (Productivity — bulk ops): multi-row selection for batch actions. The
-  // header checkbox toggles every row on the current page; the bulk bar surfaces
-  // once anything is selected.
+  // #231 (Productivity — bulk ops): multi-row selection for batch actions via the
+  // shared useBulkSelection hook. The header checkbox toggles every row on the
+  // current page; the bulk bar surfaces once anything is selected.
   const pageIds = pagedProducts.map((p) => p.id);
-  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
-
-  function toggleSelect(id: number) {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function toggleSelectAllOnPage() {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (allPageSelected) pageIds.forEach((id) => next.delete(id));
-      else pageIds.forEach((id) => next.add(id));
-      return next;
-    });
-  }
+  const {
+    selectedIds,
+    allPageSelected,
+    toggle: toggleSelect,
+    toggleAllOnPage: toggleSelectAllOnPage,
+    clear: clearSelection,
+  } = useBulkSelection<number>(pageIds);
 
   // #231 (Productivity — bulk ops + undo): archive every selected product in one
   // action. Mirrors the single-row delete: rows drop optimistically and the
@@ -320,7 +307,7 @@ export default function ProductManagement() {
   function handleBulkDelete() {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
-    setSelectedIds(new Set());
+    clearSelection();
     setProducts((prev) => prev.filter((p) => !ids.includes(p.id)));
     undoableAction({
       message: `${ids.length} ${tt('products_deleted', 'products deleted')}`,

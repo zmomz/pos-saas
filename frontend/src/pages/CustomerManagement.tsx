@@ -34,6 +34,7 @@ import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataT
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { formatMoney, formatDateTime } from '@/lib/format';
 import { Plus, Users, UserPlus, Download, ShieldOff, BarChart3, Tag, History, ShieldCheck } from 'lucide-react';
 
@@ -156,6 +157,18 @@ export default function CustomerManagement() {
     return matchesSearch && matchesTag;
   });
 
+  // #231 (Productivity — bulk ops): multi-row selection for batch actions via the
+  // shared useBulkSelection hook. The list is unpaginated, so the "page" is the
+  // whole filtered set; the bulk bar surfaces once anything is selected.
+  const {
+    selectedIds,
+    allPageSelected,
+    isSelected,
+    toggle: toggleSelect,
+    toggleAllOnPage: toggleSelectAllOnPage,
+    clear: clearSelection,
+  } = useBulkSelection<string>(filteredCustomers.map((c) => c.id));
+
   function handleFormChange(field: keyof CustomerFormData, value: string) {
     setFormData((prev) => ({ ...prev, [field]: value }));
   }
@@ -253,6 +266,34 @@ export default function CustomerManagement() {
         } catch (err) {
           console.error('Failed to delete customer:', err);
           // Commit failed — restore the row so the operator isn't misled.
+          loadCustomers();
+        }
+      },
+    });
+  }
+
+  // #231 (Productivity — bulk ops + undo): delete every selected customer in one
+  // action. Mirrors the single-row delete: rows drop optimistically and the
+  // deletes are deferred behind the undo window, so an undo cancels the whole
+  // batch before it reaches the server and no restore round-trip is needed.
+  function handleBulkDelete() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    clearSelection();
+    setCustomers((prev) => prev.filter((c) => !ids.includes(c.id)));
+    undoableAction({
+      message: `${ids.length} ${tt('customers_deleted', 'customers deleted')}`,
+      undoLabel: tt('action_undo', 'Undo'),
+      onUndo: () => {
+        loadCustomers();
+      },
+      onCommit: async () => {
+        try {
+          await Promise.all(ids.map((id) => deleteCustomer(id)));
+          await loadCustomers();
+        } catch (err) {
+          console.error('Failed to bulk-delete customers:', err);
+          // Commit failed — restore the rows so the operator isn't misled.
           loadCustomers();
         }
       },
@@ -539,6 +580,24 @@ export default function CustomerManagement() {
 
   const customerColumns: DataTableColumn<Customer>[] = [
     {
+      key: 'select',
+      className: 'w-0',
+      header: (
+        <Checkbox
+          checked={allPageSelected}
+          onCheckedChange={toggleSelectAllOnPage}
+          aria-label={tt('select_all', 'Select all')}
+        />
+      ),
+      cell: (customer) => (
+        <Checkbox
+          checked={isSelected(customer.id)}
+          onCheckedChange={() => toggleSelect(customer.id)}
+          aria-label={`${tt('select_row', 'Select')} ${customer.name}`}
+        />
+      ),
+    },
+    {
       key: 'name',
       header: tt('name', 'Name'),
       className: 'font-medium text-foreground',
@@ -759,6 +818,23 @@ export default function CustomerManagement() {
       {actionError && (
         <div role="alert" className="rounded-md border border-danger/50 bg-danger/10 p-3 text-sm text-danger">
           {actionError}
+        </div>
+      )}
+
+      {/* #231 bulk-action bar: surfaces once any row is selected. */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5">
+          <span className="text-sm font-medium text-brand-800" role="status" aria-live="polite">
+            {selectedIds.size} {tt('selected', 'selected')}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleBulkDelete}
+            className="border-danger/40 text-danger hover:bg-danger/10"
+          >
+            {tt('delete_selected', 'Delete selected')}
+          </Button>
         </div>
       )}
 
