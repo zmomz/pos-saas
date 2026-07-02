@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import NotFoundState from '@/components/states/NotFoundState';
+import LoadingState from '@/components/states/LoadingState';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getAgentPublicProfile } from '@/lib/api';
 import { readableTextColor } from '@/lib/contrast';
@@ -274,10 +275,7 @@ export default function AgentLandingPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-white flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="w-12 h-12 border-4 border-slate-200 border-t-brand-500 rounded-full animate-spin mx-auto" />
-          <p className="text-slate-600">{c.loading}</p>
-        </div>
+        <LoadingState message={c.loading} />
       </div>
     );
   }
