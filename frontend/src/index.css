@@ -434,7 +434,13 @@
     @apply px-3 pb-[11px] text-start text-[10.5px] font-extrabold uppercase tracking-[0.06em] text-muted-foreground;
   }
   [dir='rtl'] .dxr-tbl th {
+    /* a11y (#226): the header treatment is Latin `uppercase tracking-[0.06em]`;
+       its components-layer tracking beats the base `[dir='rtl']` reset, so
+       neutralise it here for raw `.dxr-tbl` tables (the <DataTable> primitive
+       also carries `rtl:tracking-normal`). Arabic joins its letters cursively,
+       so any tracking shatters the joins. */
     @apply text-right;
+    letter-spacing: normal;
   }
   .dxr-tbl td {
     @apply border-t border-border/70 px-3 py-[11px] align-middle text-[13.5px];

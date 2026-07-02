@@ -55,8 +55,14 @@ export default function DataTable<T>({
       <table className="dxr-tbl">
         <thead>
           <tr>
+            {/* a11y (#226): the `.dxr-tbl th` overline treatment (index.css) is
+                Latin `uppercase tracking-[0.06em]`; reset the tracking under RTL
+                so Arabic cursive joins aren't shattered. */}
             {columns.map((col, i) => (
-              <th key={col.key ?? i} className={cn(col.align && ALIGN[col.align], col.className)}>
+              <th
+                key={col.key ?? i}
+                className={cn('rtl:tracking-normal', col.align && ALIGN[col.align], col.className)}
+              >
                 {col.header}
               </th>
             ))}
