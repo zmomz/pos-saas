@@ -251,6 +251,10 @@ export default function POSTerminal() {
   // it was toggled off mid-await (the captured `cameraScanning` state is stale).
   const cameraScanningRef = useRef(false);
   const isMountedRef = useRef(true);
+  // a11y (#276): when a sale settles the whole POS view swaps to the receipt.
+  // That change is silent to a screen reader, so we move focus to the "sale
+  // complete" heading (WCAG 2.4.3 Focus Order) to announce the new context.
+  const receiptHeadingRef = useRef<HTMLHeadingElement | null>(null);
 
   // POS-02: split-tender payment. When enabled the cashier allocates the total
   // across multiple methods; the per-method amounts are sent as payments[].
@@ -357,6 +361,13 @@ export default function POSTerminal() {
       loadRecentTransactions();
     }
   }, [mode]);
+
+  // a11y (#276): pull focus onto the "sale complete"/refund confirmation once the
+  // receipt view mounts, so a screen-reader user hears the outcome of the sale
+  // instead of silence when the POS view is replaced by the receipt.
+  useEffect(() => {
+    if (receipt) receiptHeadingRef.current?.focus();
+  }, [receipt]);
 
   // Auto-clear barcode message after 3 seconds
   useEffect(() => {
@@ -1235,7 +1246,11 @@ export default function POSTerminal() {
         <div className="w-full max-w-md rounded-2xl border border-border bg-card">
           <div dir="rtl" lang="ar" className="p-6 space-y-4 text-right">
             <div className="text-center">
-              <h2 className={`text-xl font-bold ${isRefund ? 'text-warning' : 'text-success'}`}>
+              <h2
+                ref={receiptHeadingRef}
+                tabIndex={-1}
+                className={`text-xl font-bold outline-none ${isRefund ? 'text-warning' : 'text-success'}`}
+              >
                 {isRefund ? '↩ تمت معالجة الاسترجاع' : '✓ تمت العملية بنجاح'}
               </h2>
               <p className="text-muted-foreground mt-1">رقم الفاتورة: {receipt.invoice_number}</p>
