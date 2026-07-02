@@ -270,21 +270,21 @@ export default function PackageManagement() {
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div>
-              <label className="mb-1 block text-sm text-muted-foreground">{t('name')}</label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('package_name_placeholder')} />
+              <label htmlFor="pkg-name" className="mb-1 block text-sm text-muted-foreground">{t('name')}</label>
+              <Input id="pkg-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder={t('package_name_placeholder')} />
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="mb-1 block text-sm text-muted-foreground">{t('client_slots')}</label>
-                <Input type="number" value={form.client_slots} onChange={(e) => setForm({ ...form, client_slots: Number(e.target.value) })} min={0} />
+                <label htmlFor="pkg-client-slots" className="mb-1 block text-sm text-muted-foreground">{t('client_slots')}</label>
+                <Input id="pkg-client-slots" type="number" value={form.client_slots} onChange={(e) => setForm({ ...form, client_slots: Number(e.target.value) })} min={0} />
               </div>
               <div>
-                <label className="mb-1 block text-sm text-muted-foreground">{t('wholesale_price')}</label>
-                <Input type="number" value={form.wholesale_price} onChange={(e) => setForm({ ...form, wholesale_price: Number(e.target.value) })} min={0} step={0.01} />
+                <label htmlFor="pkg-wholesale-price" className="mb-1 block text-sm text-muted-foreground">{t('wholesale_price')}</label>
+                <Input id="pkg-wholesale-price" type="number" value={form.wholesale_price} onChange={(e) => setForm({ ...form, wholesale_price: Number(e.target.value) })} min={0} step={0.01} />
               </div>
               <div>
-                <label className="mb-1 block text-sm text-muted-foreground">{t('retail_price')}</label>
-                <Input type="number" value={form.suggested_retail_price} onChange={(e) => setForm({ ...form, suggested_retail_price: Number(e.target.value) })} min={0} step={0.01} />
+                <label htmlFor="pkg-retail-price" className="mb-1 block text-sm text-muted-foreground">{t('retail_price')}</label>
+                <Input id="pkg-retail-price" type="number" value={form.suggested_retail_price} onChange={(e) => setForm({ ...form, suggested_retail_price: Number(e.target.value) })} min={0} step={0.01} />
               </div>
             </div>
             <div>
