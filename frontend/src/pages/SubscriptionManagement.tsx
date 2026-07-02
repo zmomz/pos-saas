@@ -370,7 +370,7 @@ export default function SubscriptionManagement() {
                               aria-label={t('refund_action')}
                               title={t('refund_action')}
                             >
-                              <Undo2 className="h-4 w-4" />
+                              <Undo2 className="h-4 w-4 rtl:-scale-x-100" />
                               <span className="hidden sm:inline">{t('refund_action')}</span>
                             </Button>
                           )}
