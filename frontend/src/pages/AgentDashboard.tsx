@@ -890,7 +890,7 @@ export default function AgentDashboard() {
             {statements.map((stmt) => (
               <div key={`${stmt.period_start}-${stmt.period_end}`} className="overflow-hidden rounded-xl border border-border">
                 <div className="flex flex-wrap items-center justify-between gap-2 bg-muted/40 px-4 py-2.5">
-                  <div className="text-sm font-semibold text-foreground">{stmt.period_start} <span className="text-muted-foreground">→</span> {stmt.period_end}</div>
+                  <div className="text-sm font-semibold text-foreground">{stmt.period_start} <span className="inline-block text-muted-foreground rtl:-scale-x-100" aria-hidden="true">→</span> {stmt.period_end}</div>
                   <div className="flex items-center gap-4 text-[12.5px] tabular-nums">
                     <span className="text-muted-foreground">{t('revenue_collected') || 'Collected'}: <span className="font-semibold text-foreground">{formatMoney(stmt.collected, language)}</span></span>
                     <span className="text-muted-foreground">{t('subscription_payments') || 'Payments'}: <span className="font-semibold text-foreground">{stmt.payments}</span></span>
