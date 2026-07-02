@@ -205,6 +205,11 @@ export default function POSTerminal() {
   const [barcodeInput, setBarcodeInput] = useState('');
   const [barcodeMessage, setBarcodeMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
+  // M11 · a11y (#226): polite live region text announcing each cart addition, so
+  // adding an item (tile tap, keyboard activation, or scan) is spoken by a
+  // screen reader — the on-screen result is otherwise silent (WCAG 4.1.3).
+  const [cartAnnouncement, setCartAnnouncement] = useState('');
+
   // ISSUE-076: price / stock check. When on, a scan/SKU entry only LOOKS UP the
   // product's price and on-hand stock (via the same /resolve-barcode endpoint)
   // instead of adding it to the cart.
@@ -469,6 +474,16 @@ export default function POSTerminal() {
     overrides?: { quantity?: number; unitPrice?: number },
   ) {
     const key = cartKeyFor(product.id, variantId);
+    // a11y (#226): announce the addition by name. Include the resulting line
+    // quantity so re-adding the same item still changes the region text and is
+    // re-announced (a polite region only speaks when its content changes).
+    const priorQty = cart.find((item) => item.key === key)?.quantity ?? 0;
+    const newQty = overrides?.quantity ?? (priorQty ? priorQty + 1 : 1);
+    setCartAnnouncement(
+      newQty > 1
+        ? `${product.name} ${tt('added', 'added')} (${newQty})`
+        : `${product.name} ${tt('added', 'added')}`,
+    );
     setCart((prev) => {
       const existing = prev.find((item) => item.key === key);
       if (existing) {
@@ -1685,6 +1700,18 @@ export default function POSTerminal() {
   // pushing checkout off-screen under a heavy cart.
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background lg:flex-row">
+      {/* a11y (#226): polite live region narrating cart additions for screen
+          readers. Silent on first paint (empty), then speaks the item name on
+          each addToCart. */}
+      <div
+        data-testid="cart-announcer"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {cartAnnouncement}
+      </div>
       {/* Product Grid */}
       <div className="flex-1 min-h-0 overflow-y-auto p-4">
         <div className="flex items-center justify-between mb-4">
