@@ -16,9 +16,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { getCategories, createCategory, updateCategory, deleteCategory } from '@/lib/api';
 import { useLanguage } from '@/lib/i18n';
 import { undoableAction } from '@/lib/undo';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
 import LoadingState from '@/components/states/LoadingState';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import ErrorState from '@/components/states/ErrorState';
@@ -81,6 +83,17 @@ export default function CategoryManagement() {
 
   const parentCategories = categories.filter((c) => !c.parent_id);
   const getChildren = (parentId: string) => categories.filter((c) => c.parent_id === parentId);
+
+  // #273 (Productivity follow-up — bulk ops): multi-row selection for batch
+  // actions via the shared useBulkSelection hook. The category tree is
+  // unpaginated, so the "page" is every category (parents and children); the
+  // bulk bar surfaces once anything is selected.
+  const {
+    selectedIds,
+    isSelected,
+    toggle: toggleSelect,
+    clear: clearSelection,
+  } = useBulkSelection<string>(categories.map((c) => c.id));
 
   function handleFormChange(field: keyof CategoryFormData, value: string) {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -176,6 +189,37 @@ export default function CategoryManagement() {
     });
   }
 
+  // #273 (Productivity follow-up — bulk ops + undo): delete every selected
+  // category in one action. Mirrors the single-row delete: the selected rows
+  // (and any children of a selected parent) drop optimistically and the deletes
+  // are deferred behind the undo window, so an undo cancels the whole batch
+  // before it reaches the server and no restore round-trip is needed.
+  function handleBulkDelete() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    clearSelection();
+    setCategories((prev) =>
+      prev.filter((c) => !ids.includes(c.id) && !ids.includes(c.parent_id || ''))
+    );
+    undoableAction({
+      message: `${ids.length} ${tt('categories_deleted', 'categories deleted')}`,
+      undoLabel: tt('action_undo', 'Undo'),
+      onUndo: () => {
+        loadCategories();
+      },
+      onCommit: async () => {
+        try {
+          await Promise.all(ids.map((id) => deleteCategory(id)));
+          await loadCategories();
+        } catch (err) {
+          console.error('Failed to bulk-delete categories:', err);
+          // Commit failed — restore the rows so the operator isn't misled.
+          loadCategories();
+        }
+      },
+    });
+  }
+
   function renderForm(onSubmit: () => void, submitLabel: string) {
     return (
       <div className="space-y-4">
@@ -248,6 +292,11 @@ export default function CategoryManagement() {
             <div key={parent.id} className="dxr-tile p-0">
               <div className="flex items-center justify-between p-3">
                 <div className="flex items-center gap-2">
+                  <Checkbox
+                    checked={isSelected(parent.id)}
+                    onCheckedChange={() => toggleSelect(parent.id)}
+                    aria-label={`${tt('select_row', 'Select')} ${parent.name}`}
+                  />
                   {children.length > 0 ? (
                     <FolderOpen className="h-4 w-4 text-brand-700" />
                   ) : (
@@ -288,6 +337,11 @@ export default function CategoryManagement() {
                       className="flex items-center justify-between p-2 rounded bg-muted/30"
                     >
                       <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={isSelected(child.id)}
+                          onCheckedChange={() => toggleSelect(child.id)}
+                          aria-label={`${tt('select_row', 'Select')} ${child.name}`}
+                        />
                         <Folder className="h-3.5 w-3.5 text-muted-foreground" />
                         <span className="text-foreground/90 text-sm">
                           {child.icon && <span className="me-1">{child.icon}</span>}
@@ -352,6 +406,23 @@ export default function CategoryManagement() {
           </DialogContent>
         </Dialog>
       </PageHeading>
+
+      {/* #273 bulk-action bar: surfaces once any row is selected. */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5">
+          <span className="text-sm font-medium text-brand-800" role="status" aria-live="polite">
+            {selectedIds.size} {tt('selected', 'selected')}
+          </span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleBulkDelete}
+            className="border-danger/40 text-danger hover:bg-danger/10"
+          >
+            {tt('delete_selected', 'Delete selected')}
+          </Button>
+        </div>
+      )}
 
       {/* Category Tree — a failed load shows an error+retry, never "none yet" */}
       {loadError ? (
