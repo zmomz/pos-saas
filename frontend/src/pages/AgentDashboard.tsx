@@ -710,7 +710,7 @@ export default function AgentDashboard() {
           <div className="overflow-x-auto px-2 pb-2">
             <table className="w-full">
               <thead>
-                <tr className="text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                <tr className="text-[10.5px] font-bold uppercase tracking-wider rtl:tracking-normal text-muted-foreground/80">
                   <th className="px-3 py-2.5 text-start">{t('business_name') || 'Client'}</th>
                   <th className="px-3 py-2.5 text-start">{t('subscription_fee') || 'Fee'}</th>
                   <th className="px-3 py-2.5 text-start">{t('status')}</th>
