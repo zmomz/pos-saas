@@ -169,7 +169,11 @@ export default function Index() {
             </InputOTP>
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && (
+            <p role="alert" className="text-sm text-destructive">
+              {error}
+            </p>
+          )}
 
           <Button type="submit" disabled={submitting} className="w-full">
             {submitting ? t('loading') : tt('mfa_verify', 'Verify')}
@@ -282,7 +286,11 @@ export default function Index() {
           </div>
         )}
 
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
 
         <Button type="submit" disabled={submitting} className="w-full">
           {submitting ? t('loading') : mode === 'login' ? t('login') : t('create_account')}
