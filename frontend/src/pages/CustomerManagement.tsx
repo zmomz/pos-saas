@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { undoableAction } from '@/lib/undo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { SearchField } from '@/components/ui/search-field';
@@ -227,19 +228,35 @@ export default function CustomerManagement() {
     setDeleteOpen(true);
   }
 
-  async function handleDeleteCustomer() {
+  // #231 (Productivity — undo): deleting a customer is deferred behind an undo
+  // window. We drop the row optimistically and only hit the server once the
+  // window elapses; an undo cancels the commit outright so a mis-click never
+  // reaches the backend and no restore round-trip is needed.
+  function handleDeleteCustomer() {
     if (!selectedCustomer) return;
-    setSubmitting(true);
-    try {
-      await deleteCustomer(selectedCustomer.id);
-      setDeleteOpen(false);
-      setSelectedCustomer(null);
-      await loadCustomers();
-    } catch (err) {
-      console.error('Failed to delete customer:', err);
-    } finally {
-      setSubmitting(false);
-    }
+    const customer = selectedCustomer;
+    setDeleteOpen(false);
+    setSelectedCustomer(null);
+    // Optimistic removal; the server still holds the row until (and unless) the
+    // deferred commit fires, so a refetch reliably restores it on undo.
+    setCustomers((prev) => prev.filter((c) => c.id !== customer.id));
+    undoableAction({
+      message: tt('customer_deleted', 'Customer deleted'),
+      undoLabel: tt('action_undo', 'Undo'),
+      onUndo: () => {
+        loadCustomers();
+      },
+      onCommit: async () => {
+        try {
+          await deleteCustomer(customer.id);
+          await loadCustomers();
+        } catch (err) {
+          console.error('Failed to delete customer:', err);
+          // Commit failed — restore the row so the operator isn't misled.
+          loadCustomers();
+        }
+      },
+    });
   }
 
   // PDPL (SEC-05): download everything held about the customer as JSON.
