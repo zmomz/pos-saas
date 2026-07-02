@@ -344,8 +344,12 @@ export default function KDS() {
               </DialogHeader>
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">{t('station_name')}</label>
+                  {/* Associate each caption with its field (ISSUE-226 · WCAG
+                      4.1.2): a placeholder is not an accessible name, so the
+                      for/id link is what a screen reader announces. */}
+                  <label htmlFor="kds-station-name" className="text-sm text-muted-foreground mb-1 block">{t('station_name')}</label>
                   <Input
+                    id="kds-station-name"
                     value={stationForm.name}
                     onChange={(e) => setStationForm((f) => ({ ...f, name: e.target.value }))}
                     placeholder={tt('station_name_placeholder', 'Grill')}
@@ -353,10 +357,11 @@ export default function KDS() {
                   />
                 </div>
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">
+                  <label htmlFor="kds-station-name-ar" className="text-sm text-muted-foreground mb-1 block">
                     {t('station_name_ar')}
                   </label>
                   <Input
+                    id="kds-station-name-ar"
                     value={stationForm.name_ar}
                     onChange={(e) => setStationForm((f) => ({ ...f, name_ar: e.target.value }))}
                     dir="rtl"
