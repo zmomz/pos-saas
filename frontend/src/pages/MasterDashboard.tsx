@@ -399,7 +399,7 @@ export default function MasterDashboard() {
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr className="text-[10.5px] font-bold uppercase tracking-wider text-muted-foreground/80">
+                  <tr className="text-[10.5px] font-bold uppercase tracking-wider rtl:tracking-normal text-muted-foreground/80">
                     <th className="w-8 pb-2.5 text-start" />
                     <th className="pb-2.5 pe-3 text-start">{tt('company_name', 'Agent')}</th>
                     <th className="pb-2.5 pe-3 text-start">{tt('active_merchants', 'Merchants')}</th>
