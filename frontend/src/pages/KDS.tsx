@@ -223,6 +223,9 @@ export default function KDS() {
     setCards((prev) => prev.filter((c) => c.id !== card.id));
     try {
       await bumpKdsTicket(card.id);
+      // Narrate the confirmed bump to assistive tech (see kdsAnnouncement): the
+      // card silently left the board, so a screen-reader cook needs the cue.
+      setKdsAnnouncement(`${t('kds_bump_announce')}: ${t('kds_order')} #${card.order_ticket_id}`);
     } catch (err) {
       console.error(t('kds_bump_error'), err);
       toast.error(t('kds_bump_error'));
