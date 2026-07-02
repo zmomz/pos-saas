@@ -26,6 +26,7 @@ import LoadingState from '@/components/states/LoadingState';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
+import { undoableAction } from '@/lib/undo';
 import { formatMoney, formatDate } from '@/lib/format';
 import { Truck, Plus, Package, ClipboardList, CheckCircle } from 'lucide-react';
 
@@ -223,19 +224,31 @@ export default function SupplierManagement() {
     }
   }
 
-  async function handleDeleteSupplier() {
+  function handleDeleteSupplier() {
     if (!selectedSupplier) return;
-    setSubmitting(true);
-    try {
-      await client.entities.suppliers.delete({ id: selectedSupplier.id });
-      setDeleteOpen(false);
-      setSelectedSupplier(null);
-      await loadData();
-    } catch (err) {
-      console.error('Failed to delete supplier:', err);
-    } finally {
-      setSubmitting(false);
-    }
+    const supplier = selectedSupplier;
+    setDeleteOpen(false);
+    setSelectedSupplier(null);
+    // Optimistic removal; the server still holds the row until (and unless) the
+    // deferred commit fires, so a refetch reliably restores it on undo.
+    setSuppliers((prev) => prev.filter((s) => s.id !== supplier.id));
+    undoableAction({
+      message: t('supplier_deleted'),
+      undoLabel: t('action_undo'),
+      onUndo: () => {
+        loadData();
+      },
+      onCommit: async () => {
+        try {
+          await client.entities.suppliers.delete({ id: supplier.id });
+          await loadData();
+        } catch (err) {
+          console.error('Failed to delete supplier:', err);
+          // Commit failed — restore the row so the operator isn't misled.
+          loadData();
+        }
+      },
+    });
   }
 
   function openEdit(supplier: Supplier) {
