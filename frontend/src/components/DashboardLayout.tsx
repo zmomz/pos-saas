@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import OnboardingTour from '@/components/OnboardingTour';
 import OfflineBanner from '@/components/states/OfflineBanner';
 import CommandPalette, { type PaletteGroup } from '@/components/dashboard/rx/CommandPalette';
+import RouteAnnouncer from '@/components/a11y/RouteAnnouncer';
 import { buildSearchGroups } from '@/components/dashboard/rx/globalSearchGroups';
 import { PageChromeProvider, useShellChrome } from '@/contexts/PageChromeContext';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -311,6 +312,12 @@ const Shell: React.FC = () => {
       >
         {t('skip_to_content')}
       </a>
+
+      {/* Route announcer (#226 · WCAG 2.4.x): narrates client-side navigation
+          to screen readers, which otherwise get no signal when the SPA swaps
+          the <main> content. Lives on the persistent shell so its live region
+          survives across route changes. */}
+      <RouteAnnouncer title={pageTitle || t('app_name')} />
 
       {/* Mobile drawer overlay */}
       {drawerOpen && (
