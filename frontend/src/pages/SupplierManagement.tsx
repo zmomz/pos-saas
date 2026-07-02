@@ -23,9 +23,11 @@ import ErrorState from '@/components/states/ErrorState';
 import PermissionDenied from '@/components/states/PermissionDenied';
 import PageHeading from '@/components/dashboard/rx/PageHeading';
 import LoadingState from '@/components/states/LoadingState';
+import { Checkbox } from '@/components/ui/checkbox';
 import DataTable, { type DataTableColumn } from '@/components/dashboard/rx/DataTable';
 import StatTile from '@/components/dashboard/StatTile';
 import { useLanguage } from '@/lib/i18n';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { undoableAction } from '@/lib/undo';
 import { formatMoney, formatDate } from '@/lib/format';
 import { Truck, Plus, Package, ClipboardList, CheckCircle } from 'lucide-react';
@@ -115,7 +117,7 @@ export default function SupplierManagement() {
   const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState<'suppliers' | 'orders'>('suppliers');
 
-  const { t, isRTL, language } = useLanguage();
+  const { t, tt, isRTL, language } = useLanguage();
 
   useEffect(() => {
     loadData();
@@ -167,6 +169,19 @@ export default function SupplierManagement() {
       s.email?.toLowerCase().includes(term)
     );
   });
+
+  // #273 (Productivity follow-up — bulk ops): multi-row selection for batch
+  // actions via the shared useBulkSelection hook. The suppliers list is
+  // unpaginated, so the "page" is the whole filtered set; the bulk bar surfaces
+  // once anything is selected.
+  const {
+    selectedIds,
+    allPageSelected,
+    isSelected,
+    toggle: toggleSelect,
+    toggleAllOnPage: toggleSelectAllOnPage,
+    clear: clearSelection,
+  } = useBulkSelection<string>(filteredSuppliers.map((s) => s.id));
 
   function handleFormChange(field: keyof SupplierFormData, value: string) {
     setFormData((prev) => ({ ...prev, [field]: value }));
@@ -245,6 +260,35 @@ export default function SupplierManagement() {
         } catch (err) {
           console.error('Failed to delete supplier:', err);
           // Commit failed — restore the row so the operator isn't misled.
+          loadData();
+        }
+      },
+    });
+  }
+
+  // #273 (Productivity follow-up — bulk ops + undo): delete every selected
+  // supplier in one action. Mirrors the single-row delete: rows drop
+  // optimistically and the deletes are deferred behind the undo window, so an
+  // undo cancels the whole batch before it reaches the server and no restore
+  // round-trip is needed.
+  function handleBulkDelete() {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    clearSelection();
+    setSuppliers((prev) => prev.filter((s) => !ids.includes(s.id)));
+    undoableAction({
+      message: `${ids.length} ${tt('suppliers_deleted', 'suppliers deleted')}`,
+      undoLabel: t('action_undo'),
+      onUndo: () => {
+        loadData();
+      },
+      onCommit: async () => {
+        try {
+          await Promise.all(ids.map((id) => client.entities.suppliers.delete({ id })));
+          await loadData();
+        } catch (err) {
+          console.error('Failed to bulk-delete suppliers:', err);
+          // Commit failed — restore the rows so the operator isn't misled.
           loadData();
         }
       },
@@ -450,6 +494,24 @@ export default function SupplierManagement() {
 
   const supplierColumns: DataTableColumn<Supplier>[] = [
     {
+      key: 'select',
+      className: 'w-0',
+      header: (
+        <Checkbox
+          checked={allPageSelected}
+          onCheckedChange={toggleSelectAllOnPage}
+          aria-label={tt('select_all', 'Select all')}
+        />
+      ),
+      cell: (supplier) => (
+        <Checkbox
+          checked={isSelected(supplier.id)}
+          onCheckedChange={() => toggleSelect(supplier.id)}
+          aria-label={`${tt('select_row', 'Select')} ${supplier.name}`}
+        />
+      ),
+    },
+    {
       key: 'name',
       header: t('name'),
       cell: (supplier) => <span className="text-foreground font-medium">{supplier.name}</span>,
@@ -579,6 +641,23 @@ export default function SupplierManagement() {
         <>
           {/* Search */}
           <SearchField value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('search_suppliers')} />
+
+          {/* #273 bulk-action bar: surfaces once any row is selected. */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-4 py-2.5">
+              <span className="text-sm font-medium text-brand-800" role="status" aria-live="polite">
+                {selectedIds.size} {tt('selected', 'selected')}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleBulkDelete}
+                className="border-danger/40 text-danger hover:bg-danger/10"
+              >
+                {tt('delete_selected', 'Delete selected')}
+              </Button>
+            </div>
+          )}
 
           {/* Suppliers Table */}
           <DataTable
