@@ -82,49 +82,32 @@ export default defineConfig(() => {
     build: {
       rollupOptions: {
         output: {
-          manualChunks: {
-            // Vendor chunks
-            'react-vendor': ['react', 'react-dom'],
-            'router-vendor': ['react-router-dom'],
-            'ui-vendor': [
-              '@radix-ui/react-accordion',
-              '@radix-ui/react-alert-dialog',
-              '@radix-ui/react-aspect-ratio',
-              '@radix-ui/react-avatar',
-              '@radix-ui/react-checkbox',
-              '@radix-ui/react-collapsible',
-              '@radix-ui/react-context-menu',
-              '@radix-ui/react-dialog',
-              '@radix-ui/react-dropdown-menu',
-              '@radix-ui/react-hover-card',
-              '@radix-ui/react-label',
-              '@radix-ui/react-menubar',
-              '@radix-ui/react-navigation-menu',
-              '@radix-ui/react-popover',
-              '@radix-ui/react-progress',
-              '@radix-ui/react-radio-group',
-              '@radix-ui/react-scroll-area',
-              '@radix-ui/react-select',
-              '@radix-ui/react-separator',
-              '@radix-ui/react-slider',
-              '@radix-ui/react-slot',
-              '@radix-ui/react-switch',
-              '@radix-ui/react-tabs',
-              '@radix-ui/react-toast',
-              '@radix-ui/react-toggle',
-              '@radix-ui/react-toggle-group',
-              '@radix-ui/react-tooltip',
-            ],
-            'form-vendor': ['react-hook-form', '@hookform/resolvers', 'zod'],
-            'utils-vendor': [
-              'axios',
-              'clsx',
-              'tailwind-merge',
-              'class-variance-authority',
-              'date-fns',
-              'lucide-react',
-            ],
-            'query-vendor': ['@tanstack/react-query'],
+          // Function form (not the object form): the object form let Rollup fold
+          // the small `react-vendor`/`form-vendor` groups into `ui-vendor` and
+          // leave 33-byte facade re-export stubs behind. Assigning every
+          // node_modules module to a group by path keeps each vendor in its own
+          // chunk. Order matters: match `react-router` and the scoped `@radix-ui`
+          // packages before the bare `react`/`react-dom` rule so their own code
+          // isn't swept into react-vendor.
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return undefined;
+            const m = id.replace(/\\/g, '/');
+            if (/\/node_modules\/react-router(-dom)?\//.test(m)) return 'router-vendor';
+            if (/\/node_modules\/@radix-ui\//.test(m)) return 'ui-vendor';
+            if (/\/node_modules\/(react-hook-form|@hookform\/resolvers|zod)\//.test(m))
+              return 'form-vendor';
+            if (/\/node_modules\/@tanstack\//.test(m)) return 'query-vendor';
+            if (
+              /\/node_modules\/(react|react-dom|scheduler|use-sync-external-store|react-is)\//.test(m)
+            )
+              return 'react-vendor';
+            if (
+              /\/node_modules\/(axios|clsx|tailwind-merge|class-variance-authority|date-fns|lucide-react)\//.test(
+                m
+              )
+            )
+              return 'utils-vendor';
+            return 'vendor';
           },
         },
       },

@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { getAPIBaseURL } from './config';
-import { setToken, clearToken, getToken } from './apiClient';
+import { setToken, clearToken, getToken } from './token';
 
 export interface AuthUser {
   id: string;

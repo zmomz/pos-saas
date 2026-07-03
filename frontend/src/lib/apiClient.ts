@@ -12,8 +12,13 @@
  */
 import axios, { AxiosInstance, AxiosRequestHeaders, InternalAxiosRequestConfig, Method } from 'axios';
 import { getAPIBaseURL } from './config';
+import { getToken, setToken, clearToken } from './token';
+import { authApi } from './auth';
 
-const TOKEN_KEY = 'pos_auth_token';
+// Token storage lives in the leaf module `token.ts`; re-export it here so the
+// many existing `import { getToken } from './apiClient'` call sites keep working.
+export { getToken, setToken, clearToken } from './token';
+
 const LOGIN_PATH = '/login';
 
 // A request we've already retried once after a refresh — guards against an
@@ -23,31 +28,6 @@ type RetriableConfig = InternalAxiosRequestConfig & { _retry?: boolean };
 // Coalesce concurrent 401s onto a single in-flight refresh so a burst of
 // expired requests triggers exactly one POST /auth/refresh.
 let refreshPromise: Promise<boolean> | null = null;
-
-// ---------- Token storage ----------
-export function getToken(): string | null {
-  try {
-    return localStorage.getItem(TOKEN_KEY);
-  } catch {
-    return null;
-  }
-}
-
-export function setToken(token: string): void {
-  try {
-    localStorage.setItem(TOKEN_KEY, token);
-  } catch {
-    /* ignore storage errors */
-  }
-}
-
-export function clearToken(): void {
-  try {
-    localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* ignore storage errors */
-  }
-}
 
 // ---------- Shared axios instance ----------
 function makeHttp(): AxiosInstance {
@@ -79,8 +59,10 @@ function makeHttp(): AxiosInstance {
         const onLogin = typeof window !== 'undefined' && window.location.pathname === LOGIN_PATH;
         if (!isAuthProbe && !onLogin && !config._retry) {
           config._retry = true;
-          // Lazy import avoids a static cycle (auth.ts imports token storage from here).
-          const { authApi } = await import('./auth');
+          // `authApi` is imported statically now that token storage lives in the
+          // cycle-free leaf module `token.ts` (see its header). The interceptor
+          // only touches `authApi` at request time, well after both modules have
+          // finished initializing, so the import order is safe.
           refreshPromise = refreshPromise ?? authApi.refreshAccessToken();
           let refreshed = false;
           try {
