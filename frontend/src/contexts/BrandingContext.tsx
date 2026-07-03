@@ -9,6 +9,7 @@ import React, {
 import { useAuth } from './AuthContext';
 import { getAgentBranding, getClientBranding, getBrandingByDomain } from '../lib/api';
 import { getAPIBaseURL } from '../lib/config';
+import { readableTextColor } from '../lib/contrast';
 
 export interface Branding {
   logo_url?: string | null;
@@ -133,25 +134,20 @@ export function hexToHslTriple(hex: string): string | null {
   return `${H} ${S}% ${L}%`;
 }
 
-// Dark ink used as the foreground on a pale brand (so white-on-pale never ships).
-const DARK_INK = '222.2 47.4% 11.2%';
+// Near-black ink used as the foreground when white fails on the brand fill. It's
+// the HSL form of the shared contrast module's DARK_INK (#0a0a0a), so the
+// runtime foreground carries the exact contrast the picker decided on.
+const DARK_INK = '0 0% 4%';
 
-/** Relative luminance of a hex color, or null when it can't be parsed. */
-function luminance(hex: string): number | null {
-  let h = hex.trim().replace('#', '');
-  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-  if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return null;
-  const r = parseInt(h.slice(0, 2), 16) / 255;
-  const g = parseInt(h.slice(2, 4), 16) / 255;
-  const b = parseInt(h.slice(4, 6), 16) / 255;
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-}
-
-/** Relative luminance to pick a readable foreground for the primary color. */
+/**
+ * Pick a readable `--primary-foreground` (HSL triple) for the brand fill by
+ * delegating to the shared WCAG contrast guard, so token-based chrome, the
+ * inline-styled public surfaces, and the BrandingEditor preview all agree. The
+ * guard flips to dark ink whenever white-on-brand would drop below AA (e.g. a
+ * mid-tone blue), not just for pale brands.
+ */
 function readableForeground(hex: string): string {
-  const lum = luminance(hex);
-  if (lum == null) return '0 0% 100%';
-  return lum > 0.6 ? DARK_INK : '0 0% 100%';
+  return readableTextColor(hex) === '#ffffff' ? '0 0% 100%' : DARK_INK;
 }
 
 /** Apply branding to the document root so the whole UI is white-labeled. */

@@ -54,8 +54,10 @@
     --popover: 0 0% 100%;
     --popover-foreground: 214 13% 24%;
 
-    /* Brand: petrol teal-blue. Drives every primary Button + accent. */
-    --primary: 192 78% 37%;
+    /* Brand: petrol teal-blue. Drives every primary Button + accent.
+       L=33% (was 37%) so white-on-primary clears WCAG AA (4.5:1) for the
+       button labels that hard-code text-primary-foreground. */
+    --primary: 192 78% 33%;
     --primary-foreground: 0 0% 100%;
 
     --secondary: 192 48% 95%;
