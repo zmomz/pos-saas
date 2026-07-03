@@ -19,7 +19,10 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SRC = path.resolve(__dirname, '../src/lib/i18n.ts');
 
-const lines = fs.readFileSync(SRC, 'utf8').split('\n');
+// Split on either LF or CRLF so the line-based scan is robust to Windows-style
+// line endings (a trailing \r would otherwise defeat the `$`-anchored regexes
+// below and make every locale block look "missing").
+const lines = fs.readFileSync(SRC, 'utf8').split(/\r?\n/);
 
 /** Detect each `<lang>: {` … `},` block and collect its top-level keys. */
 const blocks = {};

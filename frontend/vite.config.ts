@@ -1,7 +1,40 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import path from 'path';
+import { createHash } from 'crypto';
+import { readFileSync, writeFileSync } from 'fs';
 import Sitemap from 'vite-plugin-sitemap';
+
+/**
+ * ISSUE-2: stamp a per-build hash into the emitted service worker so its cache
+ * name (`pos-shell-<hash>`) changes whenever the bundle changes. The SW's
+ * `activate` handler evicts every cache whose name != the current one, so a new
+ * deploy is guaranteed to drop the previous build's caches instead of pinning
+ * returning users to a stale shell. `public/sw.js` ships a `__BUILD_HASH__`
+ * placeholder that this plugin replaces in `dist/sw.js` post-build.
+ */
+function serviceWorkerBuildHash() {
+  return {
+    name: 'service-worker-build-hash',
+    apply: 'build' as const,
+    writeBundle(options: { dir?: string }, bundle: Record<string, unknown>) {
+      const outDir = options.dir || path.resolve(__dirname, 'dist');
+      const swPath = path.join(outDir, 'sw.js');
+      let src: string;
+      try {
+        src = readFileSync(swPath, 'utf8');
+      } catch {
+        return; // no sw.js in this build — nothing to stamp
+      }
+      // Derive a stable hash from the emitted (content-hashed) asset file names.
+      const hash = createHash('sha256')
+        .update(Object.keys(bundle).sort().join('\n'))
+        .digest('hex')
+        .slice(0, 12);
+      writeFileSync(swPath, src.replace(/__BUILD_HASH__/g, hash));
+    },
+  };
+}
 
 function escapeHtmlAttr(str: string): string {
   return str
@@ -28,6 +61,7 @@ export default defineConfig(() => {
         readable: true,
         generateRobotsTxt: true,
       }),
+      serviceWorkerBuildHash(),
     ],
     resolve: {
       alias: {

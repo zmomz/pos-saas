@@ -145,3 +145,75 @@ describe('POSTerminal refund panel renders amounts in SAR, not USD (ISSUE-102)',
     expect(screen.queryByText(/\$\s*[\d,]/)).not.toBeInTheDocument();
   });
 });
+
+describe('POSTerminal refund receipt shows the real Subtotal/VAT breakdown (ISSUE-5)', () => {
+  // Regression: the refund success receipt hard-coded subtotal: 0 / vat_amount: 0
+  // while the Total was correct, so the credit-note receipt rendered 0.00 for the
+  // Subtotal and VAT lines. The backend now returns the credit note's stored
+  // (negative) subtotal + vat_amount on the refund response, and the receipt reads
+  // them straight through. This pins that all three lines are consistent.
+  function refundHandlers() {
+    return [
+      http.get(PRODUCTS_URL, () => HttpResponse.json([])),
+      http.get(`${BASE}/auth/me/permissions`, () =>
+        HttpResponse.json({ is_master: true, denied: [], granted: [] })
+      ),
+      http.get(`${BASE}/entities/customers`, () => HttpResponse.json([])),
+      http.get(`${BASE}/entities/branches`, () => HttpResponse.json([])),
+      http.get(`${BASE}/tenant/client/branding`, () =>
+        HttpResponse.json({ company_name: 'Test Shop', primary_color: '#000', secondary_color: '#fff', font_family: 'sans', button_radius: '0.5rem' })
+      ),
+      http.get(`${BASE}/pos/held`, () => HttpResponse.json({ items: [], total: 0 })),
+      http.get(`${BASE}/payments/terminals`, () => HttpResponse.json([])),
+      http.get(`${BASE}/pos/transactions`, () =>
+        HttpResponse.json([
+          {
+            id: 1,
+            invoice_number: 'INV-001',
+            total_amount: 14.37,
+            payment_method: 'cash',
+            items: [{ product_id: 1, name: 'Widget', price: 12.5, quantity: 1 }],
+          },
+        ])
+      ),
+      // The credit note carries negative subtotal/VAT/total (mirrors the backend).
+      http.post(`${BASE}/pos/transactions/1/refund`, () =>
+        HttpResponse.json({
+          credit_note_id: 2,
+          original_transaction_id: 1,
+          credit_note_number: 'CRN-0001-000001',
+          total_amount: -14.37,
+          subtotal: -12.5,
+          vat_amount: -1.87,
+          zatca_status: 'disabled',
+          original_status: 'refunded',
+        })
+      ),
+    ];
+  }
+
+  it('renders non-zero Subtotal and VAT on the credit-note receipt', async () => {
+    server.use(...refundHandlers());
+
+    renderPage();
+
+    // Enter refund mode, pick the sale (defaults every line to a full return), then
+    // process the refund to open the credit-note receipt.
+    fireEvent.click(await screen.findByRole('button', { name: 'Refund' }));
+    fireEvent.click(await screen.findByText('INV-001'));
+    fireEvent.click(await screen.findByRole('button', { name: /Process Refund/ }));
+
+    // The receipt shows the credit note number once it has processed.
+    expect(await screen.findByText(/CRN-0001-000001/)).toBeInTheDocument();
+
+    // The Subtotal and VAT lines carry the stored (negative) values — NOT 0.00.
+    // formatMoneyAr renders "<western-digits> ﷼"; the receipt uses the Riyal sign.
+    // (-12.50 also appears as the returned line amount, hence getAllByText.)
+    expect(screen.getAllByText(/-12\.50/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/-1\.87/)).toBeInTheDocument();
+    expect(screen.getByText(/-14\.37/)).toBeInTheDocument();
+    // The pre-fix bug rendered the Subtotal + VAT lines as a plain "0.00" — guard
+    // against that specific regression coming back.
+    expect(screen.queryByText(/^\s*0\.00\s*﷼?\s*$/)).not.toBeInTheDocument();
+  });
+});

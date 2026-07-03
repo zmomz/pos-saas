@@ -1150,8 +1150,10 @@ export default function POSTerminal() {
       setReceipt({
         invoice_number: result.credit_note_number,
         total_amount: result.total_amount,
-        vat_amount: 0,
-        subtotal: 0,
+        // POS-07: use the credit note's real breakdown (negative, matching total)
+        // so Subtotal/VAT/Total are consistent instead of 0.00 placeholder lines.
+        vat_amount: result.vat_amount,
+        subtotal: result.subtotal,
         payment_method: 'refund',
         zatca_qr_base64: result.zatca_qr_base64 || '',
         zatca_status: result.zatca_status,

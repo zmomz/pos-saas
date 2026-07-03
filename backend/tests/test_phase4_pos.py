@@ -95,6 +95,16 @@ async def test_refund_nets_back_out_of_shift(client):
     )
     assert resp.status_code == 200, resp.text
 
+    # ISSUE-5: the refund response carries the credit note's stored subtotal + VAT
+    # (negative, matching total_amount) so the refund receipt can render a real,
+    # consistent Subtotal/VAT/Total breakdown instead of 0.00 placeholder lines.
+    body = resp.json()
+    assert body["total_amount"] < 0
+    assert body["subtotal"] < 0
+    assert body["vat_amount"] < 0
+    # subtotal + VAT re-sum to the total (no discount on this sale).
+    assert abs(body["subtotal"] + body["vat_amount"] - body["total_amount"]) < 0.01
+
     current = (await client.get("/api/v1/production/shifts/current", headers=headers)).json()
     # Sale + credit note net to zero; both counted as transactions.
     assert abs(current["shift"]["total_sales"]) < 0.01

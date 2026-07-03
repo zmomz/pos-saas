@@ -522,6 +522,10 @@ export interface RefundResult {
   original_transaction_id: number;
   credit_note_number: string;
   total_amount: number;
+  // POS-07 receipt breakdown: the credit note's stored subtotal/VAT (negative,
+  // matching total_amount) so the refund receipt shows a consistent breakdown.
+  subtotal: number;
+  vat_amount: number;
   zatca_qr?: string;
   zatca_qr_base64?: string;
   zatca_document_id: number;

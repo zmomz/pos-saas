@@ -1689,6 +1689,11 @@ class RefundResponse(BaseModel):
     original_transaction_id: int
     credit_note_number: str
     total_amount: float
+    # POS-07 receipt breakdown: the credit note's stored subtotal/VAT (negative,
+    # matching total_amount's sign) so the refund receipt can render a consistent
+    # Subtotal + VAT + Total instead of 0.00 placeholder lines.
+    subtotal: float
+    vat_amount: float
     zatca_qr: Optional[str] = None
     zatca_qr_base64: Optional[str] = None
     # ZA-09: a credit note is only signed/archived when the client has ZATCA
@@ -2016,6 +2021,8 @@ async def refund_transaction(
         original_transaction_id=original.id,
         credit_note_number=credit_number,
         total_amount=credit.total_amount,
+        subtotal=credit.subtotal,
+        vat_amount=credit.vat_amount,
         zatca_qr=stamped_qr,
         zatca_qr_base64=(
             zatca_service_mod.render_qr_png_base64(stamped_qr) if stamped_qr else None
