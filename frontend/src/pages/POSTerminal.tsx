@@ -154,6 +154,10 @@ interface Receipt {
   // POS-13 (F-012): gratuity collected on top of total_amount; shown as the amount
   // paid so the on-screen receipt matches what the customer was charged.
   tip_amount?: number | null;
+  // ISSUE-074: cash-drawer over-tender. When the customer pays cash over the
+  // amount due, the receipt shows the cash received and the change owed back.
+  cash_tendered?: number | null;
+  change_due?: number | null;
   // Captured tenders (PAY-01) — show the network/approval proof on the receipt.
   tenders?: TenderInfo[];
 }
@@ -967,6 +971,10 @@ export default function POSTerminal() {
         })),
         discount_amount: discountAmount > 0 ? discountAmount : undefined,
         discount_code: appliedDiscount?.code,
+        // ISSUE-074: carry the cash received + change owed onto the receipt so an
+        // over-tender shows the drawer the change to hand back.
+        cash_tendered: isCashSale && changeDue > 0 ? cashGiven : undefined,
+        change_due: isCashSale && changeDue > 0 ? changeDue : undefined,
         tenders: result.tenders,
       });
       // Flash the customer-facing display to a "thank you" state (still branded).
@@ -1296,6 +1304,19 @@ export default function POSTerminal() {
                   <div className="flex justify-between text-success font-bold">
                     <span>المبلغ المدفوع</span>
                     <span>{formatMoneyAr((receipt.total_amount || 0) + receipt.tip_amount)}</span>
+                  </div>
+                </>
+              )}
+              {/* ISSUE-074: cash over-tender — cash received + change owed back. */}
+              {receipt.change_due != null && receipt.change_due > 0 && (
+                <>
+                  <div className="flex justify-between text-muted-foreground text-sm">
+                    <span>النقد المستلم</span>
+                    <span>{formatMoneyAr(receipt.cash_tendered || 0)}</span>
+                  </div>
+                  <div className="flex justify-between text-foreground font-bold">
+                    <span>الباقي</span>
+                    <span>{formatMoneyAr(receipt.change_due)}</span>
                   </div>
                 </>
               )}
@@ -1973,7 +1994,7 @@ export default function POSTerminal() {
               type="button"
               onClick={handleHold}
               disabled={cart.length === 0 || holding || processing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-input px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-brand hover:text-brand-700 disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-input px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:border-brand hover:text-brand-700 disabled:opacity-50"
             >
               <Pause className="h-3.5 w-3.5" /> {holding ? t('loading') : t('hold_sale')}
             </button>
@@ -1982,7 +2003,8 @@ export default function POSTerminal() {
               onClick={() => { setCart([]); setAppliedDiscount(null); setDiscountCode(''); setTipAmount(0); }}
               disabled={cart.length === 0}
               title={t('clear') || 'Clear'}
-              className="flex h-[34px] w-[34px] items-center justify-center rounded-lg border border-input text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
+              aria-label={t('clear') || 'Clear'}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-input text-danger transition-colors hover:bg-danger/10 disabled:opacity-50"
             >
               <Trash2 className="h-4 w-4" />
             </button>

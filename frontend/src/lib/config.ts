@@ -1,5 +1,3 @@
-import { debugLog } from './debug';
-
 // Runtime configuration
 let runtimeConfig: {
   API_BASE_URL: string;
@@ -13,10 +11,12 @@ const defaultConfig = {
   API_BASE_URL: 'http://127.0.0.1:8000', // Only used if runtime config fails to load
 };
 
-// Function to load runtime configuration
+// Load runtime configuration once at startup (main.tsx awaits this before the
+// first render). Diagnostic logging was removed: the `🔧 DEBUG …` traces ran
+// through the dev-only `debugLog`, so they never printed in production, but the
+// string literals still shipped in the bundle as no-op call arguments.
 export async function loadRuntimeConfig(): Promise<void> {
   try {
-    debugLog('🔧 DEBUG: Starting to load runtime config...');
     // Try to load configuration from a config endpoint
     const response = await fetch('/api/config');
     if (response.ok) {
@@ -24,25 +24,12 @@ export async function loadRuntimeConfig(): Promise<void> {
       // Only parse as JSON if the response is actually JSON
       if (contentType && contentType.includes('application/json')) {
         runtimeConfig = await response.json();
-        debugLog('Runtime config loaded successfully');
-      } else {
-        debugLog(
-          'Config endpoint returned non-JSON response, skipping runtime config'
-        );
       }
-    } else {
-      debugLog(
-        '🔧 DEBUG: Config fetch failed with status:',
-        response.status
-      );
     }
-  } catch (error) {
-    debugLog('Failed to load runtime config, using defaults:', error);
+  } catch {
+    // Fall back to the default/Vite config below (getConfig).
   } finally {
     configLoading = false;
-    debugLog(
-      '🔧 DEBUG: Config loading finished, configLoading set to false'
-    );
   }
 }
 
@@ -50,27 +37,22 @@ export async function loadRuntimeConfig(): Promise<void> {
 export function getConfig() {
   // If config is still loading, return default config to avoid using stale Vite env vars
   if (configLoading) {
-    debugLog('Config still loading, using default config');
     return defaultConfig;
   }
 
   // First try runtime config (for Lambda)
   if (runtimeConfig) {
-    debugLog('Using runtime config');
     return runtimeConfig;
   }
 
   // Then try Vite environment variables (for local development)
   if (import.meta.env.VITE_API_BASE_URL) {
-    const viteConfig = {
+    return {
       API_BASE_URL: import.meta.env.VITE_API_BASE_URL,
     };
-    debugLog('Using Vite environment config');
-    return viteConfig;
   }
 
   // Finally fall back to default
-  debugLog('Using default config');
   return defaultConfig;
 }
 

@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-// FE-10: the runtime-config module used to emit debug `console.log` calls on
-// every app load (e.g. "Config still loading, using default config"). Those
-// must be gated so a production build is silent.
-describe('config module debug logging is dev-gated', () => {
+// FE-10 / prod-hygiene: the runtime-config module used to emit `🔧 DEBUG …`
+// console.log calls on every app load. They ran through the dev-only debugLog
+// (so prod never printed them), but the string literals still shipped in the
+// bundle as no-op call arguments — so the logging was removed outright. getConfig
+// must now be silent in every mode, dev included.
+describe('config module emits no debug logging', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.unstubAllEnvs();
@@ -23,13 +25,13 @@ describe('config module debug logging is dev-gated', () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('still emits debug logging from getConfig in development', async () => {
+  it('does not console.log from getConfig in development either', async () => {
     vi.stubEnv('DEV', true);
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const { getConfig } = await import('./config');
 
     getConfig();
 
-    expect(spy).toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
   });
 });
