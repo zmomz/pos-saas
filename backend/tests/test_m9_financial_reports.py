@@ -66,9 +66,12 @@ async def test_pnl_nets_revenue_cogs_expenses(client):
         items=[{"product_id": 1, "name": "Widget", "price": 100.0, "quantity": 1, "cost_price": 40.0}],
         invoice="INV-1",
     )
-    # Operating expenses: 30 rent + 5 supplies.
-    await _add(Expenses(user_id=user["id"], client_id=client_id, category="Rent", amount=30.0))
-    await _add(Expenses(user_id=user["id"], client_id=client_id, category="Supplies", amount=5.0))
+    # Operating expenses: 30 rent + 5 supplies. Stamp an explicit UTC created_at
+    # (like the sale above) so the report's UTC window matches regardless of the
+    # test runner's local timezone — the model default is naive local time.
+    expensed_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    await _add(Expenses(user_id=user["id"], client_id=client_id, category="Rent", amount=30.0, created_at=expensed_at))
+    await _add(Expenses(user_id=user["id"], client_id=client_id, category="Supplies", amount=5.0, created_at=expensed_at))
 
     resp = await client.get("/api/v1/reports/pnl?days=30", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -166,7 +169,7 @@ async def test_cash_flow_receipts_minus_expenses(client):
             PaymentTenders(user_id=user["id"], client_id=client_id, tender_type="card",
                            amount=999.0, status="declined", created_at=now),
         ])
-        db.add(Expenses(user_id=user["id"], client_id=client_id, category="Rent", amount=80.0))
+        db.add(Expenses(user_id=user["id"], client_id=client_id, category="Rent", amount=80.0, created_at=now))
         db.add_all([
             Cash_movements(user_id=user["id"], client_id=client_id, shift_id=1,
                            movement_type="pay_in", amount=20.0, created_at=now),

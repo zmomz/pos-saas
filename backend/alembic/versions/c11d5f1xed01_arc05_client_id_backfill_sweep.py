@@ -50,6 +50,19 @@ _COLUMN = "client_id"
 # reflecting metadata at runtime, which would couple the migration to future model
 # edits). Tables already covered by an earlier ARC-05 revision are harmless to
 # re-list — the inspector guard turns those into no-ops.
+#
+# user_id-owner audit (why backfilling client_id from user_id is safe here):
+# every table below stamps ``user_id`` with the *owning merchant* (``owner_id`` /
+# ``owner_user_id``) at write time — actor identity is isolated elsewhere
+# (``audit_logs``, a ``staff_name`` / ``staff_id`` / ``customer_id`` column), and
+# NONE of the pure actor/author tables (``audit_logs``, ``login_attempts``,
+# ``api_usage``, ``staff_attendance``, ``revoked_tokens``, ``processed_webhook_events``)
+# appear in this list. So resolving ``clients.user_id == <table>.user_id`` yields
+# the correct tenant. The generic-CRUD tables scope ``user_id`` to the creating
+# user, whom ``resolve_tenant_scope`` resolves owner-first — a caller who owns a
+# client is never scoped as another tenant's actor — so no cross-tenant
+# mis-assignment is reachable. The ``EXISTS`` guard below additionally leaves a
+# row NULL rather than guessing when no owning client can be resolved.
 _TABLES = [
     "bill_of_materials",
     "branch_catalog_override",
