@@ -236,10 +236,6 @@ class DatabaseManager:
                 logger.error("Database engine not initialized")
                 raise RuntimeError("Database engine not initialized")
 
-            # logger.info("🔧 Starting table structure repair...")
-            # await self.check_and_repair_existing_tables()
-            # logger.info("🔧 Table structure repair completed")
-
             try:
                 logger.info("🔧 Starting table creation...")
                 async with self.engine.begin() as conn:
@@ -247,6 +243,17 @@ class DatabaseManager:
                     self._initialized = True
                     logger.info("Tables initialized successfully")
                     logger.debug(f"[DB_OP] Create tables completed in {time.time() - start_time:.4f}s")
+                # OPS-01 (dev path): `create_all` only creates *missing tables* — it
+                # never adds columns to a table that already exists. So once a model
+                # gains a column, a pre-existing local SQLite/dev DB silently drifts
+                # (e.g. subscription_payments.period_key going missing 500s the
+                # subscription route) until a manual `seed_demo.py --rebuild`.
+                # Reconcile by adding any missing columns to existing tables via a
+                # safe `ALTER TABLE ADD COLUMN` so new columns land on the next boot.
+                # This runs only on the create_all path — `create_tables` is not
+                # called when Alembic migrations own the schema in production
+                # (see services/database.initialize_database's skip_create_all).
+                await self.check_and_repair_existing_tables()
             except (UniqueViolationError, DuplicateTableError) as e:
                 self._initialized = True
                 logger.info(f"Duplicate table creation: {e}, ignored.")
